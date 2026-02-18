@@ -5,6 +5,6 @@ After=network.target
 [Service]
 Type=oneshot
 User=exedev
-WorkingDirectory=/home/exedev/wslcb-tracker
-ExecStart=/home/exedev/wslcb-tracker/venv/bin/python scraper.py
+WorkingDirectory=/home/exedev/wslcb-licensing-tracker
+ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/python scraper.py
 Environment=PYTHONUNBUFFERED=1

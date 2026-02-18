@@ -5,8 +5,8 @@ After=network.target
 [Service]
 Type=simple
 User=exedev
-WorkingDirectory=/home/exedev/wslcb-tracker
-ExecStart=/home/exedev/wslcb-tracker/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/home/exedev/wslcb-licensing-tracker
+ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
