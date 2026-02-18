@@ -1,0 +1,156 @@
+# WSLCB Licensing Tracker
+
+A web application that scrapes, archives, and provides searchable access to licensing activity published by the **Washington State Liquor and Cannabis Board (WSLCB)**.
+
+The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp) of new license applications, approvals, and discontinuances for alcohol, cannabis, tobacco, and vapor product businesses across Washington State. This tracker scrapes that report daily and preserves the data in a searchable database, building a historical archive that extends beyond the 30-day window.
+
+**Live instance:** [https://wslcb-licensing-tracker.exe.xyz:8000/](https://wslcb-licensing-tracker.exe.xyz:8000/)
+
+## Features
+
+- **Daily automated scraping** of the WSLCB statewide licensing activity page
+- **Full-text search** across business names, locations, applicants, license types, and license numbers
+- **Filterable results** by record type, application type, license type, city, and date range
+- **Record detail pages** with related records for the same license number
+- **CSV export** of any search result set
+- **Historical archive** — the source only shows 30 days, but the database retains all data
+- **Deduplication** — safe to re-scrape; duplicate records are automatically skipped
+
+## Data
+
+The tracker captures three categories of licensing activity:
+
+| Section | Description |
+|---|---|
+| **New Applications** | Businesses that have submitted new license applications, renewals, changes of location, tradename changes, corporate officer changes, and other application types |
+| **Approved** | Licenses recently approved by the Board |
+| **Discontinued** | Licenses that have been discontinued |
+
+Each record includes:
+
+| Field | Description |
+|---|---|
+| Date | Notification, approval, or discontinuance date |
+| Business Name | Registered business name |
+| Business Location | Full street address including city, state, and ZIP |
+| Applicant(s) | Named applicants (new applications only) |
+| License Type | One or more license/endorsement types (e.g., "CANNABIS RETAILER", "GROCERY STORE - BEER/WINE", "SPIRITS/BR/WN REST LOUNGE +") |
+| Application Type | RENEWAL, NEW APPLICATION, CHANGE OF LOCATION, DISCONTINUED, etc. |
+| License Number | WSLCB license number |
+| Contact Phone | Business contact phone number |
+
+## Architecture
+
+| Component | Technology |
+|---|---|
+| Scraper | Python, [httpx](https://www.python-httpx.org/), [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) + lxml |
+| Database | SQLite with [FTS5](https://www.sqlite.org/fts5.html) full-text search |
+| Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
+| Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (CDN) |
+| Scheduling | systemd timer (daily) |
+
+## Project Structure
+
+```
+wslcb-licensing-tracker/
+├── app.py                  # FastAPI web application
+├── database.py             # SQLite schema, queries, FTS5 full-text search
+├── scraper.py              # WSLCB page scraper
+├── templates/
+│   ├── base.html           # Base layout template
+│   ├── index.html          # Dashboard with stats
+│   ├── search.html         # Search interface with filters
+│   ├── detail.html         # Record detail page
+│   └── partials/
+│       └── results.html    # Search results partial (HTMX)
+├── static/                 # Static assets
+├── wslcb-web.service       # systemd service for the web app
+├── wslcb-scraper.service   # systemd oneshot service for the scraper
+└── wslcb-scraper.timer     # systemd timer (daily at 6 AM Pacific)
+```
+
+## Setup
+
+### Prerequisites
+
+- Python 3.12+
+- systemd (for scheduling; optional if running manually)
+
+### Installation
+
+```bash
+git clone https://github.com/CannObserv/wslcb-licensing-tracker.git
+cd wslcb-licensing-tracker
+
+python3 -m venv venv
+source venv/bin/activate
+pip install fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart
+```
+
+### Run the initial scrape
+
+```bash
+python scraper.py
+```
+
+This fetches the current 30-day report and populates the SQLite database (`wslcb.db`).
+
+### Start the web application
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Then visit [http://localhost:8000](http://localhost:8000).
+
+### Set up daily scraping (systemd)
+
+```bash
+sudo cp wslcb-web.service /etc/systemd/system/
+sudo cp wslcb-scraper.service /etc/systemd/system/
+sudo cp wslcb-scraper.timer /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now wslcb-web.service
+sudo systemctl enable --now wslcb-scraper.timer
+```
+
+The scraper runs daily at 6:00 AM Pacific (14:00 UTC) with up to 5 minutes of random delay.
+
+Check the timer status:
+
+```bash
+systemctl list-timers wslcb-scraper.timer
+journalctl -u wslcb-scraper.service   # scraper logs
+journalctl -u wslcb-web.service       # web app logs
+```
+
+### Configuration
+
+| Environment Variable | Default | Description |
+|---|---|---|
+| `WSLCB_DB_PATH` | `./wslcb.db` | Path to the SQLite database file |
+
+## API Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /` | Dashboard with summary statistics |
+| `GET /search` | Search interface (HTML) or HTMX partial results |
+| `GET /record/{id}` | Record detail page |
+| `GET /export` | CSV export (accepts same query params as `/search`) |
+| `GET /api/stats` | JSON summary statistics |
+
+## Data Source
+
+All data is sourced from the Washington State Liquor and Cannabis Board's public licensing activity page:
+
+**[https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp](https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp)**
+
+> *STATEWIDE New License Applications, Approvals, and Discontinuances (for past 30 days, in order of most recent date)*
+
+This is an unofficial tracker and is not affiliated with or endorsed by the WSLCB.
+
+## License
+
+MIT
