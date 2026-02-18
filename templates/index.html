@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — WSLCB Licensing Tracker{% endblock %}
+{% block content %}
+<div class="mb-8">
+    <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
+    <p class="mt-1 text-sm text-gray-500">Washington State Liquor &amp; Cannabis Board — Licensing Activity Tracker</p>
+</div>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+        <div class="text-sm font-medium text-gray-500">Total Records</div>
+        <div class="mt-1 text-3xl font-bold text-gray-900">{{ "{:,}".format(stats.total_records) }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow-sm border border-blue-200 p-5">
+        <div class="text-sm font-medium text-blue-600">New Applications</div>
+        <div class="mt-1 text-3xl font-bold text-blue-700">{{ "{:,}".format(stats.new_application_count) }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow-sm border border-green-200 p-5">
+        <div class="text-sm font-medium text-green-600">Approved</div>
+        <div class="mt-1 text-3xl font-bold text-green-700">{{ "{:,}".format(stats.approved_count) }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow-sm border border-red-200 p-5">
+        <div class="text-sm font-medium text-red-600">Discontinued</div>
+        <div class="mt-1 text-3xl font-bold text-red-700">{{ "{:,}".format(stats.discontinued_count) }}</div>
+    </div>
+</div>
+
+<!-- Additional Stats -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+        <div class="text-sm font-medium text-gray-500">Unique Businesses</div>
+        <div class="mt-1 text-2xl font-bold text-gray-900">{{ "{:,}".format(stats.unique_businesses) }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+        <div class="text-sm font-medium text-gray-500">Unique Licenses</div>
+        <div class="mt-1 text-2xl font-bold text-gray-900">{{ "{:,}".format(stats.unique_licenses) }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+        <div class="text-sm font-medium text-gray-500">Date Range</div>
+        {% if stats.date_range and stats.date_range[0] %}
+        <div class="mt-1 text-lg font-semibold text-gray-900">{{ stats.date_range[0] }} — {{ stats.date_range[1] }}</div>
+        {% else %}
+        <div class="mt-1 text-lg text-gray-400">No data yet</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Last Scrape Info -->
+{% if stats.last_scrape %}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-8">
+    <h2 class="text-lg font-semibold text-gray-900 mb-2">Last Scrape</h2>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+        <div>
+            <span class="text-gray-500">Status:</span>
+            {% if stats.last_scrape['status'] == 'success' %}
+            <span class="ml-1 text-green-600 font-medium">✓ Success</span>
+            {% elif stats.last_scrape['status'] == 'error' %}
+            <span class="ml-1 text-red-600 font-medium">✗ Error</span>
+            {% else %}
+            <span class="ml-1 text-yellow-600 font-medium">⟳ Running</span>
+            {% endif %}
+        </div>
+        <div>
+            <span class="text-gray-500">Started:</span>
+            <span class="ml-1">{{ stats.last_scrape['started_at'][:19] }}</span>
+        </div>
+        <div>
+            <span class="text-gray-500">New records:</span>
+            <span class="ml-1 font-medium">{{ (stats.last_scrape['records_new'] or 0) + (stats.last_scrape['records_approved'] or 0) + (stats.last_scrape['records_discontinued'] or 0) }}</span>
+        </div>
+        <div>
+            <span class="text-gray-500">Skipped (dupes):</span>
+            <span class="ml-1">{{ stats.last_scrape['records_skipped'] or 0 }}</span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Quick Search -->
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Quick Search</h2>
+    <form action="/search" method="get" class="flex gap-3">
+        <input type="text" name="q" placeholder="Search business name, license number, location..."
+               class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+        <button type="submit"
+                class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 font-medium">
+            Search
+        </button>
+    </form>
+</div>
+{% endblock %}

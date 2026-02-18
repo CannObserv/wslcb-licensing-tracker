@@ -1,0 +1,10 @@
+[Unit]
+Description=Run WSLCB scraper daily at 6 AM Pacific
+
+[Timer]
+OnCalendar=*-*-* 14:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
