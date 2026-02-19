@@ -2,6 +2,9 @@
 import sqlite3
 import os
 from contextlib import contextmanager
+from typing import Optional
+
+from endorsements import get_endorsement_options, get_record_endorsements
 
 DB_PATH = os.environ.get("WSLCB_DB_PATH", os.path.join(os.path.dirname(__file__), "wslcb.db"))
 
@@ -27,25 +30,6 @@ def init_db():
     """Create tables and indexes.  Safe to call repeatedly."""
     with get_db() as conn:
         conn.executescript("""
-            CREATE TABLE IF NOT EXISTS license_endorsements (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE TABLE IF NOT EXISTS endorsement_codes (
-                code TEXT NOT NULL,
-                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id),
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                PRIMARY KEY (code, endorsement_id)
-            );
-            CREATE TABLE IF NOT EXISTS record_endorsements (
-                record_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
-                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id),
-                PRIMARY KEY (record_id, endorsement_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_re_endorsement
-                ON record_endorsements(endorsement_id);
-
             CREATE TABLE IF NOT EXISTS license_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 section_type TEXT NOT NULL,
@@ -69,10 +53,28 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_records_date ON license_records(record_date);
             CREATE INDEX IF NOT EXISTS idx_records_business ON license_records(business_name);
             CREATE INDEX IF NOT EXISTS idx_records_license_num ON license_records(license_number);
-            CREATE INDEX IF NOT EXISTS idx_records_license_type ON license_records(license_type);
             CREATE INDEX IF NOT EXISTS idx_records_app_type ON license_records(application_type);
             CREATE INDEX IF NOT EXISTS idx_records_city ON license_records(city);
             CREATE INDEX IF NOT EXISTS idx_records_zip ON license_records(zip_code);
+
+            CREATE TABLE IF NOT EXISTS license_endorsements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS endorsement_codes (
+                code TEXT NOT NULL,
+                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (code, endorsement_id)
+            );
+            CREATE TABLE IF NOT EXISTS record_endorsements (
+                record_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
+                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                PRIMARY KEY (record_id, endorsement_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_re_endorsement
+                ON record_endorsements(endorsement_id);
 
             CREATE VIRTUAL TABLE IF NOT EXISTS license_records_fts USING fts5(
                 business_name,
@@ -115,15 +117,16 @@ def init_db():
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
-        # Migration: drop the old mapping table if it exists
+        # Migration: drop old mapping table and obsolete indexes
         conn.execute("DROP TABLE IF EXISTS license_type_map")
+        conn.execute("DROP INDEX IF EXISTS idx_records_license_type")
         conn.commit()
 
 
-def insert_record(conn: sqlite3.Connection, record: dict) -> bool:
-    """Insert a record, returning True if new (not a duplicate)."""
+def insert_record(conn: sqlite3.Connection, record: dict) -> Optional[int]:
+    """Insert a record, returning the new row id or None if duplicate."""
     try:
-        conn.execute(
+        cursor = conn.execute(
             """INSERT INTO license_records
                (section_type, record_date, business_name, business_location,
                 applicants, license_type, application_type, license_number,
@@ -133,9 +136,9 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> bool:
                        :contact_phone, :city, :state, :zip_code, :scraped_at)""",
             record,
         )
-        return True
+        return cursor.lastrowid
     except sqlite3.IntegrityError:
-        return False
+        return None
 
 
 def search_records(
@@ -208,7 +211,6 @@ def search_records(
     ).fetchall()
 
     # Batch-attach endorsement names
-    from endorsements import get_record_endorsements
     record_ids = [r["id"] for r in rows]
     endorsement_map = get_record_endorsements(conn, record_ids)
 
@@ -231,7 +233,6 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         ).fetchall()
         options[col] = [r[0] for r in rows]
 
-    from endorsements import get_endorsement_options
     options["endorsement"] = get_endorsement_options(conn)
     return options
 

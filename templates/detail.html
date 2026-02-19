@@ -89,9 +89,18 @@
                     </td>
                     <td class="px-4 py-3 text-sm">{{ r.application_type }}</td>
                     <td class="px-4 py-3 text-sm">
-                        {% for e in r.endorsements %}
-                        <span class="inline-block bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-xs mr-1 mb-0.5">{{ e }}</span>
-                        {% endfor %}
+                        {% if r.endorsements %}
+                        <div class="flex flex-wrap gap-0.5">
+                            {% for e in r.endorsements[:3] %}
+                            <span class="inline-block bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-xs">{{ e }}</span>
+                            {% endfor %}
+                            {% if r.endorsements | length > 3 %}
+                            <span class="inline-block bg-gray-200 text-gray-500 rounded px-1.5 py-0.5 text-xs">+{{ r.endorsements | length - 3 }}</span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="text-gray-400">{{ r.license_type }}</span>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}

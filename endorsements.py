@@ -10,9 +10,13 @@ This module normalizes both representations into a shared
 `record_endorsements` junction table.  Code-to-name mappings are
 seeded from historical cross-referencing and refined automatically
 as new data arrives.
+
+TODO: FTS currently indexes raw license_type values, which are numeric
+codes for approved/discontinued records.  Text search for endorsement
+names won't match those records — only the endorsement filter works.
+Fixing this would require indexing resolved endorsement names in FTS.
 """
 import sqlite3
-from collections import Counter
 
 # ---
 # Seed data: WSLCB code → endorsement name(s), built from cross-referencing
@@ -22,6 +26,8 @@ from collections import Counter
 # Most codes map 1-to-1.  A handful map to multiple always-present
 # endorsements (e.g. 320 always includes BEER DISTRIBUTOR + WINE DISTRIBUTOR).
 # ---
+# Keys are string representations of WSLCB internal license class IDs,
+# stored as TEXT in the DB.
 SEED_CODE_MAP: dict[str, list[str]] = {
     "2":   ["NON-PROFIT ARTS ORGANIZATION"],
     "14":  ["FARMERS MARKET FOR BEER"],
@@ -177,6 +183,7 @@ def process_record(conn: sqlite3.Connection, record_id: int,
                 _link_endorsement(conn, record_id, r[0])
             return len(rows)
         # Unknown code — create a placeholder endorsement named after the code
+        print(f"[endorsements] Unknown code '{cleaned}' for record {record_id}; creating placeholder.")
         eid = _ensure_endorsement(conn, cleaned)
         conn.execute(
             "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
@@ -263,10 +270,11 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
             continue
 
         total = sum(r["cnt"] for r in matches)
-        type_freq: Counter[str] = Counter()
+        type_freq: dict[str, int] = {}
         for r in matches:
             for t in r["text_type"].split(";"):
-                type_freq[t.strip()] += r["cnt"]
+                key = t.strip()
+                type_freq[key] = type_freq.get(key, 0) + r["cnt"]
 
         # Endorsements present in every single match
         always = [t for t, c in type_freq.items() if c == total and t]
@@ -331,15 +339,18 @@ def get_record_endorsements(conn: sqlite3.Connection,
     """Batch-fetch endorsement names for a list of record ids."""
     if not record_ids:
         return {}
-    placeholders = ",".join("?" * len(record_ids))
-    rows = conn.execute(f"""
-        SELECT re.record_id, le.name
-        FROM record_endorsements re
-        JOIN license_endorsements le ON le.id = re.endorsement_id
-        WHERE re.record_id IN ({placeholders})
-        ORDER BY re.record_id, le.name
-    """, record_ids).fetchall()
+    CHUNK = 500
     result: dict[int, list[str]] = {rid: [] for rid in record_ids}
-    for r in rows:
-        result[r[0]].append(r[1])
+    for i in range(0, len(record_ids), CHUNK):
+        batch = record_ids[i:i + CHUNK]
+        placeholders = ",".join("?" * len(batch))
+        rows = conn.execute(f"""
+            SELECT re.record_id, le.name
+            FROM record_endorsements re
+            JOIN license_endorsements le ON le.id = re.endorsement_id
+            WHERE re.record_id IN ({placeholders})
+            ORDER BY re.record_id, le.name
+        """, batch).fetchall()
+        for r in rows:
+            result[r[0]].append(r[1])
     return result

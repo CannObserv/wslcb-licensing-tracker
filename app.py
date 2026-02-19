@@ -1,16 +1,31 @@
 """FastAPI web application for WSLCB licensing tracker."""
 import csv
 import io
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from database import get_db, init_db, search_records, get_filter_options, get_stats
 from endorsements import (
-    seed_endorsements, backfill, discover_code_mappings, get_record_endorsements,
+    seed_endorsements, backfill, get_record_endorsements,
 )
 
-app = FastAPI(title="WSLCB Licensing Tracker")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize database and endorsement tables on startup."""
+    init_db()
+    with get_db() as conn:
+        n = seed_endorsements(conn)
+        if n:
+            print(f"Seeded {n} endorsement code mapping(s)")
+        processed = backfill(conn)
+        if processed:
+            print(f"Backfilled endorsements for {processed} record(s)")
+    yield
+
+
+app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -33,21 +48,6 @@ def phone_format(value: str) -> str:
 
 templates.env.filters["section_label"] = section_label
 templates.env.filters["phone_format"] = phone_format
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
-    with get_db() as conn:
-        n = seed_endorsements(conn)
-        if n:
-            print(f"Seeded {n} endorsement code mapping(s)")
-        learned = discover_code_mappings(conn)
-        if learned:
-            print(f"Discovered {len(learned)} new code mapping(s)")
-        processed = backfill(conn)
-        if processed:
-            print(f"Backfilled endorsements for {processed} record(s)")
 
 
 @app.get("/", response_class=HTMLResponse)

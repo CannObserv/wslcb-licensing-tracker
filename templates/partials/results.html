@@ -34,9 +34,18 @@
                     <td class="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs truncate">{{ r.business_name }}</td>
                     <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.city }}{% if r.zip_code %}, {{ r.zip_code }}{% endif %}</td>
                     <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
-                        {% for e in r.endorsements %}
-                        <span class="inline-block bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-xs mr-1 mb-0.5">{{ e }}</span>
-                        {% endfor %}
+                        {% if r.endorsements %}
+                        <div class="flex flex-wrap gap-0.5 max-h-12 overflow-hidden relative">
+                            {% for e in r.endorsements[:3] %}
+                            <span class="inline-block bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-xs">{{ e }}</span>
+                            {% endfor %}
+                            {% if r.endorsements | length > 3 %}
+                            <span class="inline-block bg-gray-200 text-gray-500 rounded px-1.5 py-0.5 text-xs">+{{ r.endorsements | length - 3 }}</span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="text-gray-400 text-xs">{{ r.license_type }}</span>
+                        {% endif %}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-600">{{ r.application_type }}</td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">{{ r.license_number }}</td>
@@ -47,7 +56,7 @@
     </div>
 </div>
 
-{% set pq = "q=" ~ q ~ "&section_type=" ~ section_type ~ "&application_type=" ~ application_type ~ "&endorsement=" ~ endorsement ~ "&city=" ~ city ~ "&date_from=" ~ date_from ~ "&date_to=" ~ date_to %}
+{% set pq = "q=" ~ (q|urlencode) ~ "&section_type=" ~ (section_type|urlencode) ~ "&application_type=" ~ (application_type|urlencode) ~ "&endorsement=" ~ (endorsement|urlencode) ~ "&city=" ~ (city|urlencode) ~ "&date_from=" ~ (date_from|urlencode) ~ "&date_to=" ~ (date_to|urlencode) %}
 
 <!-- Pagination -->
 {% if total_pages > 1 %}
