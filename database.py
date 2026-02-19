@@ -62,6 +62,12 @@ def init_db():
                 name TEXT NOT NULL UNIQUE,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+            -- NOTE: ON DELETE CASCADE clauses below only take effect on fresh
+            -- databases.  CREATE TABLE IF NOT EXISTS is a no-op on existing
+            -- tables, so the running wslcb.db retains its original FK
+            -- definitions.  Code that deletes from license_endorsements
+            -- (e.g. _merge_placeholders) must manually clean up referencing
+            -- rows to stay safe on both old and new schemas.
             CREATE TABLE IF NOT EXISTS endorsement_codes (
                 code TEXT NOT NULL,
                 endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
@@ -158,13 +164,14 @@ def search_records(
     params: list = []
 
     if query:
-        conditions.append(
-            "lr.id IN (SELECT rowid FROM license_records_fts WHERE license_records_fts MATCH ?)"
-        )
         safe_query = query.replace('"', '').replace("'", "")
         terms = safe_query.split()
         fts_query = " AND ".join(f'"{t}"*' for t in terms if t)
-        params.append(fts_query)
+        if fts_query:
+            conditions.append(
+                "lr.id IN (SELECT rowid FROM license_records_fts WHERE license_records_fts MATCH ?)"
+            )
+            params.append(fts_query)
 
     if section_type:
         conditions.append("lr.section_type = ?")

@@ -5,7 +5,7 @@ import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from database import get_db, init_db, insert_record
-from endorsements import process_record, discover_code_mappings
+from endorsements import process_record, seed_endorsements, discover_code_mappings
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -117,6 +117,10 @@ def scrape():
     print(f"[{datetime.now().isoformat()}] Starting scrape of {URL}")
 
     with get_db() as conn:
+        # Ensure seed code→endorsement mappings exist (idempotent; needed
+        # because the scraper runs standalone, not through FastAPI lifespan).
+        seed_endorsements(conn)
+
         # Log the scrape start
         cursor = conn.execute(
             "INSERT INTO scrape_log (started_at, status) VALUES (?, 'running')",
