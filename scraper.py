@@ -4,7 +4,8 @@ import sys
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import get_db, init_db, insert_record, learn_license_type_mappings
+from database import get_db, init_db, insert_record
+from endorsements import process_record, seed_endorsements, discover_code_mappings
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -158,6 +159,12 @@ def scrape():
                 inserted = 0
                 for rec in records:
                     if insert_record(conn, rec):
+                        # Get the id of the just-inserted record
+                        rid = conn.execute(
+                            "SELECT id FROM license_records WHERE section_type=? AND record_date=? AND license_number=? AND application_type=?",
+                            (rec["section_type"], rec["record_date"], rec["license_number"], rec["application_type"]),
+                        ).fetchone()[0]
+                        process_record(conn, rid, rec["license_type"], rec["section_type"])
                         inserted += 1
                     else:
                         counts["skipped"] += 1
@@ -197,10 +204,10 @@ def scrape():
                 f"discontinued={counts['discontinued']}, skipped={counts['skipped']})"
             )
 
-            # Learn / update license-type code-to-label mappings
-            learned = learn_license_type_mappings(conn)
+            # Discover any new code→endorsement mappings from cross-references
+            learned = discover_code_mappings(conn)
             if learned:
-                print(f"Learned {len(learned)} license-type mapping(s): {learned}")
+                print(f"Discovered {len(learned)} new code mapping(s): {list(learned.keys())}")
 
         except Exception as e:
             conn.execute(
