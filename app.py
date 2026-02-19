@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from database import get_db, init_db, search_records, get_filter_options, get_stats
+from database import get_db, init_db, search_records, get_filter_options, get_stats, resolve_license_type, learn_license_type_mappings
 
 app = FastAPI(title="WSLCB Licensing Tracker")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -35,6 +35,11 @@ templates.env.filters["phone_format"] = phone_format
 @app.on_event("startup")
 def startup():
     init_db()
+    # Seed license-type mappings from existing data
+    with get_db() as conn:
+        learned = learn_license_type_mappings(conn)
+        if learned:
+            print(f"Seeded {len(learned)} license-type mapping(s)")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -103,18 +108,22 @@ async def search(
 async def record_detail(request: Request, record_id: int):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM license_records WHERE id = ?", (record_id,)).fetchone()
+        if not row:
+            return HTMLResponse("Record not found", status_code=404)
+        record = dict(row)
+        record["license_type"] = resolve_license_type(conn, record.get("license_type", ""))
         # Get other records with same license number
+        related_rows = conn.execute(
+            "SELECT * FROM license_records WHERE license_number = ? AND id != ? ORDER BY record_date DESC",
+            (row["license_number"], record_id),
+        ).fetchall()
         related = []
-        if row:
-            related = conn.execute(
-                "SELECT * FROM license_records WHERE license_number = ? AND id != ? ORDER BY record_date DESC",
-                (row["license_number"], record_id),
-            ).fetchall()
-            related = [dict(r) for r in related]
-    if not row:
-        return HTMLResponse("Record not found", status_code=404)
+        for r in related_rows:
+            d = dict(r)
+            d["license_type"] = resolve_license_type(conn, d.get("license_type", ""))
+            related.append(d)
     return templates.TemplateResponse(
-        "detail.html", {"request": request, "record": dict(row), "related": related}
+        "detail.html", {"request": request, "record": record, "related": related}
     )
 
 
@@ -139,14 +148,15 @@ async def export_csv(
 
     output = io.StringIO()
     if records:
-        writer = csv.DictWriter(output, fieldnames=[
+        fieldnames = [
             "section_type", "record_date", "business_name", "business_location",
-            "applicants", "license_type", "application_type", "license_number",
-            "contact_phone", "city", "state", "zip_code",
-        ])
+            "applicants", "license_type", "license_type_raw", "application_type",
+            "license_number", "contact_phone", "city", "state", "zip_code",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for r in records:
-            writer.writerow({k: r.get(k, "") for k in writer.fieldnames})
+            writer.writerow({k: r.get(k, "") for k in fieldnames})
 
     output.seek(0)
     return StreamingResponse(

@@ -4,7 +4,7 @@ import sys
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import get_db, init_db, insert_record
+from database import get_db, init_db, insert_record, learn_license_type_mappings
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -196,6 +196,11 @@ def scrape():
                 f"(new={counts['new']}, approved={counts['approved']}, "
                 f"discontinued={counts['discontinued']}, skipped={counts['skipped']})"
             )
+
+            # Learn / update license-type code-to-label mappings
+            learned = learn_license_type_mappings(conn)
+            if learned:
+                print(f"Learned {len(learned)} license-type mapping(s): {learned}")
 
         except Exception as e:
             conn.execute(

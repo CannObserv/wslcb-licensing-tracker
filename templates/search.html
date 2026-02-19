@@ -42,7 +42,7 @@
                 <select name="license_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
                     <option value="">All</option>
                     {% for lt in filters.license_type %}
-                    <option value="{{ lt }}" {{ 'selected' if license_type == lt }}>{{ lt }}</option>
+                    <option value="{{ lt }}" {{ 'selected' if license_type == lt }}>{{ filters.license_type_display.get(lt, lt) }}</option>
                     {% endfor %}
                 </select>
             </div>
