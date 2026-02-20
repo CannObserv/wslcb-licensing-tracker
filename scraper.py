@@ -5,6 +5,7 @@ import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from database import get_db, init_db, insert_record
+from endorsements import process_record, seed_endorsements, discover_code_mappings
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -116,6 +117,10 @@ def scrape():
     print(f"[{datetime.now().isoformat()}] Starting scrape of {URL}")
 
     with get_db() as conn:
+        # Ensure seed code→endorsement mappings exist (idempotent; needed
+        # because the scraper runs standalone, not through FastAPI lifespan).
+        seed_endorsements(conn)
+
         # Log the scrape start
         cursor = conn.execute(
             "INSERT INTO scrape_log (started_at, status) VALUES (?, 'running')",
@@ -157,7 +162,9 @@ def scrape():
 
                 inserted = 0
                 for rec in records:
-                    if insert_record(conn, rec):
+                    rid = insert_record(conn, rec)
+                    if rid is not None:
+                        process_record(conn, rid, rec["license_type"], rec["section_type"])
                         inserted += 1
                     else:
                         counts["skipped"] += 1
@@ -196,6 +203,11 @@ def scrape():
                 f"(new={counts['new']}, approved={counts['approved']}, "
                 f"discontinued={counts['discontinued']}, skipped={counts['skipped']})"
             )
+
+            # Discover any new code→endorsement mappings from cross-references
+            learned = discover_code_mappings(conn)
+            if learned:
+                print(f"Discovered {len(learned)} new code mapping(s): {list(learned.keys())}")
 
         except Exception as e:
             conn.execute(

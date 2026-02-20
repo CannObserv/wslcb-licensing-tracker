@@ -33,7 +33,20 @@
                     </td>
                     <td class="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs truncate">{{ r.business_name }}</td>
                     <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.city }}{% if r.zip_code %}, {{ r.zip_code }}{% endif %}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.license_type }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
+                        {% if r.endorsements %}
+                        <div class="flex flex-wrap gap-0.5 max-h-12 overflow-hidden relative">
+                            {% for e in r.endorsements[:3] %}
+                            <span class="inline-block bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-xs">{{ e }}</span>
+                            {% endfor %}
+                            {% if r.endorsements | length > 3 %}
+                            <span class="inline-block bg-gray-200 text-gray-500 rounded px-1.5 py-0.5 text-xs">+{{ r.endorsements | length - 3 }}</span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="text-gray-400 text-xs">{{ r.license_type }}</span>
+                        {% endif %}
+                    </td>
                     <td class="px-4 py-3 text-sm text-gray-600">{{ r.application_type }}</td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">{{ r.license_number }}</td>
                 </tr>
@@ -43,11 +56,13 @@
     </div>
 </div>
 
+{% set pq = "q=" ~ (q|urlencode) ~ "&section_type=" ~ (section_type|urlencode) ~ "&application_type=" ~ (application_type|urlencode) ~ "&endorsement=" ~ (endorsement|urlencode) ~ "&city=" ~ (city|urlencode) ~ "&date_from=" ~ (date_from|urlencode) ~ "&date_to=" ~ (date_to|urlencode) %}
+
 <!-- Pagination -->
 {% if total_pages > 1 %}
 <div class="mt-4 flex justify-center gap-1">
     {% if page > 1 %}
-    <a href="?q={{ q }}&section_type={{ section_type }}&application_type={{ application_type }}&license_type={{ license_type }}&city={{ city }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ page - 1 }}"
+    <a href="?{{ pq }}&page={{ page - 1 }}"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">← Prev</a>
     {% endif %}
 
@@ -55,13 +70,13 @@
     {% set end_page = [total_pages, page + 3] | min %}
 
     {% if start_page > 1 %}
-    <a href="?q={{ q }}&section_type={{ section_type }}&application_type={{ application_type }}&license_type={{ license_type }}&city={{ city }}&date_from={{ date_from }}&date_to={{ date_to }}&page=1"
+    <a href="?{{ pq }}&page=1"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">1</a>
     {% if start_page > 2 %}<span class="px-2 py-1.5 text-gray-400">…</span>{% endif %}
     {% endif %}
 
     {% for p in range(start_page, end_page + 1) %}
-    <a href="?q={{ q }}&section_type={{ section_type }}&application_type={{ application_type }}&license_type={{ license_type }}&city={{ city }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ p }}"
+    <a href="?{{ pq }}&page={{ p }}"
        class="px-3 py-1.5 text-sm border rounded-md {{ 'bg-indigo-600 text-white border-indigo-600' if p == page else 'border-gray-300 hover:bg-gray-50' }}">
         {{ p }}
     </a>
@@ -69,12 +84,12 @@
 
     {% if end_page < total_pages %}
     {% if end_page < total_pages - 1 %}<span class="px-2 py-1.5 text-gray-400">…</span>{% endif %}
-    <a href="?q={{ q }}&section_type={{ section_type }}&application_type={{ application_type }}&license_type={{ license_type }}&city={{ city }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ total_pages }}"
+    <a href="?{{ pq }}&page={{ total_pages }}"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">{{ total_pages }}</a>
     {% endif %}
 
     {% if page < total_pages %}
-    <a href="?q={{ q }}&section_type={{ section_type }}&application_type={{ application_type }}&license_type={{ license_type }}&city={{ city }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ page + 1 }}"
+    <a href="?{{ pq }}&page={{ page + 1 }}"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">Next →</a>
     {% endif %}
 </div>

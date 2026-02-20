@@ -2,7 +2,9 @@
 import sqlite3
 import os
 from contextlib import contextmanager
-from datetime import datetime
+from typing import Optional
+
+from endorsements import get_endorsement_options, get_record_endorsements
 
 DB_PATH = os.environ.get("WSLCB_DB_PATH", os.path.join(os.path.dirname(__file__), "wslcb.db"))
 
@@ -25,24 +27,24 @@ def get_db():
 
 
 def init_db():
-    """Create tables and indexes."""
+    """Create tables and indexes.  Safe to call repeatedly."""
     with get_db() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS license_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                section_type TEXT NOT NULL,          -- 'new_application', 'approved', 'discontinued'
-                record_date TEXT NOT NULL,            -- the notification/approved/discontinued date
+                section_type TEXT NOT NULL,
+                record_date TEXT NOT NULL,
                 business_name TEXT,
                 business_location TEXT,
-                applicants TEXT,                      -- semicolon-separated, only for new applications
+                applicants TEXT,
                 license_type TEXT,
                 application_type TEXT,
                 license_number TEXT,
                 contact_phone TEXT,
-                city TEXT,                            -- extracted from business_location
+                city TEXT,
                 state TEXT DEFAULT 'WA',
-                zip_code TEXT,                        -- extracted from business_location
-                scraped_at TEXT NOT NULL,             -- when we scraped this record
+                zip_code TEXT,
+                scraped_at TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(section_type, record_date, license_number, application_type)
             );
@@ -51,10 +53,34 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_records_date ON license_records(record_date);
             CREATE INDEX IF NOT EXISTS idx_records_business ON license_records(business_name);
             CREATE INDEX IF NOT EXISTS idx_records_license_num ON license_records(license_number);
-            CREATE INDEX IF NOT EXISTS idx_records_license_type ON license_records(license_type);
             CREATE INDEX IF NOT EXISTS idx_records_app_type ON license_records(application_type);
             CREATE INDEX IF NOT EXISTS idx_records_city ON license_records(city);
             CREATE INDEX IF NOT EXISTS idx_records_zip ON license_records(zip_code);
+
+            CREATE TABLE IF NOT EXISTS license_endorsements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            -- NOTE: ON DELETE CASCADE clauses below only take effect on fresh
+            -- databases.  CREATE TABLE IF NOT EXISTS is a no-op on existing
+            -- tables, so the running wslcb.db retains its original FK
+            -- definitions.  Code that deletes from license_endorsements
+            -- (e.g. _merge_placeholders) must manually clean up referencing
+            -- rows to stay safe on both old and new schemas.
+            CREATE TABLE IF NOT EXISTS endorsement_codes (
+                code TEXT NOT NULL,
+                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (code, endorsement_id)
+            );
+            CREATE TABLE IF NOT EXISTS record_endorsements (
+                record_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
+                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                PRIMARY KEY (record_id, endorsement_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_re_endorsement
+                ON record_endorsements(endorsement_id);
 
             CREATE VIRTUAL TABLE IF NOT EXISTS license_records_fts USING fts5(
                 business_name,
@@ -67,7 +93,6 @@ def init_db():
                 content_rowid='id'
             );
 
-            -- Triggers to keep FTS in sync
             CREATE TRIGGER IF NOT EXISTS license_records_ai AFTER INSERT ON license_records BEGIN
                 INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number)
                 VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number);
@@ -89,7 +114,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
-                status TEXT NOT NULL DEFAULT 'running',  -- 'running', 'success', 'error'
+                status TEXT NOT NULL DEFAULT 'running',
                 records_new INTEGER DEFAULT 0,
                 records_approved INTEGER DEFAULT 0,
                 records_discontinued INTEGER DEFAULT 0,
@@ -97,15 +122,17 @@ def init_db():
                 error_message TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
-        """
-        )
+        """)
+        # Migration: drop old mapping table and obsolete indexes
+        conn.execute("DROP TABLE IF EXISTS license_type_map")
+        conn.execute("DROP INDEX IF EXISTS idx_records_license_type")
         conn.commit()
 
 
-def insert_record(conn: sqlite3.Connection, record: dict) -> bool:
-    """Insert a record, returning True if it was new (not a duplicate)."""
+def insert_record(conn: sqlite3.Connection, record: dict) -> Optional[int]:
+    """Insert a record, returning the new row id or None if duplicate."""
     try:
-        conn.execute(
+        cursor = conn.execute(
             """INSERT INTO license_records
                (section_type, record_date, business_name, business_location,
                 applicants, license_type, application_type, license_number,
@@ -115,9 +142,9 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> bool:
                        :contact_phone, :city, :state, :zip_code, :scraped_at)""",
             record,
         )
-        return True
+        return cursor.lastrowid
     except sqlite3.IntegrityError:
-        return False
+        return None
 
 
 def search_records(
@@ -125,27 +152,26 @@ def search_records(
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    license_type: str = "",
+    endorsement: str = "",
     city: str = "",
     date_from: str = "",
     date_to: str = "",
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[dict], int]:
-    """Search records with filters. Returns (records, total_count)."""
+    """Search records with filters.  Returns (records, total_count)."""
     conditions = []
-    params = []
+    params: list = []
 
     if query:
-        # Use FTS for text search
-        conditions.append(
-            "lr.id IN (SELECT rowid FROM license_records_fts WHERE license_records_fts MATCH ?)"
-        )
-        # Escape special FTS characters and add prefix matching
         safe_query = query.replace('"', '').replace("'", "")
         terms = safe_query.split()
         fts_query = " AND ".join(f'"{t}"*' for t in terms if t)
-        params.append(fts_query)
+        if fts_query:
+            conditions.append(
+                "lr.id IN (SELECT rowid FROM license_records_fts WHERE license_records_fts MATCH ?)"
+            )
+            params.append(fts_query)
 
     if section_type:
         conditions.append("lr.section_type = ?")
@@ -155,9 +181,14 @@ def search_records(
         conditions.append("lr.application_type = ?")
         params.append(application_type)
 
-    if license_type:
-        conditions.append("lr.license_type = ?")
-        params.append(license_type)
+    if endorsement:
+        conditions.append("""
+            lr.id IN (
+                SELECT re.record_id FROM record_endorsements re
+                JOIN license_endorsements le ON le.id = re.endorsement_id
+                WHERE le.name = ?
+            )""")
+        params.append(endorsement)
 
     if city:
         conditions.append("lr.city = ?")
@@ -173,35 +204,49 @@ def search_records(
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-    # Count
-    count_sql = f"SELECT COUNT(*) FROM license_records lr {where}"
-    total = conn.execute(count_sql, params).fetchone()[0]
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM license_records lr {where}", params
+    ).fetchone()[0]
 
-    # Fetch page
     offset = (page - 1) * per_page
-    data_sql = f"""SELECT lr.* FROM license_records lr
-                   {where}
-                   ORDER BY lr.record_date DESC, lr.id DESC
-                   LIMIT ? OFFSET ?"""
-    rows = conn.execute(data_sql, params + [per_page, offset]).fetchall()
+    rows = conn.execute(
+        f"""SELECT lr.* FROM license_records lr
+            {where}
+            ORDER BY lr.record_date DESC, lr.id DESC
+            LIMIT ? OFFSET ?""",
+        params + [per_page, offset],
+    ).fetchall()
 
-    return [dict(r) for r in rows], total
+    # Batch-attach endorsement names
+    record_ids = [r["id"] for r in rows]
+    endorsement_map = get_record_endorsements(conn, record_ids)
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        d["endorsements"] = endorsement_map.get(d["id"], [])
+        results.append(d)
+
+    return results, total
 
 
 def get_filter_options(conn: sqlite3.Connection) -> dict:
     """Get distinct values for filter dropdowns."""
-    options = {}
-    for col in ["section_type", "application_type", "license_type", "city"]:
+    options: dict = {}
+    for col in ["section_type", "application_type", "city"]:
         rows = conn.execute(
-            f"SELECT DISTINCT {col} FROM license_records WHERE {col} IS NOT NULL AND {col} != '' ORDER BY {col}"
+            f"SELECT DISTINCT {col} FROM license_records "
+            f"WHERE {col} IS NOT NULL AND {col} != '' ORDER BY {col}"
         ).fetchall()
         options[col] = [r[0] for r in rows]
+
+    options["endorsement"] = get_endorsement_options(conn)
     return options
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:
     """Get summary statistics."""
-    stats = {}
+    stats: dict = {}
     stats["total_records"] = conn.execute("SELECT COUNT(*) FROM license_records").fetchone()[0]
     for st in ["new_application", "approved", "discontinued"]:
         stats[f"{st}_count"] = conn.execute(

@@ -39,10 +39,10 @@
             </div>
             <div>
                 <label class="block text-xs font-medium text-gray-500 mb-1">License Type</label>
-                <select name="license_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                <select name="endorsement" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
                     <option value="">All</option>
-                    {% for lt in filters.license_type %}
-                    <option value="{{ lt }}" {{ 'selected' if license_type == lt }}>{{ lt }}</option>
+                    {% for e in filters.endorsement %}
+                    <option value="{{ e }}" {{ 'selected' if endorsement == e }}>{{ e }}</option>
                     {% endfor %}
                 </select>
             </div>
