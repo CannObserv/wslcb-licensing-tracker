@@ -1,10 +1,12 @@
 """Scraper for WSLCB licensing activity page."""
 import re
 import sys
+from pathlib import Path
+
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import get_db, init_db, insert_record
+from database import DATA_DIR, get_db, init_db, insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
@@ -110,6 +112,31 @@ def parse_records_from_table(table, section_type: str) -> list[dict]:
     return records
 
 
+def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
+    """Save raw HTML to data/[yyyy]/[yyyy_mm_dd]-v[x]/licensing info.lcb.wa.gov-[yyyy_mm_dd]-v[x].html
+
+    Saves the HTML exactly as received from the server (no transformation).
+    Increments the version number if a snapshot for the same date already exists.
+    Returns the path to the saved file.
+    """
+    date_str = scrape_date.strftime("%Y_%m_%d")
+    year_str = scrape_date.strftime("%Y")
+    year_dir = DATA_DIR / year_str
+
+    # Determine next version number for this date
+    version = 1
+    while (year_dir / f"{date_str}-v{version}").exists():
+        version += 1
+
+    snapshot_dir = year_dir / f"{date_str}-v{version}"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"licensing info.lcb.wa.gov-{date_str}-v{version}.html"
+    filepath = snapshot_dir / filename
+    filepath.write_text(html, encoding="utf-8")
+    return filepath
+
+
 def scrape():
     """Main scrape function."""
     init_db()
@@ -136,6 +163,14 @@ def scrape():
             resp.raise_for_status()
             html = resp.text
             print(f"Fetched {len(html):,} bytes")
+
+            # Archive the raw HTML
+            snapshot_path = None
+            try:
+                snapshot_path = save_html_snapshot(html, datetime.now(timezone.utc))
+                print(f"Saved snapshot to {snapshot_path}")
+            except Exception as snap_err:
+                print(f"WARNING: Failed to save HTML snapshot: {snap_err}", file=sys.stderr)
 
             # Parse HTML
             soup = BeautifulSoup(html, "lxml")
@@ -184,7 +219,8 @@ def scrape():
                 """UPDATE scrape_log SET
                    finished_at = ?, status = 'success',
                    records_new = ?, records_approved = ?,
-                   records_discontinued = ?, records_skipped = ?
+                   records_discontinued = ?, records_skipped = ?,
+                   snapshot_path = ?
                    WHERE id = ?""",
                 (
                     datetime.now(timezone.utc).isoformat(),
@@ -192,6 +228,7 @@ def scrape():
                     counts["approved"],
                     counts["discontinued"],
                     counts["skipped"],
+                    str(snapshot_path.relative_to(DATA_DIR)) if snapshot_path else None,
                     log_id,
                 ),
             )

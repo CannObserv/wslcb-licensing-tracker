@@ -12,7 +12,8 @@ This is a Python web application that scrapes Washington State Liquor and Cannab
 ## Architecture at a Glance
 
 ```
-scraper.py  →  wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  templates/ (Jinja2 + HTMX)
+scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  templates/ (Jinja2 + HTMX)
+             ↘ data/[yyyy]/[date]-v[x]/*.html (archived snapshots)
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
@@ -23,9 +24,9 @@ scraper.py  →  wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  templates
 
 | File | Purpose | Notes |
 |---|---|---|
-| `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. |
+| `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
-| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. |
+| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
 
@@ -60,6 +61,7 @@ scraper.py  →  wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  templates
 
 ### `scrape_log`
 - One row per scrape run with status, record counts, timestamps, error messages
+- `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `2025/2025_07_09-v1/licensing info.lcb.wa.gov-2025_07_09-v1.html`); `NULL` if archiving failed
 
 ## Conventions
 
@@ -95,6 +97,22 @@ URL: `https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp`
 - License types in approved/discontinued sections appear as numeric codes (e.g., "349,") — these are resolved to text names by the endorsement normalization layer
 - The page carries a banner about "known data transfer issues" — expect occasional anomalies
 
+## Data Directory
+
+All persistent data lives under `data/` (override with `WSLCB_DATA_DIR` env var):
+
+```
+data/
+├── wslcb.db                           # SQLite database
+└── [yyyy]/                            # Year directories for HTML snapshots
+    └── [yyyy_mm_dd]-v[x]/             # One snapshot per scrape run (v1, v2, ... for same-day runs)
+        └── licensing info.lcb.wa.gov-[yyyy_mm_dd]-v[x].html
+```
+
+- Snapshots are saved verbatim as received from the server (no transformation)
+- Snapshot archiving is best-effort; failure does not abort the scrape
+- The entire `data/` directory is gitignored
+
 ## Deployment
 
 - Runs on an exe.dev VM as systemd services
@@ -102,7 +120,7 @@ URL: `https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp`
 - `wslcb-scraper.timer` — fires daily at 14:00 UTC (6 AM Pacific), ±5 min jitter
 - `wslcb-scraper.service` — oneshot, triggered by the timer
 - After changing service files: `sudo cp *.service *.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
-- DB file lives at `./wslcb.db` (override with `WSLCB_DB_PATH` env var)
+- All persistent data lives in `./data/` (override with `WSLCB_DATA_DIR` env var)
 - Venv shebangs are absolute paths — if the project directory moves, recreate the venv
 
 ## Git Workflow
@@ -123,7 +141,7 @@ python scraper.py
 
 ### Check scrape history
 ```bash
-sqlite3 wslcb.db "SELECT id, started_at, status, records_new, records_approved, records_discontinued, records_skipped FROM scrape_log ORDER BY id DESC LIMIT 10;"
+sqlite3 data/wslcb.db "SELECT id, started_at, status, records_new, records_approved, records_discontinued, records_skipped, snapshot_path FROM scrape_log ORDER BY id DESC LIMIT 10;"
 ```
 
 ### Restart the web app after code changes
