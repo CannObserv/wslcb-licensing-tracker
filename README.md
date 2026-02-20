@@ -66,6 +66,9 @@ wslcb-licensing-tracker/
 │   └── partials/
 │       └── results.html    # Search results partial (HTMX)
 ├── static/                 # Static assets
+├── data/                   # Persistent data (gitignored)
+│   ├── wslcb.db            # SQLite database
+│   └── [yyyy]/             # Archived HTML snapshots by year
 ├── wslcb-web.service       # systemd service for the web app
 ├── wslcb-scraper.service   # systemd oneshot service for the scraper
 └── wslcb-scraper.timer     # systemd timer (daily at 6 AM Pacific)
@@ -95,7 +98,7 @@ pip install fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart
 python scraper.py
 ```
 
-This fetches the current 30-day report and populates the SQLite database (`wslcb.db`).
+This fetches the current 30-day report, populates the SQLite database (`data/wslcb.db`), and archives a copy of the source HTML under `data/`.
 
 ### Start the web application
 
@@ -131,7 +134,7 @@ journalctl -u wslcb-web.service       # web app logs
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `WSLCB_DB_PATH` | `./wslcb.db` | Path to the SQLite database file |
+| `WSLCB_DATA_DIR` | `./data` | Directory for the SQLite database and archived HTML snapshots |
 
 ## API Endpoints
 

@@ -2,14 +2,21 @@
 import sqlite3
 import os
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Optional
 
 from endorsements import get_endorsement_options, get_record_endorsements
 
-DB_PATH = os.environ.get("WSLCB_DB_PATH", os.path.join(os.path.dirname(__file__), "wslcb.db"))
+# All persistent data (DB + HTML snapshots) lives under DATA_DIR.
+DATA_DIR = Path(os.environ.get(
+    "WSLCB_DATA_DIR",
+    Path(__file__).resolve().parent / "data",
+))
+DB_PATH = DATA_DIR / "wslcb.db"
 
 
 def get_connection() -> sqlite3.Connection:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -126,6 +133,13 @@ def init_db():
         # Migration: drop old mapping table and obsolete indexes
         conn.execute("DROP TABLE IF EXISTS license_type_map")
         conn.execute("DROP INDEX IF EXISTS idx_records_license_type")
+
+        # Migration: add snapshot_path column to scrape_log
+        try:
+            conn.execute("ALTER TABLE scrape_log ADD COLUMN snapshot_path TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         conn.commit()
 
 
