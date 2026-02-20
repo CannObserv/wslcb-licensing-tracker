@@ -10,7 +10,8 @@ The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/E
 
 - **Daily automated scraping** of the WSLCB statewide licensing activity page
 - **Full-text search** across business names, locations, applicants, license types, and license numbers
-- **Filterable results** by record type, application type, license type, city, and date range
+- **Normalized endorsements** — numeric license codes from approved/discontinued records are resolved to human-readable names via a managed code→endorsement mapping
+- **Filterable results** by record type, application type, endorsement, city, and date range
 - **Record detail pages** with related records for the same license number
 - **CSV export** of any search result set
 - **Historical archive** — the source only shows 30 days, but the database retains all data
@@ -34,7 +35,7 @@ Each record includes:
 | Business Name | Registered business name |
 | Business Location | Full street address including city, state, and ZIP |
 | Applicant(s) | Named applicants (new applications only) |
-| License Type | One or more license/endorsement types (e.g., "CANNABIS RETAILER", "GROCERY STORE - BEER/WINE", "SPIRITS/BR/WN REST LOUNGE +") |
+| Endorsements | One or more license/endorsement types (e.g., "CANNABIS RETAILER", "GROCERY STORE - BEER/WINE"), normalized from text names or numeric WSLCB codes |
 | Application Type | RENEWAL, NEW APPLICATION, CHANGE OF LOCATION, DISCONTINUED, etc. |
 | License Number | WSLCB license number |
 | Contact Phone | Business contact phone number |
@@ -55,6 +56,7 @@ Each record includes:
 wslcb-licensing-tracker/
 ├── app.py                  # FastAPI web application
 ├── database.py             # SQLite schema, queries, FTS5 full-text search
+├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── scraper.py              # WSLCB page scraper
 ├── templates/
 │   ├── base.html           # Base layout template
@@ -140,6 +142,15 @@ journalctl -u wslcb-web.service       # web app logs
 | `GET /record/{id}` | Record detail page |
 | `GET /export` | CSV export (accepts same query params as `/search`) |
 | `GET /api/stats` | JSON summary statistics |
+
+## License Type Normalization
+
+The WSLCB source page uses two different representations for license types:
+
+- **New applications** list endorsements as semicolon-separated text (e.g., `GROCERY STORE - BEER/WINE; SNACK BAR`)
+- **Approved/discontinued** records use opaque numeric codes (e.g., `450,`)
+
+The tracker normalizes both into a shared `license_endorsements` table, linked to records via a `record_endorsements` junction table. A seed mapping of 71 known codes is built into `endorsements.py`, and new mappings are automatically discovered by cross-referencing license numbers that appear in both sections.
 
 ## Data Source
 
