@@ -163,6 +163,17 @@ def init_db():
         conn.commit()
 
 
+def enrich_record(record: dict) -> dict:
+    """Add display_city and display_zip with standardized-first fallback.
+
+    Mirrors the SQL pattern COALESCE(NULLIF(std_city, ''), city) so
+    templates can use a single field without fallback logic.
+    """
+    record["display_city"] = record.get("std_city") or record.get("city") or ""
+    record["display_zip"] = record.get("std_zip") or record.get("zip_code") or ""
+    return record
+
+
 def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
     """Insert a record, returning the new row id or None if duplicate."""
     try:
@@ -257,7 +268,7 @@ def search_records(
 
     results = []
     for r in rows:
-        d = dict(r)
+        d = enrich_record(dict(r))
         d["endorsements"] = endorsement_map.get(d["id"], [])
         results.append(d)
 

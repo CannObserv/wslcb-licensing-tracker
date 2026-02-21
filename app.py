@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from database import get_db, init_db, search_records, get_filter_options, get_stats
+from database import get_db, init_db, search_records, get_filter_options, get_stats, enrich_record
 from endorsements import (
     seed_endorsements, backfill, get_record_endorsements,
 )
@@ -119,13 +119,13 @@ async def record_detail(request: Request, record_id: int):
         ).fetchone()
         if not row:
             return HTMLResponse("Record not found", status_code=404)
-        record = dict(row)
+        record = enrich_record(dict(row))
 
         related_rows = conn.execute(
             "SELECT * FROM license_records WHERE license_number = ? AND id != ? ORDER BY record_date DESC",
             (row["license_number"], record_id),
         ).fetchall()
-        related = [dict(r) for r in related_rows]
+        related = [enrich_record(dict(r)) for r in related_rows]
 
         # Attach endorsements to record + related
         all_ids = [record["id"]] + [r["id"] for r in related]
