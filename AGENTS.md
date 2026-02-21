@@ -197,6 +197,6 @@ python -u scraper.py --refresh-addresses
 - No rate limiting on search/export
 - No requirements.txt or pyproject.toml yet
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
-- A handful of validator edge cases remain (parenthetical annotations in addresses, zip codes in city field)
+- Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the DB but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
 - Consider adding: email/webhook alerts for new records matching saved searches

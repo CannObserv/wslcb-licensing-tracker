@@ -130,7 +130,7 @@ Check the timer status:
 
 ```bash
 systemctl list-timers wslcb-scraper.timer
-journalctl -u wslcb-scraper.service   # scraper logs
+journalctl -u wslcb-task@scrape.service   # scraper logs
 journalctl -u wslcb-web.service       # web app logs
 ```
 
