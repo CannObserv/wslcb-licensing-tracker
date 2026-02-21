@@ -1,17 +1,12 @@
 """Database layer for WSLCB licensing tracker."""
 import sqlite3
-import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
 
 from endorsements import get_endorsement_options, get_record_endorsements
 
 # All persistent data (DB + HTML snapshots) lives under DATA_DIR.
-DATA_DIR = Path(os.environ.get(
-    "WSLCB_DATA_DIR",
-    Path(__file__).resolve().parent / "data",
-))
+DATA_DIR = Path(__file__).resolve().parent / "data"
 DB_PATH = DATA_DIR / "wslcb.db"
 
 
@@ -167,7 +162,7 @@ def init_db():
         conn.commit()
 
 
-def insert_record(conn: sqlite3.Connection, record: dict) -> Optional[int]:
+def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
     """Insert a record, returning the new row id or None if duplicate."""
     try:
         cursor = conn.execute(

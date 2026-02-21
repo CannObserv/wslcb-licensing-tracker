@@ -8,7 +8,8 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from database import DATA_DIR, get_db, init_db, insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
-from address_validator import validate_record, backfill_addresses
+import httpx as _httpx
+from address_validator import validate_record, backfill_addresses, TIMEOUT as _AV_TIMEOUT
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -192,29 +193,30 @@ def scrape():
 
             counts = {"new": 0, "approved": 0, "discontinued": 0, "skipped": 0}
 
-            for section_type, table in data_tables:
-                records = parse_records_from_table(table, section_type)
-                print(f"  {section_type}: parsed {len(records)} records")
+            with _httpx.Client(timeout=_AV_TIMEOUT) as av_client:
+                for section_type, table in data_tables:
+                    records = parse_records_from_table(table, section_type)
+                    print(f"  {section_type}: parsed {len(records)} records")
 
-                inserted = 0
-                for rec in records:
-                    rid = insert_record(conn, rec)
-                    if rid is not None:
-                        process_record(conn, rid, rec["license_type"], rec["section_type"])
-                        validate_record(conn, rid, rec["business_location"])
-                        inserted += 1
-                    else:
-                        counts["skipped"] += 1
+                    inserted = 0
+                    for rec in records:
+                        rid = insert_record(conn, rec)
+                        if rid is not None:
+                            process_record(conn, rid, rec["license_type"], rec["section_type"])
+                            validate_record(conn, rid, rec["business_location"], client=av_client)
+                            inserted += 1
+                        else:
+                            counts["skipped"] += 1
 
-                key = section_type.split("_")[0] if "_" in section_type else section_type
-                if key == "new":
-                    counts["new"] = inserted
-                elif key == "approved":
-                    counts["approved"] = inserted
-                elif key == "discontinued":
-                    counts["discontinued"] = inserted
+                    key = section_type.split("_")[0] if "_" in section_type else section_type
+                    if key == "new":
+                        counts["new"] = inserted
+                    elif key == "approved":
+                        counts["approved"] = inserted
+                    elif key == "discontinued":
+                        counts["discontinued"] = inserted
 
-                conn.commit()
+                    conn.commit()
 
             # Update log
             conn.execute(
