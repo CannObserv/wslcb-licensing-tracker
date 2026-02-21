@@ -26,8 +26,8 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 |---|---|---|
 | `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
-| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` flag runs address validation backfill. |
-| `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. |
+| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records. |
+| `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
 
@@ -147,6 +147,7 @@ data/
 - Called at scrape time for each new record; graceful degradation if unavailable
 - Systemd services load the env file via `EnvironmentFile=` directive
 - Backfill: `python scraper.py --backfill-addresses` (processes all records where `address_validated_at IS NULL`)
+- Refresh: `python scraper.py --refresh-addresses` (re-validates all records; safe to interrupt)
 
 ## Common Tasks
 
@@ -166,6 +167,14 @@ sqlite3 data/wslcb.db "SELECT id, started_at, status, records_new, records_appro
 ```bash
 sudo systemctl restart wslcb-web.service
 ```
+
+### Refresh all standardized addresses
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python scraper.py --refresh-addresses
+```
+Re-validates every record against the address-validator API. Safe to interrupt — progress is committed in batches.
 
 ### Add a new database column
 1. Add the column to the `CREATE TABLE` in `database.py` (for fresh installs)

@@ -1,8 +1,8 @@
 """Client module for the address validation API service.
 
 Provides functions to standardize and validate business addresses against
-the address-validator API, and to backfill address data for existing
-database records.
+the address-validator API, backfill address data for un-validated records,
+and refresh all addresses when the upstream service is updated.
 
 Configuration:
     API key is loaded from ./env file (ADDRESS_VALIDATOR_API_KEY=...)
@@ -69,6 +69,11 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
         A dict with keys (address_line_1, address_line_2, city, state,
         zip_code, standardized, components) on success, or None on any
         failure (network error, non-200 status, timeout).
+
+    Note:
+        When *client* is provided its timeout setting takes precedence
+        over this module's TIMEOUT constant.  One-shot requests (no
+        client) always use TIMEOUT.
     """
     api_key = _load_api_key()
     if not api_key:
@@ -164,7 +169,7 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
 
     Queries all records where address_validated_at IS NULL and
     business_location is non-empty, then calls validate_record for each.
-    Commits every batch_size records and prints progress every 100 records.
+    Commits and prints progress every batch_size records.
     Sleeps 0.05s between API requests to be polite.
 
     Args:
@@ -205,8 +210,6 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
 
             if attempted % batch_size == 0:
                 conn.commit()
-
-            if attempted % 100 == 0:
                 print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
 
             time.sleep(0.05)
@@ -218,24 +221,58 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
 
 
 def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
-    """Re-validate all previously validated addresses.
+    """Re-validate all addresses, regardless of current validation status.
 
-    Clears address_validated_at for all records so they are picked up
-    by backfill_addresses(), then runs the backfill.  Useful when the
-    upstream address-validator service has been updated and standardized
-    values may have changed.
+    Unlike backfill_addresses() which only processes un-validated records,
+    this function re-validates every record with a non-empty business_location.
+    Useful when the upstream address-validator service has been updated and
+    standardized values may have changed.
+
+    Safe to interrupt — each record's address_validated_at timestamp is
+    updated individually on success, so partial runs leave the database
+    in a consistent state.
 
     Args:
         conn: SQLite database connection.
-        batch_size: Passed through to backfill_addresses.
+        batch_size: Number of records to process before each commit/progress log.
 
     Returns:
         Number of records successfully validated.
     """
-    count = conn.execute(
-        "SELECT COUNT(*) FROM license_records WHERE address_validated_at IS NOT NULL"
-    ).fetchone()[0]
-    print(f"Clearing address_validated_at on {count} records for re-validation")
-    conn.execute("UPDATE license_records SET address_validated_at = NULL")
+    api_key = _load_api_key()
+    if not api_key:
+        print("ERROR: No API key configured for address validation", file=sys.stderr)
+        return 0
+
+    rows = conn.execute(
+        """SELECT id, business_location FROM license_records
+        WHERE business_location IS NOT NULL AND business_location != ''"""
+    ).fetchall()
+
+    total = len(rows)
+    if total == 0:
+        print("No records to refresh")
+        return 0
+
+    print(f"Refreshing addresses for {total} records")
+    succeeded = 0
+    attempted = 0
+
+    with httpx.Client(timeout=TIMEOUT) as client:
+        for row in rows:
+            record_id, business_location = row[0], row[1]
+            ok = validate_record(conn, record_id, business_location, client=client)
+            attempted += 1
+            if ok:
+                succeeded += 1
+
+            if attempted % batch_size == 0:
+                conn.commit()
+                print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
+
+            time.sleep(0.05)
+
+    # Final commit for any remaining records
     conn.commit()
-    return backfill_addresses(conn, batch_size=batch_size)
+    print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
+    return succeeded

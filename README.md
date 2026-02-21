@@ -179,6 +179,14 @@ Addresses are validated at scrape time for new records. Existing records can be 
 python scraper.py --backfill-addresses
 ```
 
+To re-validate all addresses (e.g., after the validation service is updated):
+
+```bash
+python scraper.py --refresh-addresses
+```
+
+This is safe to interrupt — progress is committed in batches and each record's timestamp is updated individually.
+
 The original raw `business_location` string is always preserved. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
 
 ## Data Source
