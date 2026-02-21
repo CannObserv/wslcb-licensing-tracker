@@ -27,7 +27,18 @@
             </div>
             <div>
                 <dt class="text-sm font-medium text-gray-500">Business Location</dt>
-                <dd class="mt-1 text-sm text-gray-900">{{ record.business_location }}</dd>
+                <dd class="mt-1 text-sm text-gray-900">
+                    {% if record.address_line_1 %}
+                    <div>{{ record.address_line_1 }}</div>
+                    {% if record.address_line_2 %}<div>{{ record.address_line_2 }}</div>{% endif %}
+                    <div>{{ record.std_city }}, {{ record.std_state }} {{ record.std_zip }}</div>
+                    {% if record.business_location %}
+                    <div class="mt-1 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.business_location }}</div>
+                    {% endif %}
+                    {% else %}
+                    {{ record.business_location }}
+                    {% endif %}
+                </dd>
             </div>
             <div>
                 <dt class="text-sm font-medium text-gray-500">License Type</dt>
@@ -43,10 +54,7 @@
                     {% endif %}
                 </dd>
             </div>
-            <div>
-                <dt class="text-sm font-medium text-gray-500">City</dt>
-                <dd class="mt-1 text-sm text-gray-900">{{ record.city }}{% if record.zip_code %}, {{ record.state }} {{ record.zip_code }}{% endif %}</dd>
-            </div>
+
             <div>
                 <dt class="text-sm font-medium text-gray-500">Contact Phone</dt>
                 <dd class="mt-1 text-sm text-gray-900">{{ record.contact_phone | phone_format }}</dd>

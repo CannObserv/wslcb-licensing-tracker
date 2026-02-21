@@ -32,7 +32,7 @@
                         </span>
                     </td>
                     <td class="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs truncate">{{ r.business_name }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.city }}{% if r.zip_code %}, {{ r.zip_code }}{% endif %}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.std_city or r.city }}{% if r.std_zip or r.zip_code %}, {{ r.std_zip or r.zip_code }}{% endif %}</td>
                     <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
                         {% if r.endorsements %}
                         <div class="flex flex-wrap gap-0.5 max-h-12 overflow-hidden relative">

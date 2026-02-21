@@ -17,7 +17,7 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** Each `.py` file is self-contained and ideally under 300 lines. `endorsements.py` is the largest at ~356 lines (half of which is seed data).
+- **Small modules.** Each `.py` file is self-contained and ideally under 300 lines.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files
@@ -26,7 +26,8 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 |---|---|---|
 | `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
-| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. |
+| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` flag runs address validation backfill. |
+| `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
 
@@ -36,7 +37,15 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - Uniqueness constraint: `(section_type, record_date, license_number, application_type)`
 - `section_type` values: `new_application`, `approved`, `discontinued`
 - Dates stored as `YYYY-MM-DD` (ISO 8601) for proper sorting
-- `city`, `state`, `zip_code` are extracted from `business_location` at scrape time
+- `city`, `state`, `zip_code` are extracted from `business_location` at scrape time (legacy regex)
+- `address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`)
+- `address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); empty string if none
+- `std_city` — standardized city name from the address validator
+- `std_state` — standardized 2-letter state code
+- `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
+- `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
+- All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
+- Queries and UI use `COALESCE(NULLIF(std_city, ''), city)` to prefer standardized data with fallback
 - `applicants` field is semicolon-separated; only populated for `new_application` records
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
 
@@ -99,7 +108,7 @@ URL: `https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp`
 
 ## Data Directory
 
-All persistent data lives under `data/` (override with `WSLCB_DATA_DIR` env var):
+All persistent data lives under `data/`:
 
 ```
 data/
@@ -120,7 +129,7 @@ data/
 - `wslcb-scraper.timer` — fires daily at 14:00 UTC (6 AM Pacific), ±5 min jitter
 - `wslcb-scraper.service` — oneshot, triggered by the timer
 - After changing service files: `sudo cp *.service *.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
-- All persistent data lives in `./data/` (override with `WSLCB_DATA_DIR` env var)
+- All persistent data lives in `./data/`
 - Venv shebangs are absolute paths — if the project directory moves, recreate the venv
 
 ## Git Workflow
@@ -129,6 +138,15 @@ data/
 - Remote: `git@github.com:CannObserv/wslcb-licensing-tracker.git`
 - Single `main` branch for now
 - Write clear commit messages; group related changes
+
+## Address Validation
+
+- External API at `https://address-validator.exe.xyz:8000` (FastAPI, OpenAPI docs at `/docs`)
+- Authenticated via `X-API-Key` header; key stored in `./env` file (`ADDRESS_VALIDATOR_API_KEY=...`)
+- `./env` file is `640 root:exedev`, gitignored
+- Called at scrape time for each new record; graceful degradation if unavailable
+- Systemd services load the env file via `EnvironmentFile=` directive
+- Backfill: `python scraper.py --backfill-addresses` (processes all records where `address_validated_at IS NULL`)
 
 ## Common Tasks
 
@@ -160,6 +178,7 @@ sudo systemctl restart wslcb-web.service
 - No authentication — the app is fully public
 - No rate limiting on search/export
 - No requirements.txt or pyproject.toml yet
-- The city extraction regex may miss edge cases in business_location formatting
+- The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
+- A handful of validator edge cases remain (parenthetical annotations in addresses, zip codes in city field)
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
 - Consider adding: email/webhook alerts for new records matching saved searches

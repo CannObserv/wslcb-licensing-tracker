@@ -11,6 +11,7 @@ The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/E
 - **Daily automated scraping** of the WSLCB statewide licensing activity page
 - **Full-text search** across business names, locations, applicants, license types, and license numbers
 - **Normalized endorsements** — numeric license codes from approved/discontinued records are resolved to human-readable names via a managed code→endorsement mapping
+- **Address standardization** — raw business addresses are parsed into structured components (street, suite, city, state, ZIP) via an external validation API, fixing ~6% of records with mis-parsed cities
 - **Filterable results** by record type, application type, endorsement, city, and date range
 - **Record detail pages** with related records for the same license number
 - **CSV export** of any search result set
@@ -33,7 +34,7 @@ Each record includes:
 |---|---|
 | Date | Notification, approval, or discontinuance date |
 | Business Name | Registered business name |
-| Business Location | Full street address including city, state, and ZIP |
+| Business Location | Full street address including city, state, and ZIP (raw and standardized components) |
 | Applicant(s) | Named applicants (new applications only) |
 | Endorsements | One or more license/endorsement types (e.g., "CANNABIS RETAILER", "GROCERY STORE - BEER/WINE"), normalized from text names or numeric WSLCB codes |
 | Application Type | RENEWAL, NEW APPLICATION, CHANGE OF LOCATION, DISCONTINUED, etc. |
@@ -45,6 +46,7 @@ Each record includes:
 | Component | Technology |
 |---|---|
 | Scraper | Python, [httpx](https://www.python-httpx.org/), [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) + lxml |
+| Address validation | External API ([address-validator](https://address-validator.exe.xyz:8000/docs)) for USPS-standardized parsing |
 | Database | SQLite with [FTS5](https://www.sqlite.org/fts5.html) full-text search |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
 | Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (CDN) |
@@ -57,7 +59,9 @@ wslcb-licensing-tracker/
 ├── app.py                  # FastAPI web application
 ├── database.py             # SQLite schema, queries, FTS5 full-text search
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
+├── address_validator.py    # Address validation API client
 ├── scraper.py              # WSLCB page scraper
+├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
 │   ├── base.html           # Base layout template
 │   ├── index.html          # Dashboard with stats
@@ -134,7 +138,9 @@ journalctl -u wslcb-web.service       # web app logs
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `WSLCB_DATA_DIR` | `./data` | Directory for the SQLite database and archived HTML snapshots |
+| `ADDRESS_VALIDATOR_API_KEY` | *(none)* | API key for the address validation service (also read from `./env` file) |
+
+The SQLite database and archived HTML snapshots are stored in `./data/` relative to the project root.
 
 ## API Endpoints
 
@@ -154,6 +160,26 @@ The WSLCB source page uses two different representations for license types:
 - **Approved/discontinued** records use opaque numeric codes (e.g., `450,`)
 
 The tracker normalizes both into a shared `license_endorsements` table, linked to records via a `record_endorsements` junction table. A seed mapping of 71 known codes is built into `endorsements.py`, and new mappings are automatically discovered by cross-referencing license numbers that appear in both sections.
+
+## Address Standardization
+
+Raw business addresses from the WSLCB page are standardized via an external address validation API into structured USPS-standard components:
+
+| Field | Example |
+|---|---|
+| `address_line_1` | `1200 WESTLAKE AVE N` |
+| `address_line_2` | `STE 100` |
+| `std_city` | `SEATTLE` |
+| `std_state` | `WA` |
+| `std_zip` | `98109-3528` |
+
+Addresses are validated at scrape time for new records. Existing records can be backfilled:
+
+```bash
+python scraper.py --backfill-addresses
+```
+
+The original raw `business_location` string is always preserved. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
 
 ## Data Source
 
