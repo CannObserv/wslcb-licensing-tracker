@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from database import DATA_DIR, get_db, init_db, insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 import httpx as _httpx
-from address_validator import validate_record, backfill_addresses, TIMEOUT as _AV_TIMEOUT
+from address_validator import validate_record, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -261,7 +261,11 @@ def scrape():
 
 
 if __name__ == "__main__":
-    if "--backfill-addresses" in sys.argv:
+    if "--refresh-addresses" in sys.argv:
+        init_db()
+        with get_db() as conn:
+            refresh_addresses(conn)
+    elif "--backfill-addresses" in sys.argv:
         init_db()
         with get_db() as conn:
             backfill_addresses(conn)

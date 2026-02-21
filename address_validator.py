@@ -215,3 +215,27 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
     conn.commit()
     print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
     return succeeded
+
+
+def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
+    """Re-validate all previously validated addresses.
+
+    Clears address_validated_at for all records so they are picked up
+    by backfill_addresses(), then runs the backfill.  Useful when the
+    upstream address-validator service has been updated and standardized
+    values may have changed.
+
+    Args:
+        conn: SQLite database connection.
+        batch_size: Passed through to backfill_addresses.
+
+    Returns:
+        Number of records successfully validated.
+    """
+    count = conn.execute(
+        "SELECT COUNT(*) FROM license_records WHERE address_validated_at IS NOT NULL"
+    ).fetchone()[0]
+    print(f"Clearing address_validated_at on {count} records for re-validation")
+    conn.execute("UPDATE license_records SET address_validated_at = NULL")
+    conn.commit()
+    return backfill_addresses(conn, batch_size=batch_size)
