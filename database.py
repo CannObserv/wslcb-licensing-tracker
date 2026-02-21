@@ -1,4 +1,5 @@
 """Database layer for WSLCB licensing tracker."""
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 from endorsements import get_endorsement_options, get_record_endorsements
 
 # All persistent data (DB + HTML snapshots) lives under DATA_DIR.
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent / "data"))
 DB_PATH = DATA_DIR / "wslcb.db"
 
 
