@@ -162,8 +162,9 @@ async def export_csv(
     if records:
         fieldnames = [
             "section_type", "record_date", "business_name", "business_location",
-            "applicants", "license_type", "endorsements", "application_type",
-            "license_number", "contact_phone", "city", "state", "zip_code",
+            "address_line_1", "address_line_2", "applicants", "license_type",
+            "endorsements", "application_type", "license_number", "contact_phone",
+            "city", "state", "zip_code", "std_city", "std_state", "std_zip",
         ]
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()

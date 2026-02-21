@@ -140,6 +140,24 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # Column already exists
 
+        # Migration: add standardized address columns
+        for col, typedef in [
+            ("address_line_1", "TEXT DEFAULT ''"),
+            ("address_line_2", "TEXT DEFAULT ''"),
+            ("std_city", "TEXT DEFAULT ''"),
+            ("std_state", "TEXT DEFAULT ''"),
+            ("std_zip", "TEXT DEFAULT ''"),
+            ("address_validated_at", "TEXT"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} {typedef}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Index on std_city for filter dropdown performance
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_city ON license_records(std_city)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_zip ON license_records(std_zip)")
+
         conn.commit()
 
 
@@ -205,7 +223,7 @@ def search_records(
         params.append(endorsement)
 
     if city:
-        conditions.append("lr.city = ?")
+        conditions.append("COALESCE(NULLIF(lr.std_city, ''), lr.city) = ?")
         params.append(city)
 
     if date_from:
@@ -247,12 +265,22 @@ def search_records(
 def get_filter_options(conn: sqlite3.Connection) -> dict:
     """Get distinct values for filter dropdowns."""
     options: dict = {}
-    for col in ["section_type", "application_type", "city"]:
+    for col in ["section_type", "application_type"]:
         rows = conn.execute(
             f"SELECT DISTINCT {col} FROM license_records "
             f"WHERE {col} IS NOT NULL AND {col} != '' ORDER BY {col}"
         ).fetchall()
         options[col] = [r[0] for r in rows]
+
+    # City filter uses standardized city with fallback to regex-parsed city
+    rows = conn.execute(
+        "SELECT DISTINCT COALESCE(NULLIF(std_city, ''), city) AS display_city "
+        "FROM license_records "
+        "WHERE COALESCE(NULLIF(std_city, ''), city) IS NOT NULL "
+        "AND COALESCE(NULLIF(std_city, ''), city) != '' "
+        "ORDER BY display_city"
+    ).fetchall()
+    options["city"] = [r[0] for r in rows]
 
     options["endorsement"] = get_endorsement_options(conn)
     return options

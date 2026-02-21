@@ -8,3 +8,4 @@ User=exedev
 WorkingDirectory=/home/exedev/wslcb-licensing-tracker
 ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/python scraper.py
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/exedev/wslcb-licensing-tracker/env

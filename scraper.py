@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from database import DATA_DIR, get_db, init_db, insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
+from address_validator import validate_record
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -200,6 +201,7 @@ def scrape():
                     rid = insert_record(conn, rec)
                     if rid is not None:
                         process_record(conn, rid, rec["license_type"], rec["section_type"])
+                        validate_record(conn, rid, rec["business_location"])
                         inserted += 1
                     else:
                         counts["skipped"] += 1
@@ -257,4 +259,10 @@ def scrape():
 
 
 if __name__ == "__main__":
-    scrape()
+    if "--backfill-addresses" in sys.argv:
+        from address_validator import backfill_addresses
+        init_db()
+        with get_db() as conn:
+            backfill_addresses(conn)
+    else:
+        scrape()

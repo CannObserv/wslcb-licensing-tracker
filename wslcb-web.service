@@ -10,6 +10,7 @@ ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/uvicorn app:app --host 0
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/exedev/wslcb-licensing-tracker/env
 
 [Install]
 WantedBy=multi-user.target
