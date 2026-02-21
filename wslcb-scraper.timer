@@ -2,6 +2,8 @@
 Description=Run WSLCB scraper daily at 6 AM Pacific
 
 [Timer]
+# The daily scrape uses the wslcb-task@ template with "scrape" instance
+Unit=wslcb-task@scrape.service
 OnCalendar=*-*-* 14:00:00 UTC
 Persistent=true
 RandomizedDelaySec=300

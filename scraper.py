@@ -269,4 +269,6 @@ if __name__ == "__main__":
         with get_db() as conn:
             backfill_addresses(conn)
     else:
+        # "scrape" is accepted as an explicit positional arg (used by
+        # the wslcb-task@ systemd template) but is not required.
         scrape()

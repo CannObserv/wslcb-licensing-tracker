@@ -1,11 +1,11 @@
 [Unit]
-Description=WSLCB Licensing Scraper (one-shot)
+Description=WSLCB task: %i
 After=network.target
 
 [Service]
 Type=oneshot
 User=exedev
 WorkingDirectory=/home/exedev/wslcb-licensing-tracker
-ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/python scraper.py
+ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/python -u scraper.py %i
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/exedev/wslcb-licensing-tracker/env

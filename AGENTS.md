@@ -127,8 +127,11 @@ data/
 - Runs on an exe.dev VM as systemd services
 - `wslcb-web.service` — uvicorn on port 8000, auto-restart
 - `wslcb-scraper.timer` — fires daily at 14:00 UTC (6 AM Pacific), ±5 min jitter
-- `wslcb-scraper.service` — oneshot, triggered by the timer
-- After changing service files: `sudo cp *.service *.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
+- `wslcb-task@.service` — systemd template for oneshot tasks; instance name becomes the `scraper.py` argument
+  - `wslcb-task@scrape.service` — daily scrape (triggered by the timer)
+  - `wslcb-task@--refresh-addresses.service` — full address re-validation
+  - `wslcb-task@--backfill-addresses.service` — backfill un-validated addresses
+- After changing service files: `sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
 - All persistent data lives in `./data/`
 - Venv shebangs are absolute paths — if the project directory moves, recreate the venv
 
@@ -170,11 +173,17 @@ sudo systemctl restart wslcb-web.service
 
 ### Refresh all standardized addresses
 ```bash
-cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python scraper.py --refresh-addresses
+sudo systemctl start 'wslcb-task@--refresh-addresses.service'
+journalctl -u 'wslcb-task@--refresh-addresses.service' -f   # tail logs
 ```
 Re-validates every record against the address-validator API. Safe to interrupt — progress is committed in batches.
+
+Or manually:
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python -u scraper.py --refresh-addresses
+```
 
 ### Add a new database column
 1. Add the column to the `CREATE TABLE` in `database.py` (for fresh installs)

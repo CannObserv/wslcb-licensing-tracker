@@ -74,7 +74,7 @@ wslcb-licensing-tracker/
 │   ├── wslcb.db            # SQLite database
 │   └── [yyyy]/             # Archived HTML snapshots by year
 ├── wslcb-web.service       # systemd service for the web app
-├── wslcb-scraper.service   # systemd oneshot service for the scraper
+├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
 └── wslcb-scraper.timer     # systemd timer (daily at 6 AM Pacific)
 ```
 
@@ -116,7 +116,7 @@ Then visit [http://localhost:8000](http://localhost:8000).
 
 ```bash
 sudo cp wslcb-web.service /etc/systemd/system/
-sudo cp wslcb-scraper.service /etc/systemd/system/
+sudo cp wslcb-task@.service /etc/systemd/system/
 sudo cp wslcb-scraper.timer /etc/systemd/system/
 
 sudo systemctl daemon-reload
