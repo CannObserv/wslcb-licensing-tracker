@@ -32,7 +32,7 @@
                     <div>{{ record.address_line_1 }}</div>
                     {% if record.address_line_2 %}<div>{{ record.address_line_2 }}</div>{% endif %}
                     <div>{{ record.std_city }}, {{ record.std_state }} {{ record.std_zip }}</div>
-                    {% if record.business_location and record.business_location != record.address_line_1 %}
+                    {% if record.business_location %}
                     <div class="mt-1 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.business_location }}</div>
                     {% endif %}
                     {% else %}

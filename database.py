@@ -51,6 +51,12 @@ def init_db():
                 city TEXT,
                 state TEXT DEFAULT 'WA',
                 zip_code TEXT,
+                address_line_1 TEXT DEFAULT '',
+                address_line_2 TEXT DEFAULT '',
+                std_city TEXT DEFAULT '',
+                std_state TEXT DEFAULT '',
+                std_zip TEXT DEFAULT '',
+                address_validated_at TEXT,
                 scraped_at TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(section_type, record_date, license_number, application_type)

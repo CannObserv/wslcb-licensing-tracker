@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from database import DATA_DIR, get_db, init_db, insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
-from address_validator import validate_record
+from address_validator import validate_record, backfill_addresses
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -260,7 +260,6 @@ def scrape():
 
 if __name__ == "__main__":
     if "--backfill-addresses" in sys.argv:
-        from address_validator import backfill_addresses
         init_db()
         with get_db() as conn:
             backfill_addresses(conn)

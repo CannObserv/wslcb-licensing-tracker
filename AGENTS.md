@@ -17,7 +17,7 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** Each `.py` file is self-contained and ideally under 300 lines. `endorsements.py` is the largest at ~356 lines (half of which is seed data).
+- **Small modules.** Each `.py` file is self-contained and ideally under 300 lines.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files
@@ -38,8 +38,13 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `section_type` values: `new_application`, `approved`, `discontinued`
 - Dates stored as `YYYY-MM-DD` (ISO 8601) for proper sorting
 - `city`, `state`, `zip_code` are extracted from `business_location` at scrape time (legacy regex)
-- `address_line_1`, `address_line_2`, `std_city`, `std_state`, `std_zip` are populated by the address validation API
-- `address_validated_at` tracks when the address was validated (NULL = not yet validated)
+- `address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`)
+- `address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); empty string if none
+- `std_city` — standardized city name from the address validator
+- `std_state` — standardized 2-letter state code
+- `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
+- `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
+- All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
 - Queries and UI use `COALESCE(NULLIF(std_city, ''), city)` to prefer standardized data with fallback
 - `applicants` field is semicolon-separated; only populated for `new_application` records
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
