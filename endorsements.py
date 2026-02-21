@@ -237,9 +237,17 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
 
     Returns {code: [name, ...]} for newly discovered mappings.
     """
-    # Codes that already have mappings
+    # Codes that map to at least one real (non-placeholder) endorsement.
+    # A placeholder endorsement has name == code (e.g. code "321" →
+    # endorsement named "321"); these should be treated as unmapped so
+    # we can resolve them when cross-reference data becomes available.
     mapped = set(
-        r[0] for r in conn.execute("SELECT DISTINCT code FROM endorsement_codes").fetchall()
+        r[0] for r in conn.execute("""
+            SELECT DISTINCT ec.code
+            FROM endorsement_codes ec
+            JOIN license_endorsements le ON le.id = ec.endorsement_id
+            WHERE le.name != ec.code
+        """).fetchall()
     )
 
     # All numeric codes in the data

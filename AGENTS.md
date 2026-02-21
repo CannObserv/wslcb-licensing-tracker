@@ -24,7 +24,7 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 
 | File | Purpose | Notes |
 |---|---|---|
-| `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`. |
+| `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`, `enrich_record()`. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
@@ -45,13 +45,13 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
 - `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
 - All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
-- Queries and UI use `COALESCE(NULLIF(std_city, ''), city)` to prefer standardized data with fallback
+- SQL queries use `COALESCE(NULLIF(std_city, ''), city)` for filtering; display uses `enrich_record()` in `database.py`
 - `applicants` field is semicolon-separated; only populated for `new_application` records
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
 
 ### `license_endorsements`
 - One row per canonical endorsement name (e.g., "CANNABIS RETAILER")
-- `name` is UNIQUE; ~96 distinct endorsement names in current data
+- `name` is UNIQUE
 
 ### `endorsement_codes`
 - Maps WSLCB numeric codes → `license_endorsements` (many-to-many)

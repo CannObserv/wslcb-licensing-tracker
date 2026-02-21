@@ -164,13 +164,60 @@ def validate_record(
         return False
 
 
+def _validate_batch(
+    conn: sqlite3.Connection,
+    rows: list,
+    label: str,
+    batch_size: int = 100,
+) -> int:
+    """Validate a list of (id, business_location) rows against the API.
+
+    Commits and prints progress every *batch_size* records.
+    Sleeps 0.05 s between API requests to be polite.
+
+    Args:
+        conn: SQLite database connection.
+        rows: Sequence of (record_id, business_location) tuples/rows.
+        label: Human-readable verb for log messages (e.g. "Backfilling", "Refreshing").
+        batch_size: Records per commit/progress log.
+
+    Returns:
+        Number of records successfully validated.
+    """
+    total = len(rows)
+    if total == 0:
+        print(f"No records to {label.lower()}")
+        return 0
+
+    print(f"{label} addresses for {total} records")
+    succeeded = 0
+    attempted = 0
+
+    with httpx.Client(timeout=TIMEOUT) as client:
+        for row in rows:
+            record_id, business_location = row[0], row[1]
+            ok = validate_record(conn, record_id, business_location, client=client)
+            attempted += 1
+            if ok:
+                succeeded += 1
+
+            if attempted % batch_size == 0:
+                conn.commit()
+                print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
+
+            time.sleep(0.05)
+
+    conn.commit()
+    print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
+    return succeeded
+
+
 def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
     """Backfill standardized addresses for all un-validated records.
 
     Queries all records where address_validated_at IS NULL and
-    business_location is non-empty, then calls validate_record for each.
+    business_location is non-empty, then validates each one.
     Commits and prints progress every batch_size records.
-    Sleeps 0.05s between API requests to be polite.
 
     Args:
         conn: SQLite database connection.
@@ -191,33 +238,7 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
           AND business_location != ''"""
     ).fetchall()
 
-    total = len(rows)
-    if total == 0:
-        print("No records to backfill")
-        return 0
-
-    print(f"Backfilling addresses for {total} records")
-    succeeded = 0
-    attempted = 0
-
-    with httpx.Client(timeout=TIMEOUT) as client:
-        for row in rows:
-            record_id, business_location = row[0], row[1]
-            ok = validate_record(conn, record_id, business_location, client=client)
-            attempted += 1
-            if ok:
-                succeeded += 1
-
-            if attempted % batch_size == 0:
-                conn.commit()
-                print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
-
-            time.sleep(0.05)
-
-    # Final commit for any remaining records
-    conn.commit()
-    print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
-    return succeeded
+    return _validate_batch(conn, rows, "Backfilling", batch_size)
 
 
 def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
@@ -249,30 +270,4 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
         WHERE business_location IS NOT NULL AND business_location != ''"""
     ).fetchall()
 
-    total = len(rows)
-    if total == 0:
-        print("No records to refresh")
-        return 0
-
-    print(f"Refreshing addresses for {total} records")
-    succeeded = 0
-    attempted = 0
-
-    with httpx.Client(timeout=TIMEOUT) as client:
-        for row in rows:
-            record_id, business_location = row[0], row[1]
-            ok = validate_record(conn, record_id, business_location, client=client)
-            attempted += 1
-            if ok:
-                succeeded += 1
-
-            if attempted % batch_size == 0:
-                conn.commit()
-                print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
-
-            time.sleep(0.05)
-
-    # Final commit for any remaining records
-    conn.commit()
-    print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
-    return succeeded
+    return _validate_batch(conn, rows, "Refreshing", batch_size)
