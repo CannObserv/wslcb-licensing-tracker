@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 # All persistent data (DB + HTML snapshots) lives under data/
 data/
+env
