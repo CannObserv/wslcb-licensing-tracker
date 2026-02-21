@@ -108,7 +108,7 @@ URL: `https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp`
 
 ## Data Directory
 
-All persistent data lives under `data/` (override with `WSLCB_DATA_DIR` env var):
+All persistent data lives under `data/`:
 
 ```
 data/
@@ -129,7 +129,7 @@ data/
 - `wslcb-scraper.timer` — fires daily at 14:00 UTC (6 AM Pacific), ±5 min jitter
 - `wslcb-scraper.service` — oneshot, triggered by the timer
 - After changing service files: `sudo cp *.service *.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
-- All persistent data lives in `./data/` (override with `WSLCB_DATA_DIR` env var)
+- All persistent data lives in `./data/`
 - Venv shebangs are absolute paths — if the project directory moves, recreate the venv
 
 ## Git Workflow

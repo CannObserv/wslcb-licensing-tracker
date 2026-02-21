@@ -138,8 +138,9 @@ journalctl -u wslcb-web.service       # web app logs
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `WSLCB_DATA_DIR` | `./data` | Directory for the SQLite database and archived HTML snapshots |
 | `ADDRESS_VALIDATOR_API_KEY` | *(none)* | API key for the address validation service (also read from `./env` file) |
+
+The SQLite database and archived HTML snapshots are stored in `./data/` relative to the project root.
 
 ## API Endpoints
 
