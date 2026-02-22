@@ -43,21 +43,6 @@
                     {% endif %}
                 </dd>
             </div>
-            {% if record.previous_business_location %}
-            <div>
-                <dt class="text-sm font-medium text-gray-500">Previous Location</dt>
-                <dd class="mt-1 text-sm text-gray-900">
-                    {% if record.prev_address_line_1 %}
-                    <div>{{ record.prev_address_line_1 }}</div>
-                    {% if record.prev_address_line_2 %}<div>{{ record.prev_address_line_2 }}</div>{% endif %}
-                    <div>{{ record.prev_std_city }}, {{ record.prev_std_state }} {{ record.prev_std_zip }}</div>
-                    <div class="mt-1 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.previous_business_location }}</div>
-                    {% else %}
-                    {{ record.previous_business_location }}
-                    {% endif %}
-                </dd>
-            </div>
-            {% endif %}
             <div>
                 <dt class="text-sm font-medium text-gray-500">License Type</dt>
                 <dd class="mt-1 text-sm text-gray-900">
@@ -93,6 +78,9 @@
                                 {{ record.previous_business_location }}
                                 {% endif %}
                             </div>
+                            {% if record.previous_business_location %}
+                            <div class="mt-2 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.previous_business_location }}</div>
+                            {% endif %}
                         </div>
                         <div class="bg-indigo-50 rounded-lg p-4 border border-indigo-200">
                             <div class="text-xs font-semibold text-indigo-500 uppercase tracking-wide mb-2">New Location →</div>
@@ -105,6 +93,9 @@
                                 {{ record.business_location }}
                                 {% endif %}
                             </div>
+                            {% if record.business_location %}
+                            <div class="mt-2 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.business_location }}</div>
+                            {% endif %}
                         </div>
                     </div>
                 </dd>
