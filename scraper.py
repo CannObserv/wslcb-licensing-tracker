@@ -377,28 +377,48 @@ def backfill_from_snapshots():
                             zip_code=rec["previous_zip_code"],
                         )
 
-                        # Fix records that had empty location/application_type
-                        cursor = conn.execute(
-                            """UPDATE license_records
-                               SET location_id = ?,
-                                   previous_location_id = ?,
-                                   application_type = 'CHANGE OF LOCATION'
+                        # Fix records that had empty location/application_type.
+                        # Skip if a correct record already exists (avoids UNIQUE violation).
+                        existing = conn.execute(
+                            """SELECT 1 FROM license_records
                                WHERE section_type = ?
                                  AND record_date = ?
                                  AND license_number = ?
-                                 AND location_id IS NULL
-                                 AND (application_type = '' OR application_type IS NULL)""",
-                            (
-                                loc_id,
-                                prev_loc_id,
-                                rec["section_type"],
-                                rec["record_date"],
-                                rec["license_number"],
-                            ),
-                        )
-                        if cursor.rowcount > 0:
-                            col_updated += cursor.rowcount
-                            continue
+                                 AND application_type = 'CHANGE OF LOCATION'""",
+                            (rec["section_type"], rec["record_date"], rec["license_number"]),
+                        ).fetchone()
+                        if existing:
+                            # Correct record exists; delete the broken one
+                            conn.execute(
+                                """DELETE FROM license_records
+                                   WHERE section_type = ?
+                                     AND record_date = ?
+                                     AND license_number = ?
+                                     AND (application_type = '' OR application_type IS NULL)""",
+                                (rec["section_type"], rec["record_date"], rec["license_number"]),
+                            )
+                        else:
+                            cursor = conn.execute(
+                                """UPDATE license_records
+                                   SET location_id = ?,
+                                       previous_location_id = ?,
+                                       application_type = 'CHANGE OF LOCATION'
+                                   WHERE section_type = ?
+                                     AND record_date = ?
+                                     AND license_number = ?
+                                     AND location_id IS NULL
+                                     AND (application_type = '' OR application_type IS NULL)""",
+                                (
+                                    loc_id,
+                                    prev_loc_id,
+                                    rec["section_type"],
+                                    rec["record_date"],
+                                    rec["license_number"],
+                                ),
+                            )
+                            if cursor.rowcount > 0:
+                                col_updated += cursor.rowcount
+                                continue
 
                         # Also fix records that have the location but are
                         # missing previous_location_id
