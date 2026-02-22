@@ -9,7 +9,7 @@
     <div class="px-6 py-5 border-b border-gray-200 flex justify-between items-start">
         <div>
             <h1 class="text-xl font-bold text-gray-900">{{ record.business_name }}</h1>
-            {% if record.previous_business_name %}
+            {% if record.previous_business_name and record.previous_business_name != record.business_name %}
             <p class="text-sm text-gray-500 mt-0.5">← {{ record.previous_business_name }}</p>
             {% endif %}
             <p class="text-sm text-gray-500 mt-1">License #{{ record.license_number }}</p>
@@ -62,7 +62,7 @@
                 <dt class="text-sm font-medium text-gray-500">Contact Phone</dt>
                 <dd class="mt-1 text-sm text-gray-900">{{ record.contact_phone | phone_format }}</dd>
             </div>
-            {% if record.previous_business_name %}
+            {% if record.application_type == 'ASSUMPTION' and (record.previous_business_name or record.previous_applicants) %}
             <div class="md:col-span-2">
                 <dt class="text-sm font-medium text-gray-500 mb-2">Assumption Details</dt>
                 <dd class="mt-1">

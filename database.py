@@ -101,25 +101,32 @@ def init_db():
                 application_type,
                 license_number,
                 previous_business_name,
+                previous_applicants,
                 content='license_records',
                 content_rowid='id'
             );
 
-            CREATE TRIGGER IF NOT EXISTS license_records_ai AFTER INSERT ON license_records BEGIN
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name);
+            -- Triggers use DROP+CREATE (not IF NOT EXISTS) so they are
+            -- always recreated to match the current FTS column list.
+            -- _rebuild_fts_if_needed() uses the same pattern on migration.
+            DROP TRIGGER IF EXISTS license_records_ai;
+            CREATE TRIGGER license_records_ai AFTER INSERT ON license_records BEGIN
+                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
+                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants);
             END;
 
-            CREATE TRIGGER IF NOT EXISTS license_records_ad AFTER DELETE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name);
+            DROP TRIGGER IF EXISTS license_records_ad;
+            CREATE TRIGGER license_records_ad AFTER DELETE ON license_records BEGIN
+                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
+                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants);
             END;
 
-            CREATE TRIGGER IF NOT EXISTS license_records_au AFTER UPDATE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name);
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name);
+            DROP TRIGGER IF EXISTS license_records_au;
+            CREATE TRIGGER license_records_au AFTER UPDATE ON license_records BEGIN
+                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
+                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants);
+                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
+                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants);
             END;
 
             CREATE TABLE IF NOT EXISTS scrape_log (
@@ -185,7 +192,7 @@ def init_db():
 _FTS_COLUMNS = [
     "business_name", "business_location", "applicants",
     "license_type", "application_type", "license_number",
-    "previous_business_name",
+    "previous_business_name", "previous_applicants",
 ]
 
 

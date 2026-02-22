@@ -67,7 +67,7 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `ON DELETE CASCADE` on both FKs (note: only effective on fresh DBs; see comment in `init_db()`)
 
 ### `license_records_fts` (FTS5 virtual table)
-- Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name
+- Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants
 - Kept in sync via AFTER INSERT/UPDATE/DELETE triggers — never write to it directly
 - **Known limitation:** indexes raw `license_type`, so FTS text search won't match endorsement names for records that store numeric codes. The endorsement dropdown filter works correctly (uses junction table).
 
@@ -188,6 +188,14 @@ source venv/bin/activate
 python -u scraper.py --refresh-addresses
 ```
 
+### Backfill ASSUMPTION records from archived snapshots
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python -u scraper.py --backfill-assumptions
+```
+Parses all archived HTML snapshots and updates existing ASSUMPTION records that have empty business names (the telltale sign of a pre-fix scrape). Only updates records whose `business_name` is empty/NULL, so it's safe to re-run.
+
 ### Add a new database column
 1. Add the column to the `CREATE TABLE` in `database.py` (for fresh installs)
 2. Add an `ALTER TABLE` migration in `init_db()` wrapped in a try/except (for existing installs)
@@ -202,4 +210,5 @@ python -u scraper.py --refresh-addresses
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the DB but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
+- 7 ASSUMPTION records (IDs 2039–2046, all from 2026-01-21) have empty `business_name` / `previous_business_name` because they were scraped before the ASSUMPTION fix and no archived snapshot covers their date range (earliest snapshot is 2026-02-20)
 - Consider adding: email/webhook alerts for new records matching saved searches

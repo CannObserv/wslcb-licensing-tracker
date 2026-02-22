@@ -33,11 +33,13 @@ Each record includes:
 | Field | Description |
 |---|---|
 | Date | Notification, approval, or discontinuance date |
-| Business Name | Registered business name |
+| Business Name | Registered business name (for ASSUMPTION records, the buyer's business name) |
 | Business Location | Full street address including city, state, and ZIP (raw and standardized components) |
-| Applicant(s) | Named applicants (new applications only) |
+| Applicant(s) | Named applicants (new applications only; for ASSUMPTION records, the buyer's applicants) |
+| Previous Business Name | Seller's business name (ASSUMPTION records only) |
+| Previous Applicant(s) | Seller's applicants (ASSUMPTION records only) |
 | Endorsements | One or more license/endorsement types (e.g., "CANNABIS RETAILER", "GROCERY STORE - BEER/WINE"), normalized from text names or numeric WSLCB codes |
-| Application Type | RENEWAL, NEW APPLICATION, CHANGE OF LOCATION, DISCONTINUED, etc. |
+| Application Type | RENEWAL, NEW APPLICATION, CHANGE OF LOCATION, ASSUMPTION, DISCONTINUED, etc. |
 | License Number | WSLCB license number |
 | Contact Phone | Business contact phone number |
 
@@ -188,6 +190,27 @@ python scraper.py --refresh-addresses
 This is safe to interrupt — progress is committed in batches and each record's timestamp is updated individually.
 
 The original raw `business_location` string is always preserved. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
+
+## ASSUMPTION Records
+
+ASSUMPTION records represent one business assuming (purchasing) a license from another. They contain data about both the seller and buyer, using different field labels than standard records:
+
+| Source Field | DB Column | Description |
+|---|---|---|
+| Current Business Name | `previous_business_name` | Seller's business name |
+| Current Applicant(s) | `previous_applicants` | Seller's applicants (often empty) |
+| New Business Name | `business_name` | Buyer's business name |
+| New Applicant(s) | `applicants` | Buyer's applicants |
+| Business Location | `business_location` | Single shared location |
+| Contact Phone | `contact_phone` | Buyer's contact phone |
+
+To backfill assumption data for records scraped before this feature was added:
+
+```bash
+python scraper.py --backfill-assumptions
+```
+
+This parses all archived HTML snapshots and updates existing ASSUMPTION records that have empty business names.
 
 ## Data Source
 
