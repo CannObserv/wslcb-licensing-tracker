@@ -79,7 +79,9 @@ wslcb-licensing-tracker/
 ├── static/                 # Static assets
 ├── data/                   # Persistent data (gitignored)
 │   ├── wslcb.db            # SQLite database
-│   └── [yyyy]/             # Archived HTML snapshots by year
+│   └── wslcb/             # Archived data by source
+│       └── licensinginfo/ # HTML snapshots from licensinginfo.lcb.wa.gov
+│           └── [yyyy]/    # Archived HTML snapshots by year
 ├── wslcb-web.service       # systemd service for the web app
 ├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
 └── wslcb-scraper.timer     # systemd timer (daily at 6 AM Pacific)
@@ -109,7 +111,7 @@ pip install fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart
 python scraper.py
 ```
 
-This fetches the current 30-day report, populates the SQLite database (`data/wslcb.db`), and archives a copy of the source HTML under `data/`.
+This fetches the current 30-day report, populates the SQLite database (`data/wslcb.db`), and archives a copy of the source HTML under `data/wslcb/licensinginfo/`.
 
 ### Start the web application
 

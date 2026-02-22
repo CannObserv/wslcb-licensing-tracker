@@ -146,7 +146,7 @@ def parse_records_from_table(table, section_type: str) -> list[dict]:
 
 
 def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
-    """Save raw HTML to data/[yyyy]/[yyyy_mm_dd]-v[x]/licensing info.lcb.wa.gov-[yyyy_mm_dd]-v[x].html
+    """Save raw HTML to data/wslcb/licensinginfo/[yyyy]/[yyyy_mm_dd]/[yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html
 
     Saves the HTML exactly as received from the server (no transformation).
     Increments the version number if a snapshot for the same date already exists.
@@ -154,18 +154,17 @@ def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
     """
     date_str = scrape_date.strftime("%Y_%m_%d")
     year_str = scrape_date.strftime("%Y")
-    year_dir = DATA_DIR / year_str
+    date_dir = DATA_DIR / "wslcb" / "licensinginfo" / year_str / date_str
 
     # Determine next version number for this date
     version = 1
-    while (year_dir / f"{date_str}-v{version}").exists():
+    while list(date_dir.glob(f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html")):
         version += 1
 
-    snapshot_dir = year_dir / f"{date_str}-v{version}"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    date_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"licensing info.lcb.wa.gov-{date_str}-v{version}.html"
-    filepath = snapshot_dir / filename
+    filename = f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html"
+    filepath = date_dir / filename
     filepath.write_text(html, encoding="utf-8")
     return filepath
 
@@ -305,7 +304,7 @@ def backfill_from_snapshots():
     Safe to re-run — only updates records that still have empty fields.
     """
     init_db()
-    snapshots = sorted(DATA_DIR.glob("**/*.html"))
+    snapshots = sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
     if not snapshots:
         print("No archived snapshots found.")
         return

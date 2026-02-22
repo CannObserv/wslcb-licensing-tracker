@@ -13,7 +13,7 @@ This is a Python web application that scrapes Washington State Liquor and Cannab
 
 ```
 scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  templates/ (Jinja2 + HTMX)
-             ↘ data/[yyyy]/[date]-v[x]/*.html (archived snapshots)
+             ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html (archived snapshots)
 
 license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
@@ -106,7 +106,7 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### `scrape_log`
 - One row per scrape run with status, record counts, timestamps, error messages
-- `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `2025/2025_07_09-v1/licensing info.lcb.wa.gov-2025_07_09-v1.html`); `NULL` if archiving failed
+- `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed
 
 ## Conventions
 
@@ -152,13 +152,16 @@ All persistent data lives under `data/`:
 ```
 data/
 ├── wslcb.db                           # SQLite database
-└── [yyyy]/                            # Year directories for HTML snapshots
-    └── [yyyy_mm_dd]-v[x]/             # One snapshot per scrape run (v1, v2, ... for same-day runs)
-        └── licensing info.lcb.wa.gov-[yyyy_mm_dd]-v[x].html
+└── wslcb/
+    └── licensinginfo/                 # HTML snapshots from licensinginfo.lcb.wa.gov
+        └── [yyyy]/                    # Year directories
+            └── [yyyy_mm_dd]/          # Date directories (multiple versions for same-day runs)
+                └── [yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html
 ```
 
 - Snapshots are saved verbatim as received from the server (no transformation)
 - Snapshot archiving is best-effort; failure does not abort the scrape
+- Multiple same-day scrapes produce v1, v2, etc. files in the same date directory
 - The entire `data/` directory is gitignored
 
 ## Deployment
