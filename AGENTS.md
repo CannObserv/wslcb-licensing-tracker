@@ -46,7 +46,10 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
 - All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
 - SQL queries use `COALESCE(NULLIF(std_city, ''), city)` for filtering; display uses `enrich_record()` in `database.py`
-- `applicants` field is semicolon-separated; only populated for `new_application` records
+- `previous_business_name` — seller's business name for ASSUMPTION records; empty string for other types
+- `previous_applicants` — seller's applicants for ASSUMPTION records; empty string for other types
+- `applicants` field is semicolon-separated; for ASSUMPTION records this holds the buyer's applicants ("New Applicant(s)" from source)
+- For ASSUMPTION records: `business_name` = buyer ("New Business Name"), `previous_business_name` = seller ("Current Business Name")
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
 
 ### `license_endorsements`
@@ -64,7 +67,7 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `ON DELETE CASCADE` on both FKs (note: only effective on fresh DBs; see comment in `init_db()`)
 
 ### `license_records_fts` (FTS5 virtual table)
-- Indexes: business_name, business_location, applicants, license_type, application_type, license_number
+- Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name
 - Kept in sync via AFTER INSERT/UPDATE/DELETE triggers — never write to it directly
 - **Known limitation:** indexes raw `license_type`, so FTS text search won't match endorsement names for records that store numeric codes. The endorsement dropdown filter works correctly (uses junction table).
 
