@@ -50,6 +50,12 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `previous_applicants` — seller's applicants for ASSUMPTION records; empty string for other types
 - `applicants` field is semicolon-separated; for ASSUMPTION records this holds the buyer's applicants ("New Applicant(s)" from source)
 - For ASSUMPTION records: `business_name` = buyer ("New Business Name"), `previous_business_name` = seller ("Current Business Name")
+- `previous_business_location` — the "Current Business Location" for CHANGE OF LOCATION records (address being moved *from*); empty string for other types
+- `previous_city`, `previous_state`, `previous_zip_code` — parsed components from the previous location
+- `prev_address_line_1`, `prev_address_line_2`, `prev_std_city`, `prev_std_state`, `prev_std_zip` — standardized previous address fields
+- `prev_address_validated_at` — ISO 8601 timestamp; NULL = not yet validated
+- For CHANGE OF LOCATION records: `business_location` = new/destination address ("New Business Location"), `previous_business_location` = old/origin address ("Current Business Location")
+- Approved-section CHANGE OF LOCATION records only have `business_location` (the source doesn't provide the previous address)
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
 
 ### `license_endorsements`
@@ -67,7 +73,7 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `ON DELETE CASCADE` on both FKs (note: only effective on fresh DBs; see comment in `init_db()`)
 
 ### `license_records_fts` (FTS5 virtual table)
-- Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants
+- Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
 - Kept in sync via AFTER INSERT/UPDATE/DELETE triggers — never write to it directly
 - **Known limitation:** indexes raw `license_type`, so FTS text search won't match endorsement names for records that store numeric codes. The endorsement dropdown filter works correctly (uses junction table).
 
@@ -108,7 +114,8 @@ URL: `https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp`
 - New applications include an "Applicant(s):" field; approved/discontinued do not
 - License types in approved/discontinued sections appear as numeric codes (e.g., "349,") — these are resolved to text names by the endorsement normalization layer
 - ASSUMPTION records use variant field labels: `Current Business Name:`, `New Business Name:`, `Current Applicant(s):`, `New Applicant(s):` instead of the standard `Business Name:` / `Applicant(s):`
-- CHANGE OF LOCATION records use `Current Business Location:` / `New Business Location:` instead of `Business Location:` (not yet captured — see Known Issues)
+- CHANGE OF LOCATION records use `Current Business Location:` / `New Business Location:` instead of `Business Location:` (captured into `previous_business_location` / `business_location`)
+- CHANGE OF LOCATION records in the source have a `\Application Type:` label (with leading backslash) instead of `Application Type:`
 - The page carries a banner about "known data transfer issues" — expect occasional anomalies
 
 ## Data Directory
@@ -190,13 +197,17 @@ source venv/bin/activate
 python -u scraper.py --refresh-addresses
 ```
 
-### Backfill ASSUMPTION records from archived snapshots
+### Backfill records from archived snapshots
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
 source venv/bin/activate
-python -u scraper.py --backfill-assumptions
+python -u scraper.py --backfill-from-snapshots
 ```
-Parses all archived HTML snapshots and updates existing ASSUMPTION records that have empty business names (the telltale sign of a pre-fix scrape). Only updates records whose `business_name` is empty/NULL, so it's safe to re-run.
+Parses all archived HTML snapshots and fixes:
+1. ASSUMPTION records with empty business names (pre-fix scrape)
+2. CHANGE OF LOCATION records with empty business_location/application_type or missing previous_business_location
+
+Safe to re-run — only updates records that still have empty fields. The old `--backfill-assumptions` flag is still accepted for compatibility.
 
 ### Add a new database column
 1. Add the column to the `CREATE TABLE` in `database.py` (for fresh installs)
@@ -213,4 +224,5 @@ Parses all archived HTML snapshots and updates existing ASSUMPTION records that 
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the DB but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
 - 7 ASSUMPTION records (IDs 2039–2046, all from 2026-01-21) have empty `business_name` / `previous_business_name` because they were scraped before the ASSUMPTION fix and no archived snapshot covers their date range (earliest snapshot is 2026-02-20)
+- Approved-section CHANGE OF LOCATION records lack `previous_business_location` because the source page only provides `Business Location:` (the new address) for approved records
 - Consider adding: email/webhook alerts for new records matching saved searches
