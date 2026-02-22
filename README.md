@@ -16,6 +16,7 @@ The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/E
 - **Record detail pages** with related records for the same license number
 - **CSV export** of any search result set
 - **Historical archive** — the source only shows 30 days, but the database retains all data
+- **License transfer tracking** — ASSUMPTION records capture both seller and buyer business names and applicants
 - **Deduplication** — safe to re-scrape; duplicate records are automatically skipped
 
 ## Data

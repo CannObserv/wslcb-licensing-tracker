@@ -180,8 +180,8 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_city ON license_records(std_city)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_zip ON license_records(std_zip)")
 
-        # Migration: rebuild FTS table to include previous_business_name
-        # Check if FTS already has the column by inspecting its structure
+        # Migration: rebuild FTS table when columns change (e.g. adding
+        # previous_business_name and previous_applicants)
         _rebuild_fts_if_needed(conn)
 
         conn.commit()
