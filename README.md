@@ -63,6 +63,7 @@ Each record includes:
 wslcb-licensing-tracker/
 ├── app.py                  # FastAPI web application
 ├── database.py             # SQLite schema, queries, FTS5 full-text search
+├── migrate_locations.py    # One-time migration: inline address columns → locations table
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── address_validator.py    # Address validation API client
 ├── scraper.py              # WSLCB page scraper
@@ -168,7 +169,9 @@ The tracker normalizes both into a shared `license_endorsements` table, linked t
 
 ## Address Standardization
 
-Raw business addresses from the WSLCB page are standardized via an external address validation API into structured USPS-standard components:
+Business addresses are stored in a normalized `locations` table — each unique raw address string from the WSLCB source is stored once and shared across all license records that reference it. Records link to locations via `location_id` and `previous_location_id` foreign keys.
+
+Each location is standardized via an external address validation API into structured USPS-standard components:
 
 | Field | Example |
 |---|---|
@@ -178,21 +181,21 @@ Raw business addresses from the WSLCB page are standardized via an external addr
 | `std_state` | `WA` |
 | `std_zip` | `98109-3528` |
 
-Addresses are validated at scrape time for new records. Existing records can be backfilled:
+Locations are validated at scrape time. When a new record references an already-known address, it reuses the existing location row and skips the API call. Un-validated locations can be backfilled:
 
 ```bash
 python scraper.py --backfill-addresses
 ```
 
-To re-validate all addresses (e.g., after the validation service is updated):
+To re-validate all locations (e.g., after the validation service is updated):
 
 ```bash
 python scraper.py --refresh-addresses
 ```
 
-This is safe to interrupt — progress is committed in batches and each record's timestamp is updated individually.
+This is safe to interrupt — progress is committed in batches and each location's timestamp is updated individually.
 
-The original raw `business_location` string is always preserved. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
+The original raw address string is always preserved in `locations.raw_address`. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
 
 ## ASSUMPTION Records
 
@@ -204,7 +207,7 @@ ASSUMPTION records represent one business assuming (purchasing) a license from a
 | Current Applicant(s) | `previous_applicants` | Seller's applicants (often empty) |
 | New Business Name | `business_name` | Buyer's business name |
 | New Applicant(s) | `applicants` | Buyer's applicants |
-| Business Location | `business_location` | Single shared location |
+| Business Location | `location_id` → `locations` | Single shared location |
 | Contact Phone | `contact_phone` | Buyer's contact phone |
 
 ## CHANGE OF LOCATION Records
@@ -213,12 +216,12 @@ CHANGE OF LOCATION records represent a business moving to a new physical address
 
 | Source Field | DB Column | Description |
 |---|---|---|
-| Current Business Location | `previous_business_location` | Origin address (moving from) |
-| New Business Location | `business_location` | Destination address (moving to) |
+| Current Business Location | `previous_location_id` → `locations` | Origin address (moving from) |
+| New Business Location | `location_id` → `locations` | Destination address (moving to) |
 
-The previous location is also parsed into structured components (`previous_city`, `previous_state`, `previous_zip_code`) and standardized via the address validator (`prev_address_line_1`, `prev_std_city`, etc.).
+Both the previous and new addresses are stored as entries in the `locations` table, each with their own regex-parsed and USPS-standardized components.
 
-In the approved section, CHANGE OF LOCATION records only have `Business Location:` (the new address) — the source page does not provide the previous address for approved records.
+In the approved section, CHANGE OF LOCATION records only have `location_id` (the new address) — the source page does not provide the previous address for approved records.
 
 ## Backfilling from Snapshots
 

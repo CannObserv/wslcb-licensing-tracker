@@ -234,9 +234,9 @@ def scrape():
                         rid = insert_record(conn, rec)
                         if rid is not None:
                             process_record(conn, rid, rec["license_type"], rec["section_type"])
-                            validate_record(conn, rid, rec["business_location"], client=av_client)
+                            validate_record(conn, rid, client=av_client)
                             if rec.get("previous_business_location"):
-                                validate_previous_location(conn, rid, rec["previous_business_location"], client=av_client)
+                                validate_previous_location(conn, rid, client=av_client)
                             inserted += 1
                         else:
                             counts["skipped"] += 1

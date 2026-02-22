@@ -165,22 +165,17 @@ def validate_location(
         return False
 
 
-# Legacy wrappers — called by scraper.py for newly inserted records.
-# They accept a record_id + raw address, look up the location_id, and delegate.
-
 def validate_record(
     conn: sqlite3.Connection,
     record_id: int,
-    business_location: str,
     client: httpx.Client | None = None,
 ) -> bool:
     """Validate the primary location for a license record.
 
     Looks up the record's location_id and validates that location row.
     If the location is already validated, returns True immediately.
+    Returns False if the record has no location_id.
     """
-    if not business_location or not business_location.strip():
-        return False
     row = conn.execute(
         "SELECT location_id FROM license_records WHERE id = ?", (record_id,)
     ).fetchone()
@@ -200,12 +195,14 @@ def validate_record(
 def validate_previous_location(
     conn: sqlite3.Connection,
     record_id: int,
-    previous_business_location: str,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate the previous location for a CHANGE OF LOCATION record."""
-    if not previous_business_location or not previous_business_location.strip():
-        return False
+    """Validate the previous location for a CHANGE OF LOCATION record.
+
+    Looks up the record's previous_location_id and validates that location row.
+    If the location is already validated, returns True immediately.
+    Returns False if the record has no previous_location_id.
+    """
     row = conn.execute(
         "SELECT previous_location_id FROM license_records WHERE id = ?", (record_id,)
     ).fetchone()

@@ -27,7 +27,8 @@ license_records → locations (FK: location_id, previous_location_id)
 
 | File | Purpose | Notes |
 |---|---|---|
-| `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`, `enrich_record()`. |
+| `database.py` | Schema, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`, `enrich_record()`, `get_or_create_location()`. |
+| `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` recovers ASSUMPTION and CHANGE OF LOCATION data from snapshots (`--backfill-assumptions` still accepted). |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
@@ -82,7 +83,9 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
-- Kept in sync via AFTER INSERT/UPDATE/DELETE triggers — never write to it directly
+- Uses `license_records_fts_content` VIEW as its content source — this view JOINs `license_records` → `locations` to expose `raw_address` as `business_location` / `previous_business_location` for indexing
+- Kept in sync via triggers on `license_records`: AFTER INSERT and AFTER UPDATE read new values from the content view; BEFORE DELETE reads old values from the content view (must be BEFORE because the view JOIN returns nothing after the row is deleted)
+- Never write to the FTS table directly
 - **Known limitation:** indexes raw `license_type`, so FTS text search won't match endorsement names for records that store numeric codes. The endorsement dropdown filter works correctly (uses junction table).
 
 ### `scrape_log`
@@ -198,7 +201,7 @@ sudo systemctl restart wslcb-web.service
 sudo systemctl start 'wslcb-task@--refresh-addresses.service'
 journalctl -u 'wslcb-task@--refresh-addresses.service' -f   # tail logs
 ```
-Re-validates every record against the address-validator API. Safe to interrupt — progress is committed in batches.
+Re-validates every location against the address-validator API. Safe to interrupt — progress is committed in batches.
 
 Or manually:
 ```bash
@@ -219,10 +222,16 @@ Parses all archived HTML snapshots and fixes:
 
 Safe to re-run — only updates records that still have empty fields. The old `--backfill-assumptions` flag is still accepted for compatibility.
 
-### Add a new database column
-1. Add the column to the `CREATE TABLE` in `database.py` (for fresh installs)
-2. Add an `ALTER TABLE` migration in `init_db()` wrapped in a try/except (for existing installs)
-3. Update `insert_record()`, `search_records()`, and templates as needed
+### Add a new column to `locations`
+1. Add the column to the `CREATE TABLE IF NOT EXISTS locations` in `database.py`
+2. Add a try/except `ALTER TABLE locations ADD COLUMN ...` migration block in `init_db()` for existing installs
+3. If the column should be searchable via FTS, add it to the `license_records_fts_content` view in `_ensure_fts()`
+4. If needed in display, add it to `_RECORD_SELECT` and update templates
+
+### Add a new column to `license_records`
+1. Add the column to both `CREATE TABLE IF NOT EXISTS license_records` in `database.py` and the rebuild SQL in `migrate_locations.py`
+2. Add a try/except `ALTER TABLE` migration in `init_db()` for existing installs
+3. Update `insert_record()`, `_RECORD_SELECT`, `search_records()`, and templates as needed
 
 ## Known Issues & Future Work
 
