@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import DATA_DIR, get_db, init_db, insert_record
+from database import DATA_DIR, get_db, init_db, insert_record, get_or_create_location
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
 
@@ -365,32 +365,33 @@ def backfill_from_snapshots():
                         if not rec["business_location"]:
                             continue  # Still empty even after new parsing — skip
 
+                        # Resolve location IDs for the parsed addresses
+                        loc_id = get_or_create_location(
+                            conn, rec["business_location"],
+                            city=rec["city"], state=rec["state"],
+                            zip_code=rec["zip_code"],
+                        )
+                        prev_loc_id = get_or_create_location(
+                            conn, rec["previous_business_location"],
+                            city=rec["previous_city"],
+                            state=rec["previous_state"],
+                            zip_code=rec["previous_zip_code"],
+                        )
+
                         # Fix records that had empty location/application_type
                         cursor = conn.execute(
                             """UPDATE license_records
-                               SET business_location = ?,
-                                   city = ?,
-                                   state = ?,
-                                   zip_code = ?,
-                                   previous_business_location = ?,
-                                   previous_city = ?,
-                                   previous_state = ?,
-                                   previous_zip_code = ?,
+                               SET location_id = ?,
+                                   previous_location_id = ?,
                                    application_type = 'CHANGE OF LOCATION'
                                WHERE section_type = ?
                                  AND record_date = ?
                                  AND license_number = ?
-                                 AND (business_location = '' OR business_location IS NULL)
+                                 AND location_id IS NULL
                                  AND (application_type = '' OR application_type IS NULL)""",
                             (
-                                rec["business_location"],
-                                rec["city"],
-                                rec["state"],
-                                rec["zip_code"],
-                                rec["previous_business_location"],
-                                rec["previous_city"],
-                                rec["previous_state"],
-                                rec["previous_zip_code"],
+                                loc_id,
+                                prev_loc_id,
                                 rec["section_type"],
                                 rec["record_date"],
                                 rec["license_number"],
@@ -401,23 +402,17 @@ def backfill_from_snapshots():
                             continue
 
                         # Also fix records that have the location but are
-                        # missing previous_business_location
+                        # missing previous_location_id
                         cursor = conn.execute(
                             """UPDATE license_records
-                               SET previous_business_location = ?,
-                                   previous_city = ?,
-                                   previous_state = ?,
-                                   previous_zip_code = ?
+                               SET previous_location_id = ?
                                WHERE section_type = ?
                                  AND record_date = ?
                                  AND license_number = ?
                                  AND application_type = 'CHANGE OF LOCATION'
-                                 AND (previous_business_location = '' OR previous_business_location IS NULL)""",
+                                 AND previous_location_id IS NULL""",
                             (
-                                rec["previous_business_location"],
-                                rec["previous_city"],
-                                rec["previous_state"],
-                                rec["previous_zip_code"],
+                                prev_loc_id,
                                 rec["section_type"],
                                 rec["record_date"],
                                 rec["license_number"],

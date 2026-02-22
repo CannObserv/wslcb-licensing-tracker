@@ -14,6 +14,9 @@ This is a Python web application that scrapes Washington State Liquor and Cannab
 ```
 scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  templates/ (Jinja2 + HTMX)
              ↘ data/[yyyy]/[date]-v[x]/*.html (archived snapshots)
+
+license_records → locations (FK: location_id, previous_location_id)
+                → record_endorsements → license_endorsements
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
@@ -33,11 +36,10 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 
 ## Database Schema
 
-### `license_records` (main table)
-- Uniqueness constraint: `(section_type, record_date, license_number, application_type)`
-- `section_type` values: `new_application`, `approved`, `discontinued`
-- Dates stored as `YYYY-MM-DD` (ISO 8601) for proper sorting
-- `city`, `state`, `zip_code` are extracted from `business_location` at scrape time (legacy regex)
+### `locations` (address normalization table)
+- One row per unique raw address string from the WSLCB source
+- `raw_address` (UNIQUE) — the first-seen raw string, normalized (NBSP → space)
+- `city`, `state`, `zip_code` — regex-parsed from raw address at creation time
 - `address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`)
 - `address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); empty string if none
 - `std_city` — standardized city name from the address validator
@@ -45,18 +47,24 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 - `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
 - `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
 - All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
-- SQL queries use `COALESCE(NULLIF(std_city, ''), city)` for filtering; display uses `enrich_record()` in `database.py`
+- New records that reference an already-known raw address reuse the existing location row (no redundant API call)
+- `get_or_create_location()` in `database.py` handles the upsert logic
+
+### `license_records` (main table)
+- Uniqueness constraint: `(section_type, record_date, license_number, application_type)`
+- `section_type` values: `new_application`, `approved`, `discontinued`
+- Dates stored as `YYYY-MM-DD` (ISO 8601) for proper sorting
+- `location_id` — FK to `locations(id)` for the primary business address; NULL if no address
+- `previous_location_id` — FK to `locations(id)` for the previous address (CHANGE OF LOCATION records); NULL for other types
+- Address data is accessed via JOINs; `_RECORD_SELECT` in `database.py` provides the standard joined query aliasing location columns (business_location, city, std_city, etc.) for backward compatibility with templates
 - `previous_business_name` — seller's business name for ASSUMPTION records; empty string for other types
 - `previous_applicants` — seller's applicants for ASSUMPTION records; empty string for other types
 - `applicants` field is semicolon-separated; for ASSUMPTION records this holds the buyer's applicants ("New Applicant(s)" from source)
 - For ASSUMPTION records: `business_name` = buyer ("New Business Name"), `previous_business_name` = seller ("Current Business Name")
-- `previous_business_location` — the "Current Business Location" for CHANGE OF LOCATION records (address being moved *from*); empty string for other types
-- `previous_city`, `previous_state`, `previous_zip_code` — parsed components from the previous location
-- `prev_address_line_1`, `prev_address_line_2`, `prev_std_city`, `prev_std_state`, `prev_std_zip` — standardized previous address fields
-- `prev_address_validated_at` — ISO 8601 timestamp; NULL = not yet validated
-- For CHANGE OF LOCATION records: `business_location` = new/destination address ("New Business Location"), `previous_business_location` = old/origin address ("Current Business Location")
-- Approved-section CHANGE OF LOCATION records only have `business_location` (the source doesn't provide the previous address)
+- For CHANGE OF LOCATION records: `location_id` points to the new/destination address, `previous_location_id` points to the old/origin address
+- Approved-section CHANGE OF LOCATION records only have `location_id` (the source doesn't provide the previous address)
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
+- `enrich_record()` in `database.py` adds `display_city`, `display_zip`, `display_previous_city`, `display_previous_zip` with standardized-first fallback
 
 ### `license_endorsements`
 - One row per canonical endorsement name (e.g., "CANNABIS RETAILER")
@@ -160,10 +168,11 @@ data/
 - External API at `https://address-validator.exe.xyz:8000` (FastAPI, OpenAPI docs at `/docs`)
 - Authenticated via `X-API-Key` header; key stored in `./env` file (`ADDRESS_VALIDATOR_API_KEY=...`)
 - `./env` file is `640 root:exedev`, gitignored
-- Called at scrape time for each new record; graceful degradation if unavailable
+- Operates on the `locations` table — each unique raw address is validated once and shared across all records that reference it
+- At scrape time, `validate_record()` checks if the location is already validated; skips the API call if so
 - Systemd services load the env file via `EnvironmentFile=` directive
-- Backfill: `python scraper.py --backfill-addresses` (processes all records where `address_validated_at IS NULL`)
-- Refresh: `python scraper.py --refresh-addresses` (re-validates all records; safe to interrupt)
+- Backfill: `python scraper.py --backfill-addresses` (processes all locations where `address_validated_at IS NULL`)
+- Refresh: `python scraper.py --refresh-addresses` (re-validates all locations; safe to interrupt)
 
 ## Common Tasks
 
@@ -222,7 +231,7 @@ Safe to re-run — only updates records that still have empty fields. The old `-
 - No rate limiting on search/export
 - No requirements.txt or pyproject.toml yet
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
-- Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the DB but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
+- Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the locations table but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
 - 7 ASSUMPTION records (IDs 2039–2046, all from 2026-01-21) have empty `business_name` / `previous_business_name` because they were scraped before the ASSUMPTION fix and no archived snapshot covers their date range (earliest snapshot is 2026-02-20)
 - Approved-section CHANGE OF LOCATION records lack `previous_business_location` because the source page only provides `Business Location:` (the new address) for approved records

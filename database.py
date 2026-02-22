@@ -1,5 +1,6 @@
 """Database layer for WSLCB licensing tracker."""
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,116 +30,55 @@ def get_db():
         conn.close()
 
 
+def _normalize_raw_address(raw: str) -> str:
+    """Normalize whitespace variants (NBSP → space) in raw address strings.
+
+    The WSLCB source page sometimes uses non-breaking spaces (\\xa0)
+    instead of regular spaces.  We normalize before lookup so that
+    cosmetically-identical strings map to the same location row.
+    """
+    if not raw:
+        return raw
+    return re.sub(r'[\xa0\u00a0]+', ' ', raw)
+
+
 def init_db():
     """Create tables and indexes.  Safe to call repeatedly."""
     with get_db() as conn:
+        # Create supporting tables first (no dependency on license_records schema)
         conn.executescript("""
-            CREATE TABLE IF NOT EXISTS license_records (
+            CREATE TABLE IF NOT EXISTS locations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                section_type TEXT NOT NULL,
-                record_date TEXT NOT NULL,
-                business_name TEXT,
-                business_location TEXT,
-                applicants TEXT,
-                license_type TEXT,
-                application_type TEXT,
-                license_number TEXT,
-                contact_phone TEXT,
-                city TEXT,
+                raw_address TEXT NOT NULL,
+                city TEXT DEFAULT '',
                 state TEXT DEFAULT 'WA',
-                zip_code TEXT,
+                zip_code TEXT DEFAULT '',
                 address_line_1 TEXT DEFAULT '',
                 address_line_2 TEXT DEFAULT '',
                 std_city TEXT DEFAULT '',
                 std_state TEXT DEFAULT '',
                 std_zip TEXT DEFAULT '',
-                previous_business_name TEXT DEFAULT '',
-                previous_applicants TEXT DEFAULT '',
-                previous_business_location TEXT DEFAULT '',
-                previous_city TEXT DEFAULT '',
-                previous_state TEXT DEFAULT '',
-                previous_zip_code TEXT DEFAULT '',
-                prev_address_line_1 TEXT DEFAULT '',
-                prev_address_line_2 TEXT DEFAULT '',
-                prev_std_city TEXT DEFAULT '',
-                prev_std_state TEXT DEFAULT '',
-                prev_std_zip TEXT DEFAULT '',
-                prev_address_validated_at TEXT,
                 address_validated_at TEXT,
-                scraped_at TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                UNIQUE(section_type, record_date, license_number, application_type)
+                UNIQUE(raw_address)
             );
-
-            CREATE INDEX IF NOT EXISTS idx_records_section ON license_records(section_type);
-            CREATE INDEX IF NOT EXISTS idx_records_date ON license_records(record_date);
-            CREATE INDEX IF NOT EXISTS idx_records_business ON license_records(business_name);
-            CREATE INDEX IF NOT EXISTS idx_records_license_num ON license_records(license_number);
-            CREATE INDEX IF NOT EXISTS idx_records_app_type ON license_records(application_type);
-            CREATE INDEX IF NOT EXISTS idx_records_city ON license_records(city);
-            CREATE INDEX IF NOT EXISTS idx_records_zip ON license_records(zip_code);
+            CREATE INDEX IF NOT EXISTS idx_locations_city ON locations(city);
+            CREATE INDEX IF NOT EXISTS idx_locations_zip ON locations(zip_code);
+            CREATE INDEX IF NOT EXISTS idx_locations_std_city ON locations(std_city);
+            CREATE INDEX IF NOT EXISTS idx_locations_std_zip ON locations(std_zip);
 
             CREATE TABLE IF NOT EXISTS license_endorsements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
-            -- NOTE: ON DELETE CASCADE clauses below only take effect on fresh
-            -- databases.  CREATE TABLE IF NOT EXISTS is a no-op on existing
-            -- tables, so the running wslcb.db retains its original FK
-            -- definitions.  Code that deletes from license_endorsements
-            -- (e.g. _merge_placeholders) must manually clean up referencing
-            -- rows to stay safe on both old and new schemas.
             CREATE TABLE IF NOT EXISTS endorsement_codes (
                 code TEXT NOT NULL,
                 endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (code, endorsement_id)
             );
-            CREATE TABLE IF NOT EXISTS record_endorsements (
-                record_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
-                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
-                PRIMARY KEY (record_id, endorsement_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_re_endorsement
-                ON record_endorsements(endorsement_id);
 
-            CREATE VIRTUAL TABLE IF NOT EXISTS license_records_fts USING fts5(
-                business_name,
-                business_location,
-                applicants,
-                license_type,
-                application_type,
-                license_number,
-                previous_business_name,
-                previous_applicants,
-                previous_business_location,
-                content='license_records',
-                content_rowid='id'
-            );
-
-            -- Triggers use DROP+CREATE (not IF NOT EXISTS) so they are
-            -- always recreated to match the current FTS column list.
-            -- _rebuild_fts_if_needed() uses the same pattern on migration.
-            DROP TRIGGER IF EXISTS license_records_ai;
-            CREATE TRIGGER license_records_ai AFTER INSERT ON license_records BEGIN
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants, new.previous_business_location);
-            END;
-
-            DROP TRIGGER IF EXISTS license_records_ad;
-            CREATE TRIGGER license_records_ad AFTER DELETE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants, old.previous_business_location);
-            END;
-
-            DROP TRIGGER IF EXISTS license_records_au;
-            CREATE TRIGGER license_records_au AFTER UPDATE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants, old.previous_business_location);
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants, new.previous_business_location);
-            END;
 
             CREATE TABLE IF NOT EXISTS scrape_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,76 +90,214 @@ def init_db():
                 records_discontinued INTEGER DEFAULT 0,
                 records_skipped INTEGER DEFAULT 0,
                 error_message TEXT,
+                snapshot_path TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
-        # Migration: drop old mapping table and obsolete indexes
-        conn.execute("DROP TABLE IF EXISTS license_type_map")
-        conn.execute("DROP INDEX IF EXISTS idx_records_license_type")
 
-        # Migration: add snapshot_path column to scrape_log
-        try:
-            conn.execute("ALTER TABLE scrape_log ADD COLUMN snapshot_path TEXT")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        # --- Migrations for existing databases ---
+        _migrate_to_locations(conn)
 
-        # Migration: add standardized address columns
-        for col, typedef in [
-            ("address_line_1", "TEXT DEFAULT ''"),
-            ("address_line_2", "TEXT DEFAULT ''"),
-            ("std_city", "TEXT DEFAULT ''"),
-            ("std_state", "TEXT DEFAULT ''"),
-            ("std_zip", "TEXT DEFAULT ''"),
-            ("address_validated_at", "TEXT"),
+        # Create license_records with the new schema (fresh install only;
+        # existing DBs are handled by _migrate_to_locations above which
+        # rebuilds the table with the new schema).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS license_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                section_type TEXT NOT NULL,
+                record_date TEXT NOT NULL,
+                business_name TEXT,
+                location_id INTEGER REFERENCES locations(id),
+                applicants TEXT,
+                license_type TEXT,
+                application_type TEXT,
+                license_number TEXT,
+                contact_phone TEXT,
+                previous_business_name TEXT DEFAULT '',
+                previous_applicants TEXT DEFAULT '',
+                previous_location_id INTEGER REFERENCES locations(id),
+                scraped_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(section_type, record_date, license_number, application_type)
+            )
+        """)
+        # Junction table for endorsements (needs license_records to exist)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS record_endorsements (
+                record_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
+                endorsement_id INTEGER NOT NULL REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                PRIMARY KEY (record_id, endorsement_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_re_endorsement
+                ON record_endorsements(endorsement_id);
+        """)
+        # Indexes on license_records (safe after migration)
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_records_section ON license_records(section_type)",
+            "CREATE INDEX IF NOT EXISTS idx_records_date ON license_records(record_date)",
+            "CREATE INDEX IF NOT EXISTS idx_records_business ON license_records(business_name)",
+            "CREATE INDEX IF NOT EXISTS idx_records_license_num ON license_records(license_number)",
+            "CREATE INDEX IF NOT EXISTS idx_records_app_type ON license_records(application_type)",
+            "CREATE INDEX IF NOT EXISTS idx_records_location ON license_records(location_id)",
+            "CREATE INDEX IF NOT EXISTS idx_records_prev_location ON license_records(previous_location_id)",
         ]:
-            try:
-                conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} {typedef}")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            conn.execute(idx_sql)
 
-        # Migration: add assumption-related columns
-        for col, typedef in [
-            ("previous_business_name", "TEXT DEFAULT ''"),
-            ("previous_applicants", "TEXT DEFAULT ''"),
-        ]:
-            try:
-                conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} {typedef}")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-        # Migration: add change-of-location columns
-        for col, typedef in [
-            ("previous_business_location", "TEXT DEFAULT ''"),
-            ("previous_city", "TEXT DEFAULT ''"),
-            ("previous_state", "TEXT DEFAULT ''"),
-            ("previous_zip_code", "TEXT DEFAULT ''"),
-            ("prev_address_line_1", "TEXT DEFAULT ''"),
-            ("prev_address_line_2", "TEXT DEFAULT ''"),
-            ("prev_std_city", "TEXT DEFAULT ''"),
-            ("prev_std_state", "TEXT DEFAULT ''"),
-            ("prev_std_zip", "TEXT DEFAULT ''"),
-            ("prev_address_validated_at", "TEXT"),
-        ]:
-            try:
-                conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} {typedef}")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-        # Index on std_city for filter dropdown performance
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_city ON license_records(std_city)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_zip ON license_records(std_zip)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_prev_city ON license_records(previous_city)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_prev_std_city ON license_records(prev_std_city)")
-
-        # Migration: rebuild FTS table when columns change (e.g. adding
-        # previous_business_name and previous_applicants)
-        _rebuild_fts_if_needed(conn)
+        # FTS (re)build
+        _ensure_fts(conn)
 
         conn.commit()
 
 
-# Columns that should be in the FTS table (in order).  Used by the
-# migration to detect when the FTS schema is stale and rebuild it.
+# ------------------------------------------------------------------
+# Migration: move from inline address columns to locations table
+# ------------------------------------------------------------------
+
+def _migrate_to_locations(conn: sqlite3.Connection) -> None:
+    """One-time migration: populate locations table from legacy columns.
+
+    Detects the old schema by checking for the 'business_location' column
+    on license_records.  If found, populates the locations table,
+    sets the FK columns, and drops the legacy columns by rebuilding
+    the table.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(license_records)").fetchall()}
+    if "business_location" not in cols:
+        return  # Already migrated or fresh DB
+
+    # Ensure FK columns exist (ALTER is a no-op error if they already do)
+    for col in ("location_id", "previous_location_id"):
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} INTEGER")
+            except sqlite3.OperationalError:
+                pass
+
+    print("Migrating address data into locations table...")
+
+    # 1. Insert distinct primary addresses
+    conn.execute("""
+        INSERT OR IGNORE INTO locations (raw_address, city, state, zip_code,
+            address_line_1, address_line_2, std_city, std_state, std_zip,
+            address_validated_at)
+        SELECT DISTINCT
+            REPLACE(REPLACE(business_location, X'C2A0', ' '), X'C2A0', ' '),
+            city, state, zip_code,
+            address_line_1, address_line_2, std_city, std_state, std_zip,
+            address_validated_at
+        FROM license_records
+        WHERE business_location IS NOT NULL AND business_location != ''
+    """)
+
+    # 2. Insert distinct previous addresses (CHANGE OF LOCATION)
+    conn.execute("""
+        INSERT OR IGNORE INTO locations (raw_address, city, state, zip_code,
+            address_line_1, address_line_2, std_city, std_state, std_zip,
+            address_validated_at)
+        SELECT DISTINCT
+            REPLACE(REPLACE(previous_business_location, X'C2A0', ' '), X'C2A0', ' '),
+            previous_city, previous_state, previous_zip_code,
+            prev_address_line_1, prev_address_line_2,
+            prev_std_city, prev_std_state, prev_std_zip,
+            prev_address_validated_at
+        FROM license_records
+        WHERE previous_business_location IS NOT NULL
+          AND previous_business_location != ''
+    """)
+
+    # 3. Set location_id FK
+    conn.execute("""
+        UPDATE license_records
+        SET location_id = (
+            SELECT l.id FROM locations l
+            WHERE l.raw_address = REPLACE(REPLACE(license_records.business_location, X'C2A0', ' '), X'C2A0', ' ')
+        )
+        WHERE business_location IS NOT NULL AND business_location != ''
+          AND location_id IS NULL
+    """)
+
+    # 4. Set previous_location_id FK
+    conn.execute("""
+        UPDATE license_records
+        SET previous_location_id = (
+            SELECT l.id FROM locations l
+            WHERE l.raw_address = REPLACE(REPLACE(license_records.previous_business_location, X'C2A0', ' '), X'C2A0', ' ')
+        )
+        WHERE previous_business_location IS NOT NULL AND previous_business_location != ''
+          AND previous_location_id IS NULL
+    """)
+
+    conn.commit()
+
+    # 5. Rebuild license_records without legacy columns
+    _rebuild_records_table(conn)
+
+    print("Migration complete.")
+
+
+def _rebuild_records_table(conn: sqlite3.Connection) -> None:
+    """Rebuild license_records dropping all legacy address columns.
+
+    Disables foreign keys during the rebuild to prevent CASCADE deletes
+    on record_endorsements when the old table is dropped.
+    """
+    # Drop FTS triggers first to avoid errors during rebuild
+    conn.executescript("""
+        DROP TRIGGER IF EXISTS license_records_ai;
+        DROP TRIGGER IF EXISTS license_records_ad;
+        DROP TRIGGER IF EXISTS license_records_au;
+        DROP TRIGGER IF EXISTS license_records_bd;
+    """)
+
+    # Disable FK enforcement so DROP TABLE doesn't cascade
+    conn.execute("PRAGMA foreign_keys=OFF")
+
+    conn.executescript("""
+        CREATE TABLE license_records_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            section_type TEXT NOT NULL,
+            record_date TEXT NOT NULL,
+            business_name TEXT,
+            location_id INTEGER REFERENCES locations(id),
+            applicants TEXT,
+            license_type TEXT,
+            application_type TEXT,
+            license_number TEXT,
+            contact_phone TEXT,
+            previous_business_name TEXT DEFAULT '',
+            previous_applicants TEXT DEFAULT '',
+            previous_location_id INTEGER REFERENCES locations(id),
+            scraped_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(section_type, record_date, license_number, application_type)
+        );
+
+        INSERT INTO license_records_new
+            (id, section_type, record_date, business_name, location_id,
+             applicants, license_type, application_type, license_number,
+             contact_phone, previous_business_name, previous_applicants,
+             previous_location_id, scraped_at, created_at)
+        SELECT id, section_type, record_date, business_name, location_id,
+               applicants, license_type, application_type, license_number,
+               contact_phone,
+               COALESCE(previous_business_name, ''),
+               COALESCE(previous_applicants, ''),
+               previous_location_id, scraped_at, created_at
+        FROM license_records;
+
+        DROP TABLE license_records;
+        ALTER TABLE license_records_new RENAME TO license_records;
+    """)
+
+    # Re-enable FK enforcement
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.commit()
+
+
+# ------------------------------------------------------------------
+# FTS5 full-text search
+# ------------------------------------------------------------------
+
 _FTS_COLUMNS = [
     "business_name", "business_location", "applicants",
     "license_type", "application_type", "license_number",
@@ -228,77 +306,161 @@ _FTS_COLUMNS = [
 ]
 
 
-def _rebuild_fts_if_needed(conn: sqlite3.Connection) -> None:
-    """Rebuild the FTS5 virtual table if its column set is outdated.
+def _ensure_fts(conn: sqlite3.Connection) -> None:
+    """Create or rebuild the FTS5 virtual table and its sync triggers.
 
-    FTS5 tables can't be ALTERed, so we drop and recreate when the
-    expected column list doesn't match the live table.
+    The FTS table is a *content-less external content* table that
+    references a VIEW (license_records_fts_content) which JOINs
+    license_records → locations to expose business_location and
+    previous_business_location as text columns for indexing.
     """
-    # Introspect current FTS columns via a zero-result query
+    # The view that the FTS triggers read from
+    conn.execute("DROP VIEW IF EXISTS license_records_fts_content")
+    conn.execute("""
+        CREATE VIEW license_records_fts_content AS
+        SELECT
+            lr.id,
+            lr.business_name,
+            COALESCE(loc.raw_address, '') AS business_location,
+            lr.applicants,
+            lr.license_type,
+            lr.application_type,
+            lr.license_number,
+            COALESCE(lr.previous_business_name, '') AS previous_business_name,
+            COALESCE(lr.previous_applicants, '') AS previous_applicants,
+            COALESCE(ploc.raw_address, '') AS previous_business_location
+        FROM license_records lr
+        LEFT JOIN locations loc ON loc.id = lr.location_id
+        LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
+    """)
+
+    # Check if FTS table exists, has the right columns, and right content source
+    needs_rebuild = False
     try:
         cur = conn.execute("SELECT * FROM license_records_fts LIMIT 0")
         current_cols = [desc[0] for desc in cur.description]
+        if current_cols != _FTS_COLUMNS:
+            needs_rebuild = True
+        # Also check if the content source is the view (not the raw table)
+        fts_sql = conn.execute(
+            "SELECT sql FROM sqlite_schema WHERE name = 'license_records_fts'"
+        ).fetchone()
+        if fts_sql and "content='license_records_fts_content'" not in fts_sql[0]:
+            needs_rebuild = True
     except sqlite3.OperationalError:
-        # Table doesn't exist yet — will be created by the main schema
-        return
+        needs_rebuild = True
 
-    if current_cols == _FTS_COLUMNS:
-        return  # Already up-to-date
-
-    print(f"Rebuilding FTS index (columns {current_cols} → {_FTS_COLUMNS})")
-
-    # Drop old triggers, table, then recreate
-    conn.executescript("""
-        DROP TRIGGER IF EXISTS license_records_ai;
-        DROP TRIGGER IF EXISTS license_records_ad;
-        DROP TRIGGER IF EXISTS license_records_au;
-        DROP TABLE IF EXISTS license_records_fts;
-    """)
+    if needs_rebuild:
+        print("Building FTS index...")
+        conn.executescript("""
+            DROP TRIGGER IF EXISTS license_records_ai;
+            DROP TRIGGER IF EXISTS license_records_ad;
+            DROP TRIGGER IF EXISTS license_records_au;
+            DROP TABLE IF EXISTS license_records_fts;
+        """)
 
     cols = ", ".join(_FTS_COLUMNS)
-    new_cols = ", ".join(f"new.{c}" for c in _FTS_COLUMNS)
-    old_cols = ", ".join(f"old.{c}" for c in _FTS_COLUMNS)
+    conn.execute(f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS license_records_fts USING fts5(
+            {cols},
+            content='license_records_fts_content',
+            content_rowid='id'
+        )
+    """)
+
+    # Triggers: after insert/update/delete on license_records,
+    # read from the view to keep FTS in sync.
+    new_vals = ", ".join(
+        f"(SELECT {c} FROM license_records_fts_content WHERE id = new.id)"
+        for c in _FTS_COLUMNS
+    )
+    old_vals = ", ".join(
+        f"(SELECT {c} FROM license_records_fts_content WHERE id = old.id)"
+        for c in _FTS_COLUMNS
+    )
+    # For delete, the view row is gone, so we store pre-delete values
+    # via a BEFORE trigger that reads from the view *before* the DELETE.
+    # But for simplicity, we use the same pattern as before: the AFTER
+    # DELETE trigger uses old.* columns directly for the non-joined fields
+    # and just uses empty strings for location fields (the 'delete' command
+    # needs the *old* values that were in the FTS index to remove them,
+    # so we need a BEFORE DELETE approach).
+    #
+    # Actually, FTS5 external content tables handle this: we just need to
+    # supply the old values.  Since the record is being deleted, we can't
+    # read from the view.  We'll use a BEFORE DELETE trigger.
 
     conn.executescript(f"""
-        CREATE VIRTUAL TABLE license_records_fts USING fts5(
-            {cols},
-            content='license_records',
-            content_rowid='id'
-        );
-
+        DROP TRIGGER IF EXISTS license_records_ai;
         CREATE TRIGGER license_records_ai AFTER INSERT ON license_records BEGIN
             INSERT INTO license_records_fts(rowid, {cols})
-            VALUES (new.id, {new_cols});
+            VALUES (new.id, {new_vals});
         END;
 
-        CREATE TRIGGER license_records_ad AFTER DELETE ON license_records BEGIN
-            INSERT INTO license_records_fts(license_records_fts, rowid, {cols})
-            VALUES ('delete', old.id, {old_cols});
-        END;
-
+        DROP TRIGGER IF EXISTS license_records_au;
         CREATE TRIGGER license_records_au AFTER UPDATE ON license_records BEGIN
             INSERT INTO license_records_fts(license_records_fts, rowid, {cols})
-            VALUES ('delete', old.id, {old_cols});
+            SELECT 'delete', old.id, {cols} FROM license_records_fts_content WHERE id = old.id;
             INSERT INTO license_records_fts(rowid, {cols})
-            VALUES (new.id, {new_cols});
+            VALUES (new.id, {new_vals});
+        END;
+
+        DROP TRIGGER IF EXISTS license_records_bd;
+        DROP TRIGGER IF EXISTS license_records_ad;
+        CREATE TRIGGER license_records_bd BEFORE DELETE ON license_records BEGIN
+            INSERT INTO license_records_fts(license_records_fts, rowid, {cols})
+            SELECT 'delete', old.id, {cols} FROM license_records_fts_content WHERE id = old.id;
         END;
     """)
 
-    # Repopulate from existing data
-    conn.execute(f"""
-        INSERT INTO license_records_fts(rowid, {cols})
-        SELECT id, {cols} FROM license_records
-    """)
-    print("FTS index rebuilt.")
+    if needs_rebuild:
+        conn.execute(f"""
+            INSERT INTO license_records_fts(rowid, {cols})
+            SELECT id, {cols} FROM license_records_fts_content
+        """)
+        print("FTS index built.")
 
+
+# ------------------------------------------------------------------
+# Location helpers
+# ------------------------------------------------------------------
+
+def get_or_create_location(
+    conn: sqlite3.Connection,
+    raw_address: str,
+    city: str = "",
+    state: str = "WA",
+    zip_code: str = "",
+) -> int | None:
+    """Return the location id for *raw_address*, creating if needed.
+
+    Returns None if raw_address is empty/None.
+    """
+    if not raw_address or not raw_address.strip():
+        return None
+    normalized = _normalize_raw_address(raw_address)
+    row = conn.execute(
+        "SELECT id FROM locations WHERE raw_address = ?", (normalized,)
+    ).fetchone()
+    if row:
+        return row[0]
+    cursor = conn.execute(
+        """INSERT INTO locations (raw_address, city, state, zip_code)
+           VALUES (?, ?, ?, ?)""",
+        (normalized, city, state, zip_code),
+    )
+    return cursor.lastrowid
+
+
+# ------------------------------------------------------------------
+# Record CRUD
+# ------------------------------------------------------------------
 
 def enrich_record(record: dict) -> dict:
     """Add display-ready fields with standardized-first fallback.
 
-    Adds display_city, display_zip, display_previous_city, and
-    display_previous_zip.  Mirrors the SQL pattern
-    COALESCE(NULLIF(std_city, ''), city) so templates can use a single
-    field without fallback logic.
+    Works with joined query results that include location columns
+    aliased as business_location, city, std_city, etc.
     """
     record["display_city"] = record.get("std_city") or record.get("city") or ""
     record["display_zip"] = record.get("std_zip") or record.get("zip_code") or ""
@@ -308,27 +470,83 @@ def enrich_record(record: dict) -> dict:
 
 
 def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
-    """Insert a record, returning the new row id or None if duplicate."""
+    """Insert a record, returning the new row id or None if duplicate.
+
+    Automatically resolves (or creates) location rows for the primary
+    and previous business addresses.
+    """
+    location_id = get_or_create_location(
+        conn,
+        record.get("business_location", ""),
+        city=record.get("city", ""),
+        state=record.get("state", "WA"),
+        zip_code=record.get("zip_code", ""),
+    )
+    previous_location_id = get_or_create_location(
+        conn,
+        record.get("previous_business_location", ""),
+        city=record.get("previous_city", ""),
+        state=record.get("previous_state", ""),
+        zip_code=record.get("previous_zip_code", ""),
+    )
     try:
         cursor = conn.execute(
             """INSERT INTO license_records
-               (section_type, record_date, business_name, business_location,
+               (section_type, record_date, business_name, location_id,
                 applicants, license_type, application_type, license_number,
-                contact_phone, city, state, zip_code,
-                previous_business_name, previous_applicants,
-                previous_business_location, previous_city, previous_state, previous_zip_code,
-                scraped_at)
-               VALUES (:section_type, :record_date, :business_name, :business_location,
+                contact_phone, previous_business_name, previous_applicants,
+                previous_location_id, scraped_at)
+               VALUES (:section_type, :record_date, :business_name, :location_id,
                        :applicants, :license_type, :application_type, :license_number,
-                       :contact_phone, :city, :state, :zip_code,
-                       :previous_business_name, :previous_applicants,
-                       :previous_business_location, :previous_city, :previous_state, :previous_zip_code,
-                       :scraped_at)""",
-            record,
+                       :contact_phone, :previous_business_name, :previous_applicants,
+                       :previous_location_id, :scraped_at)""",
+            {
+                **record,
+                "location_id": location_id,
+                "previous_location_id": previous_location_id,
+            },
         )
         return cursor.lastrowid
     except sqlite3.IntegrityError:
         return None
+
+
+# ------------------------------------------------------------------
+# Queries (search, filters, stats)
+# ------------------------------------------------------------------
+
+# Base SELECT that joins locations for display
+_RECORD_SELECT = """
+    SELECT lr.id, lr.section_type, lr.record_date, lr.business_name,
+           lr.applicants, lr.license_type, lr.application_type,
+           lr.license_number, lr.contact_phone,
+           lr.previous_business_name, lr.previous_applicants,
+           lr.location_id, lr.previous_location_id,
+           lr.scraped_at, lr.created_at,
+           COALESCE(loc.raw_address, '') AS business_location,
+           COALESCE(loc.city, '') AS city,
+           COALESCE(loc.state, 'WA') AS state,
+           COALESCE(loc.zip_code, '') AS zip_code,
+           COALESCE(loc.address_line_1, '') AS address_line_1,
+           COALESCE(loc.address_line_2, '') AS address_line_2,
+           COALESCE(loc.std_city, '') AS std_city,
+           COALESCE(loc.std_state, '') AS std_state,
+           COALESCE(loc.std_zip, '') AS std_zip,
+           loc.address_validated_at,
+           COALESCE(ploc.raw_address, '') AS previous_business_location,
+           COALESCE(ploc.city, '') AS previous_city,
+           COALESCE(ploc.state, '') AS previous_state,
+           COALESCE(ploc.zip_code, '') AS previous_zip_code,
+           COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
+           COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
+           COALESCE(ploc.std_city, '') AS prev_std_city,
+           COALESCE(ploc.std_state, '') AS prev_std_state,
+           COALESCE(ploc.std_zip, '') AS prev_std_zip,
+           ploc.address_validated_at AS prev_address_validated_at
+    FROM license_records lr
+    LEFT JOIN locations loc ON loc.id = lr.location_id
+    LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
+"""
 
 
 def search_records(
@@ -350,7 +568,7 @@ def search_records(
     if query:
         safe_query = query.replace('"', '').replace("'", "")
         terms = safe_query.split()
-        fts_query = " AND ".join(f'"{t}"*' for t in terms if t)
+        fts_query = " AND ".join(f'"{ t }"*' for t in terms if t)
         if fts_query:
             conditions.append(
                 "lr.id IN (SELECT rowid FROM license_records_fts WHERE license_records_fts MATCH ?)"
@@ -376,8 +594,8 @@ def search_records(
 
     if city:
         conditions.append(
-            "(COALESCE(NULLIF(lr.std_city, ''), lr.city) = ?"
-            " OR COALESCE(NULLIF(lr.prev_std_city, ''), lr.previous_city) = ?)"
+            "(COALESCE(NULLIF(loc.std_city, ''), loc.city) = ?"
+            " OR COALESCE(NULLIF(ploc.std_city, ''), ploc.city) = ?)"
         )
         params.extend([city, city])
 
@@ -391,20 +609,24 @@ def search_records(
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM license_records lr {where}", params
-    ).fetchone()[0]
+    # Count query uses same JOINs (needed for city filter)
+    count_sql = f"""
+        SELECT COUNT(*) FROM license_records lr
+        LEFT JOIN locations loc ON loc.id = lr.location_id
+        LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
+        {where}
+    """
+    total = conn.execute(count_sql, params).fetchone()[0]
 
     offset = (page - 1) * per_page
     rows = conn.execute(
-        f"""SELECT lr.* FROM license_records lr
+        f"""{_RECORD_SELECT}
             {where}
             ORDER BY lr.record_date DESC, lr.id DESC
             LIMIT ? OFFSET ?""",
         params + [per_page, offset],
     ).fetchall()
 
-    # Batch-attach endorsement names
     record_ids = [r["id"] for r in rows]
     endorsement_map = get_record_endorsements(conn, record_ids)
 
@@ -427,13 +649,10 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         ).fetchall()
         options[col] = [r[0] for r in rows]
 
-    # City filter uses standardized city with fallback to regex-parsed city,
-    # including previous cities from CHANGE OF LOCATION records
+    # City filter from locations table
     rows = conn.execute(
         "SELECT DISTINCT display_city FROM ("
-        "  SELECT COALESCE(NULLIF(std_city, ''), city) AS display_city FROM license_records"
-        "  UNION"
-        "  SELECT COALESCE(NULLIF(prev_std_city, ''), previous_city) AS display_city FROM license_records"
+        "  SELECT COALESCE(NULLIF(std_city, ''), city) AS display_city FROM locations"
         ") WHERE display_city IS NOT NULL AND display_city != '' ORDER BY display_city"
     ).fetchall()
     options["city"] = [r[0] for r in rows]
@@ -463,6 +682,25 @@ def get_stats(conn: sqlite3.Connection) -> dict:
         "SELECT COUNT(DISTINCT license_number) FROM license_records"
     ).fetchone()[0]
     return stats
+
+
+def get_record_by_id(conn: sqlite3.Connection, record_id: int) -> dict | None:
+    """Fetch a single record with location data joined."""
+    row = conn.execute(
+        f"{_RECORD_SELECT} WHERE lr.id = ?", (record_id,)
+    ).fetchone()
+    if not row:
+        return None
+    return enrich_record(dict(row))
+
+
+def get_related_records(conn: sqlite3.Connection, license_number: str, exclude_id: int) -> list[dict]:
+    """Fetch other records for the same license number."""
+    rows = conn.execute(
+        f"{_RECORD_SELECT} WHERE lr.license_number = ? AND lr.id != ? ORDER BY lr.record_date DESC",
+        (license_number, exclude_id),
+    ).fetchall()
+    return [enrich_record(dict(r)) for r in rows]
 
 
 if __name__ == "__main__":

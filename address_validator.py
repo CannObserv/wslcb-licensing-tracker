@@ -1,8 +1,9 @@
 """Client module for the address validation API service.
 
 Provides functions to standardize and validate business addresses against
-the address-validator API, backfill address data for un-validated records,
-and refresh all addresses when the upstream service is updated.
+the address-validator API. Operates on the `locations` table — each unique
+raw address is validated once and shared across all license records that
+reference it.
 
 Configuration:
     API key is loaded from ./env file (ADDRESS_VALIDATOR_API_KEY=...)
@@ -110,40 +111,40 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
         return None
 
 
-def validate_record(
+def validate_location(
     conn: sqlite3.Connection,
-    record_id: int,
-    business_location: str,
+    location_id: int,
+    raw_address: str,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate and update a single record's address in the database.
+    """Validate and update a single location row.
 
-    Calls standardize() on the business_location, then UPDATEs the record's
-    address columns (address_line_1, address_line_2, std_city, std_state,
-    std_zip, address_validated_at).
+    Calls standardize() on the raw_address, then UPDATEs the location's
+    standardized columns (address_line_1, address_line_2, std_city,
+    std_state, std_zip, address_validated_at).
 
     Does NOT commit — the caller is responsible for committing.
-    Skips (returns False) if business_location is empty or None.
+    Skips (returns False) if raw_address is empty or None.
 
     Args:
         conn: SQLite database connection.
-        record_id: The ID of the record to update.
-        business_location: The raw business address to validate.
+        location_id: The ID of the location row to update.
+        raw_address: The raw business address to validate.
         client: Optional httpx.Client for connection reuse.
 
     Returns:
-        True if the record was successfully updated, False otherwise.
+        True if the location was successfully updated, False otherwise.
     """
-    if not business_location or not business_location.strip():
+    if not raw_address or not raw_address.strip():
         return False
 
-    result = standardize(business_location, client=client)
+    result = standardize(raw_address, client=client)
     if result is None:
         return False
 
     try:
         conn.execute(
-            """UPDATE license_records SET
+            """UPDATE locations SET
                 address_line_1 = ?, address_line_2 = ?,
                 std_city = ?, std_state = ?, std_zip = ?,
                 address_validated_at = ?
@@ -155,13 +156,45 @@ def validate_record(
                 result.get("state", ""),
                 result.get("zip_code", ""),
                 datetime.now(timezone.utc).isoformat(),
-                record_id,
+                location_id,
             ),
         )
         return True
     except Exception as e:
-        print(f"WARNING: Failed to update record {record_id}: {e}", file=sys.stderr)
+        print(f"WARNING: Failed to update location {location_id}: {e}", file=sys.stderr)
         return False
+
+
+# Legacy wrappers — called by scraper.py for newly inserted records.
+# They accept a record_id + raw address, look up the location_id, and delegate.
+
+def validate_record(
+    conn: sqlite3.Connection,
+    record_id: int,
+    business_location: str,
+    client: httpx.Client | None = None,
+) -> bool:
+    """Validate the primary location for a license record.
+
+    Looks up the record's location_id and validates that location row.
+    If the location is already validated, returns True immediately.
+    """
+    if not business_location or not business_location.strip():
+        return False
+    row = conn.execute(
+        "SELECT location_id FROM license_records WHERE id = ?", (record_id,)
+    ).fetchone()
+    if not row or not row[0]:
+        return False
+    loc = conn.execute(
+        "SELECT id, raw_address, address_validated_at FROM locations WHERE id = ?",
+        (row[0],),
+    ).fetchone()
+    if not loc:
+        return False
+    if loc["address_validated_at"]:
+        return True  # Already validated
+    return validate_location(conn, loc["id"], loc["raw_address"], client=client)
 
 
 def validate_previous_location(
@@ -170,88 +203,52 @@ def validate_previous_location(
     previous_business_location: str,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate and update a record's previous (origin) address.
-
-    Used for CHANGE OF LOCATION records.  Similar to validate_record()
-    but updates the prev_* columns instead of the primary address columns.
-
-    Does NOT commit — the caller is responsible for committing.
-    """
+    """Validate the previous location for a CHANGE OF LOCATION record."""
     if not previous_business_location or not previous_business_location.strip():
         return False
-
-    result = standardize(previous_business_location, client=client)
-    if result is None:
+    row = conn.execute(
+        "SELECT previous_location_id FROM license_records WHERE id = ?", (record_id,)
+    ).fetchone()
+    if not row or not row[0]:
         return False
-
-    try:
-        conn.execute(
-            """UPDATE license_records SET
-                prev_address_line_1 = ?, prev_address_line_2 = ?,
-                prev_std_city = ?, prev_std_state = ?, prev_std_zip = ?,
-                prev_address_validated_at = ?
-            WHERE id = ?""",
-            (
-                result.get("address_line_1", ""),
-                result.get("address_line_2", ""),
-                result.get("city", ""),
-                result.get("state", ""),
-                result.get("zip_code", ""),
-                datetime.now(timezone.utc).isoformat(),
-                record_id,
-            ),
-        )
-        return True
-    except Exception as e:
-        print(f"WARNING: Failed to update previous location for record {record_id}: {e}", file=sys.stderr)
+    loc = conn.execute(
+        "SELECT id, raw_address, address_validated_at FROM locations WHERE id = ?",
+        (row[0],),
+    ).fetchone()
+    if not loc:
         return False
-
-
-from typing import Callable
-
-_ValidateFn = Callable[[sqlite3.Connection, int, str, httpx.Client | None], bool]
+    if loc["address_validated_at"]:
+        return True  # Already validated
+    return validate_location(conn, loc["id"], loc["raw_address"], client=client)
 
 
 def _validate_batch(
     conn: sqlite3.Connection,
     rows: list,
     label: str,
-    validate_fn: _ValidateFn = None,
     batch_size: int = 100,
 ) -> int:
-    """Validate a list of (id, address) rows against the API.
+    """Validate a list of (location_id, raw_address) rows against the API.
 
     Commits and prints progress every *batch_size* records.
     Sleeps 0.05 s between API requests to be polite.
 
-    Args:
-        conn: SQLite database connection.
-        rows: Sequence of (record_id, address) tuples/rows.
-        label: Human-readable label for log messages (e.g. "Backfilling").
-        validate_fn: The per-record validation function to call.  Defaults
-            to validate_record; pass validate_previous_location for
-            previous-address batches.
-        batch_size: Records per commit/progress log.
-
     Returns:
-        Number of records successfully validated.
+        Number of locations successfully validated.
     """
-    if validate_fn is None:
-        validate_fn = validate_record
-
     total = len(rows)
     if total == 0:
-        print(f"No records to {label.lower()}")
+        print(f"No locations to {label.lower()}")
         return 0
 
-    print(f"{label} for {total} records")
+    print(f"{label} for {total} locations")
     succeeded = 0
     attempted = 0
 
     with httpx.Client(timeout=TIMEOUT) as client:
         for row in rows:
-            record_id, address = row[0], row[1]
-            ok = validate_fn(conn, record_id, address, client=client)
+            location_id, address = row[0], row[1]
+            ok = validate_location(conn, location_id, address, client=client)
             attempted += 1
             if ok:
                 succeeded += 1
@@ -268,19 +265,13 @@ def _validate_batch(
 
 
 def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
-    """Backfill standardized addresses for all un-validated records.
+    """Backfill standardized addresses for all un-validated locations.
 
-    Queries all records where address_validated_at IS NULL and
-    business_location is non-empty, then validates each one.
-    Also backfills previous locations for CHANGE OF LOCATION records.
-    Commits and prints progress every batch_size records.
-
-    Args:
-        conn: SQLite database connection.
-        batch_size: Number of records to process before each commit.
+    Queries all locations where address_validated_at IS NULL and
+    raw_address is non-empty, then validates each one.
 
     Returns:
-        Number of records successfully validated.
+        Number of locations successfully validated.
     """
     api_key = _load_api_key()
     if not api_key:
@@ -288,50 +279,26 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
         return 0
 
     rows = conn.execute(
-        """SELECT id, business_location FROM license_records
+        """SELECT id, raw_address FROM locations
         WHERE address_validated_at IS NULL
-          AND business_location IS NOT NULL
-          AND business_location != ''"""
+          AND raw_address IS NOT NULL
+          AND raw_address != ''"""
     ).fetchall()
 
-    count = _validate_batch(conn, rows, "Backfilling addresses", batch_size=batch_size)
-
-    # Also backfill previous locations
-    prev_rows = conn.execute(
-        """SELECT id, previous_business_location FROM license_records
-        WHERE prev_address_validated_at IS NULL
-          AND previous_business_location IS NOT NULL
-          AND previous_business_location != ''"""
-    ).fetchall()
-
-    if prev_rows:
-        count += _validate_batch(
-            conn, prev_rows, "Backfilling previous locations",
-            validate_fn=validate_previous_location, batch_size=batch_size,
-        )
-
-    return count
+    return _validate_batch(conn, rows, "Backfilling addresses", batch_size=batch_size)
 
 
 def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
-    """Re-validate all addresses, regardless of current validation status.
+    """Re-validate all locations, regardless of current validation status.
 
-    Unlike backfill_addresses() which only processes un-validated records,
-    this function re-validates every record with a non-empty business_location.
-    Also refreshes previous locations for CHANGE OF LOCATION records.
     Useful when the upstream address-validator service has been updated and
     standardized values may have changed.
 
-    Safe to interrupt — each record's address_validated_at timestamp is
-    updated individually on success, so partial runs leave the database
-    in a consistent state.
-
-    Args:
-        conn: SQLite database connection.
-        batch_size: Number of records to process before each commit/progress log.
+    Safe to interrupt — each location's address_validated_at timestamp is
+    updated individually on success.
 
     Returns:
-        Number of records successfully validated.
+        Number of locations successfully validated.
     """
     api_key = _load_api_key()
     if not api_key:
@@ -339,22 +306,8 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
         return 0
 
     rows = conn.execute(
-        """SELECT id, business_location FROM license_records
-        WHERE business_location IS NOT NULL AND business_location != ''"""
+        """SELECT id, raw_address FROM locations
+        WHERE raw_address IS NOT NULL AND raw_address != ''"""
     ).fetchall()
 
-    count = _validate_batch(conn, rows, "Refreshing addresses", batch_size=batch_size)
-
-    # Also refresh previous locations
-    prev_rows = conn.execute(
-        """SELECT id, previous_business_location FROM license_records
-        WHERE previous_business_location IS NOT NULL AND previous_business_location != ''"""
-    ).fetchall()
-
-    if prev_rows:
-        count += _validate_batch(
-            conn, prev_rows, "Refreshing previous locations",
-            validate_fn=validate_previous_location, batch_size=batch_size,
-        )
-
-    return count
+    return _validate_batch(conn, rows, "Refreshing addresses", batch_size=batch_size)
