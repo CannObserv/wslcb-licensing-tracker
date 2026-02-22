@@ -26,7 +26,7 @@ scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  temp
 |---|---|---|
 | `database.py` | Schema, migrations, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`, `enrich_record()`. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
-| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-assumptions` recovers ASSUMPTION data from snapshots. |
+| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` recovers ASSUMPTION and CHANGE OF LOCATION data from snapshots (`--backfill-assumptions` still accepted). |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
@@ -143,6 +143,7 @@ data/
   - `wslcb-task@scrape.service` — daily scrape (triggered by the timer)
   - `wslcb-task@--refresh-addresses.service` — full address re-validation
   - `wslcb-task@--backfill-addresses.service` — backfill un-validated addresses
+  - `wslcb-task@--backfill-from-snapshots.service` — recover ASSUMPTION/CHANGE OF LOCATION data from archived HTML
 - After changing service files: `sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
 - All persistent data lives in `./data/`
 - Venv shebangs are absolute paths — if the project directory moves, recreate the venv

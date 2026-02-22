@@ -17,6 +17,7 @@ The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/E
 - **CSV export** of any search result set
 - **Historical archive** — the source only shows 30 days, but the database retains all data
 - **License transfer tracking** — ASSUMPTION records capture both seller and buyer business names and applicants
+- **Location change tracking** — CHANGE OF LOCATION records capture both previous and new business addresses
 - **Deduplication** — safe to re-scrape; duplicate records are automatically skipped
 
 ## Data
@@ -39,6 +40,7 @@ Each record includes:
 | Applicant(s) | Named applicants (new applications only; for ASSUMPTION records, the buyer's applicants) |
 | Previous Business Name | Seller's business name (ASSUMPTION records only) |
 | Previous Applicant(s) | Seller's applicants (ASSUMPTION records only) |
+| Previous Location | Origin address before relocation (CHANGE OF LOCATION records only, new applications section) |
 | Endorsements | One or more license/endorsement types (e.g., "CANNABIS RETAILER", "GROCERY STORE - BEER/WINE"), normalized from text names or numeric WSLCB codes |
 | Application Type | RENEWAL, NEW APPLICATION, CHANGE OF LOCATION, ASSUMPTION, DISCONTINUED, etc. |
 | License Number | WSLCB license number |
@@ -205,13 +207,32 @@ ASSUMPTION records represent one business assuming (purchasing) a license from a
 | Business Location | `business_location` | Single shared location |
 | Contact Phone | `contact_phone` | Buyer's contact phone |
 
-To backfill assumption data for records scraped before this feature was added:
+## CHANGE OF LOCATION Records
+
+CHANGE OF LOCATION records represent a business moving to a new physical address. In the new applications section, they use different field labels to capture both the origin and destination:
+
+| Source Field | DB Column | Description |
+|---|---|---|
+| Current Business Location | `previous_business_location` | Origin address (moving from) |
+| New Business Location | `business_location` | Destination address (moving to) |
+
+The previous location is also parsed into structured components (`previous_city`, `previous_state`, `previous_zip_code`) and standardized via the address validator (`prev_address_line_1`, `prev_std_city`, etc.).
+
+In the approved section, CHANGE OF LOCATION records only have `Business Location:` (the new address) — the source page does not provide the previous address for approved records.
+
+## Backfilling from Snapshots
+
+To recover data for records scraped before ASSUMPTION or CHANGE OF LOCATION parsing was added:
 
 ```bash
-python scraper.py --backfill-assumptions
+python scraper.py --backfill-from-snapshots
 ```
 
-This parses all archived HTML snapshots and updates existing ASSUMPTION records that have empty business names.
+This parses all archived HTML snapshots and fixes:
+1. ASSUMPTION records with empty business names
+2. CHANGE OF LOCATION records with empty locations or missing previous addresses
+
+The old `--backfill-assumptions` flag is still accepted for compatibility.
 
 ## Data Source
 

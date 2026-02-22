@@ -207,64 +207,38 @@ def validate_previous_location(
         return False
 
 
+from typing import Callable
+
+_ValidateFn = Callable[[sqlite3.Connection, int, str, httpx.Client | None], bool]
+
+
 def _validate_batch(
     conn: sqlite3.Connection,
     rows: list,
     label: str,
+    validate_fn: _ValidateFn = None,
     batch_size: int = 100,
 ) -> int:
-    """Validate a list of (id, business_location) rows against the API.
+    """Validate a list of (id, address) rows against the API.
 
     Commits and prints progress every *batch_size* records.
     Sleeps 0.05 s between API requests to be polite.
 
     Args:
         conn: SQLite database connection.
-        rows: Sequence of (record_id, business_location) tuples/rows.
-        label: Human-readable verb for log messages (e.g. "Backfilling", "Refreshing").
+        rows: Sequence of (record_id, address) tuples/rows.
+        label: Human-readable label for log messages (e.g. "Backfilling").
+        validate_fn: The per-record validation function to call.  Defaults
+            to validate_record; pass validate_previous_location for
+            previous-address batches.
         batch_size: Records per commit/progress log.
 
     Returns:
         Number of records successfully validated.
     """
-    total = len(rows)
-    if total == 0:
-        print(f"No records to {label.lower()}")
-        return 0
+    if validate_fn is None:
+        validate_fn = validate_record
 
-    print(f"{label} addresses for {total} records")
-    succeeded = 0
-    attempted = 0
-
-    with httpx.Client(timeout=TIMEOUT) as client:
-        for row in rows:
-            record_id, business_location = row[0], row[1]
-            ok = validate_record(conn, record_id, business_location, client=client)
-            attempted += 1
-            if ok:
-                succeeded += 1
-
-            if attempted % batch_size == 0:
-                conn.commit()
-                print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
-
-            time.sleep(0.05)
-
-    conn.commit()
-    print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
-    return succeeded
-
-
-def _validate_previous_batch(
-    conn: sqlite3.Connection,
-    rows: list,
-    label: str,
-    batch_size: int = 100,
-) -> int:
-    """Validate a list of (id, previous_business_location) rows against the API.
-
-    Same as _validate_batch but calls validate_previous_location instead.
-    """
     total = len(rows)
     if total == 0:
         print(f"No records to {label.lower()}")
@@ -276,8 +250,8 @@ def _validate_previous_batch(
 
     with httpx.Client(timeout=TIMEOUT) as client:
         for row in rows:
-            record_id, prev_location = row[0], row[1]
-            ok = validate_previous_location(conn, record_id, prev_location, client=client)
+            record_id, address = row[0], row[1]
+            ok = validate_fn(conn, record_id, address, client=client)
             attempted += 1
             if ok:
                 succeeded += 1
@@ -320,7 +294,7 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
           AND business_location != ''"""
     ).fetchall()
 
-    count = _validate_batch(conn, rows, "Backfilling", batch_size)
+    count = _validate_batch(conn, rows, "Backfilling addresses", batch_size=batch_size)
 
     # Also backfill previous locations
     prev_rows = conn.execute(
@@ -331,7 +305,10 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
     ).fetchall()
 
     if prev_rows:
-        count += _validate_previous_batch(conn, prev_rows, "Backfilling previous locations", batch_size)
+        count += _validate_batch(
+            conn, prev_rows, "Backfilling previous locations",
+            validate_fn=validate_previous_location, batch_size=batch_size,
+        )
 
     return count
 
@@ -366,7 +343,7 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
         WHERE business_location IS NOT NULL AND business_location != ''"""
     ).fetchall()
 
-    count = _validate_batch(conn, rows, "Refreshing", batch_size)
+    count = _validate_batch(conn, rows, "Refreshing addresses", batch_size=batch_size)
 
     # Also refresh previous locations
     prev_rows = conn.execute(
@@ -375,6 +352,9 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
     ).fetchall()
 
     if prev_rows:
-        count += _validate_previous_batch(conn, prev_rows, "Refreshing previous locations", batch_size)
+        count += _validate_batch(
+            conn, prev_rows, "Refreshing previous locations",
+            validate_fn=validate_previous_location, batch_size=batch_size,
+        )
 
     return count

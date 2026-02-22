@@ -293,10 +293,12 @@ def _rebuild_fts_if_needed(conn: sqlite3.Connection) -> None:
 
 
 def enrich_record(record: dict) -> dict:
-    """Add display_city and display_zip with standardized-first fallback.
+    """Add display-ready fields with standardized-first fallback.
 
-    Mirrors the SQL pattern COALESCE(NULLIF(std_city, ''), city) so
-    templates can use a single field without fallback logic.
+    Adds display_city, display_zip, display_previous_city, and
+    display_previous_zip.  Mirrors the SQL pattern
+    COALESCE(NULLIF(std_city, ''), city) so templates can use a single
+    field without fallback logic.
     """
     record["display_city"] = record.get("std_city") or record.get("city") or ""
     record["display_zip"] = record.get("std_zip") or record.get("zip_code") or ""
