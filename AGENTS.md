@@ -30,7 +30,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `database.py` | Schema, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`, `enrich_record()`, `get_or_create_location()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
-| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` recovers ASSUMPTION and CHANGE OF LOCATION data from snapshots (`--backfill-assumptions` still accepted). |
+| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` delegates to `backfill_snapshots.py` (`--backfill-assumptions` still accepted). |
+| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/COL records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
@@ -233,13 +234,14 @@ python -u scraper.py --refresh-addresses
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
 source venv/bin/activate
-python -u scraper.py --backfill-from-snapshots
+python -u backfill_snapshots.py
 ```
-Parses all archived HTML snapshots and fixes:
-1. ASSUMPTION records with empty business names (pre-fix scrape)
-2. CHANGE OF LOCATION records with empty business_location/application_type or missing previous_business_location
+Two-phase process:
+1. **Ingest** — insert new records from all archived HTML snapshots (duplicates skipped)
+2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
-Safe to re-run — only updates records that still have empty fields. The old `--backfill-assumptions` flag is still accepted for compatibility.
+Safe to re-run. Address validation is deferred; run `--backfill-addresses` afterward.
+Also available via `python scraper.py --backfill-from-snapshots` (delegates to `backfill_snapshots.py`; `--backfill-assumptions` still accepted for compatibility).
 
 ### Add a new column to `locations`
 1. Add the column to the `CREATE TABLE IF NOT EXISTS locations` in `database.py`
@@ -263,6 +265,5 @@ Safe to re-run — only updates records that still have empty fields. The old `-
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
 - Entity names are uppercased at ingestion for consistency; the WSLCB source occasionally uses mixed case for the same person (e.g., `Cate Ryan` vs `CATE RYAN`)
 - The `applicants` and `previous_applicants` string columns on `license_records` are retained for backward compatibility with FTS indexing and CSV export; removal is deferred to a future phase
-- 7 ASSUMPTION records (IDs 2039–2046, all from 2026-01-21) have empty `business_name` / `previous_business_name` because they were scraped before the ASSUMPTION fix and no archived snapshot covers their date range (earliest snapshot is 2026-02-20)
 - Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
 - Consider adding: email/webhook alerts for new records matching saved searches

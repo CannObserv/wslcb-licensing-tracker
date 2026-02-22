@@ -67,7 +67,8 @@ wslcb-licensing-tracker/
 ├── migrate_locations.py    # One-time migration: inline address columns → locations table
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── address_validator.py    # Address validation API client
-├── scraper.py              # WSLCB page scraper
+├── scraper.py              # WSLCB page scraper (daily)
+├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
 │   ├── base.html           # Base layout template
@@ -79,9 +80,9 @@ wslcb-licensing-tracker/
 ├── static/                 # Static assets
 ├── data/                   # Persistent data (gitignored)
 │   ├── wslcb.db            # SQLite database
-│   └── wslcb/             # Archived data by source
-│       └── licensinginfo/ # HTML snapshots from licensinginfo.lcb.wa.gov
-│           └── [yyyy]/    # Archived HTML snapshots by year
+│   └── wslcb/                  # Archived data by source
+│       └── licensinginfo/      # HTML snapshots from licensinginfo.lcb.wa.gov
+│           └── [yyyy]/         # Archived HTML snapshots by year
 ├── wslcb-web.service       # systemd service for the web app
 ├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
 └── wslcb-scraper.timer     # systemd timer (daily at 6 AM Pacific)
@@ -229,17 +230,19 @@ In the approved section, CHANGE OF LOCATION records only have `location_id` (the
 
 ## Backfilling from Snapshots
 
-To recover data for records scraped before ASSUMPTION or CHANGE OF LOCATION parsing was added:
+To ingest historical records and repair broken data from archived HTML snapshots:
 
 ```bash
-python scraper.py --backfill-from-snapshots
+python backfill_snapshots.py
 ```
 
-This parses all archived HTML snapshots and fixes:
-1. ASSUMPTION records with empty business names
-2. CHANGE OF LOCATION records with empty locations or missing previous addresses
+This runs a two-phase process:
+1. **Ingest** — insert new records from all archived snapshots (duplicates are safely skipped)
+2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
-The old `--backfill-assumptions` flag is still accepted for compatibility.
+Safe to re-run at any time. Address validation is deferred; run `python scraper.py --backfill-addresses` afterward to validate new locations.
+
+Also available via `python scraper.py --backfill-from-snapshots` (the old `--backfill-assumptions` flag is still accepted for compatibility).
 
 ## Data Source
 

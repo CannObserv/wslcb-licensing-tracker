@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import DATA_DIR, get_db, init_db, insert_record, get_or_create_location
+from database import DATA_DIR, get_db, init_db, insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
 
@@ -292,160 +292,6 @@ def scrape():
             raise
 
 
-def backfill_from_snapshots():
-    """Backfill records from archived HTML snapshots.
-
-    Parses every archived snapshot and fixes two categories of records:
-
-    1. ASSUMPTION records with empty business_name (pre-fix scrape)
-    2. CHANGE OF LOCATION records with empty business_location or
-       empty previous_business_location (pre-fix scrape)
-
-    Safe to re-run — only updates records that still have empty fields.
-    """
-    init_db()
-    snapshots = sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
-    if not snapshots:
-        print("No archived snapshots found.")
-        return
-
-    print(f"Found {len(snapshots)} snapshot(s) to scan")
-    assumption_updated = 0
-    col_updated = 0
-
-    with get_db() as conn:
-        for snap_path in snapshots:
-            html = snap_path.read_text(encoding="utf-8")
-            soup = BeautifulSoup(html, "lxml")
-
-            all_tables = soup.find_all("table")
-            for t in all_tables:
-                th = t.find("th")
-                if not th:
-                    continue
-                header = th.get_text(strip=True).replace('\xa0', ' ')
-                if header not in SECTION_MAP:
-                    continue
-                section_type = SECTION_MAP[header]
-                records = parse_records_from_table(t, section_type)
-
-                for rec in records:
-                    # Backfill ASSUMPTION records
-                    if rec["application_type"] == "ASSUMPTION":
-                        if not rec["business_name"] and not rec["previous_business_name"]:
-                            continue  # Still empty even after new parsing — skip
-
-                        cursor = conn.execute(
-                            """UPDATE license_records
-                               SET business_name = ?,
-                                   applicants = ?,
-                                   previous_business_name = ?,
-                                   previous_applicants = ?
-                               WHERE section_type = ?
-                                 AND record_date = ?
-                                 AND license_number = ?
-                                 AND application_type = 'ASSUMPTION'
-                                 AND (business_name = '' OR business_name IS NULL)""",
-                            (
-                                rec["business_name"],
-                                rec["applicants"],
-                                rec["previous_business_name"],
-                                rec["previous_applicants"],
-                                rec["section_type"],
-                                rec["record_date"],
-                                rec["license_number"],
-                            ),
-                        )
-                        if cursor.rowcount > 0:
-                            assumption_updated += cursor.rowcount
-
-                    # Backfill CHANGE OF LOCATION records
-                    if rec["application_type"] == "CHANGE OF LOCATION":
-                        if not rec["business_location"]:
-                            continue  # Still empty even after new parsing — skip
-
-                        # Resolve location IDs for the parsed addresses
-                        loc_id = get_or_create_location(
-                            conn, rec["business_location"],
-                            city=rec["city"], state=rec["state"],
-                            zip_code=rec["zip_code"],
-                        )
-                        prev_loc_id = get_or_create_location(
-                            conn, rec["previous_business_location"],
-                            city=rec["previous_city"],
-                            state=rec["previous_state"],
-                            zip_code=rec["previous_zip_code"],
-                        )
-
-                        # Fix records that had empty location/application_type.
-                        # Skip if a correct record already exists (avoids UNIQUE violation).
-                        existing = conn.execute(
-                            """SELECT 1 FROM license_records
-                               WHERE section_type = ?
-                                 AND record_date = ?
-                                 AND license_number = ?
-                                 AND application_type = 'CHANGE OF LOCATION'""",
-                            (rec["section_type"], rec["record_date"], rec["license_number"]),
-                        ).fetchone()
-                        if existing:
-                            # Correct record exists; delete the broken one
-                            conn.execute(
-                                """DELETE FROM license_records
-                                   WHERE section_type = ?
-                                     AND record_date = ?
-                                     AND license_number = ?
-                                     AND (application_type = '' OR application_type IS NULL)""",
-                                (rec["section_type"], rec["record_date"], rec["license_number"]),
-                            )
-                        else:
-                            cursor = conn.execute(
-                                """UPDATE license_records
-                                   SET location_id = ?,
-                                       previous_location_id = ?,
-                                       application_type = 'CHANGE OF LOCATION'
-                                   WHERE section_type = ?
-                                     AND record_date = ?
-                                     AND license_number = ?
-                                     AND location_id IS NULL
-                                     AND (application_type = '' OR application_type IS NULL)""",
-                                (
-                                    loc_id,
-                                    prev_loc_id,
-                                    rec["section_type"],
-                                    rec["record_date"],
-                                    rec["license_number"],
-                                ),
-                            )
-                            if cursor.rowcount > 0:
-                                col_updated += cursor.rowcount
-                                continue
-
-                        # Also fix records that have the location but are
-                        # missing previous_location_id
-                        cursor = conn.execute(
-                            """UPDATE license_records
-                               SET previous_location_id = ?
-                               WHERE section_type = ?
-                                 AND record_date = ?
-                                 AND license_number = ?
-                                 AND application_type = 'CHANGE OF LOCATION'
-                                 AND previous_location_id IS NULL""",
-                            (
-                                prev_loc_id,
-                                rec["section_type"],
-                                rec["record_date"],
-                                rec["license_number"],
-                            ),
-                        )
-                        if cursor.rowcount > 0:
-                            col_updated += cursor.rowcount
-
-            conn.commit()
-
-        print(f"Updated {assumption_updated} ASSUMPTION record(s) from archived snapshots.")
-        print(f"Updated {col_updated} CHANGE OF LOCATION record(s) from archived snapshots.")
-
-
 if __name__ == "__main__":
     if "--refresh-addresses" in sys.argv:
         init_db()
@@ -456,6 +302,7 @@ if __name__ == "__main__":
         with get_db() as conn:
             backfill_addresses(conn)
     elif "--backfill-assumptions" in sys.argv or "--backfill-from-snapshots" in sys.argv:
+        from backfill_snapshots import backfill_from_snapshots
         backfill_from_snapshots()
     else:
         # "scrape" is accepted as an explicit positional arg (used by
