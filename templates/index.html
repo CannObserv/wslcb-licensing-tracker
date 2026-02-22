@@ -27,7 +27,7 @@
 </div>
 
 <!-- Additional Stats -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
         <div class="text-sm font-medium text-gray-500">Unique Businesses</div>
         <div class="mt-1 text-2xl font-bold text-gray-900">{{ "{:,}".format(stats.unique_businesses) }}</div>
@@ -35,6 +35,10 @@
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
         <div class="text-sm font-medium text-gray-500">Unique Licenses</div>
         <div class="mt-1 text-2xl font-bold text-gray-900">{{ "{:,}".format(stats.unique_licenses) }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+        <div class="text-sm font-medium text-gray-500">Unique Entities</div>
+        <div class="mt-1 text-2xl font-bold text-gray-900">{{ "{:,}".format(stats.unique_entities) }}</div>
     </div>
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
         <div class="text-sm font-medium text-gray-500">Date Range</div>

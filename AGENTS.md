@@ -33,7 +33,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` recovers ASSUMPTION and CHANGE OF LOCATION data from snapshots (`--backfill-assumptions` still accepted). |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
-| `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
+| `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. `entity.html` is the entity detail page. |
 
 ## Database Schema
 
@@ -80,6 +80,21 @@ license_records → locations (FK: location_id, previous_location_id)
 - Junction table linking `license_records` ↔ `license_endorsements`
 - Populated at ingest time by `process_record()`, not at display time
 - `ON DELETE CASCADE` on both FKs (note: only effective on fresh DBs; see comment in `init_db()`)
+
+### `entities` (applicant normalization table)
+- One row per unique applicant name (person or organization)
+- `name` (UNIQUE) — the name as received from the WSLCB source
+- `entity_type` — `'person'`, `'organization'`, or `''` (unknown); classified by heuristic at creation time
+- The first element of the semicolon-delimited `applicants` field (which equals `business_name`) is **excluded** — only the individual people/orgs behind the license are stored
+- `get_or_create_entity()` in `database.py` handles dedup by exact name match
+
+### `record_entities` (junction table)
+- Links `license_records` ↔ `entities` with role and position
+- `role` — `'applicant'` or `'previous_applicant'` (for ASSUMPTION seller applicants)
+- `position` — 0-indexed ordering from the source document (after the business name)
+- Composite PK `(record_id, entity_id, role)`
+- Populated at ingest time by `_parse_and_link_entities()`; backfilled for existing data on startup
+- `ON DELETE CASCADE` on both FKs
 
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location

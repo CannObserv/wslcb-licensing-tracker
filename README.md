@@ -18,6 +18,7 @@ The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/E
 - **Historical archive** — the source only shows 30 days, but the database retains all data
 - **License transfer tracking** — ASSUMPTION records capture both seller and buyer business names and applicants
 - **Location change tracking** — CHANGE OF LOCATION records capture both previous and new business addresses
+- **Entity normalization** — applicant names (people and organizations) are extracted into a shared `entities` table, enabling cross-license analysis (e.g., "show all licenses for person X")
 - **Deduplication** — safe to re-scrape; duplicate records are automatically skipped
 
 ## Data
@@ -156,6 +157,7 @@ The SQLite database and archived HTML snapshots are stored in `./data/` relative
 | `GET /search` | Search interface (HTML) or HTMX partial results |
 | `GET /record/{id}` | Record detail page |
 | `GET /export` | CSV export (accepts same query params as `/search`) |
+| `GET /entity/{id}` | Entity detail page (all records for a person/org) |
 | `GET /api/stats` | JSON summary statistics |
 
 ## License Type Normalization

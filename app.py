@@ -8,7 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from database import (
     get_db, init_db, search_records, get_filter_options, get_stats,
-    get_record_by_id, get_related_records,
+    get_record_by_id, get_related_records, backfill_entities,
+    get_entity_by_id, get_entity_records, get_record_entities,
 )
 from endorsements import (
     seed_endorsements, backfill, get_record_endorsements,
@@ -25,6 +26,9 @@ async def lifespan(app: FastAPI):
         processed = backfill(conn)
         if processed:
             print(f"Backfilled endorsements for {processed} record(s)")
+        entity_count = backfill_entities(conn)
+        if entity_count:
+            print(f"Backfilled entities for {entity_count} record(s)")
     yield
 
 
@@ -123,15 +127,38 @@ async def record_detail(request: Request, record_id: int):
 
         related = get_related_records(conn, record["license_number"], record_id)
 
-        # Attach endorsements to record + related
+        # Attach endorsements and entities to record + related
         all_ids = [record["id"]] + [r["id"] for r in related]
         emap = get_record_endorsements(conn, all_ids)
         record["endorsements"] = emap.get(record["id"], [])
+        entmap = get_record_entities(conn, all_ids)
+        # record already has entities from get_record_by_id; refresh for consistency
+        record["entities"] = entmap.get(record["id"], {"applicant": [], "previous_applicant": []})
         for r in related:
             r["endorsements"] = emap.get(r["id"], [])
+            r["entities"] = entmap.get(r["id"], {"applicant": [], "previous_applicant": []})
 
     return templates.TemplateResponse(
         "detail.html", {"request": request, "record": record, "related": related}
+    )
+
+
+@app.get("/entity/{entity_id}", response_class=HTMLResponse)
+async def entity_detail(request: Request, entity_id: int):
+    with get_db() as conn:
+        entity = get_entity_by_id(conn, entity_id)
+        if not entity:
+            return HTMLResponse("Entity not found", status_code=404)
+        records = get_entity_records(conn, entity_id)
+        # Count distinct license numbers
+        license_numbers = set(r["license_number"] for r in records)
+    return templates.TemplateResponse(
+        "entity.html", {
+            "request": request,
+            "entity": entity,
+            "records": records,
+            "unique_licenses": len(license_numbers),
+        }
     )
 
 

@@ -7,6 +7,14 @@ from pathlib import Path
 
 from endorsements import get_endorsement_options, get_record_endorsements
 
+# Patterns that indicate an organization rather than a person
+_ORG_PATTERNS = re.compile(
+    r'\b(LLC|L\.?L\.?C\.?|INC\.?|CORP\.?|CORPORATION|TRUST|LTD\.?|LIMITED'
+    r'|PARTNERS|PARTNERSHIP|HOLDINGS|GROUP|ENTERPRISE|ENTERPRISES'
+    r'|ASSOCIATION|FOUNDATION|COMPANY|CO\.|L\.?P\.?)\b',
+    re.IGNORECASE,
+)
+
 # All persistent data (DB + HTML snapshots) lives under DATA_DIR.
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent / "data"))
 DB_PATH = DATA_DIR / "wslcb.db"
@@ -130,6 +138,24 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_re_endorsement
                 ON record_endorsements(endorsement_id);
+        """)
+        # Entity tables (applicant normalization)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS entities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                entity_type TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS record_entities (
+                record_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
+                entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                role TEXT NOT NULL DEFAULT 'applicant',
+                position INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (record_id, entity_id, role)
+            );
+            CREATE INDEX IF NOT EXISTS idx_re_entity ON record_entities(entity_id);
+            CREATE INDEX IF NOT EXISTS idx_re_role ON record_entities(role);
         """)
         # Indexes on license_records (safe after migration)
         for idx_sql in [
@@ -301,6 +327,151 @@ def get_or_create_location(
 
 
 # ------------------------------------------------------------------
+# Entity helpers
+# ------------------------------------------------------------------
+
+def _classify_entity_type(name: str) -> str:
+    """Classify an entity name as 'person' or 'organization'."""
+    return "organization" if _ORG_PATTERNS.search(name) else "person"
+
+
+def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
+    """Return the entity id for *name*, creating if needed."""
+    row = conn.execute(
+        "SELECT id FROM entities WHERE name = ?", (name,)
+    ).fetchone()
+    if row:
+        return row[0]
+    entity_type = _classify_entity_type(name)
+    cur = conn.execute(
+        "INSERT INTO entities (name, entity_type) VALUES (?, ?)",
+        (name, entity_type),
+    )
+    return cur.lastrowid
+
+
+def _parse_and_link_entities(
+    conn: sqlite3.Connection,
+    record_id: int,
+    applicants_str: str,
+    role: str = "applicant",
+) -> int:
+    """Split a semicolon-delimited applicants string, skip the first
+    element (business name), create entities, and link them to the record.
+
+    Returns the number of entities linked.
+    """
+    if not applicants_str or ";" not in applicants_str:
+        return 0
+    parts = [p.strip() for p in applicants_str.split(";")]
+    # First element is always the business name — skip it
+    entity_names = [p for p in parts[1:] if p]
+    linked = 0
+    for position, name in enumerate(entity_names):
+        entity_id = get_or_create_entity(conn, name)
+        conn.execute(
+            """INSERT OR IGNORE INTO record_entities
+               (record_id, entity_id, role, position)
+               VALUES (?, ?, ?, ?)""",
+            (record_id, entity_id, role, position),
+        )
+        linked += 1
+    return linked
+
+
+def backfill_entities(conn: sqlite3.Connection) -> int:
+    """Populate entities + record_entities for existing records.
+
+    Only processes records that have applicants but no entity links yet.
+    Returns the number of records processed.
+    """
+    rows = conn.execute("""
+        SELECT lr.id, lr.applicants, lr.previous_applicants
+        FROM license_records lr
+        LEFT JOIN record_entities re ON re.record_id = lr.id
+        WHERE re.record_id IS NULL
+          AND (lr.applicants LIKE '%;%' OR lr.previous_applicants LIKE '%;%')
+    """).fetchall()
+
+    for r in rows:
+        _parse_and_link_entities(conn, r["id"], r["applicants"], "applicant")
+        if r["previous_applicants"]:
+            _parse_and_link_entities(
+                conn, r["id"], r["previous_applicants"], "previous_applicant"
+            )
+
+    if rows:
+        conn.commit()
+    return len(rows)
+
+
+def get_record_entities(
+    conn: sqlite3.Connection, record_ids: list[int]
+) -> dict[int, dict[str, list[dict]]]:
+    """Batch-fetch entities for a list of record ids.
+
+    Returns {record_id: {"applicant": [{"id": ..., "name": ..., "entity_type": ...}, ...],
+                         "previous_applicant": [...]}}
+    """
+    if not record_ids:
+        return {}
+    CHUNK = 500
+    result: dict[int, dict[str, list[dict]]] = {
+        rid: {"applicant": [], "previous_applicant": []} for rid in record_ids
+    }
+    for i in range(0, len(record_ids), CHUNK):
+        batch = record_ids[i:i + CHUNK]
+        placeholders = ",".join("?" * len(batch))
+        rows = conn.execute(f"""
+            SELECT re.record_id, re.role, re.position,
+                   e.id AS entity_id, e.name, e.entity_type
+            FROM record_entities re
+            JOIN entities e ON e.id = re.entity_id
+            WHERE re.record_id IN ({placeholders})
+            ORDER BY re.record_id, re.role, re.position
+        """, batch).fetchall()
+        for r in rows:
+            result[r["record_id"]][r["role"]].append({
+                "id": r["entity_id"],
+                "name": r["name"],
+                "entity_type": r["entity_type"],
+            })
+    return result
+
+
+def get_entity_by_id(conn: sqlite3.Connection, entity_id: int) -> dict | None:
+    """Fetch a single entity by id."""
+    row = conn.execute(
+        "SELECT id, name, entity_type, created_at FROM entities WHERE id = ?",
+        (entity_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_entity_records(
+    conn: sqlite3.Connection, entity_id: int
+) -> list[dict]:
+    """Fetch all records associated with an entity, with location data."""
+    rows = conn.execute(
+        f"""{_RECORD_SELECT}
+            JOIN record_entities re ON re.record_id = lr.id
+            WHERE re.entity_id = ?
+            ORDER BY lr.record_date DESC, lr.id DESC""",
+        (entity_id,),
+    ).fetchall()
+    record_ids = [r["id"] for r in rows]
+    endorsement_map = get_record_endorsements(conn, record_ids)
+    entity_map = get_record_entities(conn, record_ids)
+    results = []
+    for r in rows:
+        d = enrich_record(dict(r))
+        d["endorsements"] = endorsement_map.get(d["id"], [])
+        d["entities"] = entity_map.get(d["id"], {"applicant": [], "previous_applicant": []})
+        results.append(d)
+    return results
+
+
+# ------------------------------------------------------------------
 # Record CRUD
 # ------------------------------------------------------------------
 
@@ -354,7 +525,16 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
                 "previous_location_id": previous_location_id,
             },
         )
-        return cursor.lastrowid
+        record_id = cursor.lastrowid
+        # Populate entity links
+        _parse_and_link_entities(
+            conn, record_id, record.get("applicants", ""), "applicant"
+        )
+        if record.get("previous_applicants"):
+            _parse_and_link_entities(
+                conn, record_id, record["previous_applicants"], "previous_applicant"
+            )
+        return record_id
     except sqlite3.IntegrityError:
         return None
 
@@ -481,11 +661,13 @@ def search_records(
 
     record_ids = [r["id"] for r in rows]
     endorsement_map = get_record_endorsements(conn, record_ids)
+    entity_map = get_record_entities(conn, record_ids)
 
     results = []
     for r in rows:
         d = enrich_record(dict(r))
         d["endorsements"] = endorsement_map.get(d["id"], [])
+        d["entities"] = entity_map.get(d["id"], {"applicant": [], "previous_applicant": []})
         results.append(d)
 
     return results, total
@@ -533,17 +715,26 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     stats["unique_licenses"] = conn.execute(
         "SELECT COUNT(DISTINCT license_number) FROM license_records"
     ).fetchone()[0]
+    try:
+        stats["unique_entities"] = conn.execute(
+            "SELECT COUNT(*) FROM entities"
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        stats["unique_entities"] = 0
     return stats
 
 
 def get_record_by_id(conn: sqlite3.Connection, record_id: int) -> dict | None:
-    """Fetch a single record with location data joined."""
+    """Fetch a single record with location data and entities joined."""
     row = conn.execute(
         f"{_RECORD_SELECT} WHERE lr.id = ?", (record_id,)
     ).fetchone()
     if not row:
         return None
-    return enrich_record(dict(row))
+    d = enrich_record(dict(row))
+    entity_map = get_record_entities(conn, [record_id])
+    d["entities"] = entity_map.get(record_id, {"applicant": [], "previous_applicant": []})
+    return d
 
 
 def get_related_records(conn: sqlite3.Connection, license_number: str, exclude_id: int) -> list[dict]:
