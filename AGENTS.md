@@ -87,7 +87,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - `name` (UNIQUE) — the name as received from the WSLCB source
 - `entity_type` — `'person'`, `'organization'`, or `''` (unknown); classified by heuristic at creation time
 - The first element of the semicolon-delimited `applicants` field (which equals `business_name`) is **excluded** — only the individual people/orgs behind the license are stored
-- `get_or_create_entity()` in `database.py` handles dedup by exact name match
+- `get_or_create_entity()` in `database.py` handles dedup by uppercased exact name match
 
 ### `record_entities` (junction table)
 - Links `license_records` ↔ `entities` with role and position

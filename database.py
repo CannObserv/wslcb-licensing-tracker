@@ -7,12 +7,12 @@ from pathlib import Path
 
 from endorsements import get_endorsement_options, get_record_endorsements
 
-# Patterns that indicate an organization rather than a person
+# Patterns that indicate an organization rather than a person.
+# Input is always uppercased by get_or_create_entity(), so no IGNORECASE needed.
 _ORG_PATTERNS = re.compile(
     r'\b(LLC|L\.?L\.?C\.?|INC\.?|CORP\.?|CORPORATION|TRUST|LTD\.?|LIMITED'
     r'|PARTNERS|PARTNERSHIP|HOLDINGS|GROUP|ENTERPRISE|ENTERPRISES'
-    r'|ASSOCIATION|FOUNDATION|COMPANY|CO\.|L\.?P\.?)\b',
-    re.IGNORECASE,
+    r'|ASSOCIATION|FOUNDATION|COMPANY|CO\.|L\.?P\.?)\b'
 )
 
 # All persistent data (DB + HTML snapshots) lives under DATA_DIR.
@@ -462,35 +462,7 @@ def get_entity_records(
     # Use DISTINCT to avoid duplicate rows when the same entity appears
     # in multiple roles (applicant + previous_applicant) on one record.
     rows = conn.execute(
-        f"""SELECT DISTINCT lr.id, lr.section_type, lr.record_date, lr.business_name,
-               lr.applicants, lr.license_type, lr.application_type,
-               lr.license_number, lr.contact_phone,
-               lr.previous_business_name, lr.previous_applicants,
-               lr.location_id, lr.previous_location_id,
-               lr.scraped_at, lr.created_at,
-               COALESCE(loc.raw_address, '') AS business_location,
-               COALESCE(loc.city, '') AS city,
-               COALESCE(loc.state, 'WA') AS state,
-               COALESCE(loc.zip_code, '') AS zip_code,
-               COALESCE(loc.address_line_1, '') AS address_line_1,
-               COALESCE(loc.address_line_2, '') AS address_line_2,
-               COALESCE(loc.std_city, '') AS std_city,
-               COALESCE(loc.std_state, '') AS std_state,
-               COALESCE(loc.std_zip, '') AS std_zip,
-               loc.address_validated_at,
-               COALESCE(ploc.raw_address, '') AS previous_business_location,
-               COALESCE(ploc.city, '') AS previous_city,
-               COALESCE(ploc.state, '') AS previous_state,
-               COALESCE(ploc.zip_code, '') AS previous_zip_code,
-               COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
-               COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
-               COALESCE(ploc.std_city, '') AS prev_std_city,
-               COALESCE(ploc.std_state, '') AS prev_std_state,
-               COALESCE(ploc.std_zip, '') AS prev_std_zip,
-               ploc.address_validated_at AS prev_address_validated_at
-            FROM license_records lr
-            LEFT JOIN locations loc ON loc.id = lr.location_id
-            LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
+        f"""SELECT DISTINCT {_RECORD_COLUMNS} {_RECORD_JOINS}
             JOIN record_entities re ON re.record_id = lr.id
             WHERE re.entity_id = ?
             ORDER BY lr.record_date DESC, lr.id DESC""",
@@ -580,38 +552,43 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
 # Queries (search, filters, stats)
 # ------------------------------------------------------------------
 
-# Base SELECT that joins locations for display
-_RECORD_SELECT = """
-    SELECT lr.id, lr.section_type, lr.record_date, lr.business_name,
-           lr.applicants, lr.license_type, lr.application_type,
-           lr.license_number, lr.contact_phone,
-           lr.previous_business_name, lr.previous_applicants,
-           lr.location_id, lr.previous_location_id,
-           lr.scraped_at, lr.created_at,
-           COALESCE(loc.raw_address, '') AS business_location,
-           COALESCE(loc.city, '') AS city,
-           COALESCE(loc.state, 'WA') AS state,
-           COALESCE(loc.zip_code, '') AS zip_code,
-           COALESCE(loc.address_line_1, '') AS address_line_1,
-           COALESCE(loc.address_line_2, '') AS address_line_2,
-           COALESCE(loc.std_city, '') AS std_city,
-           COALESCE(loc.std_state, '') AS std_state,
-           COALESCE(loc.std_zip, '') AS std_zip,
-           loc.address_validated_at,
-           COALESCE(ploc.raw_address, '') AS previous_business_location,
-           COALESCE(ploc.city, '') AS previous_city,
-           COALESCE(ploc.state, '') AS previous_state,
-           COALESCE(ploc.zip_code, '') AS previous_zip_code,
-           COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
-           COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
-           COALESCE(ploc.std_city, '') AS prev_std_city,
-           COALESCE(ploc.std_state, '') AS prev_std_state,
-           COALESCE(ploc.std_zip, '') AS prev_std_zip,
-           ploc.address_validated_at AS prev_address_validated_at
+# Column list and JOINs shared by all record queries.  Defined once
+# so that _RECORD_SELECT and get_entity_records() stay in sync.
+_RECORD_COLUMNS = """
+    lr.id, lr.section_type, lr.record_date, lr.business_name,
+    lr.applicants, lr.license_type, lr.application_type,
+    lr.license_number, lr.contact_phone,
+    lr.previous_business_name, lr.previous_applicants,
+    lr.location_id, lr.previous_location_id,
+    lr.scraped_at, lr.created_at,
+    COALESCE(loc.raw_address, '') AS business_location,
+    COALESCE(loc.city, '') AS city,
+    COALESCE(loc.state, 'WA') AS state,
+    COALESCE(loc.zip_code, '') AS zip_code,
+    COALESCE(loc.address_line_1, '') AS address_line_1,
+    COALESCE(loc.address_line_2, '') AS address_line_2,
+    COALESCE(loc.std_city, '') AS std_city,
+    COALESCE(loc.std_state, '') AS std_state,
+    COALESCE(loc.std_zip, '') AS std_zip,
+    loc.address_validated_at,
+    COALESCE(ploc.raw_address, '') AS previous_business_location,
+    COALESCE(ploc.city, '') AS previous_city,
+    COALESCE(ploc.state, '') AS previous_state,
+    COALESCE(ploc.zip_code, '') AS previous_zip_code,
+    COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
+    COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
+    COALESCE(ploc.std_city, '') AS prev_std_city,
+    COALESCE(ploc.std_state, '') AS prev_std_state,
+    COALESCE(ploc.std_zip, '') AS prev_std_zip,
+    ploc.address_validated_at AS prev_address_validated_at"""
+
+_RECORD_JOINS = """
     FROM license_records lr
     LEFT JOIN locations loc ON loc.id = lr.location_id
-    LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
-"""
+    LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id"""
+
+# Base SELECT that joins locations for display
+_RECORD_SELECT = f"SELECT {_RECORD_COLUMNS} {_RECORD_JOINS}"
 
 
 def search_records(
