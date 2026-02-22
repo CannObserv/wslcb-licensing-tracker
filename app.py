@@ -166,6 +166,9 @@ async def export_csv(
             "endorsements", "application_type", "license_number", "contact_phone",
             "city", "state", "zip_code", "std_city", "std_state", "std_zip",
             "previous_business_name", "previous_applicants",
+            "previous_business_location",
+            "prev_address_line_1", "prev_address_line_2",
+            "prev_std_city", "prev_std_state", "prev_std_zip",
         ]
         writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()

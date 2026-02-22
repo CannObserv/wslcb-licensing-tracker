@@ -164,6 +164,49 @@ def validate_record(
         return False
 
 
+def validate_previous_location(
+    conn: sqlite3.Connection,
+    record_id: int,
+    previous_business_location: str,
+    client: httpx.Client | None = None,
+) -> bool:
+    """Validate and update a record's previous (origin) address.
+
+    Used for CHANGE OF LOCATION records.  Similar to validate_record()
+    but updates the prev_* columns instead of the primary address columns.
+
+    Does NOT commit — the caller is responsible for committing.
+    """
+    if not previous_business_location or not previous_business_location.strip():
+        return False
+
+    result = standardize(previous_business_location, client=client)
+    if result is None:
+        return False
+
+    try:
+        conn.execute(
+            """UPDATE license_records SET
+                prev_address_line_1 = ?, prev_address_line_2 = ?,
+                prev_std_city = ?, prev_std_state = ?, prev_std_zip = ?,
+                prev_address_validated_at = ?
+            WHERE id = ?""",
+            (
+                result.get("address_line_1", ""),
+                result.get("address_line_2", ""),
+                result.get("city", ""),
+                result.get("state", ""),
+                result.get("zip_code", ""),
+                datetime.now(timezone.utc).isoformat(),
+                record_id,
+            ),
+        )
+        return True
+    except Exception as e:
+        print(f"WARNING: Failed to update previous location for record {record_id}: {e}", file=sys.stderr)
+        return False
+
+
 def _validate_batch(
     conn: sqlite3.Connection,
     rows: list,
@@ -212,11 +255,50 @@ def _validate_batch(
     return succeeded
 
 
+def _validate_previous_batch(
+    conn: sqlite3.Connection,
+    rows: list,
+    label: str,
+    batch_size: int = 100,
+) -> int:
+    """Validate a list of (id, previous_business_location) rows against the API.
+
+    Same as _validate_batch but calls validate_previous_location instead.
+    """
+    total = len(rows)
+    if total == 0:
+        print(f"No records to {label.lower()}")
+        return 0
+
+    print(f"{label} for {total} records")
+    succeeded = 0
+    attempted = 0
+
+    with httpx.Client(timeout=TIMEOUT) as client:
+        for row in rows:
+            record_id, prev_location = row[0], row[1]
+            ok = validate_previous_location(conn, record_id, prev_location, client=client)
+            attempted += 1
+            if ok:
+                succeeded += 1
+
+            if attempted % batch_size == 0:
+                conn.commit()
+                print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
+
+            time.sleep(0.05)
+
+    conn.commit()
+    print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
+    return succeeded
+
+
 def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
     """Backfill standardized addresses for all un-validated records.
 
     Queries all records where address_validated_at IS NULL and
     business_location is non-empty, then validates each one.
+    Also backfills previous locations for CHANGE OF LOCATION records.
     Commits and prints progress every batch_size records.
 
     Args:
@@ -238,7 +320,20 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
           AND business_location != ''"""
     ).fetchall()
 
-    return _validate_batch(conn, rows, "Backfilling", batch_size)
+    count = _validate_batch(conn, rows, "Backfilling", batch_size)
+
+    # Also backfill previous locations
+    prev_rows = conn.execute(
+        """SELECT id, previous_business_location FROM license_records
+        WHERE prev_address_validated_at IS NULL
+          AND previous_business_location IS NOT NULL
+          AND previous_business_location != ''"""
+    ).fetchall()
+
+    if prev_rows:
+        count += _validate_previous_batch(conn, prev_rows, "Backfilling previous locations", batch_size)
+
+    return count
 
 
 def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
@@ -246,6 +341,7 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
 
     Unlike backfill_addresses() which only processes un-validated records,
     this function re-validates every record with a non-empty business_location.
+    Also refreshes previous locations for CHANGE OF LOCATION records.
     Useful when the upstream address-validator service has been updated and
     standardized values may have changed.
 
@@ -270,4 +366,15 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
         WHERE business_location IS NOT NULL AND business_location != ''"""
     ).fetchall()
 
-    return _validate_batch(conn, rows, "Refreshing", batch_size)
+    count = _validate_batch(conn, rows, "Refreshing", batch_size)
+
+    # Also refresh previous locations
+    prev_rows = conn.execute(
+        """SELECT id, previous_business_location FROM license_records
+        WHERE previous_business_location IS NOT NULL AND previous_business_location != ''"""
+    ).fetchall()
+
+    if prev_rows:
+        count += _validate_previous_batch(conn, prev_rows, "Refreshing previous locations", batch_size)
+
+    return count

@@ -37,7 +37,12 @@
                         <div class="text-xs text-gray-400 truncate" title="Previous: {{ r.previous_business_name }}">← {{ r.previous_business_name }}</div>
                         {% endif %}
                     </td>
-                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.display_city }}{% if r.display_zip %}, {{ r.display_zip }}{% endif %}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
+                        <div class="truncate">{{ r.display_city }}{% if r.display_zip %}, {{ r.display_zip }}{% endif %}</div>
+                        {% if r.previous_business_location %}
+                        <div class="text-xs text-gray-400 truncate" title="Previous: {{ r.previous_business_location }}">← {{ r.display_previous_city }}{% if r.display_previous_zip %}, {{ r.display_previous_zip }}{% endif %}</div>
+                        {% endif %}
+                    </td>
                     <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
                         {% if r.endorsements %}
                         <div class="flex flex-wrap gap-0.5 max-h-12 overflow-hidden relative">

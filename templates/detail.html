@@ -43,6 +43,21 @@
                     {% endif %}
                 </dd>
             </div>
+            {% if record.previous_business_location %}
+            <div>
+                <dt class="text-sm font-medium text-gray-500">Previous Location</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                    {% if record.prev_address_line_1 %}
+                    <div>{{ record.prev_address_line_1 }}</div>
+                    {% if record.prev_address_line_2 %}<div>{{ record.prev_address_line_2 }}</div>{% endif %}
+                    <div>{{ record.prev_std_city }}, {{ record.prev_std_state }} {{ record.prev_std_zip }}</div>
+                    <div class="mt-1 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.previous_business_location }}</div>
+                    {% else %}
+                    {{ record.previous_business_location }}
+                    {% endif %}
+                </dd>
+            </div>
+            {% endif %}
             <div>
                 <dt class="text-sm font-medium text-gray-500">License Type</dt>
                 <dd class="mt-1 text-sm text-gray-900">
@@ -62,7 +77,39 @@
                 <dt class="text-sm font-medium text-gray-500">Contact Phone</dt>
                 <dd class="mt-1 text-sm text-gray-900">{{ record.contact_phone | phone_format }}</dd>
             </div>
-            {% if record.application_type == 'ASSUMPTION' and (record.previous_business_name or record.previous_applicants) %}
+            {% if record.application_type == 'CHANGE OF LOCATION' and record.previous_business_location %}
+            <div class="md:col-span-2">
+                <dt class="text-sm font-medium text-gray-500 mb-2">Change of Location Details</dt>
+                <dd class="mt-1">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Previous Location</div>
+                            <div class="text-sm font-medium text-gray-900">
+                                {% if record.prev_address_line_1 %}
+                                {{ record.prev_address_line_1 }}
+                                {% if record.prev_address_line_2 %}<br>{{ record.prev_address_line_2 }}{% endif %}
+                                <br>{{ record.prev_std_city }}, {{ record.prev_std_state }} {{ record.prev_std_zip }}
+                                {% else %}
+                                {{ record.previous_business_location }}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="bg-indigo-50 rounded-lg p-4 border border-indigo-200">
+                            <div class="text-xs font-semibold text-indigo-500 uppercase tracking-wide mb-2">New Location →</div>
+                            <div class="text-sm font-medium text-gray-900">
+                                {% if record.address_line_1 %}
+                                {{ record.address_line_1 }}
+                                {% if record.address_line_2 %}<br>{{ record.address_line_2 }}{% endif %}
+                                <br>{{ record.std_city }}, {{ record.std_state }} {{ record.std_zip }}
+                                {% else %}
+                                {{ record.business_location }}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </dd>
+            </div>
+            {% elif record.application_type == 'ASSUMPTION' and (record.previous_business_name or record.previous_applicants) %}
             <div class="md:col-span-2">
                 <dt class="text-sm font-medium text-gray-500 mb-2">Assumption Details</dt>
                 <dd class="mt-1">

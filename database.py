@@ -54,6 +54,16 @@ def init_db():
                 std_zip TEXT DEFAULT '',
                 previous_business_name TEXT DEFAULT '',
                 previous_applicants TEXT DEFAULT '',
+                previous_business_location TEXT DEFAULT '',
+                previous_city TEXT DEFAULT '',
+                previous_state TEXT DEFAULT '',
+                previous_zip_code TEXT DEFAULT '',
+                prev_address_line_1 TEXT DEFAULT '',
+                prev_address_line_2 TEXT DEFAULT '',
+                prev_std_city TEXT DEFAULT '',
+                prev_std_state TEXT DEFAULT '',
+                prev_std_zip TEXT DEFAULT '',
+                prev_address_validated_at TEXT,
                 address_validated_at TEXT,
                 scraped_at TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -102,6 +112,7 @@ def init_db():
                 license_number,
                 previous_business_name,
                 previous_applicants,
+                previous_business_location,
                 content='license_records',
                 content_rowid='id'
             );
@@ -111,22 +122,22 @@ def init_db():
             -- _rebuild_fts_if_needed() uses the same pattern on migration.
             DROP TRIGGER IF EXISTS license_records_ai;
             CREATE TRIGGER license_records_ai AFTER INSERT ON license_records BEGIN
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants);
+                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
+                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants, new.previous_business_location);
             END;
 
             DROP TRIGGER IF EXISTS license_records_ad;
             CREATE TRIGGER license_records_ad AFTER DELETE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants);
+                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
+                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants, old.previous_business_location);
             END;
 
             DROP TRIGGER IF EXISTS license_records_au;
             CREATE TRIGGER license_records_au AFTER UPDATE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants);
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants);
+                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
+                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name, old.previous_applicants, old.previous_business_location);
+                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location)
+                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name, new.previous_applicants, new.previous_business_location);
             END;
 
             CREATE TABLE IF NOT EXISTS scrape_log (
@@ -176,9 +187,29 @@ def init_db():
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # Migration: add change-of-location columns
+        for col, typedef in [
+            ("previous_business_location", "TEXT DEFAULT ''"),
+            ("previous_city", "TEXT DEFAULT ''"),
+            ("previous_state", "TEXT DEFAULT ''"),
+            ("previous_zip_code", "TEXT DEFAULT ''"),
+            ("prev_address_line_1", "TEXT DEFAULT ''"),
+            ("prev_address_line_2", "TEXT DEFAULT ''"),
+            ("prev_std_city", "TEXT DEFAULT ''"),
+            ("prev_std_state", "TEXT DEFAULT ''"),
+            ("prev_std_zip", "TEXT DEFAULT ''"),
+            ("prev_address_validated_at", "TEXT"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} {typedef}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Index on std_city for filter dropdown performance
         conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_city ON license_records(std_city)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_zip ON license_records(std_zip)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_prev_city ON license_records(previous_city)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_records_prev_std_city ON license_records(prev_std_city)")
 
         # Migration: rebuild FTS table when columns change (e.g. adding
         # previous_business_name and previous_applicants)
@@ -193,6 +224,7 @@ _FTS_COLUMNS = [
     "business_name", "business_location", "applicants",
     "license_type", "application_type", "license_number",
     "previous_business_name", "previous_applicants",
+    "previous_business_location",
 ]
 
 
@@ -268,6 +300,8 @@ def enrich_record(record: dict) -> dict:
     """
     record["display_city"] = record.get("std_city") or record.get("city") or ""
     record["display_zip"] = record.get("std_zip") or record.get("zip_code") or ""
+    record["display_previous_city"] = record.get("prev_std_city") or record.get("previous_city") or ""
+    record["display_previous_zip"] = record.get("prev_std_zip") or record.get("previous_zip_code") or ""
     return record
 
 
@@ -279,11 +313,15 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
                (section_type, record_date, business_name, business_location,
                 applicants, license_type, application_type, license_number,
                 contact_phone, city, state, zip_code,
-                previous_business_name, previous_applicants, scraped_at)
+                previous_business_name, previous_applicants,
+                previous_business_location, previous_city, previous_state, previous_zip_code,
+                scraped_at)
                VALUES (:section_type, :record_date, :business_name, :business_location,
                        :applicants, :license_type, :application_type, :license_number,
                        :contact_phone, :city, :state, :zip_code,
-                       :previous_business_name, :previous_applicants, :scraped_at)""",
+                       :previous_business_name, :previous_applicants,
+                       :previous_business_location, :previous_city, :previous_state, :previous_zip_code,
+                       :scraped_at)""",
             record,
         )
         return cursor.lastrowid
@@ -335,8 +373,11 @@ def search_records(
         params.append(endorsement)
 
     if city:
-        conditions.append("COALESCE(NULLIF(lr.std_city, ''), lr.city) = ?")
-        params.append(city)
+        conditions.append(
+            "(COALESCE(NULLIF(lr.std_city, ''), lr.city) = ?"
+            " OR COALESCE(NULLIF(lr.prev_std_city, ''), lr.previous_city) = ?)"
+        )
+        params.extend([city, city])
 
     if date_from:
         conditions.append("lr.record_date >= ?")
@@ -384,13 +425,14 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         ).fetchall()
         options[col] = [r[0] for r in rows]
 
-    # City filter uses standardized city with fallback to regex-parsed city
+    # City filter uses standardized city with fallback to regex-parsed city,
+    # including previous cities from CHANGE OF LOCATION records
     rows = conn.execute(
-        "SELECT DISTINCT COALESCE(NULLIF(std_city, ''), city) AS display_city "
-        "FROM license_records "
-        "WHERE COALESCE(NULLIF(std_city, ''), city) IS NOT NULL "
-        "AND COALESCE(NULLIF(std_city, ''), city) != '' "
-        "ORDER BY display_city"
+        "SELECT DISTINCT display_city FROM ("
+        "  SELECT COALESCE(NULLIF(std_city, ''), city) AS display_city FROM license_records"
+        "  UNION"
+        "  SELECT COALESCE(NULLIF(prev_std_city, ''), previous_city) AS display_city FROM license_records"
+        ") WHERE display_city IS NOT NULL AND display_city != '' ORDER BY display_city"
     ).fetchall()
     options["city"] = [r[0] for r in rows]
 
