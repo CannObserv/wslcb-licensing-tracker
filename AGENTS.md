@@ -33,7 +33,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` recovers ASSUMPTION and CHANGE OF LOCATION data from snapshots (`--backfill-assumptions` still accepted). |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
-| `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. `entity.html` is the entity detail page. |
+| `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
+| `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 
 ## Database Schema
 
@@ -257,6 +258,8 @@ Safe to re-run — only updates records that still have empty fields. The old `-
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the locations table but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
+- Entity names are uppercased at ingestion for consistency; the WSLCB source occasionally uses mixed case for the same person (e.g., `Cate Ryan` vs `CATE RYAN`)
+- The `applicants` and `previous_applicants` string columns on `license_records` are retained for backward compatibility with FTS indexing and CSV export; removal is deferred to a future phase
 - 7 ASSUMPTION records (IDs 2039–2046, all from 2026-01-21) have empty `business_name` / `previous_business_name` because they were scraped before the ASSUMPTION fix and no archived snapshot covers their date range (earliest snapshot is 2026-02-20)
 - Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
 - Consider adding: email/webhook alerts for new records matching saved searches

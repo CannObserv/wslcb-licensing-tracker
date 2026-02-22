@@ -20,6 +20,7 @@
         <div class="text-right text-sm text-gray-500">
             <div><span class="font-semibold text-gray-900">{{ records | length }}</span> record{{ 's' if records | length != 1 }}</div>
             <div><span class="font-semibold text-gray-900">{{ unique_licenses }}</span> license{{ 's' if unique_licenses != 1 }}</div>
+            <div class="text-xs text-gray-400 mt-1">First seen {{ entity.created_at[:10] }}</div>
         </div>
     </div>
 

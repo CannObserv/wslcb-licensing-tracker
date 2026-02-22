@@ -336,16 +336,23 @@ def _classify_entity_type(name: str) -> str:
 
 
 def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
-    """Return the entity id for *name*, creating if needed."""
+    """Return the entity id for *name*, creating if needed.
+
+    Names are uppercased for consistency — the WSLCB source is
+    predominantly uppercase but occasionally uses mixed case.
+    """
+    normalized = name.strip().upper()
+    if not normalized:
+        raise ValueError("Entity name must not be empty")
     row = conn.execute(
-        "SELECT id FROM entities WHERE name = ?", (name,)
+        "SELECT id FROM entities WHERE name = ?", (normalized,)
     ).fetchone()
     if row:
         return row[0]
-    entity_type = _classify_entity_type(name)
+    entity_type = _classify_entity_type(normalized)
     cur = conn.execute(
         "INSERT INTO entities (name, entity_type) VALUES (?, ?)",
-        (name, entity_type),
+        (normalized, entity_type),
     )
     return cur.lastrowid
 
@@ -452,8 +459,38 @@ def get_entity_records(
     conn: sqlite3.Connection, entity_id: int
 ) -> list[dict]:
     """Fetch all records associated with an entity, with location data."""
+    # Use DISTINCT to avoid duplicate rows when the same entity appears
+    # in multiple roles (applicant + previous_applicant) on one record.
     rows = conn.execute(
-        f"""{_RECORD_SELECT}
+        f"""SELECT DISTINCT lr.id, lr.section_type, lr.record_date, lr.business_name,
+               lr.applicants, lr.license_type, lr.application_type,
+               lr.license_number, lr.contact_phone,
+               lr.previous_business_name, lr.previous_applicants,
+               lr.location_id, lr.previous_location_id,
+               lr.scraped_at, lr.created_at,
+               COALESCE(loc.raw_address, '') AS business_location,
+               COALESCE(loc.city, '') AS city,
+               COALESCE(loc.state, 'WA') AS state,
+               COALESCE(loc.zip_code, '') AS zip_code,
+               COALESCE(loc.address_line_1, '') AS address_line_1,
+               COALESCE(loc.address_line_2, '') AS address_line_2,
+               COALESCE(loc.std_city, '') AS std_city,
+               COALESCE(loc.std_state, '') AS std_state,
+               COALESCE(loc.std_zip, '') AS std_zip,
+               loc.address_validated_at,
+               COALESCE(ploc.raw_address, '') AS previous_business_location,
+               COALESCE(ploc.city, '') AS previous_city,
+               COALESCE(ploc.state, '') AS previous_state,
+               COALESCE(ploc.zip_code, '') AS previous_zip_code,
+               COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
+               COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
+               COALESCE(ploc.std_city, '') AS prev_std_city,
+               COALESCE(ploc.std_state, '') AS prev_std_state,
+               COALESCE(ploc.std_zip, '') AS prev_std_zip,
+               ploc.address_validated_at AS prev_address_validated_at
+            FROM license_records lr
+            LEFT JOIN locations loc ON loc.id = lr.location_id
+            LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
             JOIN record_entities re ON re.record_id = lr.id
             WHERE re.entity_id = ?
             ORDER BY lr.record_date DESC, lr.id DESC""",
@@ -715,26 +752,20 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     stats["unique_licenses"] = conn.execute(
         "SELECT COUNT(DISTINCT license_number) FROM license_records"
     ).fetchone()[0]
-    try:
-        stats["unique_entities"] = conn.execute(
-            "SELECT COUNT(*) FROM entities"
-        ).fetchone()[0]
-    except sqlite3.OperationalError:
-        stats["unique_entities"] = 0
+    stats["unique_entities"] = conn.execute(
+        "SELECT COUNT(*) FROM entities"
+    ).fetchone()[0]
     return stats
 
 
 def get_record_by_id(conn: sqlite3.Connection, record_id: int) -> dict | None:
-    """Fetch a single record with location data and entities joined."""
+    """Fetch a single record with location data joined."""
     row = conn.execute(
         f"{_RECORD_SELECT} WHERE lr.id = ?", (record_id,)
     ).fetchone()
     if not row:
         return None
-    d = enrich_record(dict(row))
-    entity_map = get_record_entities(conn, [record_id])
-    d["entities"] = entity_map.get(record_id, {"applicant": [], "previous_applicant": []})
-    return d
+    return enrich_record(dict(row))
 
 
 def get_related_records(conn: sqlite3.Connection, license_number: str, exclude_id: int) -> list[dict]:

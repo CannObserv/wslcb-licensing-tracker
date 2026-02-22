@@ -157,7 +157,7 @@ The SQLite database and archived HTML snapshots are stored in `./data/` relative
 | `GET /search` | Search interface (HTML) or HTMX partial results |
 | `GET /record/{id}` | Record detail page |
 | `GET /export` | CSV export (accepts same query params as `/search`) |
-| `GET /entity/{id}` | Entity detail page (all records for a person/org) |
+| `GET /entity/{id}` | Entity detail page — lists all license records associated with a person or organization, with type badge (Person/Organization), record count, and distinct license count |
 | `GET /api/stats` | JSON summary statistics |
 
 ## License Type Normalization

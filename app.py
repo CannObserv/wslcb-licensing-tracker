@@ -130,9 +130,8 @@ async def record_detail(request: Request, record_id: int):
         # Attach endorsements and entities to record + related
         all_ids = [record["id"]] + [r["id"] for r in related]
         emap = get_record_endorsements(conn, all_ids)
-        record["endorsements"] = emap.get(record["id"], [])
         entmap = get_record_entities(conn, all_ids)
-        # record already has entities from get_record_by_id; refresh for consistency
+        record["endorsements"] = emap.get(record["id"], [])
         record["entities"] = entmap.get(record["id"], {"applicant": [], "previous_applicant": []})
         for r in related:
             r["endorsements"] = emap.get(r["id"], [])
