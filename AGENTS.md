@@ -20,7 +20,7 @@ license_records → locations (FK: location_id, previous_location_id)
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** Each `.py` file is self-contained. Aim to keep files under 300 lines where practical; `database.py` (~550 lines) and `scraper.py` (~440 lines) are larger due to query breadth and parsing logic respectively.
+- **Small modules.** Each `.py` file is self-contained. `database.py` and `scraper.py` are the largest due to query breadth and parsing logic respectively.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files

@@ -1,7 +1,7 @@
 """Backfill records from archived HTML snapshots into the database.
 
-Two-phase process:
-  1. **Ingest** — parse every snapshot and INSERT new records (dupes skipped).
+Single-pass over each snapshot, two-phase processing:
+  1. **Ingest** — INSERT new records (dupes skipped).
   2. **Repair** — fix broken records from pre-fix scrapes:
      - ASSUMPTION records with empty business names
      - CHANGE OF LOCATION records with missing locations
@@ -30,10 +30,11 @@ def _extract_snapshot_date(path: Path) -> str | None:
     return m.group(1) if m else None
 
 
-def _parse_snapshot(path: Path):
-    """Parse a snapshot file and yield (section_type, record_dict) pairs."""
+def _parse_snapshot(path: Path) -> list[dict]:
+    """Parse a snapshot file and return a list of record dicts."""
     html = path.read_text(encoding="utf-8")
     soup = BeautifulSoup(html, "lxml")
+    records = []
     for table in soup.find_all("table"):
         th = table.find("th")
         if not th:
@@ -42,142 +43,129 @@ def _parse_snapshot(path: Path):
         if header not in SECTION_MAP:
             continue
         section_type = SECTION_MAP[header]
-        for rec in parse_records_from_table(table, section_type):
-            yield section_type, rec
+        records.extend(parse_records_from_table(table, section_type))
+    return records
 
 
 # ── Phase 1: Ingest ──────────────────────────────────────────────────
 
-def _ingest_snapshots(conn, snapshots: list[Path]) -> tuple[int, int]:
-    """Insert new records from snapshots.  Returns (inserted, skipped)."""
-    total_inserted = 0
-    total_skipped = 0
-
-    for snap_path in snapshots:
-        snap_date = _extract_snapshot_date(snap_path)
-        snap_inserted = 0
-        snap_skipped = 0
-
-        for _section, rec in _parse_snapshot(snap_path):
-            rid = insert_record(conn, rec)
-            if rid is not None:
-                process_record(conn, rid, rec["license_type"], rec["section_type"])
-                snap_inserted += 1
-            else:
-                snap_skipped += 1
-
-        conn.commit()
-        total_inserted += snap_inserted
-        total_skipped += snap_skipped
-        print(f"  {snap_date}: +{snap_inserted} new, {snap_skipped} skipped")
-
-    return total_inserted, total_skipped
+def _ingest_records(conn, records: list[dict]) -> tuple[int, int]:
+    """Insert new records into the database.  Returns (inserted, skipped)."""
+    inserted = 0
+    skipped = 0
+    for rec in records:
+        rid = insert_record(conn, rec)
+        if rid is not None:
+            process_record(conn, rid, rec["license_type"], rec["section_type"])
+            inserted += 1
+        else:
+            skipped += 1
+    return inserted, skipped
 
 
 # ── Phase 2: Repair ──────────────────────────────────────────────────
 
-def _repair_assumptions(conn, snapshots: list[Path]) -> int:
+def _repair_assumptions(conn, records: list[dict]) -> int:
     """Fix ASSUMPTION records that have empty business names."""
     updated = 0
-    for snap_path in snapshots:
-        for _section, rec in _parse_snapshot(snap_path):
-            if rec["application_type"] != "ASSUMPTION":
-                continue
-            if not rec["business_name"] and not rec["previous_business_name"]:
-                continue
-            cursor = conn.execute(
-                """UPDATE license_records
-                   SET business_name = ?,
-                       applicants = ?,
-                       previous_business_name = ?,
-                       previous_applicants = ?
+    for rec in records:
+        if rec["application_type"] != "ASSUMPTION":
+            continue
+        if not rec["business_name"] and not rec["previous_business_name"]:
+            continue
+        cursor = conn.execute(
+            """UPDATE license_records
+               SET business_name = ?,
+                   applicants = ?,
+                   previous_business_name = ?,
+                   previous_applicants = ?
+               WHERE section_type = ?
+                 AND record_date = ?
+                 AND license_number = ?
+                 AND application_type = 'ASSUMPTION'
+                 AND (business_name = '' OR business_name IS NULL)""",
+            (
+                rec["business_name"],
+                rec["applicants"],
+                rec["previous_business_name"],
+                rec["previous_applicants"],
+                rec["section_type"],
+                rec["record_date"],
+                rec["license_number"],
+            ),
+        )
+        updated += cursor.rowcount
+    return updated
+
+
+def _repair_change_of_location(conn, records: list[dict]) -> int:
+    """Fix CHANGE OF LOCATION records with missing locations."""
+    updated = 0
+    for rec in records:
+        if rec["application_type"] != "CHANGE OF LOCATION":
+            continue
+        if not rec["business_location"]:
+            continue
+
+        loc_id = get_or_create_location(
+            conn, rec["business_location"],
+            city=rec["city"], state=rec["state"],
+            zip_code=rec["zip_code"],
+        )
+        prev_loc_id = get_or_create_location(
+            conn, rec["previous_business_location"],
+            city=rec["previous_city"],
+            state=rec["previous_state"],
+            zip_code=rec["previous_zip_code"],
+        )
+
+        # If a correct record already exists, delete the broken one
+        # instead of updating (avoids UNIQUE constraint violation).
+        existing = conn.execute(
+            """SELECT 1 FROM license_records
+               WHERE section_type = ?
+                 AND record_date = ?
+                 AND license_number = ?
+                 AND application_type = 'CHANGE OF LOCATION'""",
+            (rec["section_type"], rec["record_date"], rec["license_number"]),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """DELETE FROM license_records
                    WHERE section_type = ?
                      AND record_date = ?
                      AND license_number = ?
-                     AND application_type = 'ASSUMPTION'
-                     AND (business_name = '' OR business_name IS NULL)""",
+                     AND (application_type = '' OR application_type IS NULL)""",
+                (rec["section_type"], rec["record_date"], rec["license_number"]),
+            )
+        else:
+            cursor = conn.execute(
+                """UPDATE license_records
+                   SET location_id = ?,
+                       previous_location_id = ?,
+                       application_type = 'CHANGE OF LOCATION'
+                   WHERE section_type = ?
+                     AND record_date = ?
+                     AND license_number = ?
+                     AND location_id IS NULL
+                     AND (application_type = '' OR application_type IS NULL)""",
                 (
-                    rec["business_name"],
-                    rec["applicants"],
-                    rec["previous_business_name"],
-                    rec["previous_applicants"],
+                    loc_id,
+                    prev_loc_id,
                     rec["section_type"],
                     rec["record_date"],
                     rec["license_number"],
                 ),
             )
-            updated += cursor.rowcount
-        conn.commit()
-    return updated
-
-
-def _repair_change_of_location(conn, snapshots: list[Path]) -> int:
-    """Fix CHANGE OF LOCATION records with missing locations."""
-    updated = 0
-    for snap_path in snapshots:
-        for _section, rec in _parse_snapshot(snap_path):
-            if rec["application_type"] != "CHANGE OF LOCATION":
-                continue
-            if not rec["business_location"]:
+            if cursor.rowcount > 0:
+                updated += cursor.rowcount
                 continue
 
-            loc_id = get_or_create_location(
-                conn, rec["business_location"],
-                city=rec["city"], state=rec["state"],
-                zip_code=rec["zip_code"],
-            )
-            prev_loc_id = get_or_create_location(
-                conn, rec["previous_business_location"],
-                city=rec["previous_city"],
-                state=rec["previous_state"],
-                zip_code=rec["previous_zip_code"],
-            )
-
-            # If a correct record already exists, delete the broken one
-            # instead of updating (avoids UNIQUE constraint violation).
-            existing = conn.execute(
-                """SELECT 1 FROM license_records
-                   WHERE section_type = ?
-                     AND record_date = ?
-                     AND license_number = ?
-                     AND application_type = 'CHANGE OF LOCATION'""",
-                (rec["section_type"], rec["record_date"], rec["license_number"]),
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    """DELETE FROM license_records
-                       WHERE section_type = ?
-                         AND record_date = ?
-                         AND license_number = ?
-                         AND (application_type = '' OR application_type IS NULL)""",
-                    (rec["section_type"], rec["record_date"], rec["license_number"]),
-                )
-            else:
-                cursor = conn.execute(
-                    """UPDATE license_records
-                       SET location_id = ?,
-                           previous_location_id = ?,
-                           application_type = 'CHANGE OF LOCATION'
-                       WHERE section_type = ?
-                         AND record_date = ?
-                         AND license_number = ?
-                         AND location_id IS NULL
-                         AND (application_type = '' OR application_type IS NULL)""",
-                    (
-                        loc_id,
-                        prev_loc_id,
-                        rec["section_type"],
-                        rec["record_date"],
-                        rec["license_number"],
-                    ),
-                )
-                if cursor.rowcount > 0:
-                    updated += cursor.rowcount
-                    conn.commit()
-                    continue
-
-            # Also fix records that have a location but are
-            # missing previous_location_id
+        # Backfill previous_location_id on records that have a location
+        # but are missing the previous address.  Skip when the snapshot
+        # doesn't supply one either (prev_loc_id is None) — there's
+        # nothing to repair.
+        if prev_loc_id is not None:
             cursor = conn.execute(
                 """UPDATE license_records
                    SET previous_location_id = ?
@@ -194,7 +182,6 @@ def _repair_change_of_location(conn, snapshots: list[Path]) -> int:
                 ),
             )
             updated += cursor.rowcount
-        conn.commit()
     return updated
 
 
@@ -211,27 +198,39 @@ def backfill_from_snapshots():
 
     print(f"Found {len(snapshots)} snapshot(s) to process")
 
+    total_inserted = 0
+    total_skipped = 0
+    assumption_fixed = 0
+    col_fixed = 0
+
     with get_db() as conn:
         seed_endorsements(conn)
 
-        # Phase 1: insert new records
-        print("\n── Phase 1: Ingest new records ──")
-        inserted, skipped = _ingest_snapshots(conn, snapshots)
-        print(f"Inserted {inserted} new records ({skipped} duplicates skipped)")
+        for snap_path in snapshots:
+            snap_date = _extract_snapshot_date(snap_path)
+            records = _parse_snapshot(snap_path)
 
-        # Phase 2: repair broken records
-        print("\n── Phase 2: Repair broken records ──")
-        assumption_fixed = _repair_assumptions(conn, snapshots)
-        col_fixed = _repair_change_of_location(conn, snapshots)
-        print(f"Repaired {assumption_fixed} ASSUMPTION record(s)")
-        print(f"Repaired {col_fixed} CHANGE OF LOCATION record(s)")
+            # Phase 1: insert new records
+            inserted, skipped = _ingest_records(conn, records)
+            conn.commit()
+
+            # Phase 2: repair broken records
+            assumption_fixed += _repair_assumptions(conn, records)
+            col_fixed += _repair_change_of_location(conn, records)
+            conn.commit()
+
+            total_inserted += inserted
+            total_skipped += skipped
+            print(f"  {snap_date}: +{inserted} new, {skipped} skipped")
 
         # Discover any new code→endorsement mappings
         learned = discover_code_mappings(conn)
         if learned:
             print(f"\nDiscovered {len(learned)} new code mapping(s): {list(learned.keys())}")
 
-    print("\nDone.")
+    print(f"\nDone! Inserted {total_inserted} new records ({total_skipped} duplicates skipped).")
+    if assumption_fixed or col_fixed:
+        print(f"Repaired {assumption_fixed} ASSUMPTION + {col_fixed} CHANGE OF LOCATION record(s).")
 
 
 if __name__ == "__main__":
