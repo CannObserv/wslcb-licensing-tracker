@@ -79,7 +79,6 @@ def init_db():
                 PRIMARY KEY (code, endorsement_id)
             );
 
-
             CREATE TABLE IF NOT EXISTS scrape_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 started_at TEXT NOT NULL,
@@ -150,8 +149,6 @@ def init_db():
         conn.commit()
 
 
-
-
 # ------------------------------------------------------------------
 # FTS5 full-text search
 # ------------------------------------------------------------------
@@ -214,6 +211,7 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
             DROP TRIGGER IF EXISTS license_records_ai;
             DROP TRIGGER IF EXISTS license_records_ad;
             DROP TRIGGER IF EXISTS license_records_au;
+            DROP TRIGGER IF EXISTS license_records_bu;
             DROP TRIGGER IF EXISTS license_records_bd;
             DROP TABLE IF EXISTS license_records_fts;
         """)
@@ -228,10 +226,10 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
     """)
 
     # Triggers keep FTS in sync with license_records.
-    # INSERT and UPDATE use AFTER triggers that read from the view.
-    # DELETE uses a BEFORE trigger because the view JOIN would return
-    # nothing after the row is gone — we need the old values to issue
-    # the FTS 'delete' command.
+    # INSERT uses an AFTER trigger that reads new values from the view.
+    # UPDATE and DELETE use BEFORE triggers so the view is read *before*
+    # the row changes — the 'delete' command needs the old indexed values.
+    # UPDATE also has an AFTER trigger to insert the new values.
     new_vals = ", ".join(
         f"(SELECT {c} FROM license_records_fts_content WHERE id = new.id)"
         for c in _FTS_COLUMNS
@@ -244,10 +242,13 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
             VALUES (new.id, {new_vals});
         END;
 
+        DROP TRIGGER IF EXISTS license_records_bu;
         DROP TRIGGER IF EXISTS license_records_au;
-        CREATE TRIGGER license_records_au AFTER UPDATE ON license_records BEGIN
+        CREATE TRIGGER license_records_bu BEFORE UPDATE ON license_records BEGIN
             INSERT INTO license_records_fts(license_records_fts, rowid, {cols})
             SELECT 'delete', old.id, {cols} FROM license_records_fts_content WHERE id = old.id;
+        END;
+        CREATE TRIGGER license_records_au AFTER UPDATE ON license_records BEGIN
             INSERT INTO license_records_fts(rowid, {cols})
             VALUES (new.id, {new_vals});
         END;
@@ -456,13 +457,17 @@ def search_records(
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-    # Count query uses same JOINs (needed for city filter)
-    count_sql = f"""
-        SELECT COUNT(*) FROM license_records lr
-        LEFT JOIN locations loc ON loc.id = lr.location_id
-        LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
-        {where}
-    """
+    # Only JOIN locations in the count query when needed (city filter).
+    # Without JOINs, SQLite can use a covering index scan.
+    if city:
+        count_sql = f"""
+            SELECT COUNT(*) FROM license_records lr
+            LEFT JOIN locations loc ON loc.id = lr.location_id
+            LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
+            {where}
+        """
+    else:
+        count_sql = f"SELECT COUNT(*) FROM license_records lr {where}"
     total = conn.execute(count_sql, params).fetchone()[0]
 
     offset = (page - 1) * per_page

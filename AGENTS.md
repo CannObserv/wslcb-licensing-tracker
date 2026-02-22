@@ -20,7 +20,7 @@ license_records → locations (FK: location_id, previous_location_id)
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** Each `.py` file is self-contained and ideally under 300 lines.
+- **Small modules.** Each `.py` file is self-contained. Aim to keep files under 300 lines where practical; `database.py` (~550 lines) and `scraper.py` (~440 lines) are larger due to query breadth and parsing logic respectively.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files
@@ -125,7 +125,7 @@ URL: `https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp`
 - New applications include an "Applicant(s):" field; approved/discontinued do not
 - License types in approved/discontinued sections appear as numeric codes (e.g., "349,") — these are resolved to text names by the endorsement normalization layer
 - ASSUMPTION records use variant field labels: `Current Business Name:`, `New Business Name:`, `Current Applicant(s):`, `New Applicant(s):` instead of the standard `Business Name:` / `Applicant(s):`
-- CHANGE OF LOCATION records use `Current Business Location:` / `New Business Location:` instead of `Business Location:` (captured into `previous_business_location` / `business_location`)
+- CHANGE OF LOCATION records use `Current Business Location:` / `New Business Location:` instead of `Business Location:` (stored via `previous_location_id` / `location_id` FKs to the `locations` table)
 - CHANGE OF LOCATION records in the source have a `\Application Type:` label (with leading backslash) instead of `Application Type:`
 - The page carries a banner about "known data transfer issues" — expect occasional anomalies
 
@@ -243,5 +243,5 @@ Safe to re-run — only updates records that still have empty fields. The old `-
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the locations table but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
 - 7 ASSUMPTION records (IDs 2039–2046, all from 2026-01-21) have empty `business_name` / `previous_business_name` because they were scraped before the ASSUMPTION fix and no archived snapshot covers their date range (earliest snapshot is 2026-02-20)
-- Approved-section CHANGE OF LOCATION records lack `previous_business_location` because the source page only provides `Business Location:` (the new address) for approved records
+- Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
 - Consider adding: email/webhook alerts for new records matching saved searches
