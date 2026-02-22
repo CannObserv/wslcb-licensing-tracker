@@ -85,10 +85,18 @@ def parse_records_from_table(table, section_type: str) -> list[dict]:
                 "city": "",
                 "state": "WA",
                 "zip_code": "",
+                "previous_business_name": "",
+                "previous_applicants": "",
                 "scraped_at": scraped_at,
             }
         elif label == "Business Name:":
             current["business_name"] = value
+        elif label == "New Business Name:":
+            # ASSUMPTION records: buyer's business name
+            current["business_name"] = value
+        elif label == "Current Business Name:":
+            # ASSUMPTION records: seller's business name
+            current["previous_business_name"] = value
         elif label == "Business Location:":
             current["business_location"] = value
             city, state, zip_code = parse_location(value)
@@ -97,6 +105,12 @@ def parse_records_from_table(table, section_type: str) -> list[dict]:
             current["zip_code"] = zip_code
         elif label == "Applicant(s):":
             current["applicants"] = value
+        elif label == "New Applicant(s):":
+            # ASSUMPTION records: buyer's applicants
+            current["applicants"] = value
+        elif label == "Current Applicant(s):":
+            # ASSUMPTION records: seller's applicants
+            current["previous_applicants"] = value
         elif label == "License Type:":
             current["license_type"] = value
         elif label == "Application Type:":
@@ -259,6 +273,73 @@ def scrape():
             raise
 
 
+def backfill_assumptions():
+    """Backfill ASSUMPTION records from archived HTML snapshots.
+
+    Parses every archived snapshot, extracts ASSUMPTION records, and
+    updates existing DB rows that have empty business_name (the telltale
+    sign of a pre-fix scrape).
+    """
+    init_db()
+    snapshots = sorted(DATA_DIR.glob("**/*.html"))
+    if not snapshots:
+        print("No archived snapshots found.")
+        return
+
+    print(f"Found {len(snapshots)} snapshot(s) to scan for ASSUMPTION records")
+    total_updated = 0
+
+    with get_db() as conn:
+        for snap_path in snapshots:
+            html = snap_path.read_text(encoding="utf-8")
+            soup = BeautifulSoup(html, "lxml")
+
+            all_tables = soup.find_all("table")
+            for t in all_tables:
+                th = t.find("th")
+                if not th:
+                    continue
+                header = th.get_text(strip=True).replace('\xa0', ' ')
+                if header not in SECTION_MAP:
+                    continue
+                section_type = SECTION_MAP[header]
+                records = parse_records_from_table(t, section_type)
+
+                for rec in records:
+                    if rec["application_type"] != "ASSUMPTION":
+                        continue
+                    if not rec["business_name"] and not rec["previous_business_name"]:
+                        continue  # Still empty even after new parsing — skip
+
+                    cursor = conn.execute(
+                        """UPDATE license_records
+                           SET business_name = ?,
+                               applicants = ?,
+                               previous_business_name = ?,
+                               previous_applicants = ?
+                           WHERE section_type = ?
+                             AND record_date = ?
+                             AND license_number = ?
+                             AND application_type = 'ASSUMPTION'
+                             AND (business_name = '' OR business_name IS NULL)""",
+                        (
+                            rec["business_name"],
+                            rec["applicants"],
+                            rec["previous_business_name"],
+                            rec["previous_applicants"],
+                            rec["section_type"],
+                            rec["record_date"],
+                            rec["license_number"],
+                        ),
+                    )
+                    if cursor.rowcount > 0:
+                        total_updated += cursor.rowcount
+
+            conn.commit()
+
+        print(f"Updated {total_updated} ASSUMPTION record(s) from archived snapshots.")
+
+
 if __name__ == "__main__":
     if "--refresh-addresses" in sys.argv:
         init_db()
@@ -268,6 +349,8 @@ if __name__ == "__main__":
         init_db()
         with get_db() as conn:
             backfill_addresses(conn)
+    elif "--backfill-assumptions" in sys.argv:
+        backfill_assumptions()
     else:
         # "scrape" is accepted as an explicit positional arg (used by
         # the wslcb-task@ systemd template) but is not required.

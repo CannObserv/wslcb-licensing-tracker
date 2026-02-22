@@ -31,7 +31,12 @@
                             {{ r.section_type | section_label }}
                         </span>
                     </td>
-                    <td class="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs truncate">{{ r.business_name }}</td>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs">
+                        <div class="truncate">{{ r.business_name }}</div>
+                        {% if r.previous_business_name %}
+                        <div class="text-xs text-gray-400 truncate" title="Previous: {{ r.previous_business_name }}">← {{ r.previous_business_name }}</div>
+                        {% endif %}
+                    </td>
                     <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.display_city }}{% if r.display_zip %}, {{ r.display_zip }}{% endif %}</td>
                     <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
                         {% if r.endorsements %}

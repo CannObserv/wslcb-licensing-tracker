@@ -52,6 +52,8 @@ def init_db():
                 std_city TEXT DEFAULT '',
                 std_state TEXT DEFAULT '',
                 std_zip TEXT DEFAULT '',
+                previous_business_name TEXT DEFAULT '',
+                previous_applicants TEXT DEFAULT '',
                 address_validated_at TEXT,
                 scraped_at TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -98,25 +100,26 @@ def init_db():
                 license_type,
                 application_type,
                 license_number,
+                previous_business_name,
                 content='license_records',
                 content_rowid='id'
             );
 
             CREATE TRIGGER IF NOT EXISTS license_records_ai AFTER INSERT ON license_records BEGIN
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number);
+                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
+                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name);
             END;
 
             CREATE TRIGGER IF NOT EXISTS license_records_ad AFTER DELETE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number);
+                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
+                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name);
             END;
 
             CREATE TRIGGER IF NOT EXISTS license_records_au AFTER UPDATE ON license_records BEGIN
-                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number)
-                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number);
-                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number)
-                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number);
+                INSERT INTO license_records_fts(license_records_fts, rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
+                VALUES ('delete', old.id, old.business_name, old.business_location, old.applicants, old.license_type, old.application_type, old.license_number, old.previous_business_name);
+                INSERT INTO license_records_fts(rowid, business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name)
+                VALUES (new.id, new.business_name, new.business_location, new.applicants, new.license_type, new.application_type, new.license_number, new.previous_business_name);
             END;
 
             CREATE TABLE IF NOT EXISTS scrape_log (
@@ -156,11 +159,98 @@ def init_db():
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # Migration: add assumption-related columns
+        for col, typedef in [
+            ("previous_business_name", "TEXT DEFAULT ''"),
+            ("previous_applicants", "TEXT DEFAULT ''"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} {typedef}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Index on std_city for filter dropdown performance
         conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_city ON license_records(std_city)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_records_std_zip ON license_records(std_zip)")
 
+        # Migration: rebuild FTS table to include previous_business_name
+        # Check if FTS already has the column by inspecting its structure
+        _rebuild_fts_if_needed(conn)
+
         conn.commit()
+
+
+# Columns that should be in the FTS table (in order).  Used by the
+# migration to detect when the FTS schema is stale and rebuild it.
+_FTS_COLUMNS = [
+    "business_name", "business_location", "applicants",
+    "license_type", "application_type", "license_number",
+    "previous_business_name",
+]
+
+
+def _rebuild_fts_if_needed(conn: sqlite3.Connection) -> None:
+    """Rebuild the FTS5 virtual table if its column set is outdated.
+
+    FTS5 tables can't be ALTERed, so we drop and recreate when the
+    expected column list doesn't match the live table.
+    """
+    # Introspect current FTS columns via a zero-result query
+    try:
+        cur = conn.execute("SELECT * FROM license_records_fts LIMIT 0")
+        current_cols = [desc[0] for desc in cur.description]
+    except sqlite3.OperationalError:
+        # Table doesn't exist yet — will be created by the main schema
+        return
+
+    if current_cols == _FTS_COLUMNS:
+        return  # Already up-to-date
+
+    print(f"Rebuilding FTS index (columns {current_cols} → {_FTS_COLUMNS})")
+
+    # Drop old triggers, table, then recreate
+    conn.executescript("""
+        DROP TRIGGER IF EXISTS license_records_ai;
+        DROP TRIGGER IF EXISTS license_records_ad;
+        DROP TRIGGER IF EXISTS license_records_au;
+        DROP TABLE IF EXISTS license_records_fts;
+    """)
+
+    cols = ", ".join(_FTS_COLUMNS)
+    new_cols = ", ".join(f"new.{c}" for c in _FTS_COLUMNS)
+    old_cols = ", ".join(f"old.{c}" for c in _FTS_COLUMNS)
+
+    conn.executescript(f"""
+        CREATE VIRTUAL TABLE license_records_fts USING fts5(
+            {cols},
+            content='license_records',
+            content_rowid='id'
+        );
+
+        CREATE TRIGGER license_records_ai AFTER INSERT ON license_records BEGIN
+            INSERT INTO license_records_fts(rowid, {cols})
+            VALUES (new.id, {new_cols});
+        END;
+
+        CREATE TRIGGER license_records_ad AFTER DELETE ON license_records BEGIN
+            INSERT INTO license_records_fts(license_records_fts, rowid, {cols})
+            VALUES ('delete', old.id, {old_cols});
+        END;
+
+        CREATE TRIGGER license_records_au AFTER UPDATE ON license_records BEGIN
+            INSERT INTO license_records_fts(license_records_fts, rowid, {cols})
+            VALUES ('delete', old.id, {old_cols});
+            INSERT INTO license_records_fts(rowid, {cols})
+            VALUES (new.id, {new_cols});
+        END;
+    """)
+
+    # Repopulate from existing data
+    conn.execute(f"""
+        INSERT INTO license_records_fts(rowid, {cols})
+        SELECT id, {cols} FROM license_records
+    """)
+    print("FTS index rebuilt.")
 
 
 def enrich_record(record: dict) -> dict:
@@ -181,10 +271,12 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
             """INSERT INTO license_records
                (section_type, record_date, business_name, business_location,
                 applicants, license_type, application_type, license_number,
-                contact_phone, city, state, zip_code, scraped_at)
+                contact_phone, city, state, zip_code,
+                previous_business_name, previous_applicants, scraped_at)
                VALUES (:section_type, :record_date, :business_name, :business_location,
                        :applicants, :license_type, :application_type, :license_number,
-                       :contact_phone, :city, :state, :zip_code, :scraped_at)""",
+                       :contact_phone, :city, :state, :zip_code,
+                       :previous_business_name, :previous_applicants, :scraped_at)""",
             record,
         )
         return cursor.lastrowid
