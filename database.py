@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -711,8 +712,18 @@ def search_records(
     return _hydrate_records(conn, rows), total
 
 
+# In-process cache for filter dropdown options.  The underlying data
+# changes at most twice daily (scraper runs), so a short TTL avoids
+# running the ~10 ms city-list query on every search page load.
+_filter_cache: dict = {}  # {"data": ..., "ts": float}
+_FILTER_CACHE_TTL = 300  # seconds (5 minutes)
+
+
 def get_filter_options(conn: sqlite3.Connection) -> dict:
-    """Get distinct values for filter dropdowns."""
+    """Get distinct values for filter dropdowns (cached, 5-min TTL)."""
+    now = time.monotonic()
+    if _filter_cache and now - _filter_cache["ts"] < _FILTER_CACHE_TTL:
+        return _filter_cache["data"]
     options: dict = {}
     for col in ["section_type", "application_type"]:
         rows = conn.execute(
@@ -736,6 +747,8 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
     options["city"] = [r[0] for r in rows]
 
     options["endorsement"] = get_endorsement_options(conn)
+    _filter_cache["data"] = options
+    _filter_cache["ts"] = now
     return options
 
 
