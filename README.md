@@ -58,6 +58,15 @@ Each record includes:
 | Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (CDN) |
 | Scheduling | systemd timer (twice-daily) |
 
+## Logging
+
+All modules use Python’s `logging` module via a centralized configuration in `log_config.py`. Output format is auto-detected:
+
+- **Interactive terminal (TTY):** human-readable with timestamps — `2026-02-23 04:18:47  INFO      scraper  Starting scrape of ...`
+- **systemd / pipe (non-TTY):** JSON lines via [python-json-logger](https://github.com/madzak/python-json-logger) — `{"timestamp": "2026-02-23T04:18:47", "level": "INFO", "name": "scraper", "message": "Starting scrape of ..."}`
+
+Uvicorn’s access and error logs are routed through the same formatter for consistent output.
+
 ## Project Structure
 
 ```
@@ -66,6 +75,7 @@ wslcb-licensing-tracker/
 ├── database.py             # SQLite schema, queries, FTS5 full-text search
 ├── migrate_locations.py    # One-time migration: inline address columns → locations table
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
+├── log_config.py           # Centralized logging configuration
 ├── address_validator.py    # Address validation API client
 ├── scraper.py              # WSLCB page scraper (twice-daily)
 ├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots
@@ -105,7 +115,7 @@ cd wslcb-licensing-tracker
 
 python3 -m venv venv
 source venv/bin/activate
-pip install fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart
+pip install fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart python-json-logger
 ```
 
 ### Run the initial scrape

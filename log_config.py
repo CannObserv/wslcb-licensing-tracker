@@ -19,6 +19,8 @@ and use ``logger.info()`` / ``logger.warning()`` / etc. instead of
 import logging
 import sys
 
+_configured = False
+
 
 def setup_logging(level: int = logging.INFO) -> None:
     """Configure the root logger for the application.
@@ -28,12 +30,11 @@ def setup_logging(level: int = logging.INFO) -> None:
     Args:
         level: Minimum log level (default ``logging.INFO``).
     """
-    root = logging.getLogger()
-
-    # Guard against duplicate setup (e.g. tests, reimport)
-    if getattr(root, "_wslcb_configured", False):
+    global _configured
+    if _configured:
         return
 
+    root = logging.getLogger()
     root.setLevel(level)
 
     handler = logging.StreamHandler(sys.stderr)
@@ -57,4 +58,15 @@ def setup_logging(level: int = logging.INFO) -> None:
 
     handler.setFormatter(formatter)
     root.addHandler(handler)
-    root._wslcb_configured = True  # type: ignore[attr-defined]
+
+    # Reclaim uvicorn's loggers so they flow through our root handler.
+    # Uvicorn's default dictConfig creates separate handlers on
+    # 'uvicorn', 'uvicorn.access', and 'uvicorn.error' with
+    # propagate=False.  Clearing those and re-enabling propagation
+    # gives us consistent formatting (including JSON under systemd).
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        uv_logger = logging.getLogger(name)
+        uv_logger.handlers.clear()
+        uv_logger.propagate = True
+
+    _configured = True

@@ -3,11 +3,8 @@ import csv
 import io
 import logging
 from contextlib import asynccontextmanager
-
-from log_config import setup_logging
-
-logger = logging.getLogger(__name__)
 from urllib.parse import urlencode
+
 from fastapi import FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -22,6 +19,9 @@ from database import (
 from endorsements import (
     seed_endorsements, backfill, get_record_endorsements,
 )
+from log_config import setup_logging
+
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -189,6 +189,7 @@ data/
   - `wslcb-task@--backfill-addresses.service` — backfill un-validated addresses
   - `wslcb-task@--backfill-from-snapshots.service` — recover ASSUMPTION/CHANGE OF LOCATION data from archived HTML
 - After changing service files: `sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
+- Under systemd (non-TTY), all log output is JSON lines — structured fields (`timestamp`, `level`, `name`, `message`) are captured by the journal. Uvicorn access/error logs are routed through the same formatter.
 - All persistent data lives in `./data/`
 - Venv shebangs are absolute paths — if the project directory moves, recreate the venv
 
