@@ -199,6 +199,7 @@ data/
 - Remote: `git@github.com:CannObserv/wslcb-licensing-tracker.git`
 - Single `main` branch for now
 - Write clear commit messages; group related changes
+- **When implementing a GitHub issue**, prefix every commit message with `#<number>: ` (e.g., `#1: Implement structured logging`). GitHub auto-links these to the issue. Include `(closes #<number>)` in the final commit of the series to auto-close the issue on push.
 
 ## Address Validation
 
