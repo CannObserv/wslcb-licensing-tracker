@@ -753,29 +753,41 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:
-    """Get summary statistics."""
-    stats: dict = {}
-    stats["total_records"] = conn.execute("SELECT COUNT(*) FROM license_records").fetchone()[0]
-    for st in ["new_application", "approved", "discontinued"]:
-        stats[f"{st}_count"] = conn.execute(
-            "SELECT COUNT(*) FROM license_records WHERE section_type = ?", (st,)
-        ).fetchone()[0]
-    stats["date_range"] = conn.execute(
-        "SELECT MIN(record_date), MAX(record_date) FROM license_records"
-    ).fetchone()
-    stats["last_scrape"] = conn.execute(
-        "SELECT * FROM scrape_log ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    stats["unique_businesses"] = conn.execute(
-        "SELECT COUNT(DISTINCT business_name) FROM license_records"
-    ).fetchone()[0]
-    stats["unique_licenses"] = conn.execute(
-        "SELECT COUNT(DISTINCT license_number) FROM license_records"
-    ).fetchone()[0]
-    stats["unique_entities"] = conn.execute(
-        "SELECT COUNT(*) FROM entities"
-    ).fetchone()[0]
-    return stats
+    """Get summary statistics.
+
+    Cheap aggregates (COUNT, SUM, MIN, MAX) are combined into a single
+    query.  The two COUNT(DISTINCT ...) calls remain separate because
+    combining them forces a slower full-table scan in SQLite.
+    """
+    agg = conn.execute("""
+        SELECT
+            COUNT(*) AS total_records,
+            SUM(CASE WHEN section_type = 'new_application' THEN 1 ELSE 0 END) AS new_application_count,
+            SUM(CASE WHEN section_type = 'approved' THEN 1 ELSE 0 END) AS approved_count,
+            SUM(CASE WHEN section_type = 'discontinued' THEN 1 ELSE 0 END) AS discontinued_count,
+            MIN(record_date) AS min_date,
+            MAX(record_date) AS max_date
+        FROM license_records
+    """).fetchone()
+    return {
+        "total_records": agg["total_records"],
+        "new_application_count": agg["new_application_count"],
+        "approved_count": agg["approved_count"],
+        "discontinued_count": agg["discontinued_count"],
+        "date_range": (agg["min_date"], agg["max_date"]),
+        "unique_businesses": conn.execute(
+            "SELECT COUNT(DISTINCT business_name) FROM license_records"
+        ).fetchone()[0],
+        "unique_licenses": conn.execute(
+            "SELECT COUNT(DISTINCT license_number) FROM license_records"
+        ).fetchone()[0],
+        "unique_entities": conn.execute(
+            "SELECT COUNT(*) FROM entities"
+        ).fetchone()[0],
+        "last_scrape": conn.execute(
+            "SELECT * FROM scrape_log ORDER BY id DESC LIMIT 1"
+        ).fetchone(),
+    }
 
 
 def get_record_by_id(conn: sqlite3.Connection, record_id: int) -> dict | None:
