@@ -471,16 +471,7 @@ def get_entity_records(
             ORDER BY lr.record_date DESC, lr.id DESC""",
         (entity_id,),
     ).fetchall()
-    record_ids = [r["id"] for r in rows]
-    endorsement_map = get_record_endorsements(conn, record_ids)
-    entity_map = get_record_entities(conn, record_ids)
-    results = []
-    for r in rows:
-        d = enrich_record(dict(r))
-        d["endorsements"] = endorsement_map.get(d["id"], [])
-        d["entities"] = entity_map.get(d["id"], {"applicant": [], "previous_applicant": []})
-        results.append(d)
-    return results
+    return _hydrate_records(conn, rows)
 
 
 # ------------------------------------------------------------------
@@ -498,6 +489,30 @@ def enrich_record(record: dict) -> dict:
     record["display_previous_city"] = record.get("prev_std_city") or record.get("previous_city") or ""
     record["display_previous_zip"] = record.get("prev_std_zip") or record.get("previous_zip_code") or ""
     return record
+
+
+def _hydrate_records(
+    conn: sqlite3.Connection, rows: list,
+) -> list[dict]:
+    """Enrich DB rows/dicts with endorsements, entities, and display fields.
+
+    Accepts sqlite3.Row objects or plain dicts.  Shared by
+    search_records(), get_entity_records(), and app.py record_detail().
+    """
+    if not rows:
+        return []
+    record_ids = [r["id"] for r in rows]
+    endorsement_map = get_record_endorsements(conn, record_ids)
+    entity_map = get_record_entities(conn, record_ids)
+    results = []
+    for r in rows:
+        d = enrich_record(r if isinstance(r, dict) else dict(r))
+        d["endorsements"] = endorsement_map.get(d["id"], [])
+        d["entities"] = entity_map.get(
+            d["id"], {"applicant": [], "previous_applicant": []}
+        )
+        results.append(d)
+    return results
 
 
 def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
@@ -693,18 +708,7 @@ def search_records(
         params + [per_page, offset],
     ).fetchall()
 
-    record_ids = [r["id"] for r in rows]
-    endorsement_map = get_record_endorsements(conn, record_ids)
-    entity_map = get_record_entities(conn, record_ids)
-
-    results = []
-    for r in rows:
-        d = enrich_record(dict(r))
-        d["endorsements"] = endorsement_map.get(d["id"], [])
-        d["entities"] = entity_map.get(d["id"], {"applicant": [], "previous_applicant": []})
-        results.append(d)
-
-    return results, total
+    return _hydrate_records(conn, rows), total
 
 
 def get_filter_options(conn: sqlite3.Connection) -> dict:
@@ -766,9 +770,7 @@ def get_record_by_id(conn: sqlite3.Connection, record_id: int) -> dict | None:
     row = conn.execute(
         f"{_RECORD_SELECT} WHERE lr.id = ?", (record_id,)
     ).fetchone()
-    if not row:
-        return None
-    return enrich_record(dict(row))
+    return dict(row) if row else None
 
 
 def get_related_records(conn: sqlite3.Connection, license_number: str, exclude_id: int) -> list[dict]:
@@ -777,7 +779,7 @@ def get_related_records(conn: sqlite3.Connection, license_number: str, exclude_i
         f"{_RECORD_SELECT} WHERE lr.license_number = ? AND lr.id != ? ORDER BY lr.record_date DESC",
         (license_number, exclude_id),
     ).fetchall()
-    return [enrich_record(dict(r)) for r in rows]
+    return [dict(r) for r in rows]
 
 
 if __name__ == "__main__":

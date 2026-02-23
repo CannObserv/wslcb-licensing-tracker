@@ -14,10 +14,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import (
     get_db, init_db, search_records, get_filter_options, get_stats,
     get_record_by_id, get_related_records, backfill_entities,
-    get_entity_by_id, get_entity_records, get_record_entities,
+    get_entity_by_id, get_entity_records, _hydrate_records,
 )
 from endorsements import (
-    seed_endorsements, backfill, get_record_endorsements,
+    seed_endorsements, backfill,
 )
 from log_config import setup_logging
 
@@ -169,17 +169,12 @@ async def record_detail(request: Request, record_id: int):
                 status_code=404,
             )
 
-        related = get_related_records(conn, record["license_number"], record_id)
+        related_rows = get_related_records(conn, record["license_number"], record_id)
 
-        # Attach endorsements and entities to record + related
-        all_ids = [record["id"]] + [r["id"] for r in related]
-        emap = get_record_endorsements(conn, all_ids)
-        entmap = get_record_entities(conn, all_ids)
-        record["endorsements"] = emap.get(record["id"], [])
-        record["entities"] = entmap.get(record["id"], {"applicant": [], "previous_applicant": []})
-        for r in related:
-            r["endorsements"] = emap.get(r["id"], [])
-            r["entities"] = entmap.get(r["id"], {"applicant": [], "previous_applicant": []})
+        # Hydrate record + related in a single batch
+        hydrated = _hydrate_records(conn, [record] + related_rows)
+        record = hydrated[0]
+        related = hydrated[1:]
 
     return templates.TemplateResponse(
         "detail.html", {"request": request, "record": record, "related": related}
