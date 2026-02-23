@@ -169,7 +169,7 @@ data/
 
 - Runs on an exe.dev VM as systemd services
 - `wslcb-web.service` — uvicorn on port 8000, auto-restart
-- `wslcb-scraper.timer` — fires daily at 14:00 UTC (6 AM Pacific), ±5 min jitter
+- `wslcb-scraper.timer` — fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter
 - `wslcb-task@.service` — systemd template for oneshot tasks; instance name becomes the `scraper.py` argument
   - `wslcb-task@scrape.service` — daily scrape (triggered by the timer)
   - `wslcb-task@--refresh-addresses.service` — full address re-validation

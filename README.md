@@ -134,7 +134,7 @@ sudo systemctl enable --now wslcb-web.service
 sudo systemctl enable --now wslcb-scraper.timer
 ```
 
-The scraper runs daily at 6:00 AM Pacific (14:00 UTC) with up to 5 minutes of random delay.
+The scraper runs twice daily at 12:30 AM and 6:30 AM Pacific with up to 5 minutes of random delay.
 
 Check the timer status:
 
