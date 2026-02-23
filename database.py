@@ -697,10 +697,16 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         ).fetchall()
         options[col] = [r[0] for r in rows]
 
-    # City filter from locations table
+    # City filter — only locations actually referenced by records
     rows = conn.execute(
         "SELECT DISTINCT display_city FROM ("
-        "  SELECT COALESCE(NULLIF(std_city, ''), city) AS display_city FROM locations"
+        "  SELECT COALESCE(NULLIF(l.std_city, ''), l.city) AS display_city"
+        "  FROM locations l"
+        "  WHERE l.id IN ("
+        "    SELECT location_id FROM license_records WHERE location_id IS NOT NULL"
+        "    UNION"
+        "    SELECT previous_location_id FROM license_records WHERE previous_location_id IS NOT NULL"
+        "  )"
         ") WHERE display_city IS NOT NULL AND display_city != '' ORDER BY display_city"
     ).fetchall()
     options["city"] = [r[0] for r in rows]
