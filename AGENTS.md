@@ -126,7 +126,7 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### Data Integrity
 - The UNIQUE constraint prevents duplicate records across daily scrapes
-- `insert_record()` catches `IntegrityError` and returns `None` for skipped dupes (returns the new row id on success)
+- `insert_record()` checks for duplicates before creating location rows (avoiding orphans), with `IntegrityError` as a safety net; returns `None` for skipped dupes (returns the new row id on success)
 - The source page contains duplicates within itself (especially in approved/discontinued sections); this is expected
 - Never delete historical data — the whole point is accumulating beyond the 30-day window
 
@@ -171,7 +171,7 @@ data/
 - `wslcb-web.service` — uvicorn on port 8000, auto-restart
 - `wslcb-scraper.timer` — fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter
 - `wslcb-task@.service` — systemd template for oneshot tasks; instance name becomes the `scraper.py` argument
-  - `wslcb-task@scrape.service` — daily scrape (triggered by the timer)
+  - `wslcb-task@scrape.service` — scrape (triggered by the timer)
   - `wslcb-task@--refresh-addresses.service` — full address re-validation
   - `wslcb-task@--backfill-addresses.service` — backfill un-validated addresses
   - `wslcb-task@--backfill-from-snapshots.service` — recover ASSUMPTION/CHANGE OF LOCATION data from archived HTML
@@ -266,4 +266,7 @@ Also available via `python scraper.py --backfill-from-snapshots` (delegates to `
 - Entity names are uppercased at ingestion for consistency; the WSLCB source occasionally uses mixed case for the same person (e.g., `Cate Ryan` vs `CATE RYAN`)
 - The `applicants` and `previous_applicants` string columns on `license_records` are retained for backward compatibility with FTS indexing and CSV export; removal is deferred to a future phase
 - Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
+- `search_records()` runs separate COUNT and SELECT queries with the same WHERE clause; could use `COUNT(*) OVER()` window function (fine at current scale)
+- CSV export (`/export`) loads up to 100K rows into memory with no streaming; acceptable for current dataset size
+- `get_filter_options()` city dropdown query runs on every search page load; could be cached
 - Consider adding: email/webhook alerts for new records matching saved searches

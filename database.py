@@ -376,13 +376,13 @@ def _parse_and_link_entities(
     linked = 0
     for position, name in enumerate(entity_names):
         entity_id = get_or_create_entity(conn, name)
-        conn.execute(
+        cursor = conn.execute(
             """INSERT OR IGNORE INTO record_entities
                (record_id, entity_id, role, position)
                VALUES (?, ?, ?, ?)""",
             (record_id, entity_id, role, position),
         )
-        linked += 1
+        linked += cursor.rowcount
     return linked
 
 

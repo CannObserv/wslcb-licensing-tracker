@@ -123,7 +123,10 @@ async def record_detail(request: Request, record_id: int):
     with get_db() as conn:
         record = get_record_by_id(conn, record_id)
         if not record:
-            return HTMLResponse("Record not found", status_code=404)
+            return templates.TemplateResponse(
+                "404.html", {"request": request, "message": "Record not found."},
+                status_code=404,
+            )
 
         related = get_related_records(conn, record["license_number"], record_id)
 
@@ -147,7 +150,10 @@ async def entity_detail(request: Request, entity_id: int):
     with get_db() as conn:
         entity = get_entity_by_id(conn, entity_id)
         if not entity:
-            return HTMLResponse("Entity not found", status_code=404)
+            return templates.TemplateResponse(
+                "404.html", {"request": request, "message": "Entity not found."},
+                status_code=404,
+            )
         records = get_entity_records(conn, entity_id)
         # Count distinct license numbers
         license_numbers = set(r["license_number"] for r in records)

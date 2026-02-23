@@ -2,13 +2,13 @@
 
 A web application that scrapes, archives, and provides searchable access to licensing activity published by the **Washington State Liquor and Cannabis Board (WSLCB)**.
 
-The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp) of new license applications, approvals, and discontinuances for alcohol, cannabis, tobacco, and vapor product businesses across Washington State. This tracker scrapes that report daily and preserves the data in a searchable database, building a historical archive that extends beyond the 30-day window.
+The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp) of new license applications, approvals, and discontinuances for alcohol, cannabis, tobacco, and vapor product businesses across Washington State. This tracker scrapes that report twice daily and preserves the data in a searchable database, building a historical archive that extends beyond the 30-day window.
 
 **Live instance:** [https://wslcb-licensing-tracker.exe.xyz:8000/](https://wslcb-licensing-tracker.exe.xyz:8000/)
 
 ## Features
 
-- **Daily automated scraping** of the WSLCB statewide licensing activity page
+- **Twice-daily automated scraping** of the WSLCB statewide licensing activity page
 - **Full-text search** across business names, locations, applicants, license types, and license numbers
 - **Normalized endorsements** — numeric license codes from approved/discontinued records are resolved to human-readable names via a managed code→endorsement mapping
 - **Address standardization** — raw business addresses are parsed into structured components (street, suite, city, state, ZIP) via an external validation API, fixing ~6% of records with mis-parsed cities
@@ -56,7 +56,7 @@ Each record includes:
 | Database | SQLite with [FTS5](https://www.sqlite.org/fts5.html) full-text search |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
 | Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (CDN) |
-| Scheduling | systemd timer (daily) |
+| Scheduling | systemd timer (twice-daily) |
 
 ## Project Structure
 
@@ -67,7 +67,7 @@ wslcb-licensing-tracker/
 ├── migrate_locations.py    # One-time migration: inline address columns → locations table
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── address_validator.py    # Address validation API client
-├── scraper.py              # WSLCB page scraper (daily)
+├── scraper.py              # WSLCB page scraper (twice-daily)
 ├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
@@ -75,6 +75,7 @@ wslcb-licensing-tracker/
 │   ├── index.html          # Dashboard with stats
 │   ├── search.html         # Search interface with filters
 │   ├── detail.html         # Record detail page
+│   ├── entity.html         # Entity detail page
 │   └── partials/
 │       └── results.html    # Search results partial (HTMX)
 ├── static/                 # Static assets
@@ -85,7 +86,7 @@ wslcb-licensing-tracker/
 │           └── [yyyy]/         # Archived HTML snapshots by year
 ├── wslcb-web.service       # systemd service for the web app
 ├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
-└── wslcb-scraper.timer     # systemd timer (daily at 6 AM Pacific)
+└── wslcb-scraper.timer     # systemd timer (twice-daily: 12:30 AM and 6:30 AM Pacific)
 ```
 
 ## Setup
@@ -122,7 +123,7 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 
 Then visit [http://localhost:8000](http://localhost:8000).
 
-### Set up daily scraping (systemd)
+### Set up automated scraping (systemd)
 
 ```bash
 sudo cp wslcb-web.service /etc/systemd/system/

@@ -138,7 +138,7 @@
             {% endif %}
             <div>
                 <dt class="text-sm font-medium text-gray-500">First Scraped</dt>
-                <dd class="mt-1 text-sm text-gray-400">{{ record.scraped_at[:19] }}</dd>
+                <dd class="mt-1 text-sm text-gray-400">{{ record.scraped_at[:19] if record.scraped_at else '' }}</dd>
             </div>
         </dl>
     </div>
@@ -148,6 +148,7 @@
 <div class="mt-8">
     <h2 class="text-lg font-semibold text-gray-900 mb-3">Other records for license #{{ record.license_number }}</h2>
     <div class="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
+      <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
                 <tr>
@@ -159,7 +160,7 @@
             </thead>
             <tbody class="divide-y divide-gray-200">
                 {% for r in related %}
-                <tr class="hover:bg-gray-50 cursor-pointer" onclick="window.location='/record/{{ r.id }}'">
+                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50" tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
                     <td class="px-4 py-3 text-sm">{{ r.record_date }}</td>
                     <td class="px-4 py-3 text-sm">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium badge-{{ r.section_type.split('_')[0] }}">
@@ -185,6 +186,7 @@
                 {% endfor %}
             </tbody>
         </table>
+      </div>
     </div>
 </div>
 {% endif %}

@@ -24,7 +24,7 @@
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
                 {% for r in records %}
-                <tr class="hover:bg-gray-50 cursor-pointer" onclick="window.location='/record/{{ r.id }}'">
+                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50" tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{{ r.record_date }}</td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium badge-{{ r.section_type.split('_')[0] }}">
@@ -72,7 +72,8 @@
 {% if total_pages > 1 %}
 <div class="mt-4 flex justify-center gap-1">
     {% if page > 1 %}
-    <a href="?{{ pq }}&page={{ page - 1 }}"
+    <a href="?{{ pq }}&page={{ page - 1 }}" hx-get="/search?{{ pq }}&page={{ page - 1 }}"
+       hx-target="#results" hx-push-url="true" hx-swap="innerHTML scroll:#results:top"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">← Prev</a>
     {% endif %}
 
@@ -80,13 +81,15 @@
     {% set end_page = [total_pages, page + 3] | min %}
 
     {% if start_page > 1 %}
-    <a href="?{{ pq }}&page=1"
+    <a href="?{{ pq }}&page=1" hx-get="/search?{{ pq }}&page=1"
+       hx-target="#results" hx-push-url="true" hx-swap="innerHTML scroll:#results:top"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">1</a>
     {% if start_page > 2 %}<span class="px-2 py-1.5 text-gray-400">…</span>{% endif %}
     {% endif %}
 
     {% for p in range(start_page, end_page + 1) %}
-    <a href="?{{ pq }}&page={{ p }}"
+    <a href="?{{ pq }}&page={{ p }}" hx-get="/search?{{ pq }}&page={{ p }}"
+       hx-target="#results" hx-push-url="true" hx-swap="innerHTML scroll:#results:top"
        class="px-3 py-1.5 text-sm border rounded-md {{ 'bg-indigo-600 text-white border-indigo-600' if p == page else 'border-gray-300 hover:bg-gray-50' }}">
         {{ p }}
     </a>
@@ -94,12 +97,14 @@
 
     {% if end_page < total_pages %}
     {% if end_page < total_pages - 1 %}<span class="px-2 py-1.5 text-gray-400">…</span>{% endif %}
-    <a href="?{{ pq }}&page={{ total_pages }}"
+    <a href="?{{ pq }}&page={{ total_pages }}" hx-get="/search?{{ pq }}&page={{ total_pages }}"
+       hx-target="#results" hx-push-url="true" hx-swap="innerHTML scroll:#results:top"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">{{ total_pages }}</a>
     {% endif %}
 
     {% if page < total_pages %}
-    <a href="?{{ pq }}&page={{ page + 1 }}"
+    <a href="?{{ pq }}&page={{ page + 1 }}" hx-get="/search?{{ pq }}&page={{ page + 1 }}"
+       hx-target="#results" hx-push-url="true" hx-swap="innerHTML scroll:#results:top"
        class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">Next →</a>
     {% endif %}
 </div>

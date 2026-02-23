@@ -20,8 +20,8 @@
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">Record Type</label>
-                <select name="section_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                <label for="section_type" class="block text-xs font-medium text-gray-500 mb-1">Record Type</label>
+                <select name="section_type" id="section_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
                     <option value="">All Types</option>
                     <option value="new_application" {{ 'selected' if section_type == 'new_application' }}>New Application</option>
                     <option value="approved" {{ 'selected' if section_type == 'approved' }}>Approved</option>
@@ -29,8 +29,8 @@
                 </select>
             </div>
             <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">Application Type</label>
-                <select name="application_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                <label for="application_type" class="block text-xs font-medium text-gray-500 mb-1">Application Type</label>
+                <select name="application_type" id="application_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
                     <option value="">All</option>
                     {% for at in filters.application_type %}
                     <option value="{{ at }}" {{ 'selected' if application_type == at }}>{{ at }}</option>
@@ -38,8 +38,8 @@
                 </select>
             </div>
             <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">License Type</label>
-                <select name="endorsement" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                <label for="endorsement" class="block text-xs font-medium text-gray-500 mb-1">License Type</label>
+                <select name="endorsement" id="endorsement" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
                     <option value="">All</option>
                     {% for e in filters.endorsement %}
                     <option value="{{ e }}" {{ 'selected' if endorsement == e }}>{{ e }}</option>
@@ -47,8 +47,8 @@
                 </select>
             </div>
             <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">City</label>
-                <select name="city" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                <label for="city" class="block text-xs font-medium text-gray-500 mb-1">City</label>
+                <select name="city" id="city" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
                     <option value="">All Cities</option>
                     {% for c in filters.city %}
                     <option value="{{ c }}" {{ 'selected' if city == c }}>{{ c }}</option>
@@ -56,13 +56,13 @@
                 </select>
             </div>
             <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">From Date</label>
-                <input type="date" name="date_from" value="{{ date_from }}"
+                <label for="from_date" class="block text-xs font-medium text-gray-500 mb-1">From Date</label>
+                <input type="date" name="date_from" id="from_date" value="{{ date_from }}"
                        class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
             </div>
             <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">To Date</label>
-                <input type="date" name="date_to" value="{{ date_to }}"
+                <label for="to_date" class="block text-xs font-medium text-gray-500 mb-1">To Date</label>
+                <input type="date" name="date_to" id="to_date" value="{{ date_to }}"
                        class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
             </div>
         </div>

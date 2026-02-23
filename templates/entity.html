@@ -20,7 +20,7 @@
         <div class="text-right text-sm text-gray-500">
             <div><span class="font-semibold text-gray-900">{{ records | length }}</span> record{{ 's' if records | length != 1 }}</div>
             <div><span class="font-semibold text-gray-900">{{ unique_licenses }}</span> license{{ 's' if unique_licenses != 1 }}</div>
-            <div class="text-xs text-gray-400 mt-1">First seen {{ entity.created_at[:10] }}</div>
+            <div class="text-xs text-gray-400 mt-1">First seen {{ entity.created_at[:10] if entity.created_at else '' }}</div>
         </div>
     </div>
 
@@ -40,7 +40,7 @@
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
                 {% for r in records %}
-                <tr class="hover:bg-gray-50 cursor-pointer" onclick="window.location='/record/{{ r.id }}'">
+                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50" tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{{ r.record_date }}</td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium badge-{{ r.section_type.split('_')[0] }}">
