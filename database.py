@@ -501,8 +501,25 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
     """Insert a record, returning the new row id or None if duplicate.
 
     Automatically resolves (or creates) location rows for the primary
-    and previous business addresses.
+    and previous business addresses.  Checks for duplicates *before*
+    creating locations to avoid orphaned location rows.
     """
+    # Check for duplicate before creating locations — the UNIQUE
+    # constraint is (section_type, record_date, license_number,
+    # application_type).  This avoids creating orphan location rows
+    # for the ~5 000 duplicate records skipped on each daily scrape.
+    existing = conn.execute(
+        """SELECT 1 FROM license_records
+           WHERE section_type = :section_type
+             AND record_date = :record_date
+             AND license_number = :license_number
+             AND application_type = :application_type
+           LIMIT 1""",
+        record,
+    ).fetchone()
+    if existing:
+        return None
+
     location_id = get_or_create_location(
         conn,
         record.get("business_location", ""),
