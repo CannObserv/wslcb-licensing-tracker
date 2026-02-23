@@ -2,10 +2,13 @@
 import csv
 import io
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 from fastapi import FastAPI, Request, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import (
     get_db, init_db, search_records, get_filter_options, get_stats,
     get_record_by_id, get_related_records, backfill_entities,
@@ -36,6 +39,8 @@ app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+PER_PAGE = 50
+
 SECTION_LABELS = {
     "new_application": "New Application",
     "approved": "Approved",
@@ -57,13 +62,37 @@ templates.env.filters["section_label"] = section_label
 templates.env.filters["phone_format"] = phone_format
 
 
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Render HTML 404 (and other HTTP errors) instead of raw JSON."""
+    if exc.status_code == 404:
+        return templates.TemplateResponse(
+            "404.html", {"request": request}, status_code=404,
+        )
+    # For other HTTP errors, return a simple styled page
+    return HTMLResponse(
+        f"<html><body style='font-family:sans-serif;padding:2rem'>"
+        f"<h1>Error {exc.status_code}</h1><p>{exc.detail}</p>"
+        f"<a href='/'>Back to Dashboard</a></body></html>",
+        status_code=exc.status_code,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Render HTML 404 for malformed path parameters (e.g. /record/abc)."""
+    return templates.TemplateResponse(
+        "404.html", {"request": request, "message": "Invalid URL."},
+        status_code=404,
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     with get_db() as conn:
         stats = get_stats(conn)
-        filters = get_filter_options(conn)
     return templates.TemplateResponse(
-        "index.html", {"request": request, "stats": stats, "filters": filters}
+        "index.html", {"request": request, "stats": stats}
     )
 
 
@@ -93,8 +122,13 @@ async def search(
         )
         filters = get_filter_options(conn)
 
-    per_page = 50
-    total_pages = max(1, (total + per_page - 1) // per_page)
+    total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+
+    export_params = urlencode({
+        "q": q, "section_type": section_type,
+        "application_type": application_type, "endorsement": endorsement,
+        "city": city, "date_from": date_from, "date_to": date_to,
+    })
 
     ctx = {
         "request": request,
@@ -110,6 +144,7 @@ async def search(
         "city": city,
         "date_from": date_from,
         "date_to": date_to,
+        "export_url": f"/export?{export_params}",
     }
 
     if request.headers.get("HX-Request"):
@@ -179,31 +214,40 @@ async def export_csv(
 ):
     """Export search results as CSV."""
     with get_db() as conn:
-        records, _ = search_records(
+        records, total = search_records(
             conn, query=q, section_type=section_type,
             application_type=application_type, endorsement=endorsement,
             city=city, date_from=date_from, date_to=date_to,
-            page=1, per_page=100000,
+            page=1, per_page=100_000,
         )
 
+    if not records:
+        return HTMLResponse(
+            "<html><body style='font-family:sans-serif;padding:2rem'>"
+            "<h2>No records to export</h2>"
+            "<p>Your search returned no results. "
+            "<a href='/search'>Go back to search</a> and adjust your filters.</p>"
+            "</body></html>",
+            status_code=200,
+        )
+
+    fieldnames = [
+        "section_type", "record_date", "business_name", "business_location",
+        "address_line_1", "address_line_2", "applicants", "license_type",
+        "endorsements", "application_type", "license_number", "contact_phone",
+        "city", "state", "zip_code", "std_city", "std_state", "std_zip",
+        "previous_business_name", "previous_applicants",
+        "previous_business_location",
+        "prev_address_line_1", "prev_address_line_2",
+        "prev_std_city", "prev_std_state", "prev_std_zip",
+    ]
     output = io.StringIO()
-    if records:
-        fieldnames = [
-            "section_type", "record_date", "business_name", "business_location",
-            "address_line_1", "address_line_2", "applicants", "license_type",
-            "endorsements", "application_type", "license_number", "contact_phone",
-            "city", "state", "zip_code", "std_city", "std_state", "std_zip",
-            "previous_business_name", "previous_applicants",
-            "previous_business_location",
-            "prev_address_line_1", "prev_address_line_2",
-            "prev_std_city", "prev_std_state", "prev_std_zip",
-        ]
-        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for r in records:
-            row = {k: r.get(k, "") for k in fieldnames}
-            row["endorsements"] = "; ".join(r.get("endorsements", []))
-            writer.writerow(row)
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for r in records:
+        row = {k: r.get(k, "") for k in fieldnames}
+        row["endorsements"] = "; ".join(r.get("endorsements", []))
+        writer.writerow(row)
 
     output.seek(0)
     return StreamingResponse(

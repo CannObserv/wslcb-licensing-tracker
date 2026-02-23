@@ -75,6 +75,7 @@ wslcb-licensing-tracker/
 │   ├── index.html          # Dashboard with stats
 │   ├── search.html         # Search interface with filters
 │   ├── detail.html         # Record detail page
+│   ├── 404.html            # Not-found error page
 │   ├── entity.html         # Entity detail page
 │   └── partials/
 │       └── results.html    # Search results partial (HTMX)

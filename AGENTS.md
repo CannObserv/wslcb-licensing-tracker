@@ -34,7 +34,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/COL records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
-| `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. |
+| `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. `404.html` handles not-found errors. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 
 ## Database Schema
@@ -101,7 +101,7 @@ license_records → locations (FK: location_id, previous_location_id)
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
 - Uses `license_records_fts_content` VIEW as its content source — this view JOINs `license_records` → `locations` to expose `raw_address` as `business_location` / `previous_business_location` for indexing
-- Kept in sync via triggers on `license_records`: AFTER INSERT and AFTER UPDATE read new values from the content view; BEFORE DELETE reads old values from the content view (must be BEFORE because the view JOIN returns nothing after the row is deleted)
+- Kept in sync via triggers on `license_records`: AFTER INSERT inserts new values; updates use a BEFORE UPDATE / AFTER UPDATE pair (delete old, insert new); BEFORE DELETE removes old values. All read from the content view
 - Never write to the FTS table directly
 - **Known limitation:** indexes raw `license_type`, so FTS text search won't match endorsement names for records that store numeric codes. The endorsement dropdown filter works correctly (uses junction table).
 

@@ -618,7 +618,7 @@ def search_records(
     date_from: str = "",
     date_to: str = "",
     page: int = 1,
-    per_page: int = 50,
+    per_page: int = 50,  # app.py uses PER_PAGE constant; keep in sync
 ) -> tuple[list[dict], int]:
     """Search records with filters.  Returns (records, total_count)."""
     conditions = []

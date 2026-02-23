@@ -5,6 +5,9 @@
         — page {{ page }} of {{ total_pages }}
         {% endif %}
     </p>
+    {% if total > 0 %}
+    <a href="{{ export_url }}" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">⤓ Export CSV</a>
+    {% endif %}
 </div>
 
 {% if records %}
