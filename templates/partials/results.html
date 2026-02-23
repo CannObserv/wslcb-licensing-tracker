@@ -11,63 +11,7 @@
 </div>
 
 {% if records %}
-<div class="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
-    <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
-                <tr>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Business</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">License Type</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">App Type</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">License #</th>
-                </tr>
-            </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
-                {% for r in records %}
-                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50" tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{{ r.record_date }}</td>
-                    <td class="px-4 py-3 whitespace-nowrap text-sm">
-                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium badge-{{ r.section_type.split('_')[0] }}">
-                            {{ r.section_type | section_label }}
-                        </span>
-                    </td>
-                    <td class="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs">
-                        <div class="truncate">{{ r.business_name }}</div>
-                        {% if r.previous_business_name and r.previous_business_name != r.business_name %}
-                        <div class="text-xs text-gray-400 truncate" title="Previous: {{ r.previous_business_name }}">← {{ r.previous_business_name }}</div>
-                        {% endif %}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
-                        <div class="truncate">{{ r.display_city }}{% if r.display_zip %}, {{ r.display_zip }}{% endif %}</div>
-                        {% if r.previous_business_location %}
-                        <div class="text-xs text-gray-400 truncate" title="Previous: {{ r.previous_business_location }}">← {{ r.display_previous_city }}{% if r.display_previous_zip %}, {{ r.display_previous_zip }}{% endif %}</div>
-                        {% endif %}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-600 max-w-xs">
-                        {% if r.endorsements %}
-                        <div class="flex flex-wrap gap-0.5 max-h-12 overflow-hidden relative">
-                            {% for e in r.endorsements[:3] %}
-                            <span class="inline-block bg-gray-100 text-gray-700 rounded px-1.5 py-0.5 text-xs">{{ e }}</span>
-                            {% endfor %}
-                            {% if r.endorsements | length > 3 %}
-                            <span class="inline-block bg-gray-200 text-gray-500 rounded px-1.5 py-0.5 text-xs">+{{ r.endorsements | length - 3 }}</span>
-                            {% endif %}
-                        </div>
-                        {% else %}
-                        <span class="text-gray-400 text-xs">{{ r.license_type }}</span>
-                        {% endif %}
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-600">{{ r.application_type }}</td>
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">{{ r.license_number }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
+{% include "partials/record_table.html" %}
 
 {% set pq = "q=" ~ (q|urlencode) ~ "&section_type=" ~ (section_type|urlencode) ~ "&application_type=" ~ (application_type|urlencode) ~ "&endorsement=" ~ (endorsement|urlencode) ~ "&city=" ~ (city|urlencode) ~ "&date_from=" ~ (date_from|urlencode) ~ "&date_to=" ~ (date_to|urlencode) %}
 
