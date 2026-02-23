@@ -10,13 +10,15 @@ Configuration:
     with fallback to the ADDRESS_VALIDATOR_API_KEY environment variable.
 """
 
+import logging
 import os
 import sqlite3
-import sys
 import time
 from datetime import datetime, timezone
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://address-validator.exe.xyz:8000"
 TIMEOUT = 5.0
@@ -49,7 +51,7 @@ def _load_api_key() -> str:
     except FileNotFoundError:
         pass  # Fall through to environment variable
     except OSError as e:
-        print(f"WARNING: Error reading ./env file: {e}", file=sys.stderr)
+        logger.warning("Error reading ./env file: %s", e)
 
     # Fallback to environment variable
     _cached_api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
@@ -91,23 +93,22 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
             response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
 
         if response.status_code != 200:
-            print(
-                f"WARNING: Address validation API returned status {response.status_code}"
-                f" for: {address}",
-                file=sys.stderr,
+            logger.warning(
+                "Address validation API returned status %d for: %s",
+                response.status_code, address,
             )
             return None
 
         return response.json()
 
     except httpx.TimeoutException:
-        print(f"WARNING: Timeout calling address validation API for: {address}", file=sys.stderr)
+        logger.warning("Timeout calling address validation API for: %s", address)
         return None
     except httpx.HTTPError as e:
-        print(f"WARNING: HTTP error calling address validation API: {e}", file=sys.stderr)
+        logger.warning("HTTP error calling address validation API: %s", e)
         return None
     except Exception as e:
-        print(f"WARNING: Unexpected error calling address validation API: {e}", file=sys.stderr)
+        logger.warning("Unexpected error calling address validation API: %s", e)
         return None
 
 
@@ -161,7 +162,7 @@ def validate_location(
         )
         return True
     except Exception as e:
-        print(f"WARNING: Failed to update location {location_id}: {e}", file=sys.stderr)
+        logger.warning("Failed to update location %d: %s", location_id, e)
         return False
 
 
@@ -235,10 +236,10 @@ def _validate_batch(
     """
     total = len(rows)
     if total == 0:
-        print(f"No locations to {label.lower()}")
+        logger.info("No locations to %s", label.lower())
         return 0
 
-    print(f"{label} for {total} locations")
+    logger.info("%s for %d locations", label, total)
     succeeded = 0
     attempted = 0
 
@@ -252,12 +253,12 @@ def _validate_batch(
 
             if attempted % batch_size == 0:
                 conn.commit()
-                print(f"Progress: {attempted}/{total} ({succeeded} succeeded)")
+                logger.debug("Progress: %d/%d (%d succeeded)", attempted, total, succeeded)
 
             time.sleep(0.05)
 
     conn.commit()
-    print(f"Done: {succeeded}/{total} succeeded ({total - succeeded} failed)")
+    logger.info("Done: %d/%d succeeded (%d failed)", succeeded, total, total - succeeded)
     return succeeded
 
 
@@ -272,7 +273,7 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
     """
     api_key = _load_api_key()
     if not api_key:
-        print("ERROR: No API key configured for address validation", file=sys.stderr)
+        logger.error("No API key configured for address validation")
         return 0
 
     rows = conn.execute(
@@ -299,7 +300,7 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100) -> int:
     """
     api_key = _load_api_key()
     if not api_key:
-        print("ERROR: No API key configured for address validation", file=sys.stderr)
+        logger.error("No API key configured for address validation")
         return 0
 
     rows = conn.execute(

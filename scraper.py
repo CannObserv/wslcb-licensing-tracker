@@ -1,4 +1,5 @@
 """Scraper for WSLCB licensing activity page."""
+import logging
 import re
 import sys
 from pathlib import Path
@@ -9,6 +10,9 @@ from datetime import datetime, timezone
 from database import DATA_DIR, get_db, init_db, insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
+from log_config import setup_logging
+
+logger = logging.getLogger(__name__)
 
 URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
@@ -173,7 +177,7 @@ def scrape():
     """Main scrape function."""
     init_db()
 
-    print(f"[{datetime.now().isoformat()}] Starting scrape of {URL}")
+    logger.info("Starting scrape of %s", URL)
 
     with get_db() as conn:
         # Ensure seed code→endorsement mappings exist (idempotent; needed
@@ -190,19 +194,19 @@ def scrape():
 
         try:
             # Fetch page
-            print("Fetching page...")
+            logger.debug("Fetching page...")
             resp = httpx.get(URL, timeout=120, follow_redirects=True)
             resp.raise_for_status()
             html = resp.text
-            print(f"Fetched {len(html):,} bytes")
+            logger.debug("Fetched %s bytes", f"{len(html):,}")
 
             # Archive the raw HTML
             snapshot_path = None
             try:
                 snapshot_path = save_html_snapshot(html, datetime.now(timezone.utc))
-                print(f"Saved snapshot to {snapshot_path}")
+                logger.debug("Saved snapshot to %s", snapshot_path)
             except Exception as snap_err:
-                print(f"WARNING: Failed to save HTML snapshot: {snap_err}", file=sys.stderr)
+                logger.warning("Failed to save HTML snapshot: %s", snap_err)
 
             # Parse HTML
             soup = BeautifulSoup(html, "lxml")
@@ -219,14 +223,14 @@ def scrape():
             if not data_tables:
                 raise ValueError("Could not find data tables in page")
 
-            print(f"Found {len(data_tables)} data sections")
+            logger.debug("Found %d data sections", len(data_tables))
 
             counts = {"new": 0, "approved": 0, "discontinued": 0, "skipped": 0}
 
             with httpx.Client(timeout=_AV_TIMEOUT) as av_client:
                 for section_type, table in data_tables:
                     records = parse_records_from_table(table, section_type)
-                    print(f"  {section_type}: parsed {len(records)} records")
+                    logger.debug("  %s: parsed %d records", section_type, len(records))
 
                     inserted = 0
                     for rec in records:
@@ -271,16 +275,17 @@ def scrape():
             conn.commit()
 
             total = counts["new"] + counts["approved"] + counts["discontinued"]
-            print(
-                f"Done! Inserted {total} new records "
-                f"(new={counts['new']}, approved={counts['approved']}, "
-                f"discontinued={counts['discontinued']}, skipped={counts['skipped']})"
+            logger.info(
+                "Done! Inserted %d new records "
+                "(new=%d, approved=%d, discontinued=%d, skipped=%d)",
+                total, counts["new"], counts["approved"],
+                counts["discontinued"], counts["skipped"],
             )
 
             # Discover any new code→endorsement mappings from cross-references
             learned = discover_code_mappings(conn)
             if learned:
-                print(f"Discovered {len(learned)} new code mapping(s): {list(learned.keys())}")
+                logger.info("Discovered %d new code mapping(s): %s", len(learned), list(learned.keys()))
 
         except Exception as e:
             conn.execute(
@@ -288,11 +293,12 @@ def scrape():
                 (datetime.now(timezone.utc).isoformat(), str(e), log_id),
             )
             conn.commit()
-            print(f"ERROR: {e}", file=sys.stderr)
+            logger.error("Scrape failed: %s", e)
             raise
 
 
 if __name__ == "__main__":
+    setup_logging()
     if "--refresh-addresses" in sys.argv:
         init_db()
         with get_db() as conn:

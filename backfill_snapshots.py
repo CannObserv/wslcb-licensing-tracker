@@ -9,6 +9,7 @@ Single-pass over each snapshot, two-phase processing:
 Safe to re-run at any time.  Address validation is deferred to a
 separate ``scraper.py --backfill-addresses`` pass.
 """
+import logging
 import re
 from pathlib import Path
 
@@ -16,7 +17,10 @@ from bs4 import BeautifulSoup
 
 from database import DATA_DIR, get_db, init_db, insert_record, get_or_create_location
 from endorsements import process_record, seed_endorsements, discover_code_mappings
+from log_config import setup_logging
 from scraper import parse_records_from_table, SECTION_MAP
+
+logger = logging.getLogger(__name__)
 
 
 def _snapshot_paths() -> list[Path]:
@@ -193,10 +197,10 @@ def backfill_from_snapshots():
 
     snapshots = _snapshot_paths()
     if not snapshots:
-        print("No archived snapshots found.")
+        logger.info("No archived snapshots found.")
         return
 
-    print(f"Found {len(snapshots)} snapshot(s) to process")
+    logger.info("Found %d snapshot(s) to process", len(snapshots))
 
     total_inserted = 0
     total_skipped = 0
@@ -221,17 +225,18 @@ def backfill_from_snapshots():
 
             total_inserted += inserted
             total_skipped += skipped
-            print(f"  {snap_date}: +{inserted} new, {skipped} skipped")
+            logger.debug("  %s: +%d new, %d skipped", snap_date, inserted, skipped)
 
         # Discover any new code→endorsement mappings
         learned = discover_code_mappings(conn)
         if learned:
-            print(f"\nDiscovered {len(learned)} new code mapping(s): {list(learned.keys())}")
+            logger.info("Discovered %d new code mapping(s): %s", len(learned), list(learned.keys()))
 
-    print(f"\nDone! Inserted {total_inserted} new records ({total_skipped} duplicates skipped).")
+    logger.info("Done! Inserted %d new records (%d duplicates skipped).", total_inserted, total_skipped)
     if assumption_fixed or col_fixed:
-        print(f"Repaired {assumption_fixed} ASSUMPTION + {col_fixed} CHANGE OF LOCATION record(s).")
+        logger.info("Repaired %d ASSUMPTION + %d CHANGE OF LOCATION record(s).", assumption_fixed, col_fixed)
 
 
 if __name__ == "__main__":
+    setup_logging()
     backfill_from_snapshots()

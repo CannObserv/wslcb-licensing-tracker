@@ -30,6 +30,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `database.py` | Schema, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`, `enrich_record()`, `get_or_create_location()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
+| `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` delegates to `backfill_snapshots.py` (`--backfill-assumptions` still accepted). |
 | `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/COL records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
@@ -113,10 +114,22 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### Python
 - Python 3.12+ with venv at `./venv/`
-- Dependencies: `fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart`
+- Dependencies: `fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart python-json-logger`
 - No requirements.txt yet — add one if dependencies grow
 - Use `datetime.now(timezone.utc)` not `datetime.utcnow()` (deprecated)
 - Module docstrings on every `.py` file
+
+### Logging
+- **Never use `print()` for operational output.** All logging goes through Python's `logging` module.
+- Each module declares `logger = logging.getLogger(__name__)` at the top.
+- Entry points (`app.py` lifespan, `scraper.py` main, `backfill_snapshots.py` main, `database.py` main) call `setup_logging()` from `log_config.py` before doing any work.
+- Log levels:
+  - `logger.debug()` — progress counters, verbose operational detail ("Fetched 12,000,000 bytes", "Found 3 data sections")
+  - `logger.info()` — meaningful events (records inserted, scrape complete, migrations, summaries)
+  - `logger.warning()` — recoverable issues (API timeouts, failed validations, missing config)
+  - `logger.error()` — unrecoverable failures (scrape crash, missing API key)
+- Format auto-detects: human-readable on TTY, JSON lines under systemd/pipe (via `python-json-logger`).
+- Use `%s`/`%d` style formatting in log calls (not f-strings) so messages are only formatted if the level is enabled.
 
 ### Templates
 - Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`)

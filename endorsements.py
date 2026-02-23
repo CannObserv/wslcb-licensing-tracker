@@ -16,7 +16,10 @@ codes for approved/discontinued records.  Text search for endorsement
 names won't match those records — only the endorsement filter works.
 Fixing this would require indexing resolved endorsement names in FTS.
 """
+import logging
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 # ---
 # Seed data: WSLCB code → endorsement name(s), built from cross-referencing
@@ -183,7 +186,7 @@ def process_record(conn: sqlite3.Connection, record_id: int,
                 _link_endorsement(conn, record_id, r[0])
             return len(rows)
         # Unknown code — create a placeholder endorsement named after the code
-        print(f"[endorsements] Unknown code '{cleaned}' for record {record_id}; creating placeholder.")
+        logger.info("Unknown code '%s' for record %d; creating placeholder.", cleaned, record_id)
         eid = _ensure_endorsement(conn, cleaned)
         conn.execute(
             "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",

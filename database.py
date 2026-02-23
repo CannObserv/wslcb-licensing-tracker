@@ -1,4 +1,5 @@
 """Database layer for WSLCB licensing tracker."""
+import logging
 import os
 import re
 import sqlite3
@@ -6,6 +7,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from endorsements import get_endorsement_options, get_record_endorsements
+
+logger = logging.getLogger(__name__)
 
 # Patterns that indicate an organization rather than a person.
 # Input is always uppercased by get_or_create_entity(), so no IGNORECASE needed.
@@ -232,7 +235,7 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
         needs_rebuild = True
 
     if needs_rebuild:
-        print("Building FTS index...")
+        logger.info("Building FTS index...")
         conn.executescript("""
             DROP TRIGGER IF EXISTS license_records_ai;
             DROP TRIGGER IF EXISTS license_records_ad;
@@ -292,7 +295,7 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
             INSERT INTO license_records_fts(rowid, {cols})
             SELECT id, {cols} FROM license_records_fts_content
         """)
-        print("FTS index built.")
+        logger.info("FTS index built.")
 
 
 # ------------------------------------------------------------------
@@ -778,5 +781,7 @@ def get_related_records(conn: sqlite3.Connection, license_number: str, exclude_i
 
 
 if __name__ == "__main__":
+    from log_config import setup_logging
+    setup_logging()
     init_db()
-    print(f"Database initialized at {DB_PATH}")
+    logger.info("Database initialized at %s", DB_PATH)

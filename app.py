@@ -1,7 +1,12 @@
 """FastAPI web application for WSLCB licensing tracker."""
 import csv
 import io
+import logging
 from contextlib import asynccontextmanager
+
+from log_config import setup_logging
+
+logger = logging.getLogger(__name__)
 from urllib.parse import urlencode
 from fastapi import FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
@@ -21,17 +26,18 @@ from endorsements import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database and endorsement tables on startup."""
+    setup_logging()
     init_db()
     with get_db() as conn:
         n = seed_endorsements(conn)
         if n:
-            print(f"Seeded {n} endorsement code mapping(s)")
+            logger.info("Seeded %d endorsement code mapping(s)", n)
         processed = backfill(conn)
         if processed:
-            print(f"Backfilled endorsements for {processed} record(s)")
+            logger.info("Backfilled endorsements for %d record(s)", processed)
         entity_count = backfill_entities(conn)
         if entity_count:
-            print(f"Backfilled entities for {entity_count} record(s)")
+            logger.info("Backfilled entities for %d record(s)", entity_count)
     yield
 
 

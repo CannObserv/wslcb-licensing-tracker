@@ -9,7 +9,10 @@ when the old schema is detected (business_location column exists on
 license_records).  After the migration completes, this module is
 never invoked again.
 """
+import logging
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 
 def migrate_to_locations(conn: sqlite3.Connection) -> None:
@@ -30,7 +33,7 @@ def migrate_to_locations(conn: sqlite3.Connection) -> None:
             except sqlite3.OperationalError:
                 pass
 
-    print("Migrating address data into locations table...")
+    logger.info("Migrating address data into locations table...")
 
     # 1. Insert distinct primary addresses
     conn.execute("""
@@ -92,7 +95,7 @@ def migrate_to_locations(conn: sqlite3.Connection) -> None:
     # 5. Rebuild license_records without legacy columns
     _rebuild_records_table(conn)
 
-    print("Migration complete.")
+    logger.info("Migration complete.")
 
 
 def _rebuild_records_table(conn: sqlite3.Connection) -> None:
