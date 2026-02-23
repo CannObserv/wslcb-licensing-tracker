@@ -166,19 +166,21 @@ def validate_location(
         return False
 
 
-def validate_record(
+def _validate_record_location(
     conn: sqlite3.Connection,
     record_id: int,
+    fk_column: str,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate the primary location for a license record.
+    """Validate a location FK on a license record.
 
-    Looks up the record's location_id and validates that location row.
-    If the location is already validated, returns True immediately.
-    Returns False if the record has no location_id.
+    Looks up *fk_column* (e.g. 'location_id' or 'previous_location_id')
+    on the record and validates the referenced location row.
+    Returns True if already validated; False if the FK is NULL or
+    validation fails.
     """
     row = conn.execute(
-        "SELECT location_id FROM license_records WHERE id = ?", (record_id,)
+        f"SELECT {fk_column} FROM license_records WHERE id = ?", (record_id,)
     ).fetchone()
     if not row or not row[0]:
         return False
@@ -191,6 +193,15 @@ def validate_record(
     if loc["address_validated_at"]:
         return True  # Already validated
     return validate_location(conn, loc["id"], loc["raw_address"], client=client)
+
+
+def validate_record(
+    conn: sqlite3.Connection,
+    record_id: int,
+    client: httpx.Client | None = None,
+) -> bool:
+    """Validate the primary location for a license record."""
+    return _validate_record_location(conn, record_id, "location_id", client)
 
 
 def validate_previous_location(
@@ -198,26 +209,8 @@ def validate_previous_location(
     record_id: int,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate the previous location for a CHANGE OF LOCATION record.
-
-    Looks up the record's previous_location_id and validates that location row.
-    If the location is already validated, returns True immediately.
-    Returns False if the record has no previous_location_id.
-    """
-    row = conn.execute(
-        "SELECT previous_location_id FROM license_records WHERE id = ?", (record_id,)
-    ).fetchone()
-    if not row or not row[0]:
-        return False
-    loc = conn.execute(
-        "SELECT id, raw_address, address_validated_at FROM locations WHERE id = ?",
-        (row[0],),
-    ).fetchone()
-    if not loc:
-        return False
-    if loc["address_validated_at"]:
-        return True  # Already validated
-    return validate_location(conn, loc["id"], loc["raw_address"], client=client)
+    """Validate the previous location for a CHANGE OF LOCATION record."""
+    return _validate_record_location(conn, record_id, "previous_location_id", client)
 
 
 def _validate_batch(
