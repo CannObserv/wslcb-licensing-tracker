@@ -20,14 +20,16 @@ license_records → locations (FK: location_id, previous_location_id)
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** Each `.py` file is self-contained. `database.py` and `scraper.py` are the largest due to query breadth and parsing logic respectively.
+- **Small modules.** The DB layer is split into `database.py` (core schema/connections), `entities.py` (applicant normalization), and `queries.py` (search/CRUD). Dependencies flow one-way: `queries → database, entities, endorsements`.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files
 
 | File | Purpose | Notes |
 |---|---|---|
-| `database.py` | Schema, queries, FTS | All DB access goes through here. `init_db()` is idempotent. Exports `DATA_DIR`, `enrich_record()`, `get_or_create_location()`. |
+| `database.py` | Schema, connections, FTS | Core DB layer. `init_db()` is idempotent. Exports `DATA_DIR`, `get_or_create_location()`. |
+| `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`. |
+| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
@@ -261,13 +263,13 @@ Also available via `python scraper.py --backfill-from-snapshots` (delegates to `
 ### Add a new column to `locations`
 1. Add the column to the `CREATE TABLE IF NOT EXISTS locations` in `database.py`
 2. Add a try/except `ALTER TABLE locations ADD COLUMN ...` migration block in `init_db()` for existing installs
-3. If the column should be searchable via FTS, add it to the `license_records_fts_content` view in `_ensure_fts()`
-4. If needed in display, add it to `_RECORD_SELECT` and update templates
+3. If the column should be searchable via FTS, add it to the `license_records_fts_content` view in `_ensure_fts()` (in `database.py`)
+4. If needed in display, add it to `_RECORD_COLUMNS` in `queries.py` and update templates
 
 ### Add a new column to `license_records`
 1. Add the column to both `CREATE TABLE IF NOT EXISTS license_records` in `database.py` and the rebuild SQL in `migrate_locations.py`
 2. Add a try/except `ALTER TABLE` migration in `init_db()` for existing installs
-3. Update `insert_record()`, `_RECORD_SELECT`, `search_records()`, and templates as needed
+3. Update `insert_record()` and `_RECORD_COLUMNS` in `queries.py`, `search_records()`, and templates as needed
 
 ## Known Issues & Future Work
 

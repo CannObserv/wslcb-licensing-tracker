@@ -72,7 +72,9 @@ Uvicorn’s access and error logs are routed through the same formatter for cons
 ```
 wslcb-licensing-tracker/
 ├── app.py                  # FastAPI web application
-├── database.py             # SQLite schema, queries, FTS5 full-text search
+├── database.py             # SQLite schema, connections, FTS5 full-text search
+├── queries.py              # Record search, filters, stats, CRUD
+├── entities.py             # Entity (applicant) normalization
 ├── migrate_locations.py    # One-time migration: inline address columns → locations table
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── log_config.py           # Centralized logging configuration
