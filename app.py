@@ -11,14 +11,14 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from database import (
-    get_db, init_db, search_records, get_filter_options, get_stats,
-    get_record_by_id, get_related_records, backfill_entities,
-    get_entity_by_id, get_entity_records, _hydrate_records,
+from database import get_db, init_db
+from entities import backfill_entities, get_entity_by_id
+from queries import (
+    search_records, get_filter_options, get_stats,
+    get_record_by_id, get_related_records, get_entity_records,
+    _hydrate_records,
 )
-from endorsements import (
-    seed_endorsements, backfill,
-)
+from endorsements import seed_endorsements, backfill
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,8 @@ from pathlib import Path
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import DATA_DIR, get_db, init_db, insert_record
+from database import DATA_DIR, get_db, init_db
+from queries import insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
 from log_config import setup_logging

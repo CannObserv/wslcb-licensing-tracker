@@ -15,7 +15,8 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from database import DATA_DIR, get_db, init_db, insert_record, get_or_create_location
+from database import DATA_DIR, get_db, init_db, get_or_create_location
+from queries import insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 from log_config import setup_logging
 from scraper import parse_records_from_table, SECTION_MAP
