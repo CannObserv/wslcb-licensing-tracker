@@ -15,7 +15,7 @@ Records missing ``application_type`` after both passes are dropped (typically
 ~1 % of total, caused by irrecoverable hunk splits at the end of the last diff).
 
 At the end of a run the script writes a CSV export of every record that was
-successfully inserted, to ``data/backfill_diffs_<timestamp>.csv``.
+successfully inserted, to ``data/wslcb/licensinginfo-diffs/``.
 
 Usage::
 
@@ -258,6 +258,15 @@ CSV_FIELDS = [
 ]
 
 
+CSV_DIR = DATA_DIR / "wslcb" / "licensinginfo-diffs"
+
+
+def _csv_export_path() -> Path:
+    """Return the export path for the current date."""
+    date_str = datetime.now(timezone.utc).strftime("%Y_%m_%d")
+    return CSV_DIR / f"{date_str}-licensinginfo.lcb.wa.gov-diffs.csv"
+
+
 def _write_csv(records: list[dict], path: Path) -> None:
     """Write *records* to a CSV file at *path*."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -352,7 +361,7 @@ def backfill_diffs(
     )
 
     if dry_run:
-        csv_path = DATA_DIR / f"backfill_diffs_dry_run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.csv"
+        csv_path = _csv_export_path()
         _write_csv(records, csv_path)
         logger.info("Dry run complete — no database changes made.")
         return
@@ -419,7 +428,7 @@ def backfill_diffs(
 
     # Phase 3: CSV export of successfully inserted records.
     if inserted_records:
-        csv_path = DATA_DIR / f"backfill_diffs_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.csv"
+        csv_path = _csv_export_path()
         _write_csv(inserted_records, csv_path)
 
 
