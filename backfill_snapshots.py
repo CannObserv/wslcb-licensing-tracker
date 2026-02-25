@@ -17,7 +17,9 @@ from bs4 import BeautifulSoup
 
 from database import DATA_DIR, get_db, init_db, get_or_create_location
 from queries import insert_record
-from entities import _parse_and_link_entities, clean_applicants_string
+from entities import (
+    parse_and_link_entities, clean_applicants_string, _clean_entity_name,
+)
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 from log_config import setup_logging
 from scraper import parse_records_from_table, SECTION_MAP
@@ -72,10 +74,12 @@ def _ingest_records(conn, records: list[dict]) -> tuple[int, int]:
 # ── Phase 2: Repair ──────────────────────────────────────────────────
 
 def _repair_assumptions(conn, records: list[dict]) -> int:
-    """Fix ASSUMPTION records that have empty business names.
+    """Fix ASSUMPTION records that have empty or NULL business names.
 
-    After updating the applicant columns, re-links entities so the
-    ``record_entities`` junction table reflects the corrected data.
+    Normalizes business names and applicant strings (uppercase, strip
+    trailing punctuation) before writing.  After updating, re-links
+    entities so the ``record_entities`` junction table reflects the
+    corrected data.
     """
     updated = 0
     for rec in records:
@@ -83,6 +87,10 @@ def _repair_assumptions(conn, records: list[dict]) -> int:
             continue
         if not rec["business_name"] and not rec["previous_business_name"]:
             continue
+        cleaned_biz = _clean_entity_name(rec["business_name"] or "")
+        cleaned_prev_biz = _clean_entity_name(
+            rec["previous_business_name"] or ""
+        )
         cleaned_applicants = clean_applicants_string(rec["applicants"])
         cleaned_prev_applicants = clean_applicants_string(
             rec["previous_applicants"]
@@ -99,9 +107,9 @@ def _repair_assumptions(conn, records: list[dict]) -> int:
                  AND application_type = 'ASSUMPTION'
                  AND (business_name = '' OR business_name IS NULL)""",
             (
-                rec["business_name"],
+                cleaned_biz,
                 cleaned_applicants,
-                rec["previous_business_name"],
+                cleaned_prev_biz,
                 cleaned_prev_applicants,
                 rec["section_type"],
                 rec["record_date"],
@@ -124,11 +132,11 @@ def _repair_assumptions(conn, records: list[dict]) -> int:
                 conn.execute(
                     "DELETE FROM record_entities WHERE record_id = ?", (rid,)
                 )
-                _parse_and_link_entities(
+                parse_and_link_entities(
                     conn, rid, cleaned_applicants, "applicant"
                 )
                 if cleaned_prev_applicants:
-                    _parse_and_link_entities(
+                    parse_and_link_entities(
                         conn, rid, cleaned_prev_applicants,
                         "previous_applicant",
                     )

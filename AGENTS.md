@@ -28,13 +28,13 @@ license_records → locations (FK: location_id, previous_location_id)
 | File | Purpose | Notes |
 |---|---|---|
 | `database.py` | Schema, connections, FTS | Core DB layer. `init_db()` is idempotent. Exports `DATA_DIR`, `get_or_create_location()`. |
-| `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`. |
-| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`. |
+| `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
+| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` delegates to `backfill_snapshots.py` (`--backfill-assumptions` still accepted). |
-| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/COL records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
+| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. `404.html` handles not-found errors. |
@@ -62,7 +62,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - Dates stored as `YYYY-MM-DD` (ISO 8601) for proper sorting
 - `location_id` — FK to `locations(id)` for the primary business address; NULL if no address
 - `previous_location_id` — FK to `locations(id)` for the previous address (CHANGE OF LOCATION records); NULL for other types
-- Address data is accessed via JOINs; `_RECORD_SELECT` in `database.py` provides the standard joined query aliasing location columns (business_location, city, std_city, etc.) for backward compatibility with templates
+- Address data is accessed via JOINs; `_RECORD_SELECT` in `queries.py` provides the standard joined query aliasing location columns (business_location, city, std_city, etc.) for backward compatibility with templates
 - `previous_business_name` — seller's business name for ASSUMPTION records; empty string for other types
 - `previous_applicants` — seller's applicants for ASSUMPTION records; empty string for other types
 - `applicants` field is semicolon-separated; for ASSUMPTION records this holds the buyer's applicants ("New Applicant(s)" from source)
@@ -70,7 +70,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - For CHANGE OF LOCATION records: `location_id` points to the new/destination address, `previous_location_id` points to the old/origin address
 - Approved-section CHANGE OF LOCATION records only have `location_id` (the source doesn't provide the previous address)
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
-- `enrich_record()` in `database.py` adds `display_city`, `display_zip`, `display_previous_city`, `display_previous_zip` with standardized-first fallback
+- `enrich_record()` in `queries.py` adds `display_city`, `display_zip`, `display_previous_city`, `display_previous_zip` with standardized-first fallback
 
 ### `license_endorsements`
 - One row per canonical endorsement name (e.g., "CANNABIS RETAILER")
@@ -94,7 +94,8 @@ license_records → locations (FK: location_id, previous_location_id)
 - `get_or_create_entity()` in `entities.py` normalizes names via `_clean_entity_name()`: uppercase, strip whitespace, and remove stray trailing punctuation (periods, commas) that isn't part of a recognized suffix
 - The `_LEGIT_TRAILING_DOT` regex in `entities.py` defines the suffix allowlist — add new entries there when the WSLCB source uses a new legitimate abbreviation ending with a period.  Current list: `INC`, `LLC`, `L.L.C`, `L.L.P`, `LTD`, `CORP`, `CO`, `L.P`, `PTY`, `JR`, `SR`, `S.P.A`, `F.O.E`, `U.P`, `D.B.A`, `P.C`, `N.A`, `P.A`, `W. & S`
 - `clean_applicants_string()` applies the same cleaning to each element of a semicolon-delimited applicants string — used at ingest time so the `applicants`/`previous_applicants` columns on `license_records` stay consistent with entity names
-- `merge_duplicate_entities()` runs at web app startup (via `backfill_entities()` in the `app.py` lifespan) to fix any pre-existing dirty entities — merges duplicates, renames others in place, and cleans `applicants` strings in `license_records`
+- `insert_record()` in `queries.py` also cleans `business_name` and `previous_business_name` via `_clean_entity_name()` before storage, so all name columns are consistently uppercased and stripped of stray punctuation
+- `merge_duplicate_entities()` runs at web app startup (via `backfill_entities()` in the `app.py` lifespan) — cleans `business_name`, `previous_business_name`, `applicants`, and `previous_applicants` in `license_records` via `clean_record_strings()`, then merges duplicate entities and renames dirty ones in place; all work is committed in a single transaction
 
 ### `record_entities` (junction table)
 - Links `license_records` ↔ `entities` with role and position
@@ -283,9 +284,8 @@ Also available via `python scraper.py --backfill-from-snapshots` (delegates to `
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the locations table but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
-- The `applicants` and `previous_applicants` string columns on `license_records` are retained for FTS indexing and CSV export; values are cleaned at ingest time via `clean_applicants_string()` to stay consistent with entity names. Removal is deferred to a future phase
+- The `applicants` and `previous_applicants` string columns on `license_records` are retained for FTS indexing and CSV export; values are cleaned at ingest time (alongside `business_name` and `previous_business_name`) to stay consistent with entity names. Removal is deferred to a future phase
 - Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
 - `search_records()` runs separate COUNT and SELECT queries with the same WHERE clause; could use `COUNT(*) OVER()` window function (fine at current scale)
 - CSV export (`/export`) loads up to 100K rows into memory with no streaming; acceptable for current dataset size
-- `get_filter_options()` city dropdown query runs on every search page load; could be cached
 - Consider adding: email/webhook alerts for new records matching saved searches

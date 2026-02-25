@@ -11,7 +11,8 @@ import time
 
 from endorsements import get_endorsement_options, get_record_endorsements
 from entities import (
-    _parse_and_link_entities, get_record_entities, clean_applicants_string,
+    parse_and_link_entities, get_record_entities, clean_applicants_string,
+    _clean_entity_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,9 +106,11 @@ def _hydrate_records(
 def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
     """Insert a record, returning the new row id or None if duplicate.
 
-    Automatically resolves (or creates) location rows for the primary
-    and previous business addresses.  Checks for duplicates *before*
-    creating locations to avoid orphaned location rows.
+    Normalizes ``business_name``, ``previous_business_name``,
+    ``applicants``, and ``previous_applicants`` (uppercase, strip
+    trailing punctuation) before storage.  Automatically resolves (or
+    creates) location rows and links entity records.  Checks for
+    duplicates *before* creating locations to avoid orphaned rows.
     """
     from database import get_or_create_location
 
@@ -137,7 +140,12 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
         state=record.get("previous_state", ""),
         zip_code=record.get("previous_zip_code", ""),
     )
-    # Clean applicant strings so stored values match entity names
+    # Normalize business names and applicant strings (uppercase, strip
+    # trailing punctuation) so stored values are consistent throughout.
+    cleaned_biz = _clean_entity_name(record.get("business_name", ""))
+    cleaned_prev_biz = _clean_entity_name(
+        record.get("previous_business_name", "")
+    )
     cleaned_applicants = clean_applicants_string(
         record.get("applicants", "")
     )
@@ -159,16 +167,18 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
                 **record,
                 "location_id": location_id,
                 "previous_location_id": previous_location_id,
+                "business_name": cleaned_biz,
+                "previous_business_name": cleaned_prev_biz,
                 "applicants": cleaned_applicants,
                 "previous_applicants": cleaned_prev_applicants,
             },
         )
         record_id = cursor.lastrowid
-        _parse_and_link_entities(
+        parse_and_link_entities(
             conn, record_id, cleaned_applicants, "applicant"
         )
         if cleaned_prev_applicants:
-            _parse_and_link_entities(
+            parse_and_link_entities(
                 conn, record_id, cleaned_prev_applicants, "previous_applicant"
             )
         return record_id

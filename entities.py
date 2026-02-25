@@ -54,13 +54,13 @@ def _clean_entity_name(name: str) -> str:
     return cleaned
 
 
-def clean_applicants_string(applicants: str) -> str:
+def clean_applicants_string(applicants: str | None) -> str | None:
     """Clean each semicolon-separated part of an applicants string.
 
     Applies ``_clean_entity_name()`` to every element (including the
     leading business-name element) so the stored string is consistent
     with entity names in the ``entities`` table.  Empty parts after
-    cleaning are dropped.
+    cleaning are dropped.  Returns ``None`` unchanged.
     """
     if not applicants:
         return applicants
@@ -96,7 +96,7 @@ def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
     return cur.lastrowid
 
 
-def _parse_and_link_entities(
+def parse_and_link_entities(
     conn: sqlite3.Connection,
     record_id: int,
     applicants_str: str,
@@ -105,7 +105,9 @@ def _parse_and_link_entities(
     """Split a semicolon-delimited applicants string, skip the first
     element (business name), create entities, and link them to the record.
 
-    Returns the number of entities linked.
+    Assigns contiguous 0-based positions to successfully linked entities
+    (skipped names do not leave gaps).  Returns the number of entities
+    linked.
     """
     if not applicants_str or ";" not in applicants_str:
         return 0
@@ -113,29 +115,35 @@ def _parse_and_link_entities(
     # First element is always the business name — skip it
     entity_names = [p for p in parts[1:] if p]
     linked = 0
-    for position, name in enumerate(entity_names):
+    for name in entity_names:
         try:
             entity_id = get_or_create_entity(conn, name)
         except ValueError:
             logger.warning("Skipping empty entity name in record %d "
                            "(position %d, role %s, raw: %r)",
-                           record_id, position, role, name)
+                           record_id, linked, role, name)
             continue
         cursor = conn.execute(
             """INSERT OR IGNORE INTO record_entities
                (record_id, entity_id, role, position)
                VALUES (?, ?, ?, ?)""",
-            (record_id, entity_id, role, position),
+            (record_id, entity_id, role, linked),
         )
         linked += cursor.rowcount
     return linked
 
 
 def backfill_entities(conn: sqlite3.Connection) -> int:
-    """Populate entities + record_entities for existing records.
+    """Populate entities + record_entities for existing records, then
+    run startup cleanup.
 
-    Only processes records that have applicants but no entity links yet.
-    Returns the number of records processed.
+    1. Link entities for records that have applicants but no entity
+       links yet.
+    2. Call ``merge_duplicate_entities()`` to clean stale entity names,
+       merge duplicates, and normalize string columns in
+       ``license_records``.
+
+    Returns the number of records processed in step 1.
     """
     rows = conn.execute("""
         SELECT lr.id, lr.applicants, lr.previous_applicants
@@ -146,9 +154,9 @@ def backfill_entities(conn: sqlite3.Connection) -> int:
     """).fetchall()
 
     for r in rows:
-        _parse_and_link_entities(conn, r["id"], r["applicants"], "applicant")
+        parse_and_link_entities(conn, r["id"], r["applicants"], "applicant")
         if r["previous_applicants"]:
-            _parse_and_link_entities(
+            parse_and_link_entities(
                 conn, r["id"], r["previous_applicants"], "previous_applicant"
             )
 
@@ -204,53 +212,64 @@ def get_entity_by_id(conn: sqlite3.Connection, entity_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def _clean_applicants_in_records(conn: sqlite3.Connection) -> int:
-    """One-time cleanup: apply ``clean_applicants_string()`` to all
-    ``applicants`` and ``previous_applicants`` values in ``license_records``.
+def clean_record_strings(conn: sqlite3.Connection) -> int:
+    """Startup cleanup: uppercase and strip trailing punctuation from
+    ``business_name``, ``previous_business_name``, ``applicants``, and
+    ``previous_applicants`` in ``license_records``.
 
     Only updates rows that actually change.  Returns the number of rows
-    updated.
+    updated.  Callers should commit afterward (this function does not
+    commit, so it can participate in a larger transaction).
     """
     rows = conn.execute(
-        "SELECT id, applicants, previous_applicants FROM license_records"
+        """SELECT id, business_name, previous_business_name,
+                  applicants, previous_applicants
+           FROM license_records"""
     ).fetchall()
     updated = 0
     for r in rows:
+        clean_biz = _clean_entity_name(r["business_name"] or "")
+        clean_prev_biz = _clean_entity_name(r["previous_business_name"] or "")
         clean_app = clean_applicants_string(r["applicants"] or "")
         clean_prev = clean_applicants_string(r["previous_applicants"] or "")
-        if clean_app != (r["applicants"] or "") or clean_prev != (r["previous_applicants"] or ""):
+        if (clean_biz != (r["business_name"] or "")
+                or clean_prev_biz != (r["previous_business_name"] or "")
+                or clean_app != (r["applicants"] or "")
+                or clean_prev != (r["previous_applicants"] or "")):
             conn.execute(
                 """UPDATE license_records
-                   SET applicants = ?, previous_applicants = ?
+                   SET business_name = ?,
+                       previous_business_name = ?,
+                       applicants = ?,
+                       previous_applicants = ?
                    WHERE id = ?""",
-                (clean_app, clean_prev, r["id"]),
+                (clean_biz, clean_prev_biz, clean_app, clean_prev, r["id"]),
             )
             updated += 1
     if updated:
-        conn.commit()
-        logger.info("Cleaned applicant strings in %d record(s)", updated)
+        logger.info("Cleaned strings in %d record(s)", updated)
     return updated
 
 
 def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
     """Find and merge entities whose names differ only by stray trailing
-    punctuation (e.g., ``WOLDU ARAYA BERAKI.`` → ``WOLDU ARAYA BERAKI``).
+    punctuation or casing, and clean string columns in ``license_records``.
 
-    Also cleans the ``applicants`` / ``previous_applicants`` string
-    columns on ``license_records`` so stored values, FTS indexes, and
-    CSV exports are consistent with the cleaned entity names.
+    Performs all work in a single transaction (committed at the end):
 
-    For each dirty entity:
-    1. Reassign its ``record_entities`` rows to the clean entity
-       (skipping any that would violate the PK constraint — i.e., the
-       clean entity is already linked to that record+role).
-    2. Delete the dirty entity row.
+    1. Clean ``business_name``, ``previous_business_name``, ``applicants``,
+       and ``previous_applicants`` on ``license_records`` via
+       ``clean_record_strings()``.
+    2. For each dirty entity, reassign its ``record_entities`` rows to
+       the canonical (clean-named) entity, preserving the lower position
+       on conflicts, then delete the dirty entity.
+    3. Entities with no clean counterpart are renamed in place.
 
-    Returns the number of entities merged (deleted).
+    Returns the number of entities merged or renamed.
     """
-    # Clean stray punctuation in the applicants string columns too,
-    # so FTS and CSV export stay consistent with entity names.
-    _clean_applicants_in_records(conn)
+    # Clean business names and applicant strings in license_records
+    # so FTS, CSV export, and display are all consistent.
+    clean_record_strings(conn)
 
     # Find entities whose cleaned name differs from their stored name
     all_entities = conn.execute(
@@ -324,8 +343,9 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
                         dirty_id, entity["name"], cleaned)
         merged += 1
 
+    # Commit record-string cleaning and entity merges/renames together
+    conn.commit()
     if merged:
-        conn.commit()
         logger.info("Merged/renamed %d entities with stray trailing punctuation",
                     merged)
     return merged
