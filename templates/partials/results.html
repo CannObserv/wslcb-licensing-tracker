@@ -6,7 +6,7 @@
         {% endif %}
     </p>
     {% if total > 0 %}
-    <a href="{{ export_url }}" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">⤓ Export CSV</a>
+    <a href="{{ export_url }}" class="text-sm text-co-purple hover:text-co-purple-700 font-medium">⤓ Export CSV</a>
     {% endif %}
 </div>
 
@@ -37,7 +37,7 @@
     {% for p in range(start_page, end_page + 1) %}
     <a href="?{{ pq }}&page={{ p }}" hx-get="/search?{{ pq }}&page={{ p }}"
        hx-target="#results" hx-push-url="true" hx-swap="innerHTML scroll:#results:top"
-       class="px-3 py-1.5 text-sm border rounded-md {{ 'bg-indigo-600 text-white border-indigo-600' if p == page else 'border-gray-300 hover:bg-gray-50' }}">
+       class="px-3 py-1.5 text-sm border rounded-md {{ 'bg-co-purple text-white border-co-purple' if p == page else 'border-gray-300 hover:bg-gray-50' }}">
         {{ p }}
     </a>
     {% endfor %}

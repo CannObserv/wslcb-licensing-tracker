@@ -4,8 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}WSLCB Licensing Tracker{% endblock %}</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='13' cy='13' r='9' fill='none' stroke='%234f46e5' stroke-width='3'/%3E%3Cline x1='20' y1='20' x2='29' y2='29' stroke='%234f46e5' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='13' cy='13' r='9' fill='none' stroke='%2317de6b' stroke-width='3'/%3E%3Cline x1='20' y1='20' x2='29' y2='29' stroke='%2317de6b' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com?v=3.4.17"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    'co-green': '#8cbe69',
+                    'co-purple': {
+                        DEFAULT: '#6d4488',
+                        50:  '#f5f0f8',
+                        100: '#ebe1f1',
+                        600: '#6d4488',
+                        700: '#5a3870',
+                        800: '#472c59',
+                    },
+                },
+            },
+        },
+    }
+    </script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <style>
         .htmx-request { opacity: 0.5; transition: opacity 300ms; }
@@ -22,15 +41,13 @@
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center gap-3">
                     <a href="/" class="flex items-center gap-2">
-                        <svg class="w-7 h-7 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                        </svg>
+                        <img src="/static/images/cannabis_observer-icon-square.svg" alt="Cannabis Observer" class="w-8 h-8">
                         <span class="text-lg font-bold text-gray-900">WSLCB Licensing Tracker</span>
                     </a>
                 </div>
                 <div class="flex items-center gap-4">
-                    <a href="/" class="text-sm text-gray-600 hover:text-gray-900">Dashboard</a>
-                    <a href="/search" class="text-sm text-gray-600 hover:text-gray-900">Search</a>
+                    <a href="/" class="text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
+                    <a href="/search" class="text-sm text-gray-600 hover:text-co-purple-700">Search</a>
                 </div>
             </div>
         </div>
@@ -39,7 +56,15 @@
         {% block content %}{% endblock %}
     </main>
     <footer class="border-t border-gray-200 mt-12">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-2">
+            <p class="text-xs text-gray-500 text-center inline-flex items-center justify-center gap-1 w-full">
+                A project of
+                <a href="https://cannabis.observer/" class="inline-flex items-center gap-1 font-medium text-co-purple hover:text-co-purple-700" target="_blank" rel="noopener noreferrer">
+                    <img src="/static/images/cannabis_observer-icon-square.svg" alt="" class="w-4 h-4">
+                    Cannabis Observer
+                </a>
+                <span aria-label="seedling, classical building, magnifying glass">🌱🏛️🔍</span>
+            </p>
             <p class="text-xs text-gray-400 text-center">
                 Data sourced from the
                 <a href="https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp" class="underline" target="_blank" rel="noopener noreferrer">WA State Liquor &amp; Cannabis Board</a>.
