@@ -138,10 +138,59 @@ license_records → locations (FK: location_id, previous_location_id)
 - Use `%s`/`%d` style formatting in log calls (not f-strings) so messages are only formatted if the level is enabled.
 
 ### Templates
-- Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`)
+- Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`) with custom `tailwind.config` in `base.html`
 - HTMX for partial page updates on search — the `/search` endpoint detects `HX-Request` header
 - Custom Jinja2 filters registered in `app.py`: `section_label`, `phone_format`
-- Color-coded badges: `.badge-new` (blue), `.badge-approved` (green), `.badge-discontinued` (red)
+- See **Style Guide** below for colors, branding, and component conventions
+
+### Style Guide
+
+This project is branded as a **Cannabis Observer** project. The visual identity draws from the Cannabis Observer SVG assets and uses a consistent color palette across all templates.
+
+#### Brand Assets
+
+| File | Purpose |
+|---|---|
+| `static/images/cannabis_observer-icon-square.svg` | Square icon (510×510); used in navbar (32×32) and footer (16×16) |
+| `static/images/cannabis_observer-name.svg` | Stylized "cannabis OBSERVER" wordmark (wide aspect ratio); available for future use |
+
+The emoji triad 🌱🏛️🔍 (seedling + classical building + magnifying glass) represents Cannabis Observer's mission and appears in the footer.
+
+#### Color Palette
+
+Custom colors are defined in the Tailwind config block in `base.html`:
+
+| Token | Hex | Usage |
+|---|---|---|
+| `co-green` | `#8cbe69` | Cannabis Observer brand green (from SVG). Reserved for future emphasis; not currently used as a UI accent |
+| `co-purple` (DEFAULT/600) | `#6d4488` | **Primary UI accent.** Buttons, links, active pagination, detail-page highlight panels, entity links |
+| `co-purple-50` | `#f5f0f8` | Highlight panel backgrounds (Assumption "Buyer", Change of Location "New Location") |
+| `co-purple-100` | `#ebe1f1` | Highlight panel borders |
+| `co-purple-700` | `#5a3870` | Hover states for buttons and links |
+| `co-purple-800` | `#472c59` | Available for darker emphasis if needed |
+
+The favicon uses bright green `#17de6b` (a vibrant accent distinct from the brand palette).
+
+#### Record-Type Badges (semantic — do NOT change to brand colors)
+
+| Class | Background | Text | Used for |
+|---|---|---|---|
+| `.badge-new` | `#dbeafe` (blue-100) | `#1e40af` (blue-800) | New Application records |
+| `.badge-approved` | `#dcfce7` (green-100) | `#166534` (green-800) | Approved records |
+| `.badge-discontinued` | `#fee2e2` (red-100) | `#991b1b` (red-800) | Discontinued records |
+
+These use fixed hex values (not Tailwind classes) and serve a **semantic** purpose — they should remain visually distinct from the brand accent.
+
+#### Component Conventions
+
+- **Buttons** (Search, submit): `bg-co-purple text-white hover:bg-co-purple-700`
+- **Text links** (back links, Export CSV, entity names): `text-co-purple hover:text-co-purple-700`
+- **Focus rings** on inputs: `focus:border-co-purple focus:ring-co-purple`
+- **Active pagination page**: `bg-co-purple text-white border-co-purple`
+- **Detail page accent panels** ("Buyer (New) →", "New Location →"): `bg-co-purple-50 border-co-purple-100` with `text-co-purple` header
+- **Entity type badges**: unchanged — purple-100/purple-800 for Organization, amber-100/amber-800 for Person (these use Tailwind's built-in purple, not `co-purple`)
+- **Navbar**: Cannabis Observer icon (32×32) + bold site title; nav links use `hover:text-co-purple-700`
+- **Footer**: two lines — (1) "A project of [icon] Cannabis Observer 🌱🏛️🔍" linked to `https://cannabis.observer/`, (2) WSLCB data source attribution
 
 ### Data Integrity
 - The UNIQUE constraint prevents duplicate records across daily scrapes
