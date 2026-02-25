@@ -43,8 +43,9 @@ import argparse
 import csv
 import logging
 import re
-import sys
+from collections import Counter
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -52,7 +53,7 @@ from bs4 import BeautifulSoup
 from database import DATA_DIR, get_db, init_db
 from endorsements import discover_code_mappings, process_record, seed_endorsements
 from log_config import setup_logging
-from queries import insert_record
+from queries import insert_record, search_records, _hydrate_records
 from scraper import parse_records_from_table
 
 logger = logging.getLogger(__name__)
@@ -72,20 +73,46 @@ _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # ── Diff parsing ─────────────────────────────────────────────────────
 
 
+def _parse_diff_timestamp(header_line: str) -> str:
+    """Extract an ISO 8601 timestamp from a ``---`` or ``+++`` diff header.
+
+    Expected format: ``--- @\tWed, 07 Sep 2022 06:15:05 -0700``
+    Returns the current UTC time as fallback if parsing fails.
+    """
+    try:
+        # Strip the "--- @\t" / "+++ @\t" prefix.
+        raw = header_line.split("\t", 1)[1]
+        return parsedate_to_datetime(raw).isoformat()
+    except Exception:
+        return datetime.now(timezone.utc).isoformat()
+
+
 def _split_diff_lines(content: str):
     """Split a unified diff into added, removed, and context line lists.
 
-    Returns ``(added, removed, new_with_ctx, old_with_ctx)`` where:
+    Returns ``(added, removed, new_with_ctx, old_with_ctx, old_ts, new_ts)``
+    where:
+
     - *added* / *removed* contain only ``+`` / ``-`` lines (prefix stripped).
     - *new_with_ctx* / *old_with_ctx* include context lines on both sides.
+    - *old_ts* / *new_ts* are ISO 8601 timestamps extracted from the
+      ``---`` / ``+++`` headers (used as ``scraped_at`` for recovered records).
     """
     added: list[str] = []
     removed: list[str] = []
     new_ctx: list[str] = []
     old_ctx: list[str] = []
+    old_ts = ""
+    new_ts = ""
 
     for line in content.split("\n"):
-        if line.startswith(("---", "+++", "@@")):
+        if line.startswith("--- "):
+            old_ts = _parse_diff_timestamp(line)
+            continue
+        if line.startswith("+++ "):
+            new_ts = _parse_diff_timestamp(line)
+            continue
+        if line.startswith("@@"):
             continue
         if line.startswith("+"):
             stripped = line[1:]
@@ -100,7 +127,7 @@ def _split_diff_lines(content: str):
             new_ctx.append(line)
             old_ctx.append(line)
 
-    return added, removed, new_ctx, old_ctx
+    return added, removed, new_ctx, old_ctx, old_ts, new_ts
 
 
 def _parse_html_lines(lines: list[str], section_type: str) -> list[dict]:
@@ -137,14 +164,15 @@ def extract_records_from_diff(
     overall parse time low.
     """
     content = filepath.read_text(encoding="utf-8")
-    added, removed, new_ctx, old_ctx = _split_diff_lines(content)
+    added, removed, new_ctx, old_ctx, old_ts, new_ts = _split_diff_lines(content)
 
     # ── Primary pass (no context) ──
     primary: dict[tuple, dict] = {}
     has_incomplete = False
-    for lines in (added, removed):
+    for lines, ts in ((added, new_ts), (removed, old_ts)):
         for rec in _parse_html_lines(lines, section_type):
             if _is_valid(rec):
+                rec["scraped_at"] = ts
                 key = (
                     rec["section_type"],
                     rec["record_date"],
@@ -161,30 +189,24 @@ def extract_records_from_diff(
     if not has_incomplete:
         return list(primary.values())
 
-    # Track which (section, date, license) tuples the primary pass covers.
-    primary_ids = {(k[0], k[1], k[2]) for k in primary}
-
     # ── Supplemental pass (with context) ──
-    supplemental: dict[tuple, dict] = {}
-    for lines in (new_ctx, old_ctx):
+    # Only recover records whose full 4-tuple key is absent from the
+    # primary results.  This preserves cases where the same license
+    # has two different application_types on the same date.
+    for lines, ts in ((new_ctx, new_ts), (old_ctx, old_ts)):
         for rec in _parse_html_lines(lines, section_type):
             if _is_valid(rec):
-                short_id = (
+                key = (
                     rec["section_type"],
                     rec["record_date"],
                     rec["license_number"],
+                    rec["application_type"],
                 )
-                if short_id not in primary_ids:
-                    key = (
-                        rec["section_type"],
-                        rec["record_date"],
-                        rec["license_number"],
-                        rec["application_type"],
-                    )
-                    supplemental.setdefault(key, rec)
+                if key not in primary:
+                    rec["scraped_at"] = ts
+                    primary.setdefault(key, rec)
 
-    merged = {**primary, **{k: v for k, v in supplemental.items() if k not in primary}}
-    return list(merged.values())
+    return list(primary.values())
 
 
 # ── Diff file discovery ──────────────────────────────────────────────
@@ -236,48 +258,103 @@ def _discover_diff_files(
 
 # ── CSV export ───────────────────────────────────────────────────────
 
+# Matches the field list used by the /export endpoint in app.py.
 CSV_FIELDS = [
-    "section_type",
-    "record_date",
-    "business_name",
-    "business_location",
-    "applicants",
-    "license_type",
-    "application_type",
-    "license_number",
-    "contact_phone",
-    "city",
-    "state",
-    "zip_code",
-    "previous_business_name",
-    "previous_applicants",
+    "section_type", "record_date", "business_name", "business_location",
+    "address_line_1", "address_line_2", "applicants", "license_type",
+    "endorsements", "application_type", "license_number", "contact_phone",
+    "city", "state", "zip_code", "std_city", "std_state", "std_zip",
+    "previous_business_name", "previous_applicants",
     "previous_business_location",
-    "previous_city",
-    "previous_state",
-    "previous_zip_code",
+    "prev_address_line_1", "prev_address_line_2",
+    "prev_std_city", "prev_std_state", "prev_std_zip",
 ]
 
+# Lightweight field list for dry-run exports (no DB to query).
+_DRY_RUN_FIELDS = [
+    "section_type", "record_date", "business_name", "business_location",
+    "applicants", "license_type", "application_type", "license_number",
+    "contact_phone", "city", "state", "zip_code",
+    "previous_business_name", "previous_applicants",
+    "previous_business_location", "previous_city", "previous_state",
+    "previous_zip_code",
+]
 
 CSV_DIR = DATA_DIR / "wslcb" / "licensinginfo-diffs"
 
 
 def _csv_export_path() -> Path:
-    """Return the export path for the current date."""
-    date_str = datetime.now(timezone.utc).strftime("%Y_%m_%d")
-    return CSV_DIR / f"{date_str}-licensinginfo.lcb.wa.gov-diffs.csv"
+    """Return the export path for the current UTC date and time."""
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y_%m_%d")
+    time_str = now.strftime("%H_%M_%S")
+    return CSV_DIR / f"{date_str}-{time_str}-licensinginfo.lcb.wa.gov-diffs.csv"
 
 
-def _write_csv(records: list[dict], path: Path) -> None:
-    """Write *records* to a CSV file at *path*."""
+def _write_dry_run_csv(records: list[dict], path: Path) -> None:
+    """Write raw parsed *records* to CSV (dry-run, no DB available)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        writer = csv.DictWriter(
+            f, fieldnames=_DRY_RUN_FIELDS, extrasaction="ignore",
+        )
         writer.writeheader()
         for rec in sorted(
-            records, key=lambda r: (r["record_date"], r["section_type"])
+            records, key=lambda r: (r["record_date"], r["section_type"]),
         ):
-            writer.writerow({k: rec.get(k, "") for k in CSV_FIELDS})
-    logger.info("CSV export: %d records → %s", len(records), path)
+            writer.writerow({k: rec.get(k, "") for k in _DRY_RUN_FIELDS})
+    logger.info("CSV export (dry run): %d records → %s", len(records), path)
+
+
+def _write_csv_from_db(
+    conn, record_ids: list[int], path: Path,
+) -> None:
+    """Export inserted records from the DB, with cleaned names and endorsements.
+
+    Reuses the same query infrastructure as the ``/export`` endpoint so
+    the CSV reflects the normalised data actually stored in the database.
+    """
+    if not record_ids:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Fetch in batches to keep memory bounded.
+    BATCH = 5000
+    total_written = 0
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=CSV_FIELDS, extrasaction="ignore",
+        )
+        writer.writeheader()
+        for start in range(0, len(record_ids), BATCH):
+            batch_ids = record_ids[start : start + BATCH]
+            placeholders = ",".join("?" * len(batch_ids))
+            rows = conn.execute(
+                f"""SELECT {_record_columns()} {_record_joins()}
+                    WHERE lr.id IN ({placeholders})
+                    ORDER BY lr.record_date, lr.section_type""",
+                batch_ids,
+            ).fetchall()
+            hydrated = _hydrate_records(conn, rows)
+            for r in hydrated:
+                row = {k: r.get(k, "") for k in CSV_FIELDS}
+                row["endorsements"] = "; ".join(r.get("endorsements", []))
+                writer.writerow(row)
+            total_written += len(hydrated)
+
+    logger.info("CSV export: %d records → %s", total_written, path)
+
+
+def _record_columns() -> str:
+    """Return the column list from queries._RECORD_COLUMNS."""
+    from queries import _RECORD_COLUMNS
+    return _RECORD_COLUMNS
+
+
+def _record_joins() -> str:
+    """Return the JOIN clause from queries._RECORD_JOINS."""
+    from queries import _RECORD_JOINS
+    return _RECORD_JOINS
 
 
 # ── Main entry point ─────────────────────────────────────────────────
@@ -346,8 +423,6 @@ def backfill_diffs(
         return
 
     # Summary before inserting.
-    from collections import Counter
-
     by_section = Counter(r["section_type"] for r in records)
     date_min = min(r["record_date"] for r in records)
     date_max = max(r["record_date"] for r in records)
@@ -362,12 +437,12 @@ def backfill_diffs(
 
     if dry_run:
         csv_path = _csv_export_path()
-        _write_csv(records, csv_path)
+        _write_dry_run_csv(records, csv_path)
         logger.info("Dry run complete — no database changes made.")
         return
 
     # Phase 2: insert into database in batches.
-    inserted_records: list[dict] = []
+    inserted_ids: list[int] = []
     skipped = 0
     errors = 0
 
@@ -384,7 +459,7 @@ def backfill_diffs(
                     process_record(
                         conn, rid, rec["license_type"], rec["section_type"]
                     )
-                    inserted_records.append(rec)
+                    inserted_ids.append(rid)
                 else:
                     skipped += 1
             except Exception:
@@ -403,7 +478,7 @@ def backfill_diffs(
                     "  progress: %d / %d (inserted=%d, skipped=%d)",
                     i + 1,
                     len(records),
-                    len(inserted_records),
+                    len(inserted_ids),
                     skipped,
                 )
 
@@ -420,16 +495,18 @@ def backfill_diffs(
 
     logger.info(
         "Done! inserted=%d, skipped=%d, errors=%d (of %d total)",
-        len(inserted_records),
+        len(inserted_ids),
         skipped,
         errors,
         len(records),
     )
 
-    # Phase 3: CSV export of successfully inserted records.
-    if inserted_records:
+    # Phase 3: CSV export of successfully inserted records from the DB,
+    # so the CSV reflects cleaned/normalised values and endorsements.
+    if inserted_ids:
         csv_path = _csv_export_path()
-        _write_csv(inserted_records, csv_path)
+        with get_db() as export_conn:
+            _write_csv_from_db(export_conn, inserted_ids, csv_path)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
