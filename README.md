@@ -4,6 +4,8 @@ A web application that scrapes, archives, and provides searchable access to lice
 
 The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp) of new license applications, approvals, and discontinuances for alcohol, cannabis, tobacco, and vapor product businesses across Washington State. This tracker scrapes that report twice daily and preserves the data in a searchable database, building a historical archive that extends beyond the 30-day window.
 
+A project of [Cannabis Observer](https://cannabis.observer/) 🌱🏛️🔍
+
 **Live instance:** [https://wslcb-licensing-tracker.exe.xyz:8000/](https://wslcb-licensing-tracker.exe.xyz:8000/)
 
 ## Features
@@ -55,7 +57,7 @@ Each record includes:
 | Address validation | External API ([address-validator](https://address-validator.exe.xyz:8000/docs)) for USPS-standardized parsing |
 | Database | SQLite with [FTS5](https://www.sqlite.org/fts5.html) full-text search |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
-| Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (CDN) |
+| Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (CDN, custom brand palette) |
 | Scheduling | systemd timer (twice-daily) |
 
 ## Logging
@@ -90,8 +92,10 @@ wslcb-licensing-tracker/
 │   ├── 404.html            # Not-found error page
 │   ├── entity.html         # Entity detail page
 │   └── partials/
-│       └── results.html    # Search results partial (HTMX)
+│       ├── results.html      # Search results partial (HTMX)
+│       └── record_table.html # Shared record table (results + entity pages)
 ├── static/                 # Static assets
+│   └── images/             # Cannabis Observer brand assets (icon + wordmark SVGs)
 ├── data/                   # Persistent data (gitignored)
 │   ├── wslcb.db            # SQLite database
 │   └── wslcb/                  # Archived data by source

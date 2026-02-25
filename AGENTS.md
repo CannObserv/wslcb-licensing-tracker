@@ -37,8 +37,9 @@ license_records → locations (FK: location_id, previous_location_id)
 | `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
-| `templates/` | Jinja2 HTML templates | `base.html` is the layout. `partials/results.html` is the HTMX target. `404.html` handles not-found errors. |
+| `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
+| `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
 
 ## Database Schema
 
@@ -181,14 +182,24 @@ The favicon uses bright green `#17de6b` (a vibrant accent distinct from the bran
 
 These use fixed hex values (not Tailwind classes) and serve a **semantic** purpose — they should remain visually distinct from the brand accent.
 
+#### Dashboard Stat Card Colors (semantic — do NOT change to brand colors)
+
+The stat cards on the dashboard (`index.html`) use Tailwind semantic colors matching the record-type badges:
+
+- **New Applications**: `border-blue-200`, `text-blue-600`/`text-blue-700`
+- **Approved**: `border-green-200`, `text-green-600`/`text-green-700`
+- **Discontinued**: `border-red-200`, `text-red-600`/`text-red-700`
+- **Neutral cards** (Total Records, Unique Businesses, etc.): `border-gray-200`, `text-gray-900`
+
 #### Component Conventions
 
 - **Buttons** (Search, submit): `bg-co-purple text-white hover:bg-co-purple-700`
-- **Text links** (back links, Export CSV, entity names): `text-co-purple hover:text-co-purple-700`
-- **Focus rings** on inputs: `focus:border-co-purple focus:ring-co-purple`
+- **Text links** (back links, Export CSV): `text-co-purple hover:text-co-purple-700`
+- **Entity name links** (detail page): `text-co-purple hover:text-co-purple-700 hover:underline`
+- **Focus rings** on inputs: `focus:border-co-purple focus:ring-1 focus:ring-co-purple`
 - **Active pagination page**: `bg-co-purple text-white border-co-purple`
 - **Detail page accent panels** ("Buyer (New) →", "New Location →"): `bg-co-purple-50 border-co-purple-100` with `text-co-purple` header
-- **Entity type badges**: unchanged — purple-100/purple-800 for Organization, amber-100/amber-800 for Person (these use Tailwind's built-in purple, not `co-purple`)
+- **Entity type badges**: `bg-co-purple-50 text-co-purple` for Organization, `bg-amber-100 text-amber-800` for Person
 - **Navbar**: Cannabis Observer icon (32×32) + bold site title; nav links use `hover:text-co-purple-700`
 - **Footer**: two lines — (1) "A project of [icon] Cannabis Observer 🌱🏛️🔍" linked to `https://cannabis.observer/`, (2) WSLCB data source attribution
 
