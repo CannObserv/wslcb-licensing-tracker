@@ -91,7 +91,8 @@ license_records → locations (FK: location_id, previous_location_id)
 - `name` (UNIQUE) — the name as received from the WSLCB source
 - `entity_type` — `'person'`, `'organization'`, or `''` (unknown); classified by heuristic at creation time
 - The first element of the semicolon-delimited `applicants` field (which equals `business_name`) is **excluded** — only the individual people/orgs behind the license are stored
-- `get_or_create_entity()` in `database.py` handles dedup by uppercased exact name match
+- `get_or_create_entity()` in `entities.py` normalizes names via `_clean_entity_name()`: uppercase, strip whitespace, and remove stray trailing punctuation (periods, commas) that isn't part of a recognized suffix (INC., JR., SR., etc.)
+- `merge_duplicate_entities()` runs at startup (via `backfill_entities()`) to fix any pre-existing dirty entities — merges duplicates, renames others in place
 
 ### `record_entities` (junction table)
 - Links `license_records` ↔ `entities` with role and position
@@ -280,7 +281,6 @@ Also available via `python scraper.py --backfill-from-snapshots` (delegates to `
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the locations table but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
-- Entity names are uppercased at ingestion for consistency; the WSLCB source occasionally uses mixed case for the same person (e.g., `Cate Ryan` vs `CATE RYAN`)
 - The `applicants` and `previous_applicants` string columns on `license_records` are retained for backward compatibility with FTS indexing and CSV export; removal is deferred to a future phase
 - Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
 - `search_records()` runs separate COUNT and SELECT queries with the same WHERE clause; could use `COUNT(*) OVER()` window function (fine at current scale)

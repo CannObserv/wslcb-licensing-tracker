@@ -19,6 +19,29 @@ _ORG_PATTERNS = re.compile(
 )
 
 
+# Suffixes where a trailing period is legitimate and should be kept.
+# Checked against the uppercased name.
+_LEGIT_TRAILING_DOT = re.compile(
+    r'(?:INC|LLC|L\.L\.C|LTD|CORP|JR|SR|CO|S\.P\.A|PTY|L\.P|F\.O\.E|U\.P|W\. & S)\.\s*$'
+)
+
+
+def _clean_entity_name(name: str) -> str:
+    """Normalize an entity name: uppercase, strip whitespace, and remove
+    stray trailing punctuation that isn't part of a recognized suffix.
+
+    The WSLCB source occasionally appends periods or commas to names
+    as data-entry artifacts (e.g., ``WOLDU ARAYA BERAKI.``).  This
+    strips those while preserving legitimate endings like ``INC.`` or
+    ``JR.``.
+    """
+    cleaned = name.strip().upper()
+    # Iteratively strip trailing periods/commas that aren't legit suffixes
+    while cleaned and cleaned[-1] in '.,' and not _LEGIT_TRAILING_DOT.search(cleaned):
+        cleaned = cleaned[:-1].rstrip()
+    return cleaned
+
+
 def _classify_entity_type(name: str) -> str:
     """Classify an entity name as 'person' or 'organization'."""
     return "organization" if _ORG_PATTERNS.search(name) else "person"
@@ -27,10 +50,11 @@ def _classify_entity_type(name: str) -> str:
 def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
     """Return the entity id for *name*, creating if needed.
 
-    Names are uppercased for consistency — the WSLCB source is
-    predominantly uppercase but occasionally uses mixed case.
+    Names are uppercased and cleaned of stray trailing punctuation.
+    The WSLCB source is predominantly uppercase but occasionally uses
+    mixed case or appends errant periods/commas.
     """
-    normalized = name.strip().upper()
+    normalized = _clean_entity_name(name)
     if not normalized:
         raise ValueError("Entity name must not be empty")
     row = conn.execute(
@@ -98,6 +122,10 @@ def backfill_entities(conn: sqlite3.Connection) -> int:
 
     if rows:
         conn.commit()
+
+    # Clean up any entities with stray trailing punctuation
+    merge_duplicate_entities(conn)
+
     return len(rows)
 
 
@@ -142,3 +170,74 @@ def get_entity_by_id(conn: sqlite3.Connection, entity_id: int) -> dict | None:
         (entity_id,),
     ).fetchone()
     return dict(row) if row else None
+
+
+def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
+    """Find and merge entities whose names differ only by stray trailing
+    punctuation (e.g., ``WOLDU ARAYA BERAKI.`` → ``WOLDU ARAYA BERAKI``).
+
+    For each dirty entity:
+    1. Reassign its ``record_entities`` rows to the clean entity
+       (skipping any that would violate the PK constraint — i.e., the
+       clean entity is already linked to that record+role).
+    2. Delete the dirty entity row.
+
+    Returns the number of entities merged (deleted).
+    """
+    # Find entities whose cleaned name differs from their stored name
+    all_entities = conn.execute(
+        "SELECT id, name FROM entities ORDER BY id"
+    ).fetchall()
+
+    merged = 0
+    for entity in all_entities:
+        cleaned = _clean_entity_name(entity["name"])
+        if cleaned == entity["name"]:
+            continue  # name is already clean
+        if not cleaned:
+            logger.warning("Entity %d name reduces to empty after cleaning: %r",
+                           entity["id"], entity["name"])
+            continue
+
+        # Find the canonical entity (clean name)
+        canonical = conn.execute(
+            "SELECT id FROM entities WHERE name = ?", (cleaned,)
+        ).fetchone()
+
+        dirty_id = entity["id"]
+
+        if canonical:
+            canon_id = canonical["id"]
+            # Reassign record_entities: use INSERT OR IGNORE to skip
+            # rows that would create PK conflicts (record already
+            # linked to canonical entity with the same role)
+            conn.execute(
+                """UPDATE OR IGNORE record_entities
+                   SET entity_id = ? WHERE entity_id = ?""",
+                (canon_id, dirty_id),
+            )
+            # Delete any remaining rows that couldn't be reassigned
+            # (because the canonical link already existed)
+            conn.execute(
+                "DELETE FROM record_entities WHERE entity_id = ?",
+                (dirty_id,),
+            )
+            # Delete the dirty entity
+            conn.execute("DELETE FROM entities WHERE id = ?", (dirty_id,))
+            logger.info("Merged entity %d %r → %d %r",
+                        dirty_id, entity["name"], canon_id, cleaned)
+        else:
+            # No canonical counterpart — just rename in place
+            conn.execute(
+                "UPDATE entities SET name = ? WHERE id = ?",
+                (cleaned, dirty_id),
+            )
+            logger.info("Renamed entity %d: %r → %r",
+                        dirty_id, entity["name"], cleaned)
+        merged += 1
+
+    if merged:
+        conn.commit()
+        logger.info("Merged/renamed %d entities with stray trailing punctuation",
+                    merged)
+    return merged
