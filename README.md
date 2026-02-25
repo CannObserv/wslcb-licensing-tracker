@@ -18,7 +18,7 @@ The Board publishes a [rolling 30-day report](https://licensinginfo.lcb.wa.gov/E
 - **Historical archive** — the source only shows 30 days, but the database retains all data
 - **License transfer tracking** — ASSUMPTION records capture both seller and buyer business names and applicants
 - **Location change tracking** — CHANGE OF LOCATION records capture both previous and new business addresses
-- **Entity normalization** — applicant names (people and organizations) are extracted into a shared `entities` table, enabling cross-license analysis (e.g., "show all licenses for person X")
+- **Entity normalization** — applicant names (people and organizations) are extracted into a shared `entities` table with name cleaning (uppercasing, stray punctuation removal), enabling cross-license analysis (e.g., "show all licenses for person X")
 - **Deduplication** — safe to re-scrape; duplicate records are automatically skipped
 
 ## Data
@@ -241,6 +241,22 @@ CHANGE OF LOCATION records represent a business moving to a new physical address
 Both the previous and new addresses are stored as entries in the `locations` table, each with their own regex-parsed and USPS-standardized components.
 
 In the approved section, CHANGE OF LOCATION records only have `location_id` (the new address) — the source page does not provide the previous address for approved records.
+
+## Entity Normalization
+
+Applicant names (people and organizations behind each license) are extracted from the semicolon-delimited `applicants` and `previous_applicants` fields into a shared `entities` table. This enables cross-license analysis — e.g., viewing all licenses associated with a particular person.
+
+Names are normalized at ingestion time:
+
+- **Uppercased** for consistency (the WSLCB source is predominantly uppercase but occasionally uses mixed case)
+- **Stray trailing punctuation stripped** — the source occasionally appends errant periods or commas to names (e.g., `WOLDU ARAYA BERAKI.`). These are removed while preserving legitimate suffixes like `INC.`, `JR.`, `SR.`, `LTD.`, `CORP.`, etc.
+- **Deduplicated** by exact name match — the same person appearing on multiple licenses shares a single entity row
+
+The first element of the `applicants` string (the business name) is excluded from entity extraction — only the individual people and organizations are stored.
+
+The same cleaning is applied to the `applicants` and `previous_applicants` string columns on `license_records`, so FTS search results and CSV exports are consistent with entity names.
+
+Entities are classified as `person` or `organization` by a heuristic that checks for business-indicator patterns (`LLC`, `INC`, `CORP`, `TRUST`, etc.).
 
 ## Backfilling from Snapshots
 

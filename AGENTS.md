@@ -28,7 +28,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | File | Purpose | Notes |
 |---|---|---|
 | `database.py` | Schema, connections, FTS | Core DB layer. `init_db()` is idempotent. Exports `DATA_DIR`, `get_or_create_location()`. |
-| `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`. |
+| `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`. |
 | `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
@@ -88,11 +88,13 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### `entities` (applicant normalization table)
 - One row per unique applicant name (person or organization)
-- `name` (UNIQUE) — the name as received from the WSLCB source
+- `name` (UNIQUE) — the normalized/cleaned name (uppercased, stray trailing punctuation stripped)
 - `entity_type` — `'person'`, `'organization'`, or `''` (unknown); classified by heuristic at creation time
 - The first element of the semicolon-delimited `applicants` field (which equals `business_name`) is **excluded** — only the individual people/orgs behind the license are stored
-- `get_or_create_entity()` in `entities.py` normalizes names via `_clean_entity_name()`: uppercase, strip whitespace, and remove stray trailing punctuation (periods, commas) that isn't part of a recognized suffix (INC., JR., SR., etc.)
-- `merge_duplicate_entities()` runs at startup (via `backfill_entities()`) to fix any pre-existing dirty entities — merges duplicates, renames others in place
+- `get_or_create_entity()` in `entities.py` normalizes names via `_clean_entity_name()`: uppercase, strip whitespace, and remove stray trailing punctuation (periods, commas) that isn't part of a recognized suffix
+- The `_LEGIT_TRAILING_DOT` regex in `entities.py` defines the suffix allowlist — add new entries there when the WSLCB source uses a new legitimate abbreviation ending with a period.  Current list: `INC`, `LLC`, `L.L.C`, `L.L.P`, `LTD`, `CORP`, `CO`, `L.P`, `PTY`, `JR`, `SR`, `S.P.A`, `F.O.E`, `U.P`, `D.B.A`, `P.C`, `N.A`, `P.A`, `W. & S`
+- `clean_applicants_string()` applies the same cleaning to each element of a semicolon-delimited applicants string — used at ingest time so the `applicants`/`previous_applicants` columns on `license_records` stay consistent with entity names
+- `merge_duplicate_entities()` runs at web app startup (via `backfill_entities()` in the `app.py` lifespan) to fix any pre-existing dirty entities — merges duplicates, renames others in place, and cleans `applicants` strings in `license_records`
 
 ### `record_entities` (junction table)
 - Links `license_records` ↔ `entities` with role and position
@@ -281,7 +283,7 @@ Also available via `python scraper.py --backfill-from-snapshots` (delegates to `
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the locations table but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)
-- The `applicants` and `previous_applicants` string columns on `license_records` are retained for backward compatibility with FTS indexing and CSV export; removal is deferred to a future phase
+- The `applicants` and `previous_applicants` string columns on `license_records` are retained for FTS indexing and CSV export; values are cleaned at ingest time via `clean_applicants_string()` to stay consistent with entity names. Removal is deferred to a future phase
 - Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
 - `search_records()` runs separate COUNT and SELECT queries with the same WHERE clause; could use `COUNT(*) OVER()` window function (fine at current scale)
 - CSV export (`/export`) loads up to 100K rows into memory with no streaming; acceptable for current dataset size

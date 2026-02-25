@@ -20,9 +20,21 @@ _ORG_PATTERNS = re.compile(
 
 
 # Suffixes where a trailing period is legitimate and should be kept.
-# Checked against the uppercased name.
+# Checked against the uppercased name.  The ``(?<=\s|^)`` lookbehind
+# ensures we match whole suffixes — e.g. " CO." but not "COSTCO.".
+#
+# Maintainer note: add new entries here when the WSLCB source uses a
+# legitimate abbreviation that ends with a period.  The full list:
+#   Business: INC, LLC, L.L.C, LTD, CORP, CO, L.P, L.L.P, PTY, P.C, N.A, P.A
+#   Personal: JR, SR
+#   Fraternal/other: S.P.A, F.O.E, U.P, D.B.A, W. & S
 _LEGIT_TRAILING_DOT = re.compile(
-    r'(?:INC|LLC|L\.L\.C|LTD|CORP|JR|SR|CO|S\.P\.A|PTY|L\.P|F\.O\.E|U\.P|W\. & S)\.\s*$'
+    r'(?:(?<=\s)|(?<=^))'
+    r'(?:INC|LLC|L\.L\.C|L\.L\.P|LTD|CORP|CO|L\.P|PTY'
+    r'|JR|SR'
+    r'|S\.P\.A|F\.O\.E|U\.P|D\.B\.A|P\.C|N\.A|P\.A'
+    r'|W\. & S)'
+    r'\.\s*$'
 )
 
 
@@ -40,6 +52,20 @@ def _clean_entity_name(name: str) -> str:
     while cleaned and cleaned[-1] in '.,' and not _LEGIT_TRAILING_DOT.search(cleaned):
         cleaned = cleaned[:-1].rstrip()
     return cleaned
+
+
+def clean_applicants_string(applicants: str) -> str:
+    """Clean each semicolon-separated part of an applicants string.
+
+    Applies ``_clean_entity_name()`` to every element (including the
+    leading business-name element) so the stored string is consistent
+    with entity names in the ``entities`` table.  Empty parts after
+    cleaning are dropped.
+    """
+    if not applicants:
+        return applicants
+    parts = [_clean_entity_name(p) for p in applicants.split(";")]
+    return "; ".join(p for p in parts if p)
 
 
 def _classify_entity_type(name: str) -> str:
@@ -88,7 +114,13 @@ def _parse_and_link_entities(
     entity_names = [p for p in parts[1:] if p]
     linked = 0
     for position, name in enumerate(entity_names):
-        entity_id = get_or_create_entity(conn, name)
+        try:
+            entity_id = get_or_create_entity(conn, name)
+        except ValueError:
+            logger.warning("Skipping empty entity name in record %d "
+                           "(position %d, role %s, raw: %r)",
+                           record_id, position, role, name)
+            continue
         cursor = conn.execute(
             """INSERT OR IGNORE INTO record_entities
                (record_id, entity_id, role, position)
@@ -172,9 +204,41 @@ def get_entity_by_id(conn: sqlite3.Connection, entity_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def _clean_applicants_in_records(conn: sqlite3.Connection) -> int:
+    """One-time cleanup: apply ``clean_applicants_string()`` to all
+    ``applicants`` and ``previous_applicants`` values in ``license_records``.
+
+    Only updates rows that actually change.  Returns the number of rows
+    updated.
+    """
+    rows = conn.execute(
+        "SELECT id, applicants, previous_applicants FROM license_records"
+    ).fetchall()
+    updated = 0
+    for r in rows:
+        clean_app = clean_applicants_string(r["applicants"] or "")
+        clean_prev = clean_applicants_string(r["previous_applicants"] or "")
+        if clean_app != (r["applicants"] or "") or clean_prev != (r["previous_applicants"] or ""):
+            conn.execute(
+                """UPDATE license_records
+                   SET applicants = ?, previous_applicants = ?
+                   WHERE id = ?""",
+                (clean_app, clean_prev, r["id"]),
+            )
+            updated += 1
+    if updated:
+        conn.commit()
+        logger.info("Cleaned applicant strings in %d record(s)", updated)
+    return updated
+
+
 def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
     """Find and merge entities whose names differ only by stray trailing
     punctuation (e.g., ``WOLDU ARAYA BERAKI.`` → ``WOLDU ARAYA BERAKI``).
+
+    Also cleans the ``applicants`` / ``previous_applicants`` string
+    columns on ``license_records`` so stored values, FTS indexes, and
+    CSV exports are consistent with the cleaned entity names.
 
     For each dirty entity:
     1. Reassign its ``record_entities`` rows to the clean entity
@@ -184,6 +248,10 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
 
     Returns the number of entities merged (deleted).
     """
+    # Clean stray punctuation in the applicants string columns too,
+    # so FTS and CSV export stay consistent with entity names.
+    _clean_applicants_in_records(conn)
+
     # Find entities whose cleaned name differs from their stored name
     all_entities = conn.execute(
         "SELECT id, name FROM entities ORDER BY id"
@@ -208,16 +276,36 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
 
         if canonical:
             canon_id = canonical["id"]
-            # Reassign record_entities: use INSERT OR IGNORE to skip
-            # rows that would create PK conflicts (record already
-            # linked to canonical entity with the same role)
-            conn.execute(
-                """UPDATE OR IGNORE record_entities
-                   SET entity_id = ? WHERE entity_id = ?""",
-                (canon_id, dirty_id),
-            )
-            # Delete any remaining rows that couldn't be reassigned
-            # (because the canonical link already existed)
+            # Reassign record_entities from dirty → canonical.
+            # Where the canonical entity already has a link for the
+            # same (record, role), keep whichever has the lower
+            # position (preserving source ordering) and drop the other.
+            dirty_links = conn.execute(
+                "SELECT record_id, role, position FROM record_entities WHERE entity_id = ?",
+                (dirty_id,),
+            ).fetchall()
+            for link in dirty_links:
+                existing = conn.execute(
+                    """SELECT position FROM record_entities
+                       WHERE record_id = ? AND entity_id = ? AND role = ?""",
+                    (link["record_id"], canon_id, link["role"]),
+                ).fetchone()
+                if existing:
+                    # Both linked — keep the lower position on canonical
+                    if link["position"] < existing["position"]:
+                        conn.execute(
+                            """UPDATE record_entities SET position = ?
+                               WHERE record_id = ? AND entity_id = ? AND role = ?""",
+                            (link["position"], link["record_id"], canon_id, link["role"]),
+                        )
+                else:
+                    # No conflict — reassign
+                    conn.execute(
+                        """UPDATE record_entities SET entity_id = ?
+                           WHERE record_id = ? AND entity_id = ? AND role = ?""",
+                        (canon_id, link["record_id"], dirty_id, link["role"]),
+                    )
+            # Delete any remaining dirty links (conflict cases)
             conn.execute(
                 "DELETE FROM record_entities WHERE entity_id = ?",
                 (dirty_id,),

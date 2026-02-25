@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 
 from database import DATA_DIR, get_db, init_db, get_or_create_location
 from queries import insert_record
+from entities import _parse_and_link_entities, clean_applicants_string
 from endorsements import process_record, seed_endorsements, discover_code_mappings
 from log_config import setup_logging
 from scraper import parse_records_from_table, SECTION_MAP
@@ -71,13 +72,21 @@ def _ingest_records(conn, records: list[dict]) -> tuple[int, int]:
 # ── Phase 2: Repair ──────────────────────────────────────────────────
 
 def _repair_assumptions(conn, records: list[dict]) -> int:
-    """Fix ASSUMPTION records that have empty business names."""
+    """Fix ASSUMPTION records that have empty business names.
+
+    After updating the applicant columns, re-links entities so the
+    ``record_entities`` junction table reflects the corrected data.
+    """
     updated = 0
     for rec in records:
         if rec["application_type"] != "ASSUMPTION":
             continue
         if not rec["business_name"] and not rec["previous_business_name"]:
             continue
+        cleaned_applicants = clean_applicants_string(rec["applicants"])
+        cleaned_prev_applicants = clean_applicants_string(
+            rec["previous_applicants"]
+        )
         cursor = conn.execute(
             """UPDATE license_records
                SET business_name = ?,
@@ -91,15 +100,39 @@ def _repair_assumptions(conn, records: list[dict]) -> int:
                  AND (business_name = '' OR business_name IS NULL)""",
             (
                 rec["business_name"],
-                rec["applicants"],
+                cleaned_applicants,
                 rec["previous_business_name"],
-                rec["previous_applicants"],
+                cleaned_prev_applicants,
                 rec["section_type"],
                 rec["record_date"],
                 rec["license_number"],
             ),
         )
-        updated += cursor.rowcount
+        if cursor.rowcount > 0:
+            # Find the actual record id to re-link entities
+            row = conn.execute(
+                """SELECT id FROM license_records
+                   WHERE section_type = ?
+                     AND record_date = ?
+                     AND license_number = ?
+                     AND application_type = 'ASSUMPTION'""",
+                (rec["section_type"], rec["record_date"], rec["license_number"]),
+            ).fetchone()
+            if row:
+                rid = row["id"]
+                # Clear stale entity links and re-create from updated data
+                conn.execute(
+                    "DELETE FROM record_entities WHERE record_id = ?", (rid,)
+                )
+                _parse_and_link_entities(
+                    conn, rid, cleaned_applicants, "applicant"
+                )
+                if cleaned_prev_applicants:
+                    _parse_and_link_entities(
+                        conn, rid, cleaned_prev_applicants,
+                        "previous_applicant",
+                    )
+            updated += cursor.rowcount
     return updated
 
 

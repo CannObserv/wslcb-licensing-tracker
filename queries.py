@@ -10,7 +10,9 @@ import sqlite3
 import time
 
 from endorsements import get_endorsement_options, get_record_endorsements
-from entities import _parse_and_link_entities, get_record_entities
+from entities import (
+    _parse_and_link_entities, get_record_entities, clean_applicants_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +137,13 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
         state=record.get("previous_state", ""),
         zip_code=record.get("previous_zip_code", ""),
     )
+    # Clean applicant strings so stored values match entity names
+    cleaned_applicants = clean_applicants_string(
+        record.get("applicants", "")
+    )
+    cleaned_prev_applicants = clean_applicants_string(
+        record.get("previous_applicants", "")
+    )
     try:
         cursor = conn.execute(
             """INSERT INTO license_records
@@ -150,15 +159,17 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
                 **record,
                 "location_id": location_id,
                 "previous_location_id": previous_location_id,
+                "applicants": cleaned_applicants,
+                "previous_applicants": cleaned_prev_applicants,
             },
         )
         record_id = cursor.lastrowid
         _parse_and_link_entities(
-            conn, record_id, record.get("applicants", ""), "applicant"
+            conn, record_id, cleaned_applicants, "applicant"
         )
-        if record.get("previous_applicants"):
+        if cleaned_prev_applicants:
             _parse_and_link_entities(
-                conn, record_id, record["previous_applicants"], "previous_applicant"
+                conn, record_id, cleaned_prev_applicants, "previous_applicant"
             )
         return record_id
     except sqlite3.IntegrityError:
