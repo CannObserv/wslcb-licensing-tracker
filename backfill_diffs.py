@@ -53,7 +53,7 @@ from bs4 import BeautifulSoup
 from database import DATA_DIR, get_db, init_db
 from endorsements import discover_code_mappings, process_record, seed_endorsements
 from log_config import setup_logging
-from queries import insert_record, search_records, _hydrate_records
+from queries import insert_record, _hydrate_records, _RECORD_COLUMNS, _RECORD_JOINS
 from scraper import parse_records_from_table
 
 logger = logging.getLogger(__name__)
@@ -102,8 +102,9 @@ def _split_diff_lines(content: str):
     removed: list[str] = []
     new_ctx: list[str] = []
     old_ctx: list[str] = []
-    old_ts = ""
-    new_ts = ""
+    fallback_ts = datetime.now(timezone.utc).isoformat()
+    old_ts = fallback_ts
+    new_ts = fallback_ts
 
     for line in content.split("\n"):
         if line.startswith("--- "):
@@ -330,7 +331,7 @@ def _write_csv_from_db(
             batch_ids = record_ids[start : start + BATCH]
             placeholders = ",".join("?" * len(batch_ids))
             rows = conn.execute(
-                f"""SELECT {_record_columns()} {_record_joins()}
+                f"""SELECT {_RECORD_COLUMNS} {_RECORD_JOINS}
                     WHERE lr.id IN ({placeholders})
                     ORDER BY lr.record_date, lr.section_type""",
                 batch_ids,
@@ -343,18 +344,6 @@ def _write_csv_from_db(
             total_written += len(hydrated)
 
     logger.info("CSV export: %d records → %s", total_written, path)
-
-
-def _record_columns() -> str:
-    """Return the column list from queries._RECORD_COLUMNS."""
-    from queries import _RECORD_COLUMNS
-    return _RECORD_COLUMNS
-
-
-def _record_joins() -> str:
-    """Return the JOIN clause from queries._RECORD_JOINS."""
-    from queries import _RECORD_JOINS
-    return _RECORD_JOINS
 
 
 # ── Main entry point ─────────────────────────────────────────────────
