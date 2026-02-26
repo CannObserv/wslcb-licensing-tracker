@@ -14,7 +14,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
 from entities import backfill_entities, get_entity_by_id
 from queries import (
-    search_records, get_filter_options, get_cities_for_state, get_stats,
+    search_records, get_filter_options, get_cities_for_state, _US_STATES,
+    get_stats,
     get_record_by_id, get_related_records, get_entity_records,
     _hydrate_records,
 )
@@ -116,6 +117,10 @@ async def search(
     date_to: str = "",
     page: int = Query(1, ge=1),
 ):
+    # City requires state context (names aren't unique across states).
+    if not state:
+        city = ""
+
     with get_db() as conn:
         records, total = search_records(
             conn,
@@ -213,7 +218,7 @@ async def entity_detail(request: Request, entity_id: int):
 @app.get("/api/cities")
 async def api_cities(state: str = ""):
     """Return cities for a given state (for dynamic filter population)."""
-    if not state:
+    if not state or state not in _US_STATES:
         return []
     with get_db() as conn:
         return get_cities_for_state(conn, state)
@@ -231,6 +236,8 @@ async def export_csv(
     date_to: str = "",
 ):
     """Export search results as CSV."""
+    if not state:
+        city = ""
     with get_db() as conn:
         records, total = search_records(
             conn, query=q, section_type=section_type,

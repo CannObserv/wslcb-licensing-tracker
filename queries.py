@@ -243,7 +243,8 @@ def search_records(
         )
         params.extend([state, state])
 
-    if city:
+    # City names aren't unique across states, so require a state filter.
+    if city and state:
         needs_location_join = True
         conditions.append(
             "(COALESCE(NULLIF(loc.std_city, ''), loc.city) = ?"
@@ -351,14 +352,25 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
     return options
 
 
+# Per-state city list cache.  Same TTL as filter options; keyed by
+# state code so each state is fetched at most once per window.
+_city_cache: dict[str, tuple[float, list[str]]] = {}  # {state: (ts, cities)}
+
+
 def get_cities_for_state(
     conn: sqlite3.Connection, state: str,
 ) -> list[str]:
     """Return distinct display cities for locations in *state*.
 
     Only returns cities from locations referenced by at least one
-    license record.
+    license record.  Results are cached for ``_FILTER_CACHE_TTL``
+    seconds per state.
     """
+    now = time.monotonic()
+    cached = _city_cache.get(state)
+    if cached and now - cached[0] < _FILTER_CACHE_TTL:
+        return cached[1]
+
     rows = conn.execute(
         f"SELECT DISTINCT display_city FROM ("
         f"  SELECT COALESCE(NULLIF(l.std_city, ''), l.city) AS display_city,"
@@ -369,7 +381,9 @@ def get_cities_for_state(
         f"  AND display_city != '' ORDER BY display_city",
         (state,),
     ).fetchall()
-    return [r[0] for r in rows]
+    cities = [r[0] for r in rows]
+    _city_cache[state] = (now, cities)
+    return cities
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:
