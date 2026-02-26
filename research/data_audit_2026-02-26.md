@@ -3,34 +3,36 @@
 Post-historical-backfill audit of the WSLCB Licensing Tracker database.
 
 **Database (at time of audit):** 89,157 records | 57,137 locations | 59,159 entities  
-**Database (post-fixes):** 89,156 records | 57,137 locations | 59,044 entities  
+**Database (post-fixes):** 89,156 records | 57,137 locations (100% validated) | 59,044 entities  
 **Date range:** 2022-08-08 to 2026-02-25  
 **Data sources:** Live scrapes (2025-11 to present) + unified-diff backfill (2022-08 to 2025-12)
 
 ---
 
-## 1. Unvalidated Addresses (14 locations)
+## 1. Unvalidated Addresses (14 locations) — ✅ RESOLVED
 
-These 14 locations failed the address validation API. All have correct regex-parsed fields (except #32366) and can be used as-is with the parsed city/state/zip; they just lack USPS-standardized components.
+These 14 locations initially failed the address validation API during the bulk backfill run (43K addresses in ~90 minutes). All 14 succeeded on retry.
 
-| ID | raw_address | parsed_city | parsed_zip | Notes |
-|---|---|---|---|---|
-| 32364 | 200 QUEEN ANNE AVE N, SEATTLE, WA 98109 | SEATTLE | 98109 | |
-| 32365 | 600 COOPER POINT RD SW, OLYMPIA, WA 98502 | OLYMPIA | 98502 | |
-| 32366 | 125 W CHANCE A LA MER NW, WHALERS PLAZA OCEAN SHORES, WA 98569 | *(empty)* | *(empty)* | Regex also failed — "WHALERS PLAZA" confused the parser |
-| 32367 | 1 FRONT ST, FRIDAY HARBOR, WA 98250 | FRIDAY HARBOR | 98250 | |
-| 32368 | 4741 N BALTIMORE ST, TACOMA, WA 98407 | TACOMA | 98407 | |
-| 32369 | 1 FRONT N ST STE E3, FRIDAY HARBOR, WA 98250 | FRIDAY HARBOR | 98250 | |
-| 32370 | 25207 104TH AVE SE, KENT, WA 98031 | KENT | 98031 | |
-| 32371 | 101 W UMPTANUM RD, ELLENSBURG, WA 98926 | ELLENSBURG | 98926 | |
-| 32372 | 57662 US-155, ELECTRIC CITY, WA 99123 | ELECTRIC CITY | 99123 | Highway address |
-| 32373 | 8402 EVERGREEN WAY, EVERETT, WA 98208 | EVERETT | 98208 | |
-| 32374 | 57662 HWY 155 N, ELECTRIC CITY, WA 98123 | ELECTRIC CITY | 98123 | Wrong ZIP? (99123 vs 98123) |
-| 32375 | 740 228TH AVE NE, SAMMAMISH, WA 98074 | SAMMAMISH | 98074 | |
-| 32376 | 352 GRIFFIN AVE, ENUMCLAW, WA 98022 | ENUMCLAW | 98022 | |
-| 32377 | 18010 E VALLEY HWY, KENT, WA 98032 | KENT | 98032 | |
+**Root cause:** Transient failures (likely API timeouts or rate limiting under sustained load). The `backfill_addresses()` function handles this correctly — failed locations stay `address_validated_at IS NULL` and are picked up by a subsequent `--backfill-addresses` run. There is no automatic retry within a single run.
 
-**Recommendation:** These are likely API-side limitations (unfamiliar street names, highway addresses). The parsed fields are usable for 13 of 14. No action needed unless the API is updated.
+| ID | raw_address | Retry result |
+|---|---|---|
+| 32364 | 200 QUEEN ANNE AVE N, SEATTLE, WA 98109 | ✅ OK |
+| 32365 | 600 COOPER POINT RD SW, OLYMPIA, WA 98502 | ✅ OK |
+| 32366 | 125 W CHANCE A LA MER NW, WHALERS PLAZA OCEAN SHORES, WA 98569 | ✅ OK |
+| 32367 | 1 FRONT ST, FRIDAY HARBOR, WA 98250 | ✅ OK |
+| 32368 | 4741 N BALTIMORE ST, TACOMA, WA 98407 | ✅ OK |
+| 32369 | 1 FRONT N ST STE E3, FRIDAY HARBOR, WA 98250 | ✅ OK |
+| 32370 | 25207 104TH AVE SE, KENT, WA 98031 | ✅ OK |
+| 32371 | 101 W UMPTANUM RD, ELLENSBURG, WA 98926 | ✅ OK |
+| 32372 | 57662 US-155, ELECTRIC CITY, WA 99123 | ✅ OK |
+| 32373 | 8402 EVERGREEN WAY, EVERETT, WA 98208 | ✅ OK |
+| 32374 | 57662 HWY 155 N, ELECTRIC CITY, WA 98123 | ✅ OK |
+| 32375 | 740 228TH AVE NE, SAMMAMISH, WA 98074 | ✅ OK |
+| 32376 | 352 GRIFFIN AVE, ENUMCLAW, WA 98022 | ✅ OK |
+| 32377 | 18010 E VALLEY HWY, KENT, WA 98032 | ✅ OK |
+
+**Current state:** 57,137 / 57,137 locations validated (100%).
 
 ---
 
@@ -256,4 +258,4 @@ Peak: September 2025 with 17,356 renewals alone. This is a bulk renewal cycle �
 | 6 | **Malformed record #32020** | Low | Trivial | ✅ Fixed (`125906a`) — chimera record deleted; root cause: diff boundary artifact in supplemental context-line pass |
 | 7 | **Source truncation at 30/45 chars** | Info | N/A | Open — document in AGENTS.md; not fixable |
 | 8 | **All-zeros phone numbers** | Low | Trivial | Open — filter in display template |
-| 9 | **14 unvalidated addresses** | Info | N/A | Open — API limitation; parsed fields are usable |
+| 9 | **14 unvalidated addresses** | Info | N/A | ✅ Resolved — transient API failures; all 14 succeeded on retry (100% validated) |
