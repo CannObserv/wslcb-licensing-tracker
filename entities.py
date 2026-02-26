@@ -48,6 +48,9 @@ def _clean_entity_name(name: str) -> str:
     ``JR.``.
     """
     cleaned = name.strip().upper()
+    # Collapse runs of whitespace (WSLCB source uses inconsistent spacing;
+    # e.g., "SMITH, JOHN  MICHAEL" vs "SMITH, JOHN MICHAEL").
+    cleaned = re.sub(r'\s+', ' ', cleaned)
     # Iteratively strip trailing periods/commas that aren't legit suffixes
     while cleaned and cleaned[-1] in '.,' and not _LEGIT_TRAILING_DOT.search(cleaned):
         cleaned = cleaned[:-1].rstrip()
