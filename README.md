@@ -14,7 +14,7 @@ A project of [Cannabis Observer](https://cannabis.observer/) 🌱🏛️🔍
 - **Full-text search** across business names, locations, applicants, license types, and license numbers
 - **Normalized endorsements** — numeric license codes from approved/discontinued records are resolved to human-readable names via a managed code→endorsement mapping
 - **Address standardization** — raw business addresses are parsed into structured components (street, suite, city, state, ZIP) via an external validation API, fixing ~6% of records with mis-parsed cities
-- **Filterable results** by record type, application type, endorsement, city, and date range
+- **Filterable results** by record type, application type, endorsement, state, city, and date range
 - **Record detail pages** with related records for the same license number
 - **CSV export** of any search result set
 - **Historical archive** — the source only shows 30 days, but the database retains all data
@@ -179,6 +179,7 @@ The SQLite database and archived HTML snapshots are stored in `./data/` relative
 | `GET /record/{id}` | Record detail page |
 | `GET /export` | CSV export (accepts same query params as `/search`) |
 | `GET /entity/{id}` | Entity detail page — lists all license records associated with a person or organization, with type badge (Person/Organization), record count, and distinct license count |
+| `GET /api/cities` | JSON list of cities for a given state (query param `state`) |
 | `GET /api/stats` | JSON summary statistics |
 
 ## License Type Normalization

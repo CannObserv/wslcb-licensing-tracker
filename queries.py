@@ -196,6 +196,7 @@ def search_records(
     section_type: str = "",
     application_type: str = "",
     endorsement: str = "",
+    state: str = "",
     city: str = "",
     date_from: str = "",
     date_to: str = "",
@@ -205,6 +206,7 @@ def search_records(
     """Search records with filters.  Returns (records, total_count)."""
     conditions = []
     params: list = []
+    needs_location_join = False
 
     if query:
         safe_query = query.replace('"', '').replace("'", "")
@@ -233,7 +235,16 @@ def search_records(
             )""")
         params.append(endorsement)
 
+    if state:
+        needs_location_join = True
+        conditions.append(
+            "(COALESCE(NULLIF(loc.std_state, ''), loc.state) = ?"
+            " OR COALESCE(NULLIF(ploc.std_state, ''), ploc.state) = ?)"
+        )
+        params.extend([state, state])
+
     if city:
+        needs_location_join = True
         conditions.append(
             "(COALESCE(NULLIF(loc.std_city, ''), loc.city) = ?"
             " OR COALESCE(NULLIF(ploc.std_city, ''), ploc.city) = ?)"
@@ -250,8 +261,8 @@ def search_records(
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-    # Only JOIN locations in the count query when needed (city filter).
-    if city:
+    # Only JOIN locations in the count query when needed (state/city filter).
+    if needs_location_join:
         count_sql = f"""
             SELECT COUNT(*) FROM license_records lr
             LEFT JOIN locations loc ON loc.id = lr.location_id
@@ -281,6 +292,32 @@ _filter_cache: dict = {}  # {"data": ..., "ts": float}
 _FILTER_CACHE_TTL = 300  # seconds (5 minutes)
 
 
+_US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut",
+    "DC": "District of Columbia", "DE": "Delaware", "FL": "Florida",
+    "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois",
+    "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky",
+    "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
+    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana",
+    "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
+    "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
+    "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
+    "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
+    "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming",
+}
+
+_LOCATION_IDS_SUBQUERY = (
+    "SELECT location_id FROM license_records WHERE location_id IS NOT NULL"
+    " UNION "
+    "SELECT previous_location_id FROM license_records WHERE previous_location_id IS NOT NULL"
+)
+
+
 def get_filter_options(conn: sqlite3.Connection) -> dict:
     """Get distinct values for filter dropdowns (cached, 5-min TTL)."""
     now = time.monotonic()
@@ -294,23 +331,45 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         ).fetchall()
         options[col] = [r[0] for r in rows]
 
+    # States: only valid US state codes that appear in the data.
     rows = conn.execute(
-        "SELECT DISTINCT display_city FROM ("
-        "  SELECT COALESCE(NULLIF(l.std_city, ''), l.city) AS display_city"
-        "  FROM locations l"
-        "  WHERE l.id IN ("
-        "    SELECT location_id FROM license_records WHERE location_id IS NOT NULL"
-        "    UNION"
-        "    SELECT previous_location_id FROM license_records WHERE previous_location_id IS NOT NULL"
-        "  )"
-        ") WHERE display_city IS NOT NULL AND display_city != '' ORDER BY display_city"
+        f"SELECT DISTINCT display_state FROM ("
+        f"  SELECT COALESCE(NULLIF(l.std_state, ''), l.state) AS display_state"
+        f"  FROM locations l"
+        f"  WHERE l.id IN ({_LOCATION_IDS_SUBQUERY})"
+        f") WHERE display_state IN ({','.join('?' for _ in _US_STATES)})"
+        f" ORDER BY display_state",
+        list(_US_STATES.keys()),
     ).fetchall()
-    options["city"] = [r[0] for r in rows]
+    options["state"] = [
+        {"code": r[0], "name": _US_STATES[r[0]]} for r in rows
+    ]
 
     options["endorsement"] = get_endorsement_options(conn)
     _filter_cache["data"] = options
     _filter_cache["ts"] = now
     return options
+
+
+def get_cities_for_state(
+    conn: sqlite3.Connection, state: str,
+) -> list[str]:
+    """Return distinct display cities for locations in *state*.
+
+    Only returns cities from locations referenced by at least one
+    license record.
+    """
+    rows = conn.execute(
+        f"SELECT DISTINCT display_city FROM ("
+        f"  SELECT COALESCE(NULLIF(l.std_city, ''), l.city) AS display_city,"
+        f"         COALESCE(NULLIF(l.std_state, ''), l.state) AS display_state"
+        f"  FROM locations l"
+        f"  WHERE l.id IN ({_LOCATION_IDS_SUBQUERY})"
+        f") WHERE display_state = ? AND display_city IS NOT NULL"
+        f"  AND display_city != '' ORDER BY display_city",
+        (state,),
+    ).fetchall()
+    return [r[0] for r in rows]
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:

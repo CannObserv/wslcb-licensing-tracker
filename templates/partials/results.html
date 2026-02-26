@@ -13,7 +13,7 @@
 {% if records %}
 {% include "partials/record_table.html" %}
 
-{% set pq = "q=" ~ (q|urlencode) ~ "&section_type=" ~ (section_type|urlencode) ~ "&application_type=" ~ (application_type|urlencode) ~ "&endorsement=" ~ (endorsement|urlencode) ~ "&city=" ~ (city|urlencode) ~ "&date_from=" ~ (date_from|urlencode) ~ "&date_to=" ~ (date_to|urlencode) %}
+{% set pq = "q=" ~ (q|urlencode) ~ "&section_type=" ~ (section_type|urlencode) ~ "&application_type=" ~ (application_type|urlencode) ~ "&endorsement=" ~ (endorsement|urlencode) ~ "&state=" ~ (state|urlencode) ~ "&city=" ~ (city|urlencode) ~ "&date_from=" ~ (date_from|urlencode) ~ "&date_to=" ~ (date_to|urlencode) %}
 
 <!-- Pagination -->
 {% if total_pages > 1 %}

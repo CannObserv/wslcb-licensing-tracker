@@ -29,7 +29,7 @@ license_records → locations (FK: location_id, previous_location_id)
 |---|---|---|
 | `database.py` | Schema, connections, FTS | Core DB layer. `init_db()` is idempotent. Exports `DATA_DIR`, `get_or_create_location()`. |
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
-| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
+| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
@@ -338,6 +338,7 @@ Also available via `python scraper.py --backfill-from-snapshots` (delegates to `
 
 ## Known Issues & Future Work
 
+- Non-standard state values exist in `locations.state` from regex parsing errors (e.g., `SR WA`, `TERMINAL WA`); all validated `std_state` values resolve to valid US state codes. The state filter only shows valid US state codes (validated against `_US_STATES` in `queries.py`)
 - FTS indexes raw `license_type` values — text search for endorsement names won't find approved/discontinued records that store numeric codes (the endorsement filter works correctly)
 - No authentication — the app is fully public
 - No rate limiting on search/export

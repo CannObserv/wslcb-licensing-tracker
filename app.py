@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
 from entities import backfill_entities, get_entity_by_id
 from queries import (
-    search_records, get_filter_options, get_stats,
+    search_records, get_filter_options, get_cities_for_state, get_stats,
     get_record_by_id, get_related_records, get_entity_records,
     _hydrate_records,
 )
@@ -110,6 +110,7 @@ async def search(
     section_type: str = "",
     application_type: str = "",
     endorsement: str = "",
+    state: str = "",
     city: str = "",
     date_from: str = "",
     date_to: str = "",
@@ -122,19 +123,22 @@ async def search(
             section_type=section_type,
             application_type=application_type,
             endorsement=endorsement,
+            state=state,
             city=city,
             date_from=date_from,
             date_to=date_to,
             page=page,
         )
         filters = get_filter_options(conn)
+        cities = get_cities_for_state(conn, state) if state else []
 
     total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
 
     export_params = urlencode({
         "q": q, "section_type": section_type,
         "application_type": application_type, "endorsement": endorsement,
-        "city": city, "date_from": date_from, "date_to": date_to,
+        "state": state, "city": city,
+        "date_from": date_from, "date_to": date_to,
     })
 
     ctx = {
@@ -144,10 +148,12 @@ async def search(
         "page": page,
         "total_pages": total_pages,
         "filters": filters,
+        "cities": cities,
         "q": q,
         "section_type": section_type,
         "application_type": application_type,
         "endorsement": endorsement,
+        "state": state,
         "city": city,
         "date_from": date_from,
         "date_to": date_to,
@@ -204,12 +210,22 @@ async def entity_detail(request: Request, entity_id: int):
     )
 
 
+@app.get("/api/cities")
+async def api_cities(state: str = ""):
+    """Return cities for a given state (for dynamic filter population)."""
+    if not state:
+        return []
+    with get_db() as conn:
+        return get_cities_for_state(conn, state)
+
+
 @app.get("/export")
 async def export_csv(
     q: str = "",
     section_type: str = "",
     application_type: str = "",
     endorsement: str = "",
+    state: str = "",
     city: str = "",
     date_from: str = "",
     date_to: str = "",
@@ -219,7 +235,7 @@ async def export_csv(
         records, total = search_records(
             conn, query=q, section_type=section_type,
             application_type=application_type, endorsement=endorsement,
-            city=city, date_from=date_from, date_to=date_to,
+            state=state, city=city, date_from=date_from, date_to=date_to,
             page=1, per_page=100_000,
         )
 
