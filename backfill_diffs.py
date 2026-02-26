@@ -51,7 +51,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from database import DATA_DIR, get_db, init_db
-from endorsements import discover_code_mappings, process_record, seed_endorsements
+from endorsements import discover_code_mappings, process_record, seed_endorsements, repair_code_name_endorsements
 from log_config import setup_logging
 from queries import insert_record, _hydrate_records, _RECORD_COLUMNS, _RECORD_JOINS
 from scraper import parse_records_from_table
@@ -437,6 +437,7 @@ def backfill_diffs(
 
     with get_db() as conn:
         seed_endorsements(conn)
+        repair_code_name_endorsements(conn)
 
         # Sort by date for deterministic insertion order.
         records.sort(key=lambda r: (r["record_date"], r["section_type"]))

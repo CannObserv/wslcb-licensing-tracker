@@ -3,9 +3,11 @@
 The WSLCB source page represents license types differently by section:
 - New applications: semicolon-separated text names
   (e.g. "GROCERY STORE - BEER/WINE; SNACK BAR")
-- Approved/discontinued: opaque integer codes (e.g. "450,")
+- Approved/discontinued (current): opaque integer codes (e.g. "450,")
+- Approved/discontinued (historical, pre-2025): "CODE, NAME" format
+  (e.g. "450, GROCERY STORE - BEER/WINE")
 
-This module normalizes both representations into a shared
+This module normalizes all three representations into a shared
 `license_endorsements` lookup table and links records via a
 `record_endorsements` junction table.  Code-to-name mappings are
 seeded from historical cross-referencing and refined automatically
@@ -17,9 +19,16 @@ names won't match those records — only the endorsement filter works.
 Fixing this would require indexing resolved endorsement names in FTS.
 """
 import logging
+import re
 import sqlite3
 
 logger = logging.getLogger(__name__)
+
+# Matches the historical "CODE, NAME" format used in approved/discontinued
+# sections before ~2025 (e.g. "450, GROCERY STORE - BEER/WINE").  The
+# first capturing group is the numeric code, the second is the name.
+# Handles names that themselves contain commas (e.g. "< 250,000 LITERS").
+_CODE_NAME_RE = re.compile(r"^(\d+),\s+(.+)$")
 
 # ---
 # Seed data: WSLCB code → endorsement name(s), built from cross-referencing
@@ -32,22 +41,36 @@ logger = logging.getLogger(__name__)
 # Keys are string representations of WSLCB internal license class IDs,
 # stored as TEXT in the DB.
 SEED_CODE_MAP: dict[str, list[str]] = {
+    "1":   ["SPECIAL OCCASION-PER DAY-PER LOC."],
     "2":   ["NON-PROFIT ARTS ORGANIZATION"],
+    "3":   ["BED & BREAKFAST"],
+    "4":   ["SERVE EMPLOYEES & GUESTS"],
+    "13":  ["FARMERS MARKET FOR WINE"],
     "14":  ["FARMERS MARKET FOR BEER"],
+    "15":  ["FARMERS MARKET FOR BEER/WINE"],
+    "18":  ["RETAIL CERTIFICATE HOLDER"],
     "56":  ["GROCERY STORE - BEER/WINE"],
     "63":  ["GROCERY STORE - BEER/WINE"],
+    "98":  ["TRIBAL COMPACT"],
     "136": ["GROCERY STORE - BEER/WINE"],
     "320": ["BEER DISTRIBUTOR", "WINE DISTRIBUTOR"],
+    "321": ["BEER IMPORTER"],
     "322": ["BONDED WINE WAREHOUSE"],
     "323": ["INTERSTATE COMMON CARRIER"],
     "325": ["DISTILL / RECTIFY"],
+    "326": ["DOMESTIC BREWERY"],
     "327": ["DOMESTIC WINERY < 250,000 LITERS"],
+    "328": ["DOMESTIC WINERY > 249,999 LITERS"],
+    "329": ["FRUIT AND/OR WINE DISTILLERY"],
     "330": ["SPIRITS IMPORTER"],
+    "331": ["MANUFACTURER - LIQUOR"],
     "332": ["MICROBREWERY"],
+    "333": ["SHIPS CHANDLER"],
     "334": ["WINE DISTRIBUTOR"],
     "335": ["GROWER"],
     "336": ["WINE IMPORTER"],
     "337": ["DOMESTIC WINERY < 250,000 ADDL LOC"],
+    "338": ["DOMESTIC WINERY > 249,999 ADDL LOC"],
     "340": ["BEER CERTIFICATE OF APPROVAL"],
     "341": ["WINE CERTIFICATE OF APPROVAL"],
     "342": ["AUTH REP COA US BEER"],
@@ -59,6 +82,7 @@ SEED_CODE_MAP: dict[str, list[str]] = {
     "349": ["DIRECT SHIPMENT RECEIVER-IN/OUT WA"],
     "350": ["DIRECT SHIPMENT RECEIVER-IN WA ONLY"],
     "351": ["CRAFT DISTILLERY"],
+    "352": ["MICROBREWERY WAREHOUSE"],
     "353": ["WINERY WAREHOUSE"],
     "354": ["SPIRITS DISTRIBUTOR"],
     "355": ["SPIRITS COA"],
@@ -67,9 +91,11 @@ SEED_CODE_MAP: dict[str, list[str]] = {
     "359": ["OFF-SITE SPIRITS TASTING ROOM"],
     "371": ["BEER/CIDER GROCERY GROWLERS"],
     "372": ["COMBO GROCERY OFF PREM S/B/W"],
+    "373": ["SPIRITS WAREHOUSE"],
     "379": ["TAKEOUT/DELIVERY"],
     "380": ["PREMIXED COCKTAILS/WINE TO-GO"],
     "381": ["GROWLERS TAKEOUT/DELIVERY"],
+    "386": ["SE CANNABIS RETAILER"],
     "387": ["CANNABIS TRANSPORTATION"],
     "388": ["CANNABIS RESEARCH"],
     "390": ["CANNABIS PRODUCER TIER 1"],
@@ -87,14 +113,24 @@ SEED_CODE_MAP: dict[str, list[str]] = {
     "420": ["BEER/WINE GIFT DELIVERY"],
     "422": ["BEER/WINE SPECIALTY SHOP"],
     "424": ["SPIRITS/BR/WN REST LOUNGE +"],
+    "425": ["SPIRITS/BR/WN REST LOUNGE + SEAS"],
     "426": ["SPIRITS/BR/WN REST LOUNGE -"],
+    "427": ["SPIRITS/BR/WN REST LOUNGE - SEAS"],
+    "430": ["SPIRITS/BR/WN REST CONVENTION CTR +"],
+    "431": ["SPIRITS/BR/WN REST CONVENTION CTR -"],
+    "433": ["SPIRITS/BR/WN REST AIRPORT BAR +"],
+    "435": ["VIP AIRPORT LOUNGE"],
     "438": ["HOTEL"],
     "439": ["SPIRITS/BR/WN REST NONPUBLIC +"],
+    "440": ["SPIRITS/BR/WN REST NONPUBLIC -"],
     "442": ["SPIRITS/BR/WN REST SERVICE BAR"],
     "450": ["GROCERY STORE - BEER/WINE"],
+    "451": ["GROCERY STORE-RESTRICT FORT WINE"],
     "452": ["BEER/WINE REST - BEER"],
+    "456": ["BEER/WINE REST - BEER W/TAPROOM"],
     "457": ["BEER/WINE REST - WINE"],
     "462": ["BEER/WINE REST - BEER/WINE"],
+    "466": ["BEER/WINE REST-BEER/WINE W/TAPROOM"],
     "467": ["MOTEL"],
     "468": ["PRIVATE CLUB - BEER/WINE"],
     "469": ["PRIVATE CLUB - SPIRITS/BEER/WINE"],
@@ -157,15 +193,175 @@ def seed_endorsements(conn: sqlite3.Connection) -> int:
 
 
 # ---
+# Repair: migrate "CODE, NAME" endorsements to proper names
+# ---
+
+def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
+    """Migrate record links from spurious ``CODE, NAME`` endorsements.
+
+    Historical data used license_type values like ``"450, GROCERY STORE -
+    BEER/WINE"`` which were stored as endorsement names verbatim.  This
+    function re-resolves each one: if the embedded code is already mapped
+    in ``endorsement_codes``, migrate to those endorsements; otherwise
+    use the embedded name (creating the endorsement if needed) and
+    register the code mapping.
+
+    Also cleans up bogus ``endorsement_codes`` rows whose code column
+    contains spaces (artifacts of ``discover_code_mappings`` running on
+    ``CODE, NAME`` values).
+
+    Returns the number of record links migrated.  Safe to call
+    repeatedly — no-ops once all ``CODE, NAME`` endorsements are gone.
+    """
+    # Find all endorsements matching the CODE, NAME pattern.
+    bogus = conn.execute(
+        "SELECT id, name FROM license_endorsements WHERE name GLOB '[0-9]*, *'"
+    ).fetchall()
+    if not bogus:
+        # Also clean up space-codes even if no CODE, NAME endorsements remain.
+        deleted = _cleanup_space_codes(conn)
+        if deleted:
+            conn.commit()
+        return 0
+
+    migrated = 0
+    for eid_old, full_name in bogus:
+        m = _CODE_NAME_RE.match(full_name)
+        if not m:
+            continue
+        code, name = m.group(1), m.group(2).strip()
+
+        # Determine the target endorsement(s) for this code.
+        # Prefer existing endorsement_codes mappings (from SEED_CODE_MAP)
+        # so we converge on the canonical name.
+        mapped_eids = conn.execute(
+            """SELECT ec.endorsement_id FROM endorsement_codes ec
+               JOIN license_endorsements le ON le.id = ec.endorsement_id
+               WHERE ec.code = ? AND le.name != ?""",
+            (code, full_name),
+        ).fetchall()
+
+        if mapped_eids:
+            target_eids = [r[0] for r in mapped_eids]
+        else:
+            # No existing mapping — use the name from the CODE, NAME value.
+            target_eid = _ensure_endorsement(conn, name)
+            conn.execute(
+                "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) "
+                "VALUES (?, ?)",
+                (code, target_eid),
+            )
+            target_eids = [target_eid]
+
+        # Migrate all record links from the bogus endorsement to the target(s).
+        records = conn.execute(
+            "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
+            (eid_old,),
+        ).fetchall()
+        for rec in records:
+            for tgt in target_eids:
+                _link_endorsement(conn, rec[0], tgt)
+            migrated += 1
+
+        # Remove old links and the bogus endorsement.
+        conn.execute(
+            "DELETE FROM record_endorsements WHERE endorsement_id = ?", (eid_old,)
+        )
+        conn.execute(
+            "DELETE FROM endorsement_codes WHERE endorsement_id = ?", (eid_old,)
+        )
+        conn.execute(
+            "DELETE FROM license_endorsements WHERE id = ?", (eid_old,)
+        )
+
+    # Clean up bogus endorsement_codes with spaces in the code column.
+    _cleanup_space_codes(conn)
+
+    if migrated:
+        conn.commit()
+        logger.info(
+            "Repaired %d record-endorsement link(s) from %d 'CODE, NAME' "
+            "endorsement(s).",
+            migrated, len(bogus),
+        )
+    return migrated
+
+
+def _cleanup_space_codes(conn: sqlite3.Connection) -> int:
+    """Remove ``endorsement_codes`` rows whose code contains spaces.
+
+    These are artifacts of ``discover_code_mappings()`` processing
+    ``CODE, NAME`` license_type values via ``REPLACE(license_type, ',', '')``,
+    producing codes like ``"379 Curbside/Delivery Endorsement"``.
+
+    Returns the number of rows deleted.
+    """
+    cur = conn.execute("DELETE FROM endorsement_codes WHERE code LIKE '% %'")
+    if cur.rowcount:
+        logger.info(
+            "Removed %d bogus endorsement_codes row(s) with spaces in code.",
+            cur.rowcount,
+        )
+    return cur.rowcount
+
+
+# ---
 # Processing: parse raw license_type into normalized endorsements
 # ---
+
+def _process_code(conn: sqlite3.Connection, record_id: int,
+                  code: str, fallback_name: str | None = None) -> int:
+    """Resolve a numeric code to endorsements and link to *record_id*.
+
+    If the code is already mapped in ``endorsement_codes``, use those
+    mappings.  Otherwise, if *fallback_name* is provided (from a
+    ``CODE, NAME`` raw value), create the endorsement from the name
+    and register the code mapping.  As a last resort, create a numeric
+    placeholder endorsement.
+
+    Returns the number of endorsements linked.
+    """
+    rows = conn.execute(
+        "SELECT ec.endorsement_id FROM endorsement_codes ec WHERE ec.code = ?",
+        (code,),
+    ).fetchall()
+    if rows:
+        for r in rows:
+            _link_endorsement(conn, record_id, r[0])
+        return len(rows)
+
+    # Unknown code — use fallback name from CODE, NAME if available
+    if fallback_name:
+        eid = _ensure_endorsement(conn, fallback_name)
+        conn.execute(
+            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
+            (code, eid),
+        )
+        _link_endorsement(conn, record_id, eid)
+        return 1
+
+    # No name available — create a numeric placeholder
+    logger.info("Unknown code '%s' for record %d; creating placeholder.", code, record_id)
+    eid = _ensure_endorsement(conn, code)
+    conn.execute(
+        "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
+        (code, eid),
+    )
+    _link_endorsement(conn, record_id, eid)
+    return 1
+
 
 def process_record(conn: sqlite3.Connection, record_id: int,
                    raw_license_type: str, section_type: str) -> int:
     """Parse a record's raw license_type and create endorsement links.
 
-    For new_application records the value is semicolon-separated text.
-    For approved/discontinued it is a numeric code.
+    Handles three formats:
+    - Numeric code: ``"450,"`` → look up code in endorsement_codes
+    - Code + name: ``"450, GROCERY STORE - BEER/WINE"`` → extract code,
+      use the name as the endorsement (and register the code mapping)
+    - Text names: ``"GROCERY STORE - BEER/WINE; SNACK BAR"`` → split on
+      semicolons, each part is an endorsement name
+
     Returns the number of endorsements linked.
     """
     if not raw_license_type:
@@ -173,27 +369,15 @@ def process_record(conn: sqlite3.Connection, record_id: int,
 
     cleaned = raw_license_type.rstrip(",").strip()
 
+    # Pure numeric code (e.g. "450" after stripping trailing comma)
     if cleaned.isdigit():
-        # Numeric code — look up via endorsement_codes
-        rows = conn.execute(
-            """SELECT ec.endorsement_id
-               FROM endorsement_codes ec
-               WHERE ec.code = ?""",
-            (cleaned,),
-        ).fetchall()
-        if rows:
-            for r in rows:
-                _link_endorsement(conn, record_id, r[0])
-            return len(rows)
-        # Unknown code — create a placeholder endorsement named after the code
-        logger.info("Unknown code '%s' for record %d; creating placeholder.", cleaned, record_id)
-        eid = _ensure_endorsement(conn, cleaned)
-        conn.execute(
-            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
-            (cleaned, eid),
-        )
-        _link_endorsement(conn, record_id, eid)
-        return 1
+        return _process_code(conn, record_id, cleaned)
+
+    # Historical "CODE, NAME" format (e.g. "450, GROCERY STORE - BEER/WINE")
+    m = _CODE_NAME_RE.match(cleaned)
+    if m:
+        code, name = m.group(1), m.group(2).strip()
+        return _process_code(conn, record_id, code, fallback_name=name)
 
     # Text — split on semicolons
     linked = 0
@@ -253,14 +437,23 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
         """).fetchall()
     )
 
-    # All numeric codes in the data
-    all_codes = conn.execute("""
-        SELECT DISTINCT REPLACE(license_type, ',', '') AS code
+    # All numeric codes in the data.  Handles both "450," (pure code)
+    # and "450, GROCERY STORE - BEER/WINE" (historical CODE, NAME).
+    all_codes: set[str] = set()
+    rows = conn.execute("""
+        SELECT DISTINCT license_type
         FROM license_records
         WHERE section_type IN ('approved', 'discontinued')
           AND license_type GLOB '[0-9]*'
     """).fetchall()
-    unmapped = [r[0] for r in all_codes if r[0] not in mapped]
+    for r in rows:
+        raw = r[0].rstrip(",").strip()
+        m = _CODE_NAME_RE.match(raw)
+        if m:
+            all_codes.add(m.group(1))
+        elif raw.isdigit():
+            all_codes.add(raw)
+    unmapped = [c for c in all_codes if c not in mapped]
 
     if not unmapped:
         return {}

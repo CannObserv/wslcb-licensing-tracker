@@ -18,7 +18,7 @@ from queries import (
     get_record_by_id, get_related_records, get_entity_records,
     _hydrate_records,
 )
-from endorsements import seed_endorsements, backfill
+from endorsements import seed_endorsements, backfill, repair_code_name_endorsements
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
         n = seed_endorsements(conn)
         if n:
             logger.info("Seeded %d endorsement code mapping(s)", n)
+        repair_code_name_endorsements(conn)
         processed = backfill(conn)
         if processed:
             logger.info("Backfilled endorsements for %d record(s)", processed)

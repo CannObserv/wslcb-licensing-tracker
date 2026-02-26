@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from database import DATA_DIR, get_db, init_db
 from queries import insert_record
-from endorsements import process_record, seed_endorsements, discover_code_mappings
+from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
 from log_config import setup_logging
 
@@ -184,6 +184,7 @@ def scrape():
         # Ensure seed code→endorsement mappings exist (idempotent; needed
         # because the scraper runs standalone, not through FastAPI lifespan).
         seed_endorsements(conn)
+        repair_code_name_endorsements(conn)
 
         # Log the scrape start
         cursor = conn.execute(

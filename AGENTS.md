@@ -31,7 +31,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
 | `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
-| `endorsements.py` | License type normalization | Seed code map, `process_record()`, `discover_code_mappings()`, query helpers. |
+| `endorsements.py` | License type normalization | Seed code map (85 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` delegates to `backfill_snapshots.py` (`--backfill-assumptions` still accepted). |
 | `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
@@ -80,7 +80,7 @@ license_records → locations (FK: location_id, previous_location_id)
 ### `endorsement_codes`
 - Maps WSLCB numeric codes → `license_endorsements` (many-to-many)
 - Composite PK `(code, endorsement_id)` — multiple codes can map to the same endorsement, and one code can expand to multiple endorsements
-- Seeded from `SEED_CODE_MAP` in `endorsements.py` (71 codes); auto-discovered codes are added by `discover_code_mappings()`
+- Seeded from `SEED_CODE_MAP` in `endorsements.py` (85 codes); auto-discovered codes are added by `discover_code_mappings()`
 
 ### `record_endorsements`
 - Junction table linking `license_records` ↔ `license_endorsements`
@@ -220,6 +220,7 @@ URL: `https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp`
 - The date field label differs per section: "Notification Date:", "Approved Date:", "Discontinued Date:"
 - New applications include an "Applicant(s):" field; approved/discontinued do not
 - License types in approved/discontinued sections appear as numeric codes (e.g., "349,") — these are resolved to text names by the endorsement normalization layer
+- Historical data (pre-2025) used "CODE, NAME" format (e.g., "450, GROCERY STORE - BEER/WINE") instead of bare codes; `process_record()` handles both formats
 - ASSUMPTION records use variant field labels: `Current Business Name:`, `New Business Name:`, `Current Applicant(s):`, `New Applicant(s):` instead of the standard `Business Name:` / `Applicant(s):`
 - CHANGE OF LOCATION records use `Current Business Location:` / `New Business Location:` instead of `Business Location:` (stored via `previous_location_id` / `location_id` FKs to the `locations` table)
 - CHANGE OF LOCATION records in the source have a `\Application Type:` label (with leading backslash) instead of `Application Type:`

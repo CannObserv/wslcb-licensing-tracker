@@ -20,7 +20,7 @@ from queries import insert_record
 from entities import (
     parse_and_link_entities, clean_applicants_string, _clean_entity_name,
 )
-from endorsements import process_record, seed_endorsements, discover_code_mappings
+from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from log_config import setup_logging
 from scraper import parse_records_from_table, SECTION_MAP
 
@@ -251,6 +251,7 @@ def backfill_from_snapshots():
 
     with get_db() as conn:
         seed_endorsements(conn)
+        repair_code_name_endorsements(conn)
 
         for snap_path in snapshots:
             snap_date = _extract_snapshot_date(snap_path)
