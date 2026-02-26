@@ -14,10 +14,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
 from entities import backfill_entities, get_entity_by_id
 from queries import (
-    search_records, get_filter_options, get_cities_for_state, _US_STATES,
+    search_records, get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
-    _hydrate_records,
+    hydrate_records,
 )
 from endorsements import seed_endorsements, backfill, repair_code_name_endorsements
 from log_config import setup_logging
@@ -184,7 +184,7 @@ async def record_detail(request: Request, record_id: int):
         related_rows = get_related_records(conn, record["license_number"], record_id)
 
         # Hydrate record + related in a single batch
-        hydrated = _hydrate_records(conn, [record] + related_rows)
+        hydrated = hydrate_records(conn, [record] + related_rows)
         record = hydrated[0]
         related = hydrated[1:]
 
@@ -218,7 +218,7 @@ async def entity_detail(request: Request, entity_id: int):
 @app.get("/api/cities")
 async def api_cities(state: str = ""):
     """Return cities for a given state (for dynamic filter population)."""
-    if not state or state not in _US_STATES:
+    if not state or state not in US_STATES:
         return JSONResponse([], headers={"Cache-Control": "public, max-age=300"})
     with get_db() as conn:
         cities = get_cities_for_state(conn, state)

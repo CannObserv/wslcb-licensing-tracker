@@ -29,7 +29,7 @@ license_records → locations (FK: location_id, previous_location_id)
 |---|---|---|
 | `database.py` | Schema, connections, FTS | Core DB layer. `init_db()` is idempotent. Exports `DATA_DIR`, `get_or_create_location()`. |
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
-| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
+| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
@@ -92,10 +92,10 @@ license_records → locations (FK: location_id, previous_location_id)
 - `name` (UNIQUE) — the normalized/cleaned name (uppercased, stray trailing punctuation stripped)
 - `entity_type` — `'person'`, `'organization'`, or `''` (unknown); classified by heuristic at creation time
 - The first element of the semicolon-delimited `applicants` field (which equals `business_name`) is **excluded** — only the individual people/orgs behind the license are stored
-- `get_or_create_entity()` in `entities.py` normalizes names via `_clean_entity_name()`: uppercase, strip whitespace, and remove stray trailing punctuation (periods, commas) that isn't part of a recognized suffix
+- `get_or_create_entity()` in `entities.py` normalizes names via `clean_entity_name()`: uppercase, strip whitespace, and remove stray trailing punctuation (periods, commas) that isn't part of a recognized suffix
 - The `_LEGIT_TRAILING_DOT` regex in `entities.py` defines the suffix allowlist — add new entries there when the WSLCB source uses a new legitimate abbreviation ending with a period.  Current list: `INC`, `LLC`, `L.L.C`, `L.L.P`, `LTD`, `CORP`, `CO`, `L.P`, `PTY`, `JR`, `SR`, `S.P.A`, `F.O.E`, `U.P`, `D.B.A`, `P.C`, `N.A`, `P.A`, `W. & S`
 - `clean_applicants_string()` applies the same cleaning to each element of a semicolon-delimited applicants string — used at ingest time so the `applicants`/`previous_applicants` columns on `license_records` stay consistent with entity names
-- `insert_record()` in `queries.py` also cleans `business_name` and `previous_business_name` via `_clean_entity_name()` before storage, so all name columns are consistently uppercased and stripped of stray punctuation
+- `insert_record()` in `queries.py` also cleans `business_name` and `previous_business_name` via `clean_entity_name()` before storage, so all name columns are consistently uppercased and stripped of stray punctuation
 - `merge_duplicate_entities()` runs at web app startup (via `backfill_entities()` in the `app.py` lifespan) — cleans `business_name`, `previous_business_name`, `applicants`, and `previous_applicants` in `license_records` via `clean_record_strings()`, then merges duplicate entities and renames dirty ones in place; all work is committed in a single transaction
 
 ### `record_entities` (junction table)
@@ -200,6 +200,8 @@ The stat cards on the dashboard (`index.html`) use Tailwind semantic colors matc
 - **Active pagination page**: `bg-co-purple text-white border-co-purple`
 - **Detail page accent panels** ("Buyer (New) →", "New Location →"): `bg-co-purple-50 border-co-purple-100` with `text-co-purple` header
 - **Entity type badges**: `bg-co-purple-50 text-co-purple` for Organization, `bg-amber-100 text-amber-800` for Person
+- **Search filter grid**: `grid-cols-1 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))]` — auto-fill at desktop so items expand when the conditional city filter is hidden; explicit 1-col and 3-col at mobile/tablet
+- **Search button**: always bottom-right of the filter card (alongside "Clear filters" link at bottom-left), not inline with the text input
 - **Navbar**: Cannabis Observer icon (32×32) + bold site title; nav links use `hover:text-co-purple-700`
 - **Footer**: two lines — (1) "A project of [icon] Cannabis Observer 🌱🏛️🔍" linked to `https://cannabis.observer/`, (2) WSLCB data source attribution
 
@@ -329,16 +331,16 @@ Also available via `python scraper.py --backfill-from-snapshots` (delegates to `
 1. Add the column to the `CREATE TABLE IF NOT EXISTS locations` in `database.py`
 2. Add a try/except `ALTER TABLE locations ADD COLUMN ...` migration block in `init_db()` for existing installs
 3. If the column should be searchable via FTS, add it to the `license_records_fts_content` view in `_ensure_fts()` (in `database.py`)
-4. If needed in display, add it to `_RECORD_COLUMNS` in `queries.py` and update templates
+4. If needed in display, add it to `RECORD_COLUMNS` in `queries.py` and update templates
 
 ### Add a new column to `license_records`
 1. Add the column to both `CREATE TABLE IF NOT EXISTS license_records` in `database.py` and the rebuild SQL in `migrate_locations.py`
 2. Add a try/except `ALTER TABLE` migration in `init_db()` for existing installs
-3. Update `insert_record()` and `_RECORD_COLUMNS` in `queries.py`, `search_records()`, and templates as needed
+3. Update `insert_record()` and `RECORD_COLUMNS` in `queries.py`, `search_records()`, and templates as needed
 
 ## Known Issues & Future Work
 
-- Non-standard state values exist in `locations.state` from regex parsing errors (e.g., `SR WA`, `TERMINAL WA`); all validated `std_state` values resolve to valid US state codes. The state filter only shows valid US state codes (validated against `_US_STATES` in `queries.py`)
+- Non-standard state values exist in `locations.state` from regex parsing errors (e.g., `SR WA`, `TERMINAL WA`); all validated `std_state` values resolve to valid US state codes. The state filter only shows valid US state codes (validated against `US_STATES` in `queries.py`)
 - FTS indexes raw `license_type` values — text search for endorsement names won't find approved/discontinued records that store numeric codes (the endorsement filter works correctly)
 - No authentication — the app is fully public
 - No rate limiting on search/export

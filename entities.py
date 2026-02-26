@@ -38,7 +38,7 @@ _LEGIT_TRAILING_DOT = re.compile(
 )
 
 
-def _clean_entity_name(name: str) -> str:
+def clean_entity_name(name: str) -> str:
     """Normalize an entity name: uppercase, strip whitespace, and remove
     stray trailing punctuation that isn't part of a recognized suffix.
 
@@ -60,14 +60,14 @@ def _clean_entity_name(name: str) -> str:
 def clean_applicants_string(applicants: str | None) -> str | None:
     """Clean each semicolon-separated part of an applicants string.
 
-    Applies ``_clean_entity_name()`` to every element (including the
+    Applies ``clean_entity_name()`` to every element (including the
     leading business-name element) so the stored string is consistent
     with entity names in the ``entities`` table.  Empty parts after
     cleaning are dropped.  Returns ``None`` unchanged.
     """
     if not applicants:
         return applicants
-    parts = [_clean_entity_name(p) for p in applicants.split(";")]
+    parts = [clean_entity_name(p) for p in applicants.split(";")]
     return "; ".join(p for p in parts if p)
 
 
@@ -83,7 +83,7 @@ def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
     The WSLCB source is predominantly uppercase but occasionally uses
     mixed case or appends errant periods/commas.
     """
-    normalized = _clean_entity_name(name)
+    normalized = clean_entity_name(name)
     if not normalized:
         raise ValueError("Entity name must not be empty")
     row = conn.execute(
@@ -231,8 +231,8 @@ def clean_record_strings(conn: sqlite3.Connection) -> int:
     ).fetchall()
     updated = 0
     for r in rows:
-        clean_biz = _clean_entity_name(r["business_name"] or "")
-        clean_prev_biz = _clean_entity_name(r["previous_business_name"] or "")
+        clean_biz = clean_entity_name(r["business_name"] or "")
+        clean_prev_biz = clean_entity_name(r["previous_business_name"] or "")
         clean_app = clean_applicants_string(r["applicants"] or "")
         clean_prev = clean_applicants_string(r["previous_applicants"] or "")
         if (clean_biz != (r["business_name"] or "")
@@ -281,7 +281,7 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
 
     merged = 0
     for entity in all_entities:
-        cleaned = _clean_entity_name(entity["name"])
+        cleaned = clean_entity_name(entity["name"])
         if cleaned == entity["name"]:
             continue  # name is already clean
         if not cleaned:

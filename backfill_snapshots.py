@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from database import DATA_DIR, get_db, init_db, get_or_create_location
 from queries import insert_record
 from entities import (
-    parse_and_link_entities, clean_applicants_string, _clean_entity_name,
+    parse_and_link_entities, clean_applicants_string, clean_entity_name,
 )
 from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from log_config import setup_logging
@@ -87,8 +87,8 @@ def _repair_assumptions(conn, records: list[dict]) -> int:
             continue
         if not rec["business_name"] and not rec["previous_business_name"]:
             continue
-        cleaned_biz = _clean_entity_name(rec["business_name"] or "")
-        cleaned_prev_biz = _clean_entity_name(
+        cleaned_biz = clean_entity_name(rec["business_name"] or "")
+        cleaned_prev_biz = clean_entity_name(
             rec["previous_business_name"] or ""
         )
         cleaned_applicants = clean_applicants_string(rec["applicants"])

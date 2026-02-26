@@ -53,7 +53,7 @@ from bs4 import BeautifulSoup
 from database import DATA_DIR, get_db, init_db
 from endorsements import discover_code_mappings, process_record, seed_endorsements, repair_code_name_endorsements
 from log_config import setup_logging
-from queries import insert_record, _hydrate_records, _RECORD_COLUMNS, _RECORD_JOINS
+from queries import insert_record, hydrate_records, RECORD_COLUMNS, RECORD_JOINS
 from scraper import parse_records_from_table
 
 logger = logging.getLogger(__name__)
@@ -331,12 +331,12 @@ def _write_csv_from_db(
             batch_ids = record_ids[start : start + BATCH]
             placeholders = ",".join("?" * len(batch_ids))
             rows = conn.execute(
-                f"""SELECT {_RECORD_COLUMNS} {_RECORD_JOINS}
+                f"""SELECT {RECORD_COLUMNS} {RECORD_JOINS}
                     WHERE lr.id IN ({placeholders})
                     ORDER BY lr.record_date, lr.section_type""",
                 batch_ids,
             ).fetchall()
-            hydrated = _hydrate_records(conn, rows)
+            hydrated = hydrate_records(conn, rows)
             for r in hydrated:
                 row = {k: r.get(k, "") for k in CSV_FIELDS}
                 row["endorsements"] = "; ".join(r.get("endorsements", []))

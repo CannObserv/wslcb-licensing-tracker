@@ -12,7 +12,7 @@ import time
 from endorsements import get_endorsement_options, get_record_endorsements
 from entities import (
     parse_and_link_entities, get_record_entities, clean_applicants_string,
-    _clean_entity_name,
+    clean_entity_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Shared column list and JOINs for all record queries
 # ------------------------------------------------------------------
 
-_RECORD_COLUMNS = """
+RECORD_COLUMNS = """
     lr.id, lr.section_type, lr.record_date, lr.business_name,
     lr.applicants, lr.license_type, lr.application_type,
     lr.license_number, lr.contact_phone,
@@ -50,12 +50,12 @@ _RECORD_COLUMNS = """
     COALESCE(ploc.std_zip, '') AS prev_std_zip,
     ploc.address_validated_at AS prev_address_validated_at"""
 
-_RECORD_JOINS = """
+RECORD_JOINS = """
     FROM license_records lr
     LEFT JOIN locations loc ON loc.id = lr.location_id
     LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id"""
 
-_RECORD_SELECT = f"SELECT {_RECORD_COLUMNS} {_RECORD_JOINS}"
+_RECORD_SELECT = f"SELECT {RECORD_COLUMNS} {RECORD_JOINS}"
 
 
 # ------------------------------------------------------------------
@@ -75,7 +75,7 @@ def enrich_record(record: dict) -> dict:
     return record
 
 
-def _hydrate_records(
+def hydrate_records(
     conn: sqlite3.Connection, rows: list,
 ) -> list[dict]:
     """Enrich DB rows/dicts with endorsements, entities, and display fields.
@@ -142,8 +142,8 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
     )
     # Normalize business names and applicant strings (uppercase, strip
     # trailing punctuation) so stored values are consistent throughout.
-    cleaned_biz = _clean_entity_name(record.get("business_name", ""))
-    cleaned_prev_biz = _clean_entity_name(
+    cleaned_biz = clean_entity_name(record.get("business_name", ""))
+    cleaned_prev_biz = clean_entity_name(
         record.get("previous_business_name", "")
     )
     cleaned_applicants = clean_applicants_string(
@@ -283,7 +283,7 @@ def search_records(
         params + [per_page, offset],
     ).fetchall()
 
-    return _hydrate_records(conn, rows), total
+    return hydrate_records(conn, rows), total
 
 
 # In-process cache for filter dropdown options.  The underlying data
@@ -293,7 +293,7 @@ _filter_cache: dict = {}  # {"data": ..., "ts": float}
 _FILTER_CACHE_TTL = 300  # seconds (5 minutes)
 
 
-_US_STATES = {
+US_STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
     "CA": "California", "CO": "Colorado", "CT": "Connecticut",
     "DC": "District of Columbia", "DE": "Delaware", "FL": "Florida",
@@ -338,12 +338,12 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         f"  SELECT COALESCE(NULLIF(l.std_state, ''), l.state) AS display_state"
         f"  FROM locations l"
         f"  WHERE l.id IN ({_LOCATION_IDS_SUBQUERY})"
-        f") WHERE display_state IN ({','.join('?' for _ in _US_STATES)})"
+        f") WHERE display_state IN ({','.join('?' for _ in US_STATES)})"
         f" ORDER BY display_state",
-        list(_US_STATES.keys()),
+        list(US_STATES.keys()),
     ).fetchall()
     options["state"] = [
-        {"code": r[0], "name": _US_STATES[r[0]]} for r in rows
+        {"code": r[0], "name": US_STATES[r[0]]} for r in rows
     ]
 
     options["endorsement"] = get_endorsement_options(conn)
@@ -452,10 +452,10 @@ def get_entity_records(
 ) -> list[dict]:
     """Fetch all records associated with an entity, with location data."""
     rows = conn.execute(
-        f"""SELECT DISTINCT {_RECORD_COLUMNS} {_RECORD_JOINS}
+        f"""SELECT DISTINCT {RECORD_COLUMNS} {RECORD_JOINS}
             JOIN record_entities re ON re.record_id = lr.id
             WHERE re.entity_id = ?
             ORDER BY lr.record_date DESC, lr.id DESC""",
         (entity_id,),
     ).fetchall()
-    return _hydrate_records(conn, rows)
+    return hydrate_records(conn, rows)
