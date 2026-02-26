@@ -192,9 +192,11 @@ One record has a license number (`434776`) in the `application_type` field:
 |---|---|---|---|---|---|
 | 32020 | 2024-09-25 | G & T ADULT DAYCARE BAR & GRILL | 433344 | 434776 | 424, SPIRITS/BR/WN REST LOUNGE + |
 
-**Root cause:** Parsing error in the diff — likely a hunk boundary split the record and the license number of an adjacent record leaked into the application_type field.
+**Root cause:** Diff boundary chimera from the supplemental (with-context) parsing pass. The diff file `2024_10_04-07_16_42-approvals-diff.txt` splits the G & T ADULT DAYCARE record across two hunks. When the supplemental pass reassembles using context lines, it creates a chimera that combines G & T's business name and license type with JACQUOT FARM AND VINEYARD's license number (`433344`), phone, and application type.
 
-**Recommendation:** Manual correction: `UPDATE license_records SET application_type = 'RENEWAL' WHERE id = 32020;` (most approved records with this endorsement type are renewals; verify against source if a snapshot is available for 2024-09-25).
+The correct G & T record already existed as **#32016** (parsed from the earlier `2024_09_26` diff). Record #32020 was a corrupt duplicate with shifted fields.
+
+**Resolution:** Deleted record #32020 and its `record_endorsements` link. The correct record #32016 remains. This was the only chimera in the database (confirmed by scanning for 6-digit numeric `application_type` values). This is a known limitation of the supplemental context-line pass — it can produce valid-looking records from fields belonging to adjacent records at hunk boundaries.
 
 ---
 
