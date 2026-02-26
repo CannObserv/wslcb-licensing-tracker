@@ -2,7 +2,8 @@
 
 Post-historical-backfill audit of the WSLCB Licensing Tracker database.
 
-**Database:** 89,157 records | 57,137 locations | 59,159 entities  
+**Database (at time of audit):** 89,157 records | 57,137 locations | 59,159 entities  
+**Database (post-fixes):** 89,156 records | 57,137 locations | 59,044 entities  
 **Date range:** 2022-08-08 to 2026-02-25  
 **Data sources:** Live scrapes (2025-11 to present) + unified-diff backfill (2022-08 to 2025-12)
 
@@ -135,18 +136,24 @@ The WSLCB has renamed endorsements over time, creating multiple `license_endorse
 - Start with punctuation (`.`, `-`)
 - Are known non-name tokens (`LLC`, `INC`, etc. when standalone)
 
-### 4d. Duplicate Entities from Double Spaces (107 pairs)
+### 4d. Duplicate Entities from Double Spaces (107 pairs) — ✅ RESOLVED
 
-The WSLCB source uses inconsistent spacing — the same person appears as both `SMITH, JOHN  MICHAEL` (double space) and `SMITH, JOHN MICHAEL` (single space), creating two separate entity rows. **107 confirmed duplicate pairs** exist.
+The WSLCB source uses inconsistent spacing — the same person appears as both `SMITH, JOHN  MICHAEL` (double space) and `SMITH, JOHN MICHAEL` (single space), creating two separate entity rows. **107 confirmed duplicate pairs** existed at the time of audit.
 
-Additionally, **4,821 entities** have double spaces in their names (most don't have a single-space twin, but the inconsistency makes searching harder).
+Additionally, **4,821 entities** had double spaces in their names (most didn't have a single-space twin, but the inconsistency made searching harder).
 
 Examples:
 - `ACKLEY, BRANDON  J` (id 27038) ↔ `ACKLEY, BRANDON J` (id 19645)
 - `BLEDSOE, DREW  MCQUEEN` (id 21106) ↔ `BLEDSOE, DREW MCQUEEN` (id 19633)
 - `CASTRO,  ROXANA` (id 17984) ↔ `CASTRO, ROXANA` (id 17982)
 
-**Recommendation:** Add whitespace normalization (collapse multiple spaces to single space) in `_clean_entity_name()`. Then run `merge_duplicate_entities()` to consolidate the 107 existing pairs. This would also prevent future duplicates.
+**Fix applied** (`09d026a`): Added `re.sub(r'\s+', ' ', cleaned)` to `_clean_entity_name()` in `entities.py` to collapse runs of whitespace to a single space. On service restart, the existing `merge_duplicate_entities()` startup hook automatically:
+- Renamed 4,713 entities with double spaces
+- Merged 115 duplicate pairs into their canonical single-space form
+- Cleaned all double spaces in `business_name`, `applicants`, `previous_business_name`, `previous_applicants` columns in `license_records`
+- Net result: 59,159 → 59,044 entities. Zero double-space names remain.
+
+Future records are also protected — any new names with extra whitespace are normalized at ingest time.
 
 ---
 
@@ -184,9 +191,9 @@ The 30-char limit affects individual applicant segments within the semicolon-del
 
 ---
 
-## 7. Record with Malformed application_type
+## 7. Record with Malformed application_type — ✅ RESOLVED
 
-One record has a license number (`434776`) in the `application_type` field:
+One record had a license number (`434776`) in the `application_type` field:
 
 | ID | Date | Business | License# | application_type | license_type |
 |---|---|---|---|---|---|
@@ -196,7 +203,7 @@ One record has a license number (`434776`) in the `application_type` field:
 
 The correct G & T record already existed as **#32016** (parsed from the earlier `2024_09_26` diff). Record #32020 was a corrupt duplicate with shifted fields.
 
-**Resolution:** Deleted record #32020 and its `record_endorsements` link. The correct record #32016 remains. This was the only chimera in the database (confirmed by scanning for 6-digit numeric `application_type` values). This is a known limitation of the supplemental context-line pass — it can produce valid-looking records from fields belonging to adjacent records at hunk boundaries.
+**Fix applied** (`125906a`): Deleted record #32020 and its `record_endorsements` link. The correct record #32016 remains. This was the only chimera in the database (confirmed by scanning for 6-digit numeric `application_type` values). This is a known limitation of the supplemental context-line pass — it can produce valid-looking records from fields belonging to adjacent records at hunk boundaries.
 
 ---
 
@@ -239,14 +246,14 @@ Peak: September 2025 with 17,356 renewals alone. This is a bulk renewal cycle �
 
 ## Summary of Recommendations
 
-| # | Issue | Severity | Effort | Recommendation |
+| # | Issue | Severity | Effort | Status |
 |---|---|---|---|---|
-| 1 | **Double-space duplicate entities** (107 pairs) | Medium | Low | Add whitespace normalization to `_clean_entity_name()`; run merge |
-| 2 | **Junk/fragment entities** (11 entries) | Low | Low | Add entity name validation filter (skip WAC refs, parens, ≤2 chars) |
-| 3 | **Endorsement naming variants** (4 codes with multiple names) | Medium | Medium | Build endorsement alias table or canonical name mapping |
-| 4 | **Unmapped endorsement codes** (7 codes, 102 records) | Low | Low | Cross-reference with new_application records to resolve; manually map remaining |
-| 5 | **Misclassified org-as-person entities** (~30) | Low | Medium | Expand heuristic to check for business-name patterns (BAR, GRILL, WINERY, BREWERY, RESTAURANT, CAFE, etc.) |
-| 6 | **Malformed record #32020** | Low | Trivial | Manual SQL correction |
-| 7 | **Source truncation at 30/45 chars** | Info | N/A | Document in AGENTS.md; not fixable |
-| 8 | **All-zeros phone numbers** | Low | Trivial | Filter in display template |
-| 9 | **14 unvalidated addresses** | Info | N/A | API limitation; parsed fields are usable |
+| 1 | **Double-space duplicate entities** (107 pairs) | Medium | Low | ✅ Fixed (`09d026a`) — whitespace normalization added to `_clean_entity_name()`; 115 entities merged, 4,713 renamed on restart |
+| 2 | **Junk/fragment entities** (11 entries) | Low | Low | Open — add entity name validation filter (skip WAC refs, parens, ≤2 chars) |
+| 3 | **Endorsement naming variants** (4 codes with multiple names) | Medium | Medium | [Issue #7](https://github.com/CannObserv/wslcb-licensing-tracker/issues/7) — admin interface with endorsement alias table |
+| 4 | **Unmapped endorsement codes** (7 codes, 102 records) | Low | Low | [Issue #7](https://github.com/CannObserv/wslcb-licensing-tracker/issues/7) — admin interface to assign text descriptions |
+| 5 | **Misclassified org-as-person entities** (~30) | Low | Medium | Open — expand heuristic to check for business-name patterns (BAR, GRILL, WINERY, BREWERY, RESTAURANT, CAFE, etc.) |
+| 6 | **Malformed record #32020** | Low | Trivial | ✅ Fixed (`125906a`) — chimera record deleted; root cause: diff boundary artifact in supplemental context-line pass |
+| 7 | **Source truncation at 30/45 chars** | Info | N/A | Open — document in AGENTS.md; not fixable |
+| 8 | **All-zeros phone numbers** | Low | Trivial | Open — filter in display template |
+| 9 | **14 unvalidated addresses** | Info | N/A | Open — API limitation; parsed fields are usable |
