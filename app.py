@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -219,9 +219,10 @@ async def entity_detail(request: Request, entity_id: int):
 async def api_cities(state: str = ""):
     """Return cities for a given state (for dynamic filter population)."""
     if not state or state not in _US_STATES:
-        return []
+        return JSONResponse([], headers={"Cache-Control": "public, max-age=300"})
     with get_db() as conn:
-        return get_cities_for_state(conn, state)
+        cities = get_cities_for_state(conn, state)
+    return JSONResponse(cities, headers={"Cache-Control": "public, max-age=300"})
 
 
 @app.get("/export")
