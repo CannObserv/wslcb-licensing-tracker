@@ -31,7 +31,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
 | `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_stats()`, `insert_record()`, `enrich_record()`, `_hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
-| `endorsements.py` | License type normalization | Seed code map (85 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
+| `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` delegates to `backfill_snapshots.py` (`--backfill-assumptions` still accepted). |
 | `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
@@ -80,7 +80,7 @@ license_records → locations (FK: location_id, previous_location_id)
 ### `endorsement_codes`
 - Maps WSLCB numeric codes → `license_endorsements` (many-to-many)
 - Composite PK `(code, endorsement_id)` — multiple codes can map to the same endorsement, and one code can expand to multiple endorsements
-- Seeded from `SEED_CODE_MAP` in `endorsements.py` (85 codes); auto-discovered codes are added by `discover_code_mappings()`
+- Seeded from `SEED_CODE_MAP` in `endorsements.py` (98 codes); auto-discovered codes are added by `discover_code_mappings()`
 
 ### `record_endorsements`
 - Junction table linking `license_records` ↔ `license_endorsements`

@@ -352,7 +352,7 @@ def _process_code(conn: sqlite3.Connection, record_id: int,
 
 
 def process_record(conn: sqlite3.Connection, record_id: int,
-                   raw_license_type: str, section_type: str) -> int:
+                   raw_license_type: str) -> int:
     """Parse a record's raw license_type and create endorsement links.
 
     Handles three formats:
@@ -404,7 +404,7 @@ def backfill(conn: sqlite3.Connection) -> int:
     """).fetchall()
 
     for r in rows:
-        process_record(conn, r["id"], r["license_type"], r["section_type"])
+        process_record(conn, r["id"], r["license_type"])
 
     if rows:
         conn.commit()
@@ -466,7 +466,7 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
             JOIN license_records n
                 ON a.license_number = n.license_number
                 AND n.section_type = 'new_application'
-            WHERE REPLACE(a.license_type, ',', '') = ?
+            WHERE SUBSTR(a.license_type, 1, INSTR(a.license_type, ',') - 1) = ?
               AND a.section_type IN ('approved', 'discontinued')
             GROUP BY n.license_type
         """, (code,)).fetchall()

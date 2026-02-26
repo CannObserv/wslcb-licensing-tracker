@@ -446,9 +446,7 @@ def backfill_diffs(
             try:
                 rid = insert_record(conn, rec)
                 if rid is not None:
-                    process_record(
-                        conn, rid, rec["license_type"], rec["section_type"]
-                    )
+                    process_record(conn, rid, rec["license_type"])
                     inserted_ids.append(rid)
                 else:
                     skipped += 1

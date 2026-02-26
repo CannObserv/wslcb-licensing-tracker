@@ -238,7 +238,7 @@ def scrape():
                     for rec in records:
                         rid = insert_record(conn, rec)
                         if rid is not None:
-                            process_record(conn, rid, rec["license_type"], rec["section_type"])
+                            process_record(conn, rid, rec["license_type"])
                             validate_record(conn, rid, client=av_client)
                             if rec.get("previous_business_location"):
                                 validate_previous_location(conn, rid, client=av_client)

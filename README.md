@@ -188,7 +188,7 @@ The WSLCB source page uses two different representations for license types:
 - **New applications** list endorsements as semicolon-separated text (e.g., `GROCERY STORE - BEER/WINE; SNACK BAR`)
 - **Approved/discontinued** records use opaque numeric codes (e.g., `450,`)
 
-Historical data also uses a hybrid `"CODE, NAME"` format (e.g., `"450, GROCERY STORE - BEER/WINE"`). The tracker normalizes all three into a shared `license_endorsements` table, linked to records via a `record_endorsements` junction table. A seed mapping of 85 known codes is built into `endorsements.py`, and new mappings are automatically discovered by cross-referencing license numbers that appear in both sections.
+Historical data also uses a hybrid `"CODE, NAME"` format (e.g., `"450, GROCERY STORE - BEER/WINE"`). The tracker normalizes all three into a shared `license_endorsements` table, linked to records via a `record_endorsements` junction table. A seed mapping of 98 known codes is built into `endorsements.py`, and new mappings are automatically discovered by cross-referencing license numbers that appear in both sections.
 
 ## Address Standardization
 

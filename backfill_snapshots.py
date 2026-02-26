@@ -64,7 +64,7 @@ def _ingest_records(conn, records: list[dict]) -> tuple[int, int]:
     for rec in records:
         rid = insert_record(conn, rec)
         if rid is not None:
-            process_record(conn, rid, rec["license_type"], rec["section_type"])
+            process_record(conn, rid, rec["license_type"])
             inserted += 1
         else:
             skipped += 1
