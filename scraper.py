@@ -7,7 +7,10 @@ from pathlib import Path
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import DATA_DIR, get_db, init_db
+from database import (
+    DATA_DIR, get_db, init_db, get_or_create_source, link_record_source,
+    SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL,
+)
 from queries import insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
@@ -210,6 +213,20 @@ def scrape():
             except Exception as snap_err:
                 logger.warning("Failed to save HTML snapshot: %s", snap_err)
 
+            # Register provenance source
+            rel_path = (
+                str(snapshot_path.relative_to(DATA_DIR))
+                if snapshot_path else None
+            )
+            source_id = get_or_create_source(
+                conn,
+                SOURCE_TYPE_LIVE_SCRAPE,
+                snapshot_path=rel_path,
+                url=URL,
+                captured_at=datetime.now(timezone.utc).isoformat(),
+                scrape_log_id=log_id,
+            )
+
             # Parse HTML
             soup = BeautifulSoup(html, "lxml")
 
@@ -239,11 +256,25 @@ def scrape():
                         rid = insert_record(conn, rec)
                         if rid is not None:
                             process_record(conn, rid, rec["license_type"])
+                            link_record_source(conn, rid, source_id, "first_seen")
                             validate_record(conn, rid, client=av_client)
                             if rec.get("previous_business_location"):
                                 validate_previous_location(conn, rid, client=av_client)
                             inserted += 1
                         else:
+                            # Record already exists — link as confirmed
+                            existing = conn.execute(
+                                """SELECT id FROM license_records
+                                   WHERE section_type = :section_type
+                                     AND record_date = :record_date
+                                     AND license_number = :license_number
+                                     AND application_type = :application_type""",
+                                rec,
+                            ).fetchone()
+                            if existing:
+                                link_record_source(
+                                    conn, existing["id"], source_id, "confirmed",
+                                )
                             counts["skipped"] += 1
 
                     key = section_type.split("_")[0] if "_" in section_type else section_type
