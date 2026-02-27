@@ -9,8 +9,18 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+import json
 
 logger = logging.getLogger(__name__)
+
+# Source type constants (fixed IDs — must match seed data in init_db)
+SOURCE_TYPE_LIVE_SCRAPE = 1
+SOURCE_TYPE_CO_ARCHIVE = 2
+SOURCE_TYPE_INTERNET_ARCHIVE = 3
+SOURCE_TYPE_CO_DIFF_ARCHIVE = 4
+SOURCE_TYPE_MANUAL = 5
+
+WSLCB_SOURCE_URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
 # All persistent data (DB + HTML snapshots) lives under DATA_DIR.
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent / "data"))
@@ -97,6 +107,27 @@ def init_db():
                 snapshot_path TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS source_types (
+                id INTEGER PRIMARY KEY,
+                slug TEXT NOT NULL UNIQUE,
+                label TEXT NOT NULL,
+                description TEXT DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type_id INTEGER NOT NULL
+                    REFERENCES source_types(id),
+                snapshot_path TEXT,
+                url TEXT,
+                captured_at TEXT,
+                ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
+                scrape_log_id INTEGER
+                    REFERENCES scrape_log(id),
+                metadata TEXT NOT NULL DEFAULT '{}',
+                UNIQUE(source_type_id, snapshot_path)
+            );
         """)
 
         # --- Migrations for existing databases ---
@@ -153,6 +184,34 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_re_entity ON record_entities(entity_id);
             CREATE INDEX IF NOT EXISTS idx_re_role ON record_entities(role);
+        """)
+        # Source provenance junction table
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS record_sources (
+                record_id INTEGER NOT NULL
+                    REFERENCES license_records(id) ON DELETE CASCADE,
+                source_id INTEGER NOT NULL
+                    REFERENCES sources(id) ON DELETE CASCADE,
+                role TEXT NOT NULL DEFAULT 'first_seen',
+                PRIMARY KEY (record_id, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rs_source
+                ON record_sources(source_id);
+        """)
+        # Seed the fixed source_types rows
+        conn.executescript("""
+            INSERT OR IGNORE INTO source_types (id, slug, label, description)
+            VALUES
+                (1, 'live_scrape',    'Live Scrape',
+                 'Direct scrape of the WSLCB licensing page'),
+                (2, 'co_archive',     'CO Page Archive',
+                 'Cannabis Observer archived HTML snapshots'),
+                (3, 'internet_archive','Internet Archive',
+                 'Wayback Machine snapshots'),
+                (4, 'co_diff_archive','CO Diff Archive',
+                 'Cannabis Observer diff-detected change snapshots'),
+                (5, 'manual',         'Manual Entry',
+                 'Manually entered or corrected records');
         """)
         # Indexes on license_records (safe after migration)
         for idx_sql in [
@@ -316,6 +375,76 @@ def get_or_create_location(
         (normalized, city, state, zip_code),
     )
     return cursor.lastrowid
+
+
+def get_or_create_source(
+    conn: sqlite3.Connection,
+    source_type_id: int,
+    snapshot_path: str | None = None,
+    url: str | None = None,
+    captured_at: str | None = None,
+    scrape_log_id: int | None = None,
+    metadata: dict | None = None,
+) -> int:
+    """Return the source id for the given type + snapshot_path, creating if needed.
+
+    Uses INSERT OR IGNORE followed by SELECT so the call is idempotent.
+    The (source_type_id, snapshot_path) pair is the uniqueness key.
+
+    .. note:: SQLite treats NULLs as distinct in UNIQUE constraints, so when
+       *snapshot_path* is None the SELECT uses ``snapshot_path IS NULL`` to
+       find any existing row before inserting a new one.
+    """
+    meta_json = json.dumps(metadata) if metadata else "{}"
+    if snapshot_path is not None:
+        conn.execute(
+            """INSERT OR IGNORE INTO sources
+                   (source_type_id, snapshot_path, url, captured_at,
+                    scrape_log_id, metadata)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (source_type_id, snapshot_path, url, captured_at,
+             scrape_log_id, meta_json),
+        )
+        row = conn.execute(
+            """SELECT id FROM sources
+               WHERE source_type_id = ? AND snapshot_path = ?""",
+            (source_type_id, snapshot_path),
+        ).fetchone()
+    else:
+        # NULL snapshot_path — look for an existing row first
+        row = conn.execute(
+            """SELECT id FROM sources
+               WHERE source_type_id = ? AND snapshot_path IS NULL""",
+            (source_type_id,),
+        ).fetchone()
+        if row is None:
+            cursor = conn.execute(
+                """INSERT INTO sources
+                       (source_type_id, snapshot_path, url, captured_at,
+                        scrape_log_id, metadata)
+                   VALUES (?, NULL, ?, ?, ?, ?)""",
+                (source_type_id, url, captured_at,
+                 scrape_log_id, meta_json),
+            )
+            return cursor.lastrowid
+    return row[0]
+
+
+def link_record_source(
+    conn: sqlite3.Connection,
+    record_id: int,
+    source_id: int,
+    role: str = "first_seen",
+) -> None:
+    """Link a license record to a source (idempotent).
+
+    Does nothing if the (record_id, source_id) pair already exists.
+    """
+    conn.execute(
+        """INSERT OR IGNORE INTO record_sources (record_id, source_id, role)
+           VALUES (?, ?, ?)""",
+        (record_id, source_id, role),
+    )
 
 
 if __name__ == "__main__":

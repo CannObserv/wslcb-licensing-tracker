@@ -38,6 +38,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
+| `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
 
@@ -116,6 +117,31 @@ license_records → locations (FK: location_id, previous_location_id)
 ### `scrape_log`
 - One row per scrape run with status, record counts, timestamps, error messages
 - `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed
+
+### `source_types` (provenance enum)
+- Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`
+- Python constants in `database.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc.
+- Seeded by `init_db()` via `INSERT OR IGNORE`
+
+### `sources` (provenance artifacts)
+- One row per source artifact (a specific HTML snapshot file or scrape run)
+- `source_type_id` — FK to `source_types`
+- `snapshot_path` — repo-relative path to archived HTML file; `NULL` if archiving failed
+- `url` — original URL (WSLCB page, Wayback Machine URL)
+- `captured_at` — when the source was captured (distinct from ingestion)
+- `ingested_at` — when we processed it
+- `scrape_log_id` — FK to `scrape_log` for live scrapes (avoids duplicating operational data)
+- `metadata` — JSON blob for source-specific attributes (`truncated`, `file_size_bytes`, `sections_present`, `sha256`, `wayback_timestamp`)
+- UNIQUE constraint on `(source_type_id, snapshot_path)`
+- `get_or_create_source()` in `database.py` handles idempotent upsert
+
+### `record_sources` (provenance junction)
+- M:M junction linking `license_records` ↔ `sources`
+- `role` — `'first_seen'` (introduced by this source), `'confirmed'` (already existed, corroborated), `'repaired'` (data fixed from this source)
+- Composite PK `(record_id, source_id)`
+- `link_record_source()` in `database.py` handles idempotent insert
+- `ON DELETE CASCADE` on both FKs
+- `get_record_sources()` in `queries.py` returns provenance for display on detail page
 
 ## Conventions
 

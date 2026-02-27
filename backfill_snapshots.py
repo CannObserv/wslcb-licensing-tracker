@@ -15,7 +15,11 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from database import DATA_DIR, get_db, init_db, get_or_create_location
+from database import (
+    DATA_DIR, get_db, init_db, get_or_create_location,
+    get_or_create_source, link_record_source, SOURCE_TYPE_CO_ARCHIVE,
+    WSLCB_SOURCE_URL,
+)
 from queries import insert_record
 from entities import (
     parse_and_link_entities, clean_applicants_string, clean_entity_name,
@@ -57,29 +61,52 @@ def _parse_snapshot(path: Path) -> list[dict]:
 
 # ── Phase 1: Ingest ──────────────────────────────────────────────────
 
-def _ingest_records(conn, records: list[dict]) -> tuple[int, int]:
-    """Insert new records into the database.  Returns (inserted, skipped)."""
+def _ingest_records(
+    conn, records: list[dict], source_id: int,
+) -> tuple[int, int]:
+    """Insert new records into the database.  Returns (inserted, skipped).
+
+    Links every record to *source_id*: newly-inserted records get
+    ``first_seen``, duplicates get ``confirmed``.
+    """
     inserted = 0
     skipped = 0
     for rec in records:
         rid = insert_record(conn, rec)
         if rid is not None:
             process_record(conn, rid, rec["license_type"])
+            link_record_source(conn, rid, source_id, "first_seen")
             inserted += 1
         else:
+            # Record already exists — link as confirmed
+            existing = conn.execute(
+                """SELECT id FROM license_records
+                   WHERE section_type = :section_type
+                     AND record_date = :record_date
+                     AND license_number = :license_number
+                     AND application_type = :application_type""",
+                rec,
+            ).fetchone()
+            if existing:
+                link_record_source(
+                    conn, existing["id"], source_id, "confirmed",
+                )
             skipped += 1
     return inserted, skipped
 
 
 # ── Phase 2: Repair ──────────────────────────────────────────────────
 
-def _repair_assumptions(conn, records: list[dict]) -> int:
+def _repair_assumptions(
+    conn, records: list[dict], source_id: int,
+) -> int:
     """Fix ASSUMPTION records that have empty or NULL business names.
 
     Normalizes business names and applicant strings (uppercase, strip
     trailing punctuation) before writing.  After updating, re-links
     entities so the ``record_entities`` junction table reflects the
-    corrected data.
+    corrected data.  Links repaired records to *source_id* with role
+    ``repaired``.
     """
     updated = 0
     for rec in records:
@@ -140,12 +167,18 @@ def _repair_assumptions(conn, records: list[dict]) -> int:
                         conn, rid, cleaned_prev_applicants,
                         "previous_applicant",
                     )
+                link_record_source(conn, rid, source_id, "repaired")
             updated += cursor.rowcount
     return updated
 
 
-def _repair_change_of_location(conn, records: list[dict]) -> int:
-    """Fix CHANGE OF LOCATION records with missing locations."""
+def _repair_change_of_location(
+    conn, records: list[dict], source_id: int,
+) -> int:
+    """Fix CHANGE OF LOCATION records with missing locations.
+
+    Links repaired records to *source_id* with role ``repaired``.
+    """
     updated = 0
     for rec in records:
         if rec["application_type"] != "CHANGE OF LOCATION":
@@ -204,6 +237,20 @@ def _repair_change_of_location(conn, records: list[dict]) -> int:
                 ),
             )
             if cursor.rowcount > 0:
+                # Tag the repaired record
+                row = conn.execute(
+                    """SELECT id FROM license_records
+                       WHERE section_type = ?
+                         AND record_date = ?
+                         AND license_number = ?
+                         AND application_type = 'CHANGE OF LOCATION'""",
+                    (rec["section_type"], rec["record_date"],
+                     rec["license_number"]),
+                ).fetchone()
+                if row:
+                    link_record_source(
+                        conn, row["id"], source_id, "repaired",
+                    )
                 updated += cursor.rowcount
                 continue
 
@@ -227,6 +274,20 @@ def _repair_change_of_location(conn, records: list[dict]) -> int:
                     rec["license_number"],
                 ),
             )
+            if cursor.rowcount > 0:
+                row = conn.execute(
+                    """SELECT id FROM license_records
+                       WHERE section_type = ?
+                         AND record_date = ?
+                         AND license_number = ?
+                         AND application_type = 'CHANGE OF LOCATION'""",
+                    (rec["section_type"], rec["record_date"],
+                     rec["license_number"]),
+                ).fetchone()
+                if row:
+                    link_record_source(
+                        conn, row["id"], source_id, "repaired",
+                    )
             updated += cursor.rowcount
     return updated
 
@@ -257,13 +318,31 @@ def backfill_from_snapshots():
             snap_date = _extract_snapshot_date(snap_path)
             records = _parse_snapshot(snap_path)
 
+            # Register provenance source for this snapshot
+            rel_path = str(snap_path.relative_to(DATA_DIR))
+            source_id = get_or_create_source(
+                conn,
+                SOURCE_TYPE_CO_ARCHIVE,
+                snapshot_path=rel_path,
+                url=WSLCB_SOURCE_URL,
+                captured_at=(
+                    snap_date.replace("_", "-") if snap_date else None
+                ),
+            )
+
             # Phase 1: insert new records
-            inserted, skipped = _ingest_records(conn, records)
+            inserted, skipped = _ingest_records(
+                conn, records, source_id,
+            )
             conn.commit()
 
             # Phase 2: repair broken records
-            assumption_fixed += _repair_assumptions(conn, records)
-            col_fixed += _repair_change_of_location(conn, records)
+            assumption_fixed += _repair_assumptions(
+                conn, records, source_id,
+            )
+            col_fixed += _repair_change_of_location(
+                conn, records, source_id,
+            )
             conn.commit()
 
             total_inserted += inserted
