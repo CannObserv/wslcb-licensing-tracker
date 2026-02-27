@@ -1,12 +1,12 @@
 # New Application → Approved Record Linking: Analysis & Plan
 
-*Date: 2026-02-27*
+*Date: 2026-02-27 · Updated 2026-02-27 (date-tolerance correction)*
 
 ## Executive Summary
 
-We analyzed 42,092 "New Application" records and 42,373 "Approved" records in the WSLCB licensing tracker to determine how many new applications can be reliably linked to a corresponding approval. Using a **bidirectional nearest-neighbor matching** algorithm, we can confidently link **3,164 NEW APPLICATION → Approved pairs** (46% of NEW APPLICATION new_app records). Across all application types, **29,404 pairs** (70% of new_app records) can be linked with high confidence.
+We analyzed 42,092 "New Application" records and 42,373 "Approved" records in the WSLCB licensing tracker to determine how many new applications can be reliably linked to a corresponding approval. Using a **bidirectional nearest-neighbor matching** algorithm with a **±7-day tolerance window**, we can confidently link **3,170 NEW APPLICATION → Approved pairs** (46% of NEW APPLICATION records). Across all application types, **33,606 pairs** (80% of new_app records) can be linked with high confidence.
 
-The remaining ~30% are either genuinely pending, predate our data collection, or represent applications that were denied/withdrawn/abandoned.
+The remaining ~20% are either genuinely pending, predate our data collection, or represent applications that were denied/withdrawn/abandoned.
 
 ---
 
@@ -54,53 +54,67 @@ A license number can appear in the new_application section **multiple times** �
 
 The algorithm that produces the cleanest results:
 
-1. **Forward pass**: For each new_application record, find the **earliest** approved record for the same license_number + application_type with `approved_date >= new_app_date`.
-2. **Backward pass**: For each approved record, find the **latest** new_application record for the same license_number + application_type with `new_app_date <= approved_date`.
+1. **Forward pass**: For each new_application record, find the **earliest** approved record for the same license_number + application_type with `approved_date >= new_app_date - 7 days`.
+2. **Backward pass**: For each approved record, find the **latest** new_application record for the same license_number + application_type with `new_app_date <= approved_date + 7 days`.
 3. **Mutual match**: Only link pairs where **both passes agree** — the new_app's best approved match points back to that same new_app.
 
 This eliminates contested matches and produces **clean 1:1 pairs** with high confidence.
+
+#### Why ±7 days, not strict date ordering?
+
+The WSLCB source page uses different date semantics per section: `Notification Date` for new applications vs `Approved Date` for approvals. These are different events — a license can be approved *before* its notification date is published. In practice this manifests as:
+
+- **−1 day** (the most common negative gap): approval on a weekday, notification published the next business day. Example: FRED MEYER #351 approved 2025-12-01, notification 2025-12-02.
+- **−3 days**: Friday approval → Monday notification (weekend offset). Example: SUMMIT INN approved 2025-09-06 (Sat), notification 2025-09-09 (Tue).
+- **−7 to −12 days**: less common, but same business name and license number confirm same event.
+
+Beyond ±30 days, pairs are overwhelmingly different application cycles (often years apart, sometimes with different business names). The 7-day window captures 99%+ of the genuine same-event negative-gap pairs while avoiding false matches from different cycles.
+
+A 30-day tolerance was also tested; it gains only ~225 additional RENEWAL matches (27,388 → 27,613) with marginal improvement elsewhere, so the 7-day window is the recommended conservative default.
 
 ### Results by Application Type
 
 | Application Type | Total New Apps | Mutual Matches | Forward-Only (Ambiguous) | No Match | Match Rate |
 |---|---|---|---|---|---|
-| RENEWAL | 28,677 | 23,901 | 1,666 | 3,110 | 83.3% |
-| NEW APPLICATION | 6,887 | 3,164 | 909 | 2,814 | 45.9% |
-| ASSUMPTION | 2,998 | 1,779 | 421 | 798 | 59.3% |
-| ADDED/CHANGE OF CLASS | 1,059 | 395 | 61 | 603 | 37.3% |
-| CHANGE OF LOCATION | 681 | 85 | 43 | 553 | 12.5% |
-| CHANGE OF CORP OFFICER | 233 | 62 | 35 | 136 | 26.6% |
-| RESUME BUSINESS | 28 | 16 | 7 | 5 | 57.1% |
-| **Total** | **42,092** | **29,404** | **3,143** | **8,870** | **69.9%** |
+| RENEWAL | 28,677 | 27,388 | 1,113 | 176 | 95.5% |
+| NEW APPLICATION | 6,887 | 3,170 | 944 | 2,773 | 46.0% |
+| ASSUMPTION | 2,998 | 2,159 | 346 | 493 | 72.0% |
+| ADDED/CHANGE OF CLASS | 1,059 | 489 | 54 | 516 | 46.2% |
+| CHANGE OF LOCATION | 681 | 157 | 45 | 479 | 23.1% |
+| CHANGE OF CORP OFFICER | 233 | 214 | 8 | 11 | 91.8% |
+| RESUME BUSINESS | 28 | 25 | 1 | 2 | 89.3% |
+| **Total** | **42,092** | **33,606** | **2,512** | **4,453** | **79.8%** |
 
 *(DISC. LIQUOR SALES and ADDED/CHANGE OF TRADENAME excluded — these types almost never appear as matched pairs in the approved section.)*
+
+The ±7-day tolerance dramatically improves match rates for types where same-day or next-day approval-before-notification is common: RENEWAL jumped from 83.3% to 95.5%, CHANGE OF CORPORATE OFFICER from 26.6% to 91.8%, and ASSUMPTION from 59.3% to 72.0%.
 
 ### Time-to-Approval Distribution (Mutual Matches, NEW APPLICATION Only)
 
 | Days to Approval | Count | Percentage |
 |---|---|---|
+| −3 to −1 days (approved before notification) | 41 | 1.3% |
 | Same day | 9 | 0.3% |
-| 1–30 days | 731 | 23.1% |
-| 31–60 days | 1,324 | 41.8% |
-| 61–90 days | 702 | 22.2% |
-| 91–180 days | 373 | 11.8% |
-| 181–365 days | 23 | 0.7% |
+| 1–30 days | 730 | 23.0% |
+| 31–60 days | 1,307 | 41.2% |
+| 61–90 days | 692 | 21.8% |
+| 91–180 days | 367 | 11.6% |
+| 181–365 days | 22 | 0.7% |
 | 365+ days | 2 | 0.1% |
 
-**Median time to approval: ~50 days.** 87% of approvals occur within 90 days.
+**Median time to approval: ~50 days.** 87% of approvals occur within 90 days. 1.3% of matched pairs have the approval date *before* the notification date (weekday offsets).
 
-### What Happens to Unmatched New Applications?
-
-For NEW APPLICATION records filed before 2025-02-01 (old enough to have been approved):
+### Full Outcome Breakdown (NEW APPLICATION Only)
 
 | Outcome | Count | Percentage |
 |---|---|---|
-| ✅ Approved (matched) | 3,093 | 61.8% |
-| ❌ Not approved + later discontinued | 421 | 8.4% |
-| ❓ No outcome known | 1,463 | 29.2% |
-| ⚠️ Matched with date anomaly | 29 | 0.6% |
+| ✅ Approved (mutual match) | 3,170 | 46.0% |
+| ⚠️ Approved (ambiguous/forward-only match) | 944 | 13.7% |
+| ⏳ Pending (filed after Feb 2025) | 1,712 | 24.9% |
+| ❓ No outcome known (old) | 926 | 13.4% |
+| 🚫 Not approved + later discontinued | 135 | 2.0% |
 
-The 29.2% "no outcome known" likely represents:
+The 13.4% "no outcome known" likely represents:
 - Applications denied or withdrawn (WSLCB doesn't publish denials)
 - Applications that predate our data window (we started collecting in Aug 2022) where the approval was before our first scrape
 - Approvals that fell in a gap between scrapes (the 30-day rolling window)
@@ -142,6 +156,13 @@ CREATE INDEX idx_record_links_approved ON record_links(approved_id);
 ### Linking Algorithm (Python)
 
 ```python
+# Tolerance window in days — accounts for approval dates that precede
+# notification dates within the same 30-day source window. The WSLCB
+# source uses "Notification Date" for new applications and "Approved Date"
+# for approvals; these are different events and the approval can occur
+# before the notification is published (weekday offsets, batch processing).
+DATE_TOLERANCE_DAYS = 7
+
 def link_records(conn):
     """Build new_application → approved links using bidirectional matching."""
     # Phase 1: Mutual matches (high confidence)
@@ -150,23 +171,25 @@ def link_records(conn):
         SELECT f.new_id, f.approved_id, 'high',
                CAST(julianday(a.record_date) - julianday(n.record_date) AS INTEGER)
         FROM (
+            -- Forward: each new_app → earliest approved within tolerance
             SELECT n.id AS new_id,
                    (SELECT a.id FROM license_records a
                     WHERE a.section_type='approved'
                       AND a.license_number = n.license_number
                       AND a.application_type = n.application_type
-                      AND a.record_date >= n.record_date
+                      AND julianday(a.record_date) >= julianday(n.record_date) - :tol
                     ORDER BY a.record_date LIMIT 1) AS approved_id
             FROM license_records n
             WHERE n.section_type='new_application'
         ) f
         JOIN (
+            -- Backward: each approved → latest new_app within tolerance
             SELECT a.id AS approved_id,
                    (SELECT n.id FROM license_records n
                     WHERE n.section_type='new_application'
                       AND n.license_number = a.license_number
                       AND n.application_type = a.application_type
-                      AND n.record_date <= a.record_date
+                      AND julianday(n.record_date) <= julianday(a.record_date) + :tol
                     ORDER BY n.record_date DESC LIMIT 1) AS new_id
             FROM license_records a
             WHERE a.section_type='approved'
@@ -174,7 +197,7 @@ def link_records(conn):
         JOIN license_records n ON n.id = f.new_id
         JOIN license_records a ON a.id = f.approved_id
         WHERE f.approved_id IS NOT NULL
-    """)
+    """, {"tol": DATE_TOLERANCE_DAYS})
     
     # Phase 2: Remaining forward-only matches (medium confidence)
     # Only for new_apps that don't yet have a high-confidence link
@@ -286,7 +309,7 @@ Add a new card row to the dashboard showing the pipeline:
 ```
 ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
 │  ✅ Approved    │ │  ⏳ Pending     │ │  ❓ Unknown    │ │  🚫 Discontinued│
-│     3,164      │ │     1,753      │ │       926      │ │       135      │
+│     3,170      │ │     1,712      │ │       926      │ │       135      │
 │   (46% of      │ │  (25% of       │ │   (13%)        │ │    (2%)        │
 │  new apps)     │ │  new apps)     │ │                │ │                │
 └────────────────┘ └────────────────┘ └────────────────┘ └────────────────┘
@@ -356,9 +379,9 @@ Add columns to the CSV export:
 
 3. **DISC. LIQUOR SALES**: These appear in new_application but almost never in approved (only 3 records). They seem to be a different workflow. Exclude from matching.
 
-4. **CHANGE OF CORPORATE OFFICER**: More approved records (1,218) than new_application records (233). The approved section likely captures these even when they don't go through the notification period. Match rate is low (26.6%).
+4. **CHANGE OF CORPORATE OFFICER**: More approved records (1,218) than new_application records (233). The approved section likely captures these even when they don't go through the notification period. With the ±7-day tolerance, match rate is 91.8% (up from 26.6% with strict date ordering — these are overwhelmingly same-day or next-day pairs).
 
-5. **Forward-only matches (3,143 records)**: These are ambiguous — the new_app points to an approved record, but that approved record has a closer new_app. Consider:
+5. **Forward-only matches (2,512 records)**: These are ambiguous — the new_app points to an approved record, but that approved record has a closer new_app. Consider:
    - Display with "medium" confidence badge
    - Or exclude from display entirely (only show high-confidence links)
 

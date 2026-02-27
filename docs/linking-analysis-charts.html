@@ -37,12 +37,12 @@
 <div class="stats-grid">
   <div class="stat-card green">
     <div class="label">✅ Approved</div>
-    <div class="value" style="color:#166534">3,164</div>
+    <div class="value" style="color:#166534">3,170</div>
     <div class="label">46% — high confidence match</div>
   </div>
   <div class="stat-card amber">
     <div class="label">⏳ Pending (Recent)</div>
-    <div class="value" style="color:#92400e">1,753</div>
+    <div class="value" style="color:#92400e">1,712</div>
     <div class="label">25% — filed after Feb 2025</div>
   </div>
   <div class="stat-card gray">
@@ -57,8 +57,8 @@
   </div>
   <div class="stat-card purple">
     <div class="label">⚠️ Ambiguous Match</div>
-    <div class="value" style="color:#6d4488">909</div>
-    <div class="label">13% — forward-only match</div>
+    <div class="value" style="color:#6d4488">944</div>
+    <div class="label">14% — forward-only match</div>
   </div>
 </div>
 
@@ -73,12 +73,13 @@
 
 <script>
 const timeData = [
+  {bucket: "−3 to −1d", count: 41, order: -1},
   {bucket: "Same day", count: 9, order: 0},
-  {bucket: "1–30 days", count: 731, order: 1},
-  {bucket: "31–60 days", count: 1324, order: 2},
-  {bucket: "61–90 days", count: 702, order: 3},
-  {bucket: "91–180 days", count: 373, order: 4},
-  {bucket: "181–365 days", count: 23, order: 5},
+  {bucket: "1–30 days", count: 730, order: 1},
+  {bucket: "31–60 days", count: 1307, order: 2},
+  {bucket: "61–90 days", count: 692, order: 3},
+  {bucket: "91–180 days", count: 367, order: 4},
+  {bucket: "181–365 days", count: 22, order: 5},
   {bucket: "365+ days", count: 2, order: 6}
 ];
 
@@ -97,13 +98,13 @@ vegaEmbed('#time-chart', {
 }, { actions: false, renderer: 'svg' });
 
 const typeData = [
-  { type: 'RENEWAL', total: 28677, matched: 23901, pct: 83.3 },
-  { type: 'NEW APPLICATION', total: 6887, matched: 3164, pct: 45.9 },
-  { type: 'ASSUMPTION', total: 2998, matched: 1779, pct: 59.3 },
-  { type: 'CLASS/IN LIEU', total: 1059, matched: 395, pct: 37.3 },
-  { type: 'CHANGE OF LOCATION', total: 681, matched: 85, pct: 12.5 },
-  { type: 'CORP OFFICER', total: 233, matched: 62, pct: 26.6 },
-  { type: 'RESUME BUSINESS', total: 28, matched: 16, pct: 57.1 }
+  { type: 'RENEWAL', total: 28677, matched: 27388, pct: 95.5 },
+  { type: 'NEW APPLICATION', total: 6887, matched: 3170, pct: 46.0 },
+  { type: 'ASSUMPTION', total: 2998, matched: 2159, pct: 72.0 },
+  { type: 'CLASS/IN LIEU', total: 1059, matched: 489, pct: 46.2 },
+  { type: 'CHANGE OF LOCATION', total: 681, matched: 157, pct: 23.1 },
+  { type: 'CORP OFFICER', total: 233, matched: 214, pct: 91.8 },
+  { type: 'RESUME BUSINESS', total: 28, matched: 25, pct: 89.3 }
 ];
 
 vegaEmbed('#type-chart', {
@@ -126,24 +127,24 @@ vegaEmbed('#type-chart', {
 }, { actions: false, renderer: 'svg' });
 
 const stackedData = [
-  { type: 'RENEWAL', status: 'Mutual Match', count: 23901 },
-  { type: 'RENEWAL', status: 'Ambiguous', count: 1666 },
-  { type: 'RENEWAL', status: 'No Match', count: 3110 },
-  { type: 'NEW APPLICATION', status: 'Mutual Match', count: 3164 },
-  { type: 'NEW APPLICATION', status: 'Ambiguous', count: 909 },
-  { type: 'NEW APPLICATION', status: 'No Match', count: 2814 },
-  { type: 'ASSUMPTION', status: 'Mutual Match', count: 1779 },
-  { type: 'ASSUMPTION', status: 'Ambiguous', count: 421 },
-  { type: 'ASSUMPTION', status: 'No Match', count: 798 },
-  { type: 'CLASS/IN LIEU', status: 'Mutual Match', count: 395 },
-  { type: 'CLASS/IN LIEU', status: 'Ambiguous', count: 61 },
-  { type: 'CLASS/IN LIEU', status: 'No Match', count: 603 },
-  { type: 'CHANGE OF LOCATION', status: 'Mutual Match', count: 85 },
-  { type: 'CHANGE OF LOCATION', status: 'Ambiguous', count: 43 },
-  { type: 'CHANGE OF LOCATION', status: 'No Match', count: 553 },
-  { type: 'CORP OFFICER', status: 'Mutual Match', count: 62 },
-  { type: 'CORP OFFICER', status: 'Ambiguous', count: 35 },
-  { type: 'CORP OFFICER', status: 'No Match', count: 136 }
+  { type: 'RENEWAL', status: 'Mutual Match', count: 27388 },
+  { type: 'RENEWAL', status: 'Ambiguous', count: 1113 },
+  { type: 'RENEWAL', status: 'No Match', count: 176 },
+  { type: 'NEW APPLICATION', status: 'Mutual Match', count: 3170 },
+  { type: 'NEW APPLICATION', status: 'Ambiguous', count: 944 },
+  { type: 'NEW APPLICATION', status: 'No Match', count: 2773 },
+  { type: 'ASSUMPTION', status: 'Mutual Match', count: 2159 },
+  { type: 'ASSUMPTION', status: 'Ambiguous', count: 346 },
+  { type: 'ASSUMPTION', status: 'No Match', count: 493 },
+  { type: 'CLASS/IN LIEU', status: 'Mutual Match', count: 489 },
+  { type: 'CLASS/IN LIEU', status: 'Ambiguous', count: 54 },
+  { type: 'CLASS/IN LIEU', status: 'No Match', count: 516 },
+  { type: 'CHANGE OF LOCATION', status: 'Mutual Match', count: 157 },
+  { type: 'CHANGE OF LOCATION', status: 'Ambiguous', count: 45 },
+  { type: 'CHANGE OF LOCATION', status: 'No Match', count: 479 },
+  { type: 'CORP OFFICER', status: 'Mutual Match', count: 214 },
+  { type: 'CORP OFFICER', status: 'Ambiguous', count: 8 },
+  { type: 'CORP OFFICER', status: 'No Match', count: 11 }
 ];
 
 vegaEmbed('#stacked-chart', {
