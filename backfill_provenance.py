@@ -18,9 +18,10 @@ from database import (
     DATA_DIR, get_db, init_db,
     get_or_create_source, link_record_source,
     SOURCE_TYPE_LIVE_SCRAPE, SOURCE_TYPE_CO_ARCHIVE,
-    WSLCB_SOURCE_URL,
+    SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
 from scraper import parse_records_from_table, SECTION_MAP, URL
+from backfill_diffs import _discover_diff_files, _parse_diff_timestamp
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,81 @@ def backfill_provenance():
         logger.info(
             "Phase 2 done: linked %d records (%d unmatched)",
             total_linked, total_missed,
+        )
+
+        # ── Phase 3: CO diff archives ──────────────────────────
+        # Strategy: instead of re-parsing 4K+ diff files (slow — some
+        # are 45 MB), match orphan records to diff files via scraped_at
+        # timestamps.  Each diff has --- (old) and +++ (new) header
+        # timestamps that backfill_diffs.py used as scraped_at.
+        diff_files = _discover_diff_files()
+        logger.info(
+            "Phase 3: processing %d CO diff archive files",
+            len(diff_files),
+        )
+
+        # Build ts → [(source_id, path)] mapping from diff headers
+        ts_to_source: dict[str, int] = {}
+        for diff_path, section_type in diff_files:
+            try:
+                old_ts = new_ts = None
+                with open(diff_path, encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("--- "):
+                            old_ts = _parse_diff_timestamp(line.rstrip("\n"))
+                        elif line.startswith("+++ "):
+                            new_ts = _parse_diff_timestamp(line.rstrip("\n"))
+                            break
+            except Exception as e:
+                logger.warning("Failed to read %s: %s", diff_path.name, e)
+                continue
+
+            rel_path = str(diff_path)
+            source_id = get_or_create_source(
+                conn,
+                SOURCE_TYPE_CO_DIFF_ARCHIVE,
+                snapshot_path=rel_path,
+                url=WSLCB_SOURCE_URL,
+                captured_at=new_ts,
+            )
+            # Map both timestamps to this source
+            if old_ts:
+                ts_to_source.setdefault(old_ts, source_id)
+            if new_ts:
+                ts_to_source.setdefault(new_ts, source_id)
+
+        conn.commit()
+        logger.info(
+            "  Registered %d diff sources, %d unique timestamps",
+            len(diff_files), len(ts_to_source),
+        )
+
+        # Find orphan records and link them via scraped_at
+        orphans = conn.execute(
+            """SELECT id, scraped_at FROM license_records
+               WHERE id NOT IN (SELECT record_id FROM record_sources)"""
+        ).fetchall()
+        logger.info("  Matching %d orphan records to diff sources", len(orphans))
+
+        diff_linked = 0
+        diff_missed = 0
+        batch = 0
+        for row in orphans:
+            source_id = ts_to_source.get(row["scraped_at"])
+            if source_id is not None:
+                link_record_source(conn, row["id"], source_id, "confirmed")
+                diff_linked += 1
+            else:
+                diff_missed += 1
+            batch += 1
+            if batch % 10000 == 0:
+                conn.commit()
+                logger.debug("    ...%d/%d", batch, len(orphans))
+        conn.commit()
+
+        logger.info(
+            "Phase 3 done: linked %d records from diffs (%d unmatched)",
+            diff_linked, diff_missed,
         )
 
         # ── Summary ──────────────────────────────────────────────

@@ -144,10 +144,11 @@
             <div class="md:col-span-2">
                 <dt class="text-sm font-medium text-gray-500 mb-2">Data Sources</dt>
                 <dd class="mt-1">
-                    {%- set ns = namespace(live=0, co=0, ia=0, other=0, first_date='', last_date='', repaired=false) -%}
+                    {%- set ns = namespace(live=0, co=0, co_diff=0, ia=0, other=0, first_date='', last_date='', repaired=false) -%}
                     {%- for s in sources -%}
                         {%- if s.source_type == 'live_scrape' -%}{%- set ns.live = ns.live + 1 -%}
                         {%- elif s.source_type == 'co_archive' -%}{%- set ns.co = ns.co + 1 -%}
+                        {%- elif s.source_type == 'co_diff_archive' -%}{%- set ns.co_diff = ns.co_diff + 1 -%}
                         {%- elif s.source_type == 'internet_archive' -%}{%- set ns.ia = ns.ia + 1 -%}
                         {%- else -%}{%- set ns.other = ns.other + 1 -%}{%- endif -%}
                         {%- if s.role == 'repaired' -%}{%- set ns.repaired = true -%}{%- endif -%}
@@ -164,6 +165,10 @@
                         {% if ns.co %}
                         <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-co-purple-50 text-co-purple border border-co-purple-100"
                               title="Confirmed in {{ ns.co }} CO archive snapshot{{ 's' if ns.co != 1 }}">📁 CO Archive <span class="opacity-70">×{{ ns.co }}</span></span>
+                        {% endif %}
+                        {% if ns.co_diff %}
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-co-purple-50 text-co-purple border border-co-purple-100"
+                              title="Confirmed in {{ ns.co_diff }} CO diff archive{{ 's' if ns.co_diff != 1 }}">📄 CO Diff Archive <span class="opacity-70">×{{ ns.co_diff }}</span></span>
                         {% endif %}
                         {% if ns.ia %}
                         <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200"
@@ -187,7 +192,7 @@
                             {% for s in sources %}
                             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium
                                 {% if s.source_type == 'live_scrape' %}bg-green-50 text-green-700 border border-green-200
-                                {% elif s.source_type == 'co_archive' %}bg-co-purple-50 text-co-purple border border-co-purple-100
+                                {% elif s.source_type in ('co_archive', 'co_diff_archive') %}bg-co-purple-50 text-co-purple border border-co-purple-100
                                 {% elif s.source_type == 'internet_archive' %}bg-amber-50 text-amber-700 border border-amber-200
                                 {% else %}bg-gray-50 text-gray-600 border border-gray-200{% endif %}"
                                 title="{{ s.role }}">
