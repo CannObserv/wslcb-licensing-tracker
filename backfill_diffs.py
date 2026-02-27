@@ -50,7 +50,10 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from database import DATA_DIR, get_db, init_db
+from database import (
+    DATA_DIR, get_db, init_db, get_or_create_source, link_record_source,
+    SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
+)
 from endorsements import discover_code_mappings, process_record, seed_endorsements, repair_code_name_endorsements
 from log_config import setup_logging
 from queries import insert_record, hydrate_records, RECORD_COLUMNS, RECORD_JOINS
@@ -376,7 +379,9 @@ def backfill_diffs(
     )
 
     # Phase 1: extract all unique records across every diff file.
+    # Also build ts→path mapping for provenance linking.
     all_records: dict[tuple, dict] = {}
+    ts_to_diff_path: dict[str, str] = {}  # scraped_at → diff file path
     files_processed = 0
     for fp, sec_type in diff_files:
         try:
@@ -392,6 +397,10 @@ def backfill_diffs(
                 rec["application_type"],
             )
             all_records.setdefault(key, rec)
+            # Track which diff file contributed this scraped_at
+            ts = rec.get("scraped_at", "")
+            if ts and ts not in ts_to_diff_path:
+                ts_to_diff_path[ts] = str(fp)
         files_processed += 1
         if files_processed % 100 == 0:
             logger.debug(
@@ -439,6 +448,24 @@ def backfill_diffs(
         seed_endorsements(conn)
         repair_code_name_endorsements(conn)
 
+        # Pre-register provenance sources for all diff files.
+        # Cache source_id by diff path to avoid repeated lookups.
+        _source_cache: dict[str, int] = {}
+
+        def _get_source_id(scraped_at: str) -> int | None:
+            diff_path = ts_to_diff_path.get(scraped_at)
+            if not diff_path:
+                return None
+            if diff_path not in _source_cache:
+                _source_cache[diff_path] = get_or_create_source(
+                    conn,
+                    SOURCE_TYPE_CO_DIFF_ARCHIVE,
+                    snapshot_path=diff_path,
+                    url=WSLCB_SOURCE_URL,
+                    captured_at=scraped_at,
+                )
+            return _source_cache[diff_path]
+
         # Sort by date for deterministic insertion order.
         records.sort(key=lambda r: (r["record_date"], r["section_type"]))
 
@@ -447,6 +474,9 @@ def backfill_diffs(
                 rid = insert_record(conn, rec)
                 if rid is not None:
                     process_record(conn, rid, rec["license_type"])
+                    sid = _get_source_id(rec.get("scraped_at", ""))
+                    if sid is not None:
+                        link_record_source(conn, rid, sid, "first_seen")
                     inserted_ids.append(rid)
                 else:
                     skipped += 1
