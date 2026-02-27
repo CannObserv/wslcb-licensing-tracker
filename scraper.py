@@ -206,9 +206,10 @@ def scrape():
             logger.debug("Fetched %s bytes", f"{len(html):,}")
 
             # Archive the raw HTML
+            scrape_time = datetime.now(timezone.utc)
             snapshot_path = None
             try:
-                snapshot_path = save_html_snapshot(html, datetime.now(timezone.utc))
+                snapshot_path = save_html_snapshot(html, scrape_time)
                 logger.debug("Saved snapshot to %s", snapshot_path)
             except Exception as snap_err:
                 logger.warning("Failed to save HTML snapshot: %s", snap_err)
@@ -223,7 +224,7 @@ def scrape():
                 SOURCE_TYPE_LIVE_SCRAPE,
                 snapshot_path=rel_path,
                 url=URL,
-                captured_at=datetime.now(timezone.utc).isoformat(),
+                captured_at=scrape_time.isoformat(),
                 scrape_log_id=log_id,
             )
 
@@ -253,8 +254,12 @@ def scrape():
 
                     inserted = 0
                     for rec in records:
-                        rid = insert_record(conn, rec)
-                        if rid is not None:
+                        result = insert_record(conn, rec)
+                        if result is None:
+                            counts["skipped"] += 1
+                            continue
+                        rid, is_new = result
+                        if is_new:
                             process_record(conn, rid, rec["license_type"])
                             link_record_source(conn, rid, source_id, "first_seen")
                             validate_record(conn, rid, client=av_client)
@@ -262,19 +267,9 @@ def scrape():
                                 validate_previous_location(conn, rid, client=av_client)
                             inserted += 1
                         else:
-                            # Record already exists — link as confirmed
-                            existing = conn.execute(
-                                """SELECT id FROM license_records
-                                   WHERE section_type = :section_type
-                                     AND record_date = :record_date
-                                     AND license_number = :license_number
-                                     AND application_type = :application_type""",
-                                rec,
-                            ).fetchone()
-                            if existing:
-                                link_record_source(
-                                    conn, existing["id"], source_id, "confirmed",
-                                )
+                            link_record_source(
+                                conn, rid, source_id, "confirmed",
+                            )
                             counts["skipped"] += 1
 
                     key = section_type.split("_")[0] if "_" in section_type else section_type

@@ -192,8 +192,9 @@ def init_db():
                     REFERENCES license_records(id) ON DELETE CASCADE,
                 source_id INTEGER NOT NULL
                     REFERENCES sources(id) ON DELETE CASCADE,
-                role TEXT NOT NULL DEFAULT 'first_seen',
-                PRIMARY KEY (record_id, source_id)
+                role TEXT NOT NULL DEFAULT 'first_seen'
+                    CHECK(role IN ('first_seen', 'confirmed', 'repaired')),
+                PRIMARY KEY (record_id, source_id, role)
             );
             CREATE INDEX IF NOT EXISTS idx_rs_source
                 ON record_sources(source_id);
@@ -224,6 +225,39 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_records_prev_location ON license_records(previous_location_id)",
         ]:
             conn.execute(idx_sql)
+
+        # Migrate record_sources PK to include role (allows multiple
+        # roles per record+source pair).  Only needed once; the new
+        # CREATE TABLE above already uses the 3-column PK.
+        try:
+            rs_sql = conn.execute(
+                "SELECT sql FROM sqlite_master"
+                " WHERE type='table' AND name='record_sources'"
+            ).fetchone()
+            if rs_sql and "source_id, role)" not in rs_sql[0]:
+                logger.info("Migrating record_sources PK to include role")
+                conn.executescript("""
+                    CREATE TABLE record_sources_new (
+                        record_id INTEGER NOT NULL
+                            REFERENCES license_records(id) ON DELETE CASCADE,
+                        source_id INTEGER NOT NULL
+                            REFERENCES sources(id) ON DELETE CASCADE,
+                        role TEXT NOT NULL DEFAULT 'first_seen'
+                            CHECK(role IN ('first_seen', 'confirmed', 'repaired')),
+                        PRIMARY KEY (record_id, source_id, role)
+                    );
+                    INSERT INTO record_sources_new
+                        SELECT record_id, source_id, role
+                        FROM record_sources;
+                    DROP TABLE record_sources;
+                    ALTER TABLE record_sources_new
+                        RENAME TO record_sources;
+                    CREATE INDEX IF NOT EXISTS idx_rs_source
+                        ON record_sources(source_id);
+                """)
+                logger.info("record_sources PK migration complete")
+        except Exception:
+            pass  # table doesn't exist yet or already migrated
 
         # FTS (re)build
         _ensure_fts(conn)
@@ -410,6 +444,11 @@ def get_or_create_source(
                WHERE source_type_id = ? AND snapshot_path = ?""",
             (source_type_id, snapshot_path),
         ).fetchone()
+        if row is None:
+            raise RuntimeError(
+                f"Source row vanished for type={source_type_id},"
+                f" path={snapshot_path!r}"
+            )
     else:
         # NULL snapshot_path — look for an existing row first
         row = conn.execute(

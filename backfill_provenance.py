@@ -12,36 +12,18 @@ import logging
 import re
 from pathlib import Path
 
-from bs4 import BeautifulSoup
-
 from database import (
     DATA_DIR, get_db, init_db,
     get_or_create_source, link_record_source,
     SOURCE_TYPE_LIVE_SCRAPE, SOURCE_TYPE_CO_ARCHIVE,
     SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
-from scraper import parse_records_from_table, SECTION_MAP, URL
+from scraper import URL
+from backfill_snapshots import _parse_snapshot
 from backfill_diffs import _discover_diff_files, _parse_diff_timestamp
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_snapshot(path: Path) -> list[dict]:
-    """Parse a snapshot file and return a list of record dicts."""
-    html = path.read_text(encoding="utf-8")
-    soup = BeautifulSoup(html, "lxml")
-    records = []
-    for table in soup.find_all("table"):
-        th = table.find("th")
-        if not th:
-            continue
-        header = th.get_text(strip=True).replace('\xa0', ' ')
-        if header not in SECTION_MAP:
-            continue
-        section_type = SECTION_MAP[header]
-        records.extend(parse_records_from_table(table, section_type))
-    return records
 
 
 def _find_record_id(conn, rec: dict) -> int | None:
@@ -150,7 +132,8 @@ def backfill_provenance():
             # Extract date from filename for captured_at
             m = re.search(r'(\d{4})_(\d{2})_(\d{2})', snap_path.name)
             captured_at = (
-                f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+                f"{m.group(1)}-{m.group(2)}-{m.group(3)}T00:00:00+00:00"
+                if m else None
             )
             source_id = get_or_create_source(
                 conn,

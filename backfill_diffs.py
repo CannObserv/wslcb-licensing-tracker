@@ -471,15 +471,19 @@ def backfill_diffs(
 
         for i, rec in enumerate(records):
             try:
-                rid = insert_record(conn, rec)
-                if rid is not None:
-                    process_record(conn, rid, rec["license_type"])
-                    sid = _get_source_id(rec.get("scraped_at", ""))
-                    if sid is not None:
-                        link_record_source(conn, rid, sid, "first_seen")
-                    inserted_ids.append(rid)
-                else:
+                result = insert_record(conn, rec)
+                if result is None:
                     skipped += 1
+                else:
+                    rid, is_new = result
+                    if is_new:
+                        process_record(conn, rid, rec["license_type"])
+                        sid = _get_source_id(rec.get("scraped_at", ""))
+                        if sid is not None:
+                            link_record_source(conn, rid, sid, "first_seen")
+                        inserted_ids.append(rid)
+                    else:
+                        skipped += 1
             except Exception:
                 logger.exception(
                     "Error inserting record: %s/%s/#%s",

@@ -103,8 +103,12 @@ def hydrate_records(
 # Record CRUD
 # ------------------------------------------------------------------
 
-def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
-    """Insert a record, returning the new row id or None if duplicate.
+def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | None:
+    """Insert a record, returning ``(id, is_new)`` or *None* on error.
+
+    Returns ``(new_id, True)`` for freshly inserted records and
+    ``(existing_id, False)`` when a duplicate is detected.  *None* is
+    only returned on an unexpected ``IntegrityError`` (safety net).
 
     Normalizes ``business_name``, ``previous_business_name``,
     ``applicants``, and ``previous_applicants`` (uppercase, strip
@@ -115,7 +119,7 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
     from database import get_or_create_location
 
     existing = conn.execute(
-        """SELECT 1 FROM license_records
+        """SELECT id FROM license_records
            WHERE section_type = :section_type
              AND record_date = :record_date
              AND license_number = :license_number
@@ -124,7 +128,7 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
         record,
     ).fetchone()
     if existing:
-        return None
+        return (existing["id"], False)
 
     location_id = get_or_create_location(
         conn,
@@ -181,7 +185,7 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> int | None:
             parse_and_link_entities(
                 conn, record_id, cleaned_prev_applicants, "previous_applicant"
             )
-        return record_id
+        return (record_id, True)
     except sqlite3.IntegrityError:
         return None
 

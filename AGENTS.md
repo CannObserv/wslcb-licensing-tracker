@@ -137,8 +137,8 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### `record_sources` (provenance junction)
 - M:M junction linking `license_records` ↔ `sources`
-- `role` — `'first_seen'` (introduced by this source), `'confirmed'` (already existed, corroborated), `'repaired'` (data fixed from this source)
-- Composite PK `(record_id, source_id)`
+- `role` — `'first_seen'` (introduced by this source), `'confirmed'` (already existed, corroborated), `'repaired'` (data fixed from this source); enforced by CHECK constraint
+- Composite PK `(record_id, source_id, role)` — a record can have multiple roles for the same source (e.g., `first_seen` + `repaired`)
 - `link_record_source()` in `database.py` handles idempotent insert
 - `ON DELETE CASCADE` on both FKs
 - `get_record_sources()` in `queries.py` returns provenance for display on detail page
@@ -226,6 +226,12 @@ The stat cards on the dashboard (`index.html`) use Tailwind semantic colors matc
 - **Active pagination page**: `bg-co-purple text-white border-co-purple`
 - **Detail page accent panels** ("Buyer (New) →", "New Location →"): `bg-co-purple-50 border-co-purple-100` with `text-co-purple` header
 - **Entity type badges**: `bg-co-purple-50 text-co-purple` for Organization, `bg-amber-100 text-amber-800` for Person
+- **Provenance source badges** (detail page, `detail.html`):
+  - Live Scrape: `bg-green-50 text-green-700 border-green-200` (semantic: "live/active")
+  - CO Archive / CO Diff Archive: `bg-co-purple-50 text-co-purple border-co-purple-100` (brand)
+  - Internet Archive: `bg-amber-50 text-amber-700 border-amber-200`
+  - Repaired: `bg-sky-50 text-sky-700 border-sky-200` (distinct from Internet Archive amber)
+- **Provenance display**: collapsed summary badges with count (e.g., "⚡ Live Scrape ×13") + date range; expandable `<details>` for individual sources when >3
 - **Search filter grid**: `grid-cols-1 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))]` — auto-fill at desktop so items expand when the conditional city filter is hidden; explicit 1-col and 3-col at mobile/tablet
 - **Search button**: always bottom-right of the filter card (alongside "Clear filters" link at bottom-left), not inline with the text input
 - **Navbar**: Cannabis Observer icon (32×32) + bold site title; nav links use `hover:text-co-purple-700`
@@ -233,7 +239,7 @@ The stat cards on the dashboard (`index.html`) use Tailwind semantic colors matc
 
 ### Data Integrity
 - The UNIQUE constraint prevents duplicate records across daily scrapes
-- `insert_record()` checks for duplicates before creating location rows (avoiding orphans), with `IntegrityError` as a safety net; returns `None` for skipped dupes (returns the new row id on success)
+- `insert_record()` checks for duplicates before creating location rows (avoiding orphans), with `IntegrityError` as a safety net; returns `(id, True)` for new records, `(id, False)` for existing duplicates, `None` only on unexpected `IntegrityError`
 - The source page contains duplicates within itself (especially in approved/discontinued sections); this is expected
 - Never delete historical data — the whole point is accumulating beyond the 30-day window
 

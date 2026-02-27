@@ -72,25 +72,19 @@ def _ingest_records(
     inserted = 0
     skipped = 0
     for rec in records:
-        rid = insert_record(conn, rec)
-        if rid is not None:
+        result = insert_record(conn, rec)
+        if result is None:
+            skipped += 1
+            continue
+        rid, is_new = result
+        if is_new:
             process_record(conn, rid, rec["license_type"])
             link_record_source(conn, rid, source_id, "first_seen")
             inserted += 1
         else:
-            # Record already exists — link as confirmed
-            existing = conn.execute(
-                """SELECT id FROM license_records
-                   WHERE section_type = :section_type
-                     AND record_date = :record_date
-                     AND license_number = :license_number
-                     AND application_type = :application_type""",
-                rec,
-            ).fetchone()
-            if existing:
-                link_record_source(
-                    conn, existing["id"], source_id, "confirmed",
-                )
+            link_record_source(
+                conn, rid, source_id, "confirmed",
+            )
             skipped += 1
     return inserted, skipped
 
@@ -316,7 +310,11 @@ def backfill_from_snapshots():
 
         for snap_path in snapshots:
             snap_date = _extract_snapshot_date(snap_path)
-            records = _parse_snapshot(snap_path)
+            try:
+                records = _parse_snapshot(snap_path)
+            except Exception:
+                logger.exception("Failed to parse %s — skipping", snap_path.name)
+                continue
 
             # Register provenance source for this snapshot
             rel_path = str(snap_path.relative_to(DATA_DIR))
@@ -326,7 +324,8 @@ def backfill_from_snapshots():
                 snapshot_path=rel_path,
                 url=WSLCB_SOURCE_URL,
                 captured_at=(
-                    snap_date.replace("_", "-") if snap_date else None
+                    snap_date.replace("_", "-") + "T00:00:00+00:00"
+                    if snap_date else None
                 ),
             )
 

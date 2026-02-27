@@ -178,11 +178,11 @@
                         <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200">Other <span class="opacity-70">×{{ ns.other }}</span></span>
                         {% endif %}
                         {% if ns.repaired %}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600 border border-amber-200"
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-sky-50 text-sky-700 border border-sky-200"
                               title="Data was repaired from a snapshot source">🔧 Repaired</span>
                         {% endif %}
                         {% if ns.first_date and ns.last_date %}
-                        <span class="text-[11px] text-gray-400 ml-1">{{ ns.first_date }} – {{ ns.last_date }}</span>
+                        <span class="text-[11px] text-gray-400 ml-1">{% if ns.first_date == ns.last_date %}{{ ns.first_date }}{% else %}{{ ns.first_date }} – {{ ns.last_date }}{% endif %}</span>
                         {% endif %}
                     </div>
                     {% if sources|length > 3 %}
