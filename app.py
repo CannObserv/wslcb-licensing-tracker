@@ -17,6 +17,7 @@ from queries import (
     search_records, get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
+    get_record_sources,
     hydrate_records,
 )
 from endorsements import seed_endorsements, backfill, repair_code_name_endorsements
@@ -188,8 +189,13 @@ async def record_detail(request: Request, record_id: int):
         record = hydrated[0]
         related = hydrated[1:]
 
+        sources = get_record_sources(conn, record_id)
+
     return templates.TemplateResponse(
-        "detail.html", {"request": request, "record": record, "related": related}
+        "detail.html", {
+            "request": request, "record": record,
+            "related": related, "sources": sources,
+        }
     )
 
 

@@ -459,3 +459,21 @@ def get_entity_records(
         (entity_id,),
     ).fetchall()
     return hydrate_records(conn, rows)
+
+
+def get_record_sources(
+    conn: sqlite3.Connection, record_id: int,
+) -> list[dict]:
+    """Return provenance sources for a record, newest first."""
+    rows = conn.execute(
+        """SELECT s.id, st.slug AS source_type, st.label AS source_label,
+                  s.snapshot_path, s.url, s.captured_at, s.ingested_at,
+                  s.metadata, rs.role
+           FROM record_sources rs
+           JOIN sources s ON s.id = rs.source_id
+           JOIN source_types st ON st.id = s.source_type_id
+           WHERE rs.record_id = ?
+           ORDER BY s.captured_at DESC""",
+        (record_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
