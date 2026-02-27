@@ -1,6 +1,6 @@
 """Backfill historical records from unified-diff archives.
 
-Parses diff files in ``research/historical_data/{notifications,approvals,discontinued}/``
+Parses diff files in ``data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/``
 and inserts recovered records into the database via the standard ``insert_record()``
 pipeline.  Both added (+) and removed (-) lines are harvested — removals represent
 records that aged off the WSLCB rolling window and are equally valid historical data.
@@ -26,7 +26,7 @@ Usage::
     python backfill_diffs.py --section notifications
 
     # Process a single diff file:
-    python backfill_diffs.py --file research/historical_data/notifications/2022_09_07-06_15_00-notifications-diff.txt
+    python backfill_diffs.py --file data/wslcb/licensinginfo-diffs/notifications/2022_09_07-06_15_00-notifications-diff.txt
 
     # Full run across all sections:
     python backfill_diffs.py
@@ -61,7 +61,7 @@ from scraper import parse_records_from_table
 
 logger = logging.getLogger(__name__)
 
-RESEARCH_DIR = Path("research/historical_data")
+DIFF_DIR = DATA_DIR / "wslcb" / "licensinginfo-diffs"
 
 # Maps subdirectory names to the section_type values used in the DB.
 SECTION_DIR_MAP = {
@@ -226,7 +226,7 @@ def _discover_diff_files(
     *single_file* overrides everything and processes just one file.
     """
     if single_file:
-        p = Path(single_file)
+        p = Path(single_file).resolve()
         if not p.exists():
             logger.error("File not found: %s", p)
             return []
@@ -250,7 +250,7 @@ def _discover_diff_files(
 
     result: list[tuple[Path, str]] = []
     for dir_name, sec_type in dirs.items():
-        dir_path = RESEARCH_DIR / dir_name
+        dir_path = DIFF_DIR / dir_name
         if not dir_path.is_dir():
             logger.warning("Directory not found: %s", dir_path)
             continue
@@ -400,7 +400,7 @@ def backfill_diffs(
             # Track which diff file contributed this scraped_at
             ts = rec.get("scraped_at", "")
             if ts and ts not in ts_to_diff_path:
-                ts_to_diff_path[ts] = str(fp)
+                ts_to_diff_path[ts] = str(fp.relative_to(DATA_DIR))
         files_processed += 1
         if files_processed % 100 == 0:
             logger.debug(
@@ -460,7 +460,7 @@ def backfill_diffs(
                 _source_cache[diff_path] = get_or_create_source(
                     conn,
                     SOURCE_TYPE_CO_DIFF_ARCHIVE,
-                    snapshot_path=diff_path,
+                    snapshot_path=diff_path,  # already DATA_DIR-relative
                     url=WSLCB_SOURCE_URL,
                     captured_at=scraped_at,
                 )

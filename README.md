@@ -83,6 +83,7 @@ wslcb-licensing-tracker/
 ├── address_validator.py    # Address validation API client
 ├── scraper.py              # WSLCB page scraper (twice-daily)
 ├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots
+├── backfill_diffs.py       # Ingest from CO diff archives
 ├── backfill_provenance.py  # One-time backfill of source provenance links
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
@@ -100,8 +101,12 @@ wslcb-licensing-tracker/
 ├── data/                   # Persistent data (gitignored)
 │   ├── wslcb.db            # SQLite database
 │   └── wslcb/                  # Archived data by source
-│       └── licensinginfo/      # HTML snapshots from licensinginfo.lcb.wa.gov
-│           └── [yyyy]/         # Archived HTML snapshots by year
+│       ├── licensinginfo/      # HTML snapshots from licensinginfo.lcb.wa.gov
+│       │   └── [yyyy]/         # Archived HTML snapshots by year
+│       └── licensinginfo-diffs/  # CO diff archive files
+│           ├── notifications/  # Unified diffs of the notifications section
+│           ├── approvals/      # Unified diffs of the approvals section
+│           └── discontinued/   # Unified diffs of the discontinued section
 ├── wslcb-web.service       # systemd service for the web app
 ├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
 └── wslcb-scraper.timer     # systemd timer (twice-daily: 12:30 AM and 6:30 AM Pacific)

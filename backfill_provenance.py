@@ -185,7 +185,7 @@ def backfill_provenance():
                 logger.warning("Failed to read %s: %s", diff_path.name, e)
                 continue
 
-            rel_path = str(diff_path)
+            rel_path = str(diff_path.relative_to(DATA_DIR))
             source_id = get_or_create_source(
                 conn,
                 SOURCE_TYPE_CO_DIFF_ARCHIVE,

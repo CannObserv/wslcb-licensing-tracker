@@ -38,6 +38,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
+| `backfill_diffs.py` | Ingest from CO diff archives | Parses unified-diff files in `data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/`. Safe to re-run. |
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
@@ -268,10 +269,15 @@ All persistent data lives under `data/`:
 data/
 ├── wslcb.db                           # SQLite database
 └── wslcb/
-    └── licensinginfo/                 # HTML snapshots from licensinginfo.lcb.wa.gov
-        └── [yyyy]/                    # Year directories
-            └── [yyyy_mm_dd]/          # Date directories (multiple versions for same-day runs)
-                └── [yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html
+    ├── licensinginfo/                 # HTML snapshots from licensinginfo.lcb.wa.gov
+    │   └── [yyyy]/                    # Year directories
+    │       └── [yyyy_mm_dd]/          # Date directories (multiple versions for same-day runs)
+    │           └── [yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html
+    └── licensinginfo-diffs/           # CO diff archive files
+        ├── notifications/             # Unified diffs of the notifications section
+        ├── approvals/                 # Unified diffs of the approvals section
+        ├── discontinued/              # Unified diffs of the discontinued section
+        └── *.csv                      # CSV exports from backfill_diffs.py runs
 ```
 
 - Snapshots are saved verbatim as received from the server (no transformation)
