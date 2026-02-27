@@ -97,6 +97,40 @@ Note the **RENEWAL explosion**: from zero to 9,718 records/month in September 20
 4. **Monitor for fix** — if WSLCB resolves the "data transfer issue", NEW APPLICATION will presumably reappear in the approved section. The linking engine should automatically pick up new records.
 5. **Consider filing a public records request** — the approval data likely exists in the WSLCB's internal systems; only the public web report is broken.
 
+## Investigated: Did RENEWAL Replace NEW APPLICATION?
+
+**No.** RENEWAL is a new data category, not a relabeling of NEW APPLICATION.
+
+### Evidence
+
+**1. Volume mismatch (21x):** Pre-restructure approved/NEW APPLICATION averaged 123 records/month. Post-restructure approved/RENEWAL averages 2,620/month — a 21x increase. If RENEWAL replaced NEW APPLICATION, the volumes should be comparable.
+
+**2. NEW APPLICATION volume unchanged in new_application section:** The new_application/NEW APPLICATION rate held steady at ~80-170/month both before and after RENEWAL appeared. If they were the same category, the old one would have dropped.
+
+| Month | new_app/NEW APPLICATION | new_app/RENEWAL |
+|---|---|---|
+| 2025-01 | 142 | 0 |
+| 2025-02 | 164 | 0 |
+| 2025-03 | 173 | 44 ← RENEWAL first appears |
+| 2025-04 | 99 | 1,003 |
+| 2025-05 | 108 | 1,356 |
+| ... | ~80-150/month | ~1,200-7,600/month |
+
+**3. Total approved volume 10x:** Pre-restructure: 286 approved records/month. Post-restructure: 2,768/month. RENEWAL is a massive new data feed, not a reshuffling.
+
+**4. License-level inspection (17 cross-type candidates, 6 distinct licenses outside bulk dump):** Every case shows NEW APPLICATION and RENEWAL as **separate sequential events** on the same license, not the same event under different names:
+- Different business names on the same license (e.g., license 080610: "TAQUERIA EL PATRON AJ LLC" filed NEW APPLICATION, then "DON TACO" — the existing holder — filed RENEWAL)
+- RENEWAL filed days after NEW APPLICATION as an independent new_application record
+- NEW APPLICATION has no approved match; the RENEWAL is the approval of the *RENEWAL filing*, not the NEW APPLICATION
+
+**5. Pre-restructure RENEWAL count: zero.** No RENEWAL records exist before March 30, 2025 in either section. Renewals were simply not published on the WSLCB licensing activity page prior to the restructure.
+
+### Conclusion
+
+RENEWAL represents license renewals — a routine process for existing licensees that was not publicly reported before the March 2025 restructure. NEW APPLICATION represents initial applications for new licenses (or re-applications after discontinuance). They are fundamentally different licensing actions and should **not** be cross-matched.
+
+The approved/NEW APPLICATION gap remains a genuine loss of data visibility: the WSLCB is no longer publishing when NEW APPLICATION filings are approved. The linking engine should match new_application/NEW APPLICATION → approved/NEW APPLICATION (same type) and treat post-May-2025 NEW APPLICATION records as having no approval data available.
+
 ## Verification
 
 ### Live source page (fetched 2026-02-27)
