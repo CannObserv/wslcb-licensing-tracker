@@ -83,6 +83,7 @@ wslcb-licensing-tracker/
 ├── address_validator.py    # Address validation API client
 ├── scraper.py              # WSLCB page scraper (twice-daily)
 ├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots
+├── backfill_provenance.py  # One-time backfill of source provenance links
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
 │   ├── base.html           # Base layout template
@@ -262,6 +263,30 @@ The first element of the `applicants` string (the business name) is excluded fro
 The same cleaning is applied to the `applicants` and `previous_applicants` string columns on `license_records`, so FTS search results and CSV exports are consistent with entity names.
 
 Entities are classified as `person` or `organization` by a heuristic that checks for business-indicator patterns (`LLC`, `INC`, `CORP`, `TRUST`, etc.).
+
+## Source Provenance
+
+Every license record is linked to the source artifact(s) it was extracted from via a many-to-many `record_sources` junction table. This tracks *where* each record came from (live scrape, archived snapshot, Internet Archive, etc.), when the source was captured, and what role the source played (first introduction, corroboration, or data repair).
+
+### Source Types
+
+| ID | Slug | Description |
+|---|---|---|
+| 1 | `live_scrape` | Direct scrape of the WSLCB licensing page |
+| 2 | `co_archive` | Cannabis Observer archived HTML snapshots |
+| 3 | `internet_archive` | Wayback Machine snapshots |
+| 4 | `co_diff_archive` | Cannabis Observer diff-detected change snapshots |
+| 5 | `manual` | Manually entered or corrected records |
+
+### Roles
+
+| Role | Meaning |
+|---|---|
+| `first_seen` | This source introduced the record to the database |
+| `confirmed` | Record already existed; this source corroborates it |
+| `repaired` | This source was used to fix/enrich the record |
+
+Provenance is displayed on record detail pages as collapsed summary badges (e.g., "⚡ Live Scrape ×13, 📁 CO Archive ×10") with an expandable list of individual sources.
 
 ## Backfilling from Snapshots
 
