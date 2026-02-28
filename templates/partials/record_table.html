@@ -23,14 +23,14 @@
             <tbody class="bg-white divide-y divide-gray-200">
                 {% for r in records %}
                 {% set ost = r.outcome_status if r.outcome_status else {} %}
-                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50
-                    {%- if show_outcome and ost.status == 'approved' %} border-l-2 border-green-300
-                    {%- elif show_outcome and ost.status == 'discontinued' %} border-l-2 border-red-300
-                    {%- elif show_outcome and ost.status == 'pending' %} border-l-2 border-amber-300
-                    {%- elif show_outcome and ost.status == 'data_gap' %} border-l-2 border-slate-300
-                    {%- elif show_outcome and ost.status == 'unknown' %} border-l-2 border-gray-300{% endif %}"
+                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50"
                     tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{{ r.record_date }}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900
+                        {%- if show_outcome and ost.status == 'approved' %} border-l-2 border-green-300
+                        {%- elif show_outcome and ost.status == 'discontinued' %} border-l-2 border-red-300
+                        {%- elif show_outcome and ost.status == 'pending' %} border-l-2 border-amber-300
+                        {%- elif show_outcome and ost.status == 'data_gap' %} border-l-2 border-slate-300
+                        {%- elif show_outcome and ost.status == 'unknown' %} border-l-2 border-gray-300{% endif %}">{{ r.record_date }}</td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium badge-{{ r.section_type.split('_')[0] }}">
                             {{ r.section_type | section_label }}
