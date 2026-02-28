@@ -402,6 +402,10 @@ Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~8
 2. Add a try/except `ALTER TABLE` migration in `init_db()` for existing installs
 3. Update `insert_record()` and `RECORD_COLUMNS` in `queries.py`, `search_records()`, and templates as needed
 
+## Playbooks
+
+When the user references a playbook by name or trigger phrase (e.g., "do a review", "ship it"), read `PLAYBOOKS.md` in the project root and execute the matching procedure. Playbooks define the expected steps, output format, and interaction protocol.
+
 ## Known Issues & Future Work
 
 - Non-standard state values exist in `locations.state` from regex parsing errors (e.g., `SR WA`, `TERMINAL WA`); all validated `std_state` values resolve to valid US state codes. The state filter only shows valid US state codes (validated against `US_STATES` in `queries.py`)
