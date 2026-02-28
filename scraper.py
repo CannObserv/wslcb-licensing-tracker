@@ -19,11 +19,8 @@ from queries import insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from address_validator import validate_record, validate_previous_location, TIMEOUT as _AV_TIMEOUT
 from link_records import link_new_record
-from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
-
-URL = WSLCB_SOURCE_URL
 
 
 def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
@@ -54,7 +51,7 @@ def scrape():
     """Main scrape function."""
     init_db()
 
-    logger.info("Starting scrape of %s", URL)
+    logger.info("Starting scrape of %s", WSLCB_SOURCE_URL)
 
     with get_db() as conn:
         # Ensure seed code→endorsement mappings exist (idempotent; needed
@@ -73,7 +70,7 @@ def scrape():
         try:
             # Fetch page
             logger.debug("Fetching page...")
-            resp = httpx.get(URL, timeout=120, follow_redirects=True)
+            resp = httpx.get(WSLCB_SOURCE_URL, timeout=120, follow_redirects=True)
             resp.raise_for_status()
             html = resp.text
             logger.debug("Fetched %s bytes", f"{len(html):,}")
@@ -96,7 +93,7 @@ def scrape():
                 conn,
                 SOURCE_TYPE_LIVE_SCRAPE,
                 snapshot_path=rel_path,
-                url=URL,
+                url=WSLCB_SOURCE_URL,
                 captured_at=scrape_time.isoformat(),
                 scrape_log_id=log_id,
             )

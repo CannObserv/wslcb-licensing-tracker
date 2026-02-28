@@ -1,8 +1,10 @@
 """Pure parsing functions for WSLCB HTML pages and diff archives.
 
 This module contains all HTML/diff parsing functions and file-discovery
-helpers.  It has **no database access and no side effects** (beyond
-reading files from disk).  Dependencies are limited to stdlib + bs4/lxml.
+helpers.  It has **no database access, no project imports, and no side
+effects** (beyond reading files from disk).  Dependencies are limited
+to stdlib + bs4/lxml.  Callers pass ``data_dir`` where filesystem paths
+are needed.
 
 Extracted from ``scraper.py``, ``backfill_snapshots.py``, and
 ``backfill_diffs.py`` as part of the Phase 1 architecture refactor (#16).
@@ -14,8 +16,6 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from bs4 import BeautifulSoup
-
-from database import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,6 @@ SECTION_DIR_MAP = {
     "approvals": "approved",
     "discontinued": "discontinued",
 }
-
-DIFF_DIR = DATA_DIR / "wslcb" / "licensinginfo-diffs"
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -174,9 +172,9 @@ def parse_records_from_table(table, section_type: str) -> list[dict]:
 # ── Full-page snapshot parsing ───────────────────────────────────────
 
 
-def snapshot_paths() -> list[Path]:
+def snapshot_paths(data_dir: Path) -> list[Path]:
     """Return all archived snapshot paths, sorted chronologically."""
-    return sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
+    return sorted(data_dir.glob("wslcb/licensinginfo/**/*.html"))
 
 
 def extract_snapshot_date(path: Path) -> str | None:
@@ -345,6 +343,7 @@ def extract_records_from_diff(
 
 
 def discover_diff_files(
+    data_dir: Path,
     section: str | None = None,
     single_file: str | None = None,
 ) -> list[tuple[Path, str]]:
@@ -378,7 +377,7 @@ def discover_diff_files(
 
     result: list[tuple[Path, str]] = []
     for dir_name, sec_type in dirs.items():
-        dir_path = DIFF_DIR / dir_name
+        dir_path = data_dir / "wslcb" / "licensinginfo-diffs" / dir_name
         if not dir_path.is_dir():
             logger.warning("Directory not found: %s", dir_path)
             continue

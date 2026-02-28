@@ -19,7 +19,6 @@ from database import (
     SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
 from parser import parse_snapshot, discover_diff_files, parse_diff_timestamp
-from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +160,7 @@ def backfill_provenance():
         # are 45 MB), match orphan records to diff files via scraped_at
         # timestamps.  Each diff has --- (old) and +++ (new) header
         # timestamps that backfill_diffs.py used as scraped_at.
-        diff_files = discover_diff_files()
+        diff_files = discover_diff_files(DATA_DIR)
         logger.info(
             "Phase 3: processing %d CO diff archive files",
             len(diff_files),
@@ -256,7 +255,3 @@ def backfill_provenance():
                 "%d records have no source attribution", orphan_count,
             )
 
-
-if __name__ == "__main__":
-    setup_logging()
-    backfill_provenance()

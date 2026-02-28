@@ -39,7 +39,6 @@ Address validation is deferred; run ``python scraper.py --backfill-addresses``
 afterward.
 """
 
-import argparse
 import csv
 import logging
 from collections import Counter
@@ -51,10 +50,7 @@ from database import (
     SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
 from endorsements import discover_code_mappings, process_record, seed_endorsements, repair_code_name_endorsements
-from log_config import setup_logging
-from parser import (
-    discover_diff_files, extract_records_from_diff, SECTION_DIR_MAP,
-)
+from parser import discover_diff_files, extract_records_from_diff
 from queries import insert_record, hydrate_records, RECORD_COLUMNS, RECORD_JOINS
 
 logger = logging.getLogger(__name__)
@@ -164,7 +160,7 @@ def backfill_diffs(
     """Parse diff files and insert recovered records into the database."""
     init_db()
 
-    diff_files = discover_diff_files(section=section, single_file=single_file)
+    diff_files = discover_diff_files(DATA_DIR, section=section, single_file=single_file)
     if limit is not None:
         diff_files = diff_files[:limit]
 
@@ -330,45 +326,3 @@ def backfill_diffs(
         with get_db() as export_conn:
             _write_csv_from_db(export_conn, inserted_ids, csv_path)
 
-
-# ── CLI ──────────────────────────────────────────────────────────────
-
-
-def main() -> None:
-    setup_logging()
-
-    parser = argparse.ArgumentParser(
-        description="Backfill historical records from unified-diff archives.",
-    )
-    parser.add_argument(
-        "--section",
-        choices=list(SECTION_DIR_MAP.keys()),
-        help="Process only this section subdirectory.",
-    )
-    parser.add_argument(
-        "--file",
-        dest="single_file",
-        help="Process a single diff file instead of scanning directories.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        help="Process at most N diff files (for validation runs).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Parse and export CSV without writing to the database.",
-    )
-    args = parser.parse_args()
-
-    backfill_diffs(
-        section=args.section,
-        single_file=args.single_file,
-        limit=args.limit,
-        dry_run=args.dry_run,
-    )
-
-
-if __name__ == "__main__":
-    main()

@@ -7,7 +7,7 @@ Single-pass over each snapshot, two-phase processing:
      - CHANGE OF LOCATION records with missing locations
 
 Safe to re-run at any time.  Address validation is deferred to a
-separate ``scraper.py --backfill-addresses`` pass.
+separate ``cli.py backfill-addresses`` pass.
 """
 import logging
 
@@ -21,7 +21,6 @@ from entities import (
     parse_and_link_entities, clean_applicants_string, clean_entity_name,
 )
 from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
-from log_config import setup_logging
 from parser import parse_records_from_table, SECTION_MAP, snapshot_paths, extract_snapshot_date, parse_snapshot
 
 logger = logging.getLogger(__name__)
@@ -260,7 +259,7 @@ def backfill_from_snapshots():
     """Ingest records from archived snapshots, then repair broken records."""
     init_db()
 
-    snapshots = snapshot_paths()
+    snapshots = snapshot_paths(DATA_DIR)
     if not snapshots:
         logger.info("No archived snapshots found.")
         return
@@ -325,7 +324,3 @@ def backfill_from_snapshots():
     if assumption_fixed or col_fixed:
         logger.info("Repaired %d ASSUMPTION + %d CHANGE OF LOCATION record(s).", assumption_fixed, col_fixed)
 
-
-if __name__ == "__main__":
-    setup_logging()
-    backfill_from_snapshots()

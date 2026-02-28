@@ -38,7 +38,6 @@ def cmd_backfill_snapshots(args):
 def cmd_backfill_diffs(args):
     """Ingest records from unified-diff archives."""
     from backfill_diffs import backfill_diffs
-    from parser import SECTION_DIR_MAP
 
     backfill_diffs(
         section=args.section,
