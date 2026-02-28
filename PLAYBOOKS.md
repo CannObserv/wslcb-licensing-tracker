@@ -2,13 +2,13 @@
 
 Shorthand commands that map to well-defined, repeatable workflows. When the user references a playbook by name or trigger phrase, execute the matching procedure.
 
-Playbooks are parameterized — the user may append context (e.g., `review entities.py`, `review #14`). When no scope is specified, infer from conversation context.
+Playbooks are parameterized — the user may append context (e.g., `code review entities.py`, `CR #14`). When no scope is specified, infer from conversation context.
 
 ---
 
 ## `review` — Code & Documentation Review
 
-**Triggers:** "review", "code review", "perform a review", "review following our usual pattern"
+**Triggers:** "CR", "code review", "perform a review"
 
 **Purpose:** Systematic review of code and documentation changes, structured for efficient async feedback.
 
@@ -70,6 +70,7 @@ The user will respond with terse directives referencing item numbers:
 - `5: fix, but use X approach instead` — fix with user's preferred approach
 - `2: document as TODO` — don't fix now, add a code comment or AGENTS.md note
 - `7: investigate further` — gather more information before deciding
+- `10: GH` - create or update a corresponding GitHub issue
 
 After receiving directives, implement all requested changes, commit, and present a summary table of what was done.
 

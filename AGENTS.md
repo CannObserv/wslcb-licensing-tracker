@@ -43,6 +43,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
+| `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
 
 ## Database Schema
 
@@ -161,6 +162,16 @@ license_records → locations (FK: location_id, previous_location_id)
 - `link_record_source()` in `database.py` handles idempotent insert
 - `ON DELETE CASCADE` on both FKs
 - `get_record_sources()` in `queries.py` returns provenance for display on detail page
+
+## Playbooks
+
+When the user references a playbook by name or trigger phrase (e.g., `CR`, `ship it`), read `PLAYBOOKS.md` and execute the matching procedure. Playbooks define the expected steps, output format, and interaction protocol.
+
+**Resolution order** (most specific wins):
+1. **Project-level** — `PLAYBOOKS.md` in the project root
+2. **Global** — `~/.config/shelley/PLAYBOOKS.md` (cross-project defaults)
+
+If a playbook name exists in both files, the project-level definition takes precedence. If a playbook exists only in the global file, use it.
 
 ## Conventions
 
@@ -401,10 +412,6 @@ Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~8
 1. Add the column to both `CREATE TABLE IF NOT EXISTS license_records` in `database.py` and the rebuild SQL in `migrate_locations.py`
 2. Add a try/except `ALTER TABLE` migration in `init_db()` for existing installs
 3. Update `insert_record()` and `RECORD_COLUMNS` in `queries.py`, `search_records()`, and templates as needed
-
-## Playbooks
-
-When the user references a playbook by name or trigger phrase (e.g., "do a review", "ship it"), read `PLAYBOOKS.md` in the project root and execute the matching procedure. Playbooks define the expected steps, output format, and interaction protocol.
 
 ## Known Issues & Future Work
 
