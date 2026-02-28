@@ -41,11 +41,13 @@ _CODE_NAME_RE = re.compile(r"^(\d+),\s+(.+)$")
 # Keys are string representations of WSLCB internal license class IDs,
 # stored as TEXT in the DB.
 SEED_CODE_MAP: dict[str, list[str]] = {
+    "0":   ["UNDEFINED"],
     "1":   ["SPECIAL OCCASION-PER DAY-PER LOC."],
     "2":   ["NON-PROFIT ARTS ORGANIZATION"],
     "3":   ["BED & BREAKFAST"],
     "4":   ["SERVE EMPLOYEES & GUESTS"],
     "13":  ["FARMERS MARKET FOR WINE"],
+    "99":  ["TRIBAL MOA"],
     "14":  ["FARMERS MARKET FOR BEER"],
     "15":  ["FARMERS MARKET FOR BEER/WINE"],
     "18":  ["RETAIL CERTIFICATE HOLDER"],
@@ -77,6 +79,7 @@ SEED_CODE_MAP: dict[str, list[str]] = {
     "343": ["AUTH REP COA US WINE"],
     "344": ["AUTH REP COA FOREIGN BEER"],
     "345": ["AUTH REP COA FOREIGN WINE"],
+    "346": ["COA SHIPPER TO CONSUMER"],
     "347": ["WINE SHIPPER TO CONSUMER"],
     "348": ["SHIP TO RETAILER", "SPIRITS COA"],
     "349": ["DIRECT SHIPMENT RECEIVER-IN/OUT WA"],
@@ -88,10 +91,12 @@ SEED_CODE_MAP: dict[str, list[str]] = {
     "355": ["SPIRITS COA"],
     "356": ["AUTH REP US SPIRITS COA"],
     "357": ["AUTH REP FOREIGN SPIRITS COA"],
+    "358": ["B/W ON PREMISES ENDORSEMENT"],
     "359": ["OFF-SITE SPIRITS TASTING ROOM"],
     "371": ["BEER/CIDER GROCERY GROWLERS"],
     "372": ["COMBO GROCERY OFF PREM S/B/W"],
     "373": ["SPIRITS WAREHOUSE"],
+    "376": ["COMBO SPECIALTY OFF PREM S/B/W"],
     "379": ["TAKEOUT/DELIVERY"],
     "380": ["PREMIXED COCKTAILS/WINE TO-GO"],
     "381": ["GROWLERS TAKEOUT/DELIVERY"],
@@ -179,7 +184,10 @@ def _link_endorsement(conn: sqlite3.Connection, record_id: int, endorsement_id: 
 def seed_endorsements(conn: sqlite3.Connection) -> int:
     """Populate license_endorsements and endorsement_codes from SEED_CODE_MAP.
 
-    Safe to call repeatedly — skips existing rows.
+    Safe to call repeatedly — skips existing rows.  After seeding, merges
+    any placeholder endorsements (where the endorsement name equals the
+    numeric code) that now have real mappings.
+
     Returns the number of new code mappings inserted.
     """
     inserted = 0
@@ -193,6 +201,10 @@ def seed_endorsements(conn: sqlite3.Connection) -> int:
             )
             inserted += cur.rowcount
     conn.commit()
+
+    # Merge any placeholder endorsements now that seed mappings exist.
+    _merge_seeded_placeholders(conn)
+
     return inserted
 
 
@@ -614,6 +626,65 @@ def _merge_placeholders(conn: sqlite3.Connection, learned: dict[str, list[str]])
         conn.execute("DELETE FROM record_endorsements WHERE endorsement_id = ?", (pid,))
         conn.execute("DELETE FROM endorsement_codes WHERE endorsement_id = ?", (pid,))
         conn.execute("DELETE FROM license_endorsements WHERE id = ?", (pid,))
+
+
+def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
+    """Merge placeholder endorsements that now have real seed mappings.
+
+    A placeholder endorsement has ``name == code`` (e.g. endorsement named
+    ``"331"`` for code ``"331"``).  If ``seed_endorsements`` has since
+    registered a real mapping for that code, migrate all record links from
+    the placeholder to the real endorsement(s) and delete the placeholder.
+
+    Returns the number of record links migrated.
+    """
+    # Find placeholder endorsements: name is purely numeric and matches a code
+    # that also has at least one *real* (non-placeholder) endorsement.
+    placeholders = conn.execute("""
+        SELECT le.id, le.name
+        FROM license_endorsements le
+        JOIN endorsement_codes ec ON ec.endorsement_id = le.id AND ec.code = le.name
+        WHERE le.name GLOB '[0-9]*' AND le.name NOT GLOB '*[a-zA-Z]*'
+          AND EXISTS (
+              SELECT 1 FROM endorsement_codes ec2
+              JOIN license_endorsements le2 ON le2.id = ec2.endorsement_id
+              WHERE ec2.code = le.name AND le2.name != le.name
+          )
+    """).fetchall()
+    if not placeholders:
+        return 0
+
+    migrated = 0
+    for pid, code in placeholders:
+        # Real endorsement(s) for this code
+        real_eids = [r[0] for r in conn.execute("""
+            SELECT ec.endorsement_id FROM endorsement_codes ec
+            JOIN license_endorsements le ON le.id = ec.endorsement_id
+            WHERE ec.code = ? AND le.name != ?
+        """, (code, code)).fetchall()]
+        if not real_eids:
+            continue
+
+        records = conn.execute(
+            "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
+            (pid,),
+        ).fetchall()
+        for rec in records:
+            for eid in real_eids:
+                _link_endorsement(conn, rec[0], eid)
+            migrated += 1
+
+        conn.execute("DELETE FROM record_endorsements WHERE endorsement_id = ?", (pid,))
+        conn.execute("DELETE FROM endorsement_codes WHERE endorsement_id = ?", (pid,))
+        conn.execute("DELETE FROM license_endorsements WHERE id = ?", (pid,))
+
+    if migrated:
+        conn.commit()
+        logger.info(
+            "Merged %d record link(s) from %d placeholder endorsement(s).",
+            migrated, len(placeholders),
+        )
+    return migrated
 
 
 # ---

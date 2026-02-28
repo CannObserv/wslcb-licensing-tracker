@@ -83,7 +83,7 @@ license_records → locations (FK: location_id, previous_location_id)
 ### `endorsement_codes`
 - Maps WSLCB numeric codes → `license_endorsements` (many-to-many)
 - Composite PK `(code, endorsement_id)` — multiple codes can map to the same endorsement, and one code can expand to multiple endorsements
-- Seeded from `SEED_CODE_MAP` in `endorsements.py` (98 codes); auto-discovered codes are added by `discover_code_mappings()`
+- Seeded from `SEED_CODE_MAP` in `endorsements.py` (103 codes); auto-discovered codes are added by `discover_code_mappings()`
 
 ### `record_endorsements`
 - Junction table linking `license_records` ↔ `license_endorsements`
