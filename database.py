@@ -441,9 +441,14 @@ def get_or_create_source(
     Uses INSERT OR IGNORE followed by SELECT so the call is idempotent.
     The (source_type_id, snapshot_path) pair is the uniqueness key.
 
+    When *snapshot_path* is None and *scrape_log_id* is provided (i.e. a live
+    scrape whose snapshot save failed), the lookup uses *scrape_log_id* to
+    distinguish distinct scrape events that both lack a snapshot.  Without
+    this, all NULL-path scrapes would conflate into the first row.
+
     .. note:: SQLite treats NULLs as distinct in UNIQUE constraints, so when
-       *snapshot_path* is None the SELECT uses ``snapshot_path IS NULL`` to
-       find any existing row before inserting a new one.
+       *snapshot_path* is None the SELECT uses ``IS NULL`` checks to find an
+       existing row before inserting a new one.
     """
     meta_json = json.dumps(metadata) if metadata else "{}"
     if snapshot_path is not None:
@@ -466,12 +471,23 @@ def get_or_create_source(
                 f" path={snapshot_path!r}"
             )
     else:
-        # NULL snapshot_path — look for an existing row first
-        row = conn.execute(
-            """SELECT id FROM sources
-               WHERE source_type_id = ? AND snapshot_path IS NULL""",
-            (source_type_id,),
-        ).fetchone()
+        # NULL snapshot_path — match on scrape_log_id when available so
+        # distinct scrape events with failed snapshot saves each get their
+        # own source row.
+        if scrape_log_id is not None:
+            row = conn.execute(
+                """SELECT id FROM sources
+                   WHERE source_type_id = ? AND snapshot_path IS NULL
+                     AND scrape_log_id = ?""",
+                (source_type_id, scrape_log_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT id FROM sources
+                   WHERE source_type_id = ? AND snapshot_path IS NULL
+                     AND scrape_log_id IS NULL""",
+                (source_type_id,),
+            ).fetchone()
         if row is None:
             cursor = conn.execute(
                 """INSERT INTO sources
