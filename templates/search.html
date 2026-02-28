@@ -51,6 +51,17 @@
                     {% endfor %}
                 </select>
             </div>
+            <div id="outcome-filter-wrapper"{% if section_type != 'new_application' %} style="display:none"{% endif %}>
+                <label for="outcome_status" class="block text-xs font-medium text-gray-500 mb-1">Outcome</label>
+                <select name="outcome_status" id="outcome_status" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                    <option value="">All</option>
+                    <option value="approved" {{ 'selected' if outcome_status == 'approved' }}>✅ Approved</option>
+                    <option value="discontinued" {{ 'selected' if outcome_status == 'discontinued' }}>🚫 Discontinued</option>
+                    <option value="pending" {{ 'selected' if outcome_status == 'pending' }}>⏳ Pending</option>
+                    <option value="data_gap" {{ 'selected' if outcome_status == 'data_gap' }}>📁 Data Unavailable</option>
+                    <option value="unknown" {{ 'selected' if outcome_status == 'unknown' }}>❓ Unknown</option>
+                </select>
+            </div>
             <div id="city-filter-wrapper"{% if not state %} style="display:none"{% endif %}>
                 <label for="city" class="block text-xs font-medium text-gray-500 mb-1">City</label>
                 <select name="city" id="city" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
@@ -87,6 +98,18 @@
 </div>
 
 <script>
+// Show/hide outcome filter based on section type
+document.getElementById('section_type').addEventListener('change', function() {
+    const wrapper = document.getElementById('outcome-filter-wrapper');
+    const select = document.getElementById('outcome_status');
+    if (this.value === 'new_application') {
+        wrapper.style.display = '';
+    } else {
+        wrapper.style.display = 'none';
+        select.value = '';
+    }
+});
+
 document.getElementById('state').addEventListener('change', async function() {
     const state = this.value;
     const wrapper = document.getElementById('city-filter-wrapper');

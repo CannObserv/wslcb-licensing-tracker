@@ -14,6 +14,7 @@ from entities import (
     parse_and_link_entities, get_record_entities, clean_applicants_string,
     clean_entity_name,
 )
+from link_records import get_outcome_status
 
 logger = logging.getLogger(__name__)
 
@@ -82,18 +83,29 @@ def hydrate_records(
 
     Accepts sqlite3.Row objects or plain dicts.  Shared by
     search_records(), get_entity_records(), and app.py record_detail().
+    Also attaches ``outcome_status`` for new_application records.
     """
     if not rows:
         return []
     record_ids = [r["id"] for r in rows]
     endorsement_map = get_record_endorsements(conn, record_ids)
     entity_map = get_record_entities(conn, record_ids)
+
+    # Bulk-fetch outcome links for new_application records
+    new_app_ids = [
+        r["id"] for r in rows if r["section_type"] == "new_application"
+    ]
+    link_map = get_record_links_bulk(conn, new_app_ids) if new_app_ids else {}
+
     results = []
     for r in rows:
         d = enrich_record(r if isinstance(r, dict) else dict(r))
         d["endorsements"] = endorsement_map.get(d["id"], [])
         d["entities"] = entity_map.get(
             d["id"], {"applicant": [], "previous_applicant": []}
+        )
+        d["outcome_status"] = get_outcome_status(
+            d, link_map.get(d["id"]),
         )
         results.append(d)
     return results
@@ -204,6 +216,7 @@ def search_records(
     city: str = "",
     date_from: str = "",
     date_to: str = "",
+    outcome_status: str = "",
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[dict], int]:
@@ -263,6 +276,71 @@ def search_records(
     if date_to:
         conditions.append("lr.record_date <= ?")
         params.append(date_to)
+
+    if outcome_status:
+        from link_records import _DATA_GAP_CUTOFF, PENDING_CUTOFF_DAYS, _APPROVAL_LINK_TYPES, _DISC_LINK_TYPE
+        linkable_types = ", ".join(
+            f"'{t}'" for t in (_APPROVAL_LINK_TYPES | {_DISC_LINK_TYPE})
+        )
+        if outcome_status == "approved":
+            conditions.append(
+                "lr.id IN (SELECT rl.new_app_id FROM record_links rl "
+                "JOIN license_records o ON o.id = rl.outcome_id "
+                "WHERE o.section_type = 'approved')"
+            )
+        elif outcome_status == "discontinued":
+            conditions.append(
+                "lr.id IN (SELECT rl.new_app_id FROM record_links rl "
+                "JOIN license_records o ON o.id = rl.outcome_id "
+                "WHERE o.section_type = 'discontinued')"
+            )
+        elif outcome_status == "pending":
+            conditions.append(
+                f"lr.section_type = 'new_application'"
+            )
+            conditions.append(
+                f"lr.application_type IN ({linkable_types})"
+            )
+            conditions.append(
+                "lr.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
+            )
+            conditions.append(
+                f"lr.record_date >= date('now', '-{PENDING_CUTOFF_DAYS} days')"
+            )
+            # Exclude data-gap NEW APPLICATION records
+            conditions.append(
+                f"NOT (lr.application_type = 'NEW APPLICATION' AND lr.record_date > '{_DATA_GAP_CUTOFF}')"
+            )
+        elif outcome_status == "data_gap":
+            conditions.append(
+                "lr.section_type = 'new_application'"
+            )
+            conditions.append(
+                "lr.application_type = 'NEW APPLICATION'"
+            )
+            conditions.append(
+                f"lr.record_date > '{_DATA_GAP_CUTOFF}'"
+            )
+            conditions.append(
+                "lr.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
+            )
+        elif outcome_status == "unknown":
+            conditions.append(
+                f"lr.section_type = 'new_application'"
+            )
+            conditions.append(
+                f"lr.application_type IN ({linkable_types})"
+            )
+            conditions.append(
+                "lr.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
+            )
+            conditions.append(
+                f"lr.record_date < date('now', '-{PENDING_CUTOFF_DAYS} days')"
+            )
+            # Exclude data-gap NEW APPLICATION records
+            conditions.append(
+                f"NOT (lr.application_type = 'NEW APPLICATION' AND lr.record_date > '{_DATA_GAP_CUTOFF}')"
+            )
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
@@ -407,6 +485,10 @@ def get_stats(conn: sqlite3.Connection) -> dict:
             MAX(record_date) AS max_date
         FROM license_records
     """).fetchone()
+
+    # Application pipeline stats (record_links)
+    pipeline = _get_pipeline_stats(conn)
+
     return {
         "total_records": agg["total_records"],
         "new_application_count": agg["new_application_count"],
@@ -425,6 +507,78 @@ def get_stats(conn: sqlite3.Connection) -> dict:
         "last_scrape": conn.execute(
             "SELECT * FROM scrape_log ORDER BY id DESC LIMIT 1"
         ).fetchone(),
+        "pipeline": pipeline,
+    }
+
+
+def _get_pipeline_stats(conn: sqlite3.Connection) -> dict:
+    """Compute application pipeline outcome breakdown."""
+    from link_records import (
+        _APPROVAL_LINK_TYPES, _DISC_LINK_TYPE,
+        PENDING_CUTOFF_DAYS, _DATA_GAP_CUTOFF,
+    )
+
+    linkable_types = ", ".join(
+        f"'{t}'" for t in (_APPROVAL_LINK_TYPES | {_DISC_LINK_TYPE})
+    )
+
+    # Total linkable new applications
+    total = conn.execute(f"""
+        SELECT COUNT(*) FROM license_records
+        WHERE section_type = 'new_application'
+          AND application_type IN ({linkable_types})
+    """).fetchone()[0]
+
+    # Linked to approved
+    approved = conn.execute("""
+        SELECT COUNT(*) FROM record_links rl
+        JOIN license_records o ON o.id = rl.outcome_id
+        WHERE o.section_type = 'approved'
+    """).fetchone()[0]
+
+    # Linked to discontinued
+    discontinued = conn.execute("""
+        SELECT COUNT(*) FROM record_links rl
+        JOIN license_records o ON o.id = rl.outcome_id
+        WHERE o.section_type = 'discontinued'
+    """).fetchone()[0]
+
+    # Data gap (unlinked post-gap NEW APPLICATION)
+    data_gap = conn.execute(f"""
+        SELECT COUNT(*) FROM license_records
+        WHERE section_type = 'new_application'
+          AND application_type = 'NEW APPLICATION'
+          AND record_date > '{_DATA_GAP_CUTOFF}'
+          AND id NOT IN (SELECT new_app_id FROM record_links)
+    """).fetchone()[0]
+
+    # Pending (unlinked, recent)
+    pending = conn.execute(f"""
+        SELECT COUNT(*) FROM license_records
+        WHERE section_type = 'new_application'
+          AND application_type IN ({linkable_types})
+          AND id NOT IN (SELECT new_app_id FROM record_links)
+          AND record_date >= date('now', '-{PENDING_CUTOFF_DAYS} days')
+          AND NOT (application_type = 'NEW APPLICATION' AND record_date > '{_DATA_GAP_CUTOFF}')
+    """).fetchone()[0]
+
+    # Unknown (unlinked, old, not data gap)
+    unknown = conn.execute(f"""
+        SELECT COUNT(*) FROM license_records
+        WHERE section_type = 'new_application'
+          AND application_type IN ({linkable_types})
+          AND id NOT IN (SELECT new_app_id FROM record_links)
+          AND record_date < date('now', '-{PENDING_CUTOFF_DAYS} days')
+          AND NOT (application_type = 'NEW APPLICATION' AND record_date > '{_DATA_GAP_CUTOFF}')
+    """).fetchone()[0]
+
+    return {
+        "total": total,
+        "approved": approved,
+        "discontinued": discontinued,
+        "pending": pending,
+        "data_gap": data_gap,
+        "unknown": unknown,
     }
 
 
@@ -463,6 +617,55 @@ def get_entity_records(
         (entity_id,),
     ).fetchall()
     return hydrate_records(conn, rows)
+
+
+def get_record_link(conn: sqlite3.Connection, record_id: int) -> dict | None:
+    """Fetch the outcome link for a new_application record.
+
+    Returns a dict with outcome_id, confidence, days_gap,
+    outcome_date, outcome_section_type, or None.
+    """
+    row = conn.execute(
+        """SELECT rl.outcome_id, rl.confidence, rl.days_gap,
+                  lr.record_date AS outcome_date,
+                  lr.section_type AS outcome_section_type
+           FROM record_links rl
+           JOIN license_records lr ON lr.id = rl.outcome_id
+           WHERE rl.new_app_id = ?
+           ORDER BY rl.confidence = 'high' DESC
+           LIMIT 1""",
+        (record_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_record_links_bulk(
+    conn: sqlite3.Connection, record_ids: list[int],
+) -> dict[int, dict]:
+    """Fetch outcome links for multiple new_application records.
+
+    Returns {new_app_id: {outcome_id, confidence, days_gap,
+    outcome_date, outcome_section_type}}.
+    """
+    if not record_ids:
+        return {}
+    placeholders = ",".join("?" for _ in record_ids)
+    rows = conn.execute(
+        f"""SELECT rl.new_app_id, rl.outcome_id, rl.confidence, rl.days_gap,
+                   lr.record_date AS outcome_date,
+                   lr.section_type AS outcome_section_type
+            FROM record_links rl
+            JOIN license_records lr ON lr.id = rl.outcome_id
+            WHERE rl.new_app_id IN ({placeholders})""",
+        record_ids,
+    ).fetchall()
+    result: dict[int, dict] = {}
+    for r in rows:
+        nid = r["new_app_id"]
+        # Prefer high confidence if there are multiple
+        if nid not in result or r["confidence"] == "high":
+            result[nid] = dict(r)
+    return result
 
 
 def get_record_sources(

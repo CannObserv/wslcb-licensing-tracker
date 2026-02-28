@@ -17,10 +17,11 @@ from queries import (
     search_records, get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
-    get_record_sources,
+    get_record_sources, get_record_link,
     hydrate_records,
 )
 from endorsements import seed_endorsements, backfill, repair_code_name_endorsements
+from link_records import build_all_links, get_reverse_link_info, get_outcome_status
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,18 @@ async def lifespan(app: FastAPI):
         entity_count = backfill_entities(conn)
         if entity_count:
             logger.info("Backfilled entities for %d record(s)", entity_count)
+        # Build application→outcome links if table is empty (first run).
+        # Subsequent updates are handled incrementally by the scraper.
+        existing_links = conn.execute(
+            "SELECT COUNT(*) FROM record_links"
+        ).fetchone()[0]
+        if not existing_links:
+            link_stats = build_all_links(conn)
+            if link_stats["total"]:
+                logger.info(
+                    "Record linking: %d links (%d high, %d medium)",
+                    link_stats["total"], link_stats["high"], link_stats["medium"],
+                )
     yield
 
 
@@ -116,6 +129,7 @@ async def search(
     city: str = "",
     date_from: str = "",
     date_to: str = "",
+    outcome_status: str = "",
     page: int = Query(1, ge=1),
 ):
     # City requires state context (names aren't unique across states).
@@ -133,6 +147,7 @@ async def search(
             city=city,
             date_from=date_from,
             date_to=date_to,
+            outcome_status=outcome_status,
             page=page,
         )
         filters = get_filter_options(conn)
@@ -145,6 +160,7 @@ async def search(
         "application_type": application_type, "endorsement": endorsement,
         "state": state, "city": city,
         "date_from": date_from, "date_to": date_to,
+        "outcome_status": outcome_status,
     })
 
     ctx = {
@@ -163,6 +179,7 @@ async def search(
         "city": city,
         "date_from": date_from,
         "date_to": date_to,
+        "outcome_status": outcome_status,
         "export_url": f"/export?{export_params}",
     }
 
@@ -191,10 +208,16 @@ async def record_detail(request: Request, record_id: int):
 
         sources = get_record_sources(conn, record_id)
 
+        # Outcome link info for the detail page
+        link = get_record_link(conn, record_id)
+        outcome = get_outcome_status(record, link)
+        reverse_link = get_reverse_link_info(conn, record)
+
     return templates.TemplateResponse(
         "detail.html", {
             "request": request, "record": record,
             "related": related, "sources": sources,
+            "outcome": outcome, "reverse_link": reverse_link,
         }
     )
 
@@ -241,6 +264,7 @@ async def export_csv(
     city: str = "",
     date_from: str = "",
     date_to: str = "",
+    outcome_status: str = "",
 ):
     """Export search results as CSV."""
     if not state:
@@ -250,6 +274,7 @@ async def export_csv(
             conn, query=q, section_type=section_type,
             application_type=application_type, endorsement=endorsement,
             state=state, city=city, date_from=date_from, date_to=date_to,
+            outcome_status=outcome_status,
             page=1, per_page=100_000,
         )
 
@@ -272,6 +297,7 @@ async def export_csv(
         "previous_business_location",
         "prev_address_line_1", "prev_address_line_2",
         "prev_std_city", "prev_std_state", "prev_std_zip",
+        "outcome_status", "outcome_date", "days_to_outcome",
     ]
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
@@ -279,6 +305,18 @@ async def export_csv(
     for r in records:
         row = {k: r.get(k, "") for k in fieldnames}
         row["endorsements"] = "; ".join(r.get("endorsements", []))
+        ost = r.get("outcome_status", {})
+        if ost and ost.get("status"):
+            row["outcome_status"] = ost["status"]
+            row["outcome_date"] = ost.get("linked_record_id", "")  # placeholder
+            # Extract date from detail string if available
+            if ost.get("status") in ("approved", "discontinued") and ost.get("detail"):
+                import re
+                m = re.search(r'on (\d{4}-\d{2}-\d{2})', ost["detail"])
+                row["outcome_date"] = m.group(1) if m else ""
+                # days_gap from detail
+                m2 = re.search(r'(\d+) days?', ost["detail"])
+                row["days_to_outcome"] = m2.group(1) if m2 else ""
         writer.writerow(row)
 
     output.seek(0)

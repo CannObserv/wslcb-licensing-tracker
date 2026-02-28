@@ -81,6 +81,47 @@
 </div>
 {% endif %}
 
+<!-- Application Pipeline -->
+{% if stats.pipeline and stats.pipeline.total > 0 %}
+{% set p = stats.pipeline %}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-8">
+    <h2 class="text-lg font-semibold text-gray-900 mb-1">Application Outcomes</h2>
+    <p class="text-xs text-gray-500 mb-4">Tracks what happened to each new application — approved, pending, or discontinued.</p>
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <a href="/search?section_type=new_application" class="block rounded-lg border border-gray-200 p-3 hover:border-co-purple-100 hover:bg-co-purple-50/30 transition">
+            <div class="text-xs font-medium text-gray-500">Total Linkable</div>
+            <div class="text-xl font-bold text-gray-900">{{ "{:,}".format(p.total) }}</div>
+        </a>
+        <a href="/search?section_type=new_application&outcome_status=approved" class="block rounded-lg border border-green-200 p-3 hover:bg-green-50 transition">
+            <div class="text-xs font-medium text-green-600">✅ Approved</div>
+            <div class="text-xl font-bold text-green-700">{{ "{:,}".format(p.approved) }}</div>
+            <div class="text-xs text-green-600">{{ "%.0f" | format(p.approved / p.total * 100) }}%</div>
+        </a>
+        <a href="/search?section_type=new_application&outcome_status=pending" class="block rounded-lg border border-amber-200 p-3 hover:bg-amber-50 transition">
+            <div class="text-xs font-medium text-amber-600">⏳ Pending</div>
+            <div class="text-xl font-bold text-amber-700">{{ "{:,}".format(p.pending) }}</div>
+            <div class="text-xs text-amber-600">{{ "%.0f" | format(p.pending / p.total * 100) }}%</div>
+        </a>
+        <a href="/search?section_type=new_application&outcome_status=unknown" class="block rounded-lg border border-gray-200 p-3 hover:bg-gray-50 transition">
+            <div class="text-xs font-medium text-gray-500">❓ Unknown</div>
+            <div class="text-xl font-bold text-gray-700">{{ "{:,}".format(p.unknown) }}</div>
+            <div class="text-xs text-gray-500">{{ "%.0f" | format(p.unknown / p.total * 100) }}%</div>
+        </a>
+        <a href="/search?section_type=new_application&outcome_status=discontinued" class="block rounded-lg border border-red-200 p-3 hover:bg-red-50 transition">
+            <div class="text-xs font-medium text-red-600">🚫 Discontinued</div>
+            <div class="text-xl font-bold text-red-700">{{ "{:,}".format(p.discontinued) }}</div>
+            <div class="text-xs text-red-600">{{ "%.0f" | format(p.discontinued / p.total * 100) }}%</div>
+        </a>
+        <a href="/search?section_type=new_application&outcome_status=data_gap" class="block rounded-lg border border-slate-200 p-3 hover:bg-slate-50 transition">
+            <div class="text-xs font-medium text-slate-500">📁 Data Gap</div>
+            <div class="text-xl font-bold text-slate-600">{{ "{:,}".format(p.data_gap) }}</div>
+            <div class="text-xs text-slate-500">{{ "%.0f" | format(p.data_gap / p.total * 100) }}%</div>
+        </a>
+    </div>
+    <p class="text-[11px] text-gray-400 mt-3">Note: Post-May 2025 NEW APPLICATION approvals not published by WSLCB due to a data transfer issue.</p>
+</div>
+{% endif %}
+
 <!-- Quick Search -->
 <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
     <h2 class="text-lg font-semibold text-gray-900 mb-3">Quick Search</h2>

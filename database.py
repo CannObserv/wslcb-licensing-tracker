@@ -185,6 +185,22 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_re_entity ON record_entities(entity_id);
             CREATE INDEX IF NOT EXISTS idx_re_role ON record_entities(role);
         """)
+        # Application → outcome linking table
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS record_links (
+                id INTEGER PRIMARY KEY,
+                new_app_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
+                outcome_id INTEGER NOT NULL REFERENCES license_records(id) ON DELETE CASCADE,
+                confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+                days_gap INTEGER,
+                linked_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(new_app_id, outcome_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_record_links_new
+                ON record_links(new_app_id);
+            CREATE INDEX IF NOT EXISTS idx_record_links_outcome
+                ON record_links(outcome_id);
+        """)
         # Source provenance junction table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS record_sources (

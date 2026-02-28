@@ -13,6 +13,47 @@
     <a href="/search" onclick="if(document.referrer.startsWith(location.origin)){history.back();return false;}" class="text-sm text-co-purple hover:text-co-purple-700">← Back to results</a>
 </div>
 
+{% if outcome and outcome.status %}
+<div class="rounded-lg border p-4 mb-4 {{ outcome.css_bg }} {{ outcome.css_border }}">
+    <div class="flex items-start gap-3">
+        <span class="text-lg">{{ outcome.icon }}</span>
+        <div class="flex-1">
+            <div class="font-semibold {{ outcome.css_text }}">{{ outcome.label }}
+                {% if outcome.confidence == 'medium' %}
+                <span class="ml-1 text-xs font-normal opacity-70">(medium confidence)</span>
+                {% endif %}
+            </div>
+            <div class="text-sm {{ outcome.css_accent }} mt-0.5">{{ outcome.detail }}</div>
+            {% if outcome.linked_record_id %}
+            <a href="/record/{{ outcome.linked_record_id }}" class="inline-flex items-center gap-1 text-sm {{ outcome.css_text }} hover:underline mt-1 font-medium">
+                View {{ outcome.label | lower }} record →
+            </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if reverse_link %}
+<div class="rounded-lg border p-4 mb-4 bg-blue-50 border-blue-200">
+    <div class="flex items-start gap-3">
+        <span class="text-lg">📋</span>
+        <div class="flex-1">
+            <div class="font-semibold text-blue-800">Original Application</div>
+            <div class="text-sm text-blue-600 mt-0.5">
+                {{ reverse_link.new_app_type }} filed on {{ reverse_link.new_app_date }}
+                {% if reverse_link.days_gap is not none %}
+                ({{ reverse_link.days_gap }} day{{ 's' if reverse_link.days_gap != 1 }} to {{ record.section_type | section_label | lower }})
+                {% endif %}
+            </div>
+            <a href="/record/{{ reverse_link.new_app_id }}" class="inline-flex items-center gap-1 text-sm text-blue-800 hover:underline mt-1 font-medium">
+                View application record →
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
     <div class="px-6 py-5 border-b border-gray-200 flex justify-between items-start">
         <div>
@@ -225,8 +266,18 @@
             </thead>
             <tbody class="divide-y divide-gray-200">
                 {% for r in related %}
-                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50" tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
-                    <td class="px-4 py-3 text-sm">{{ r.record_date }}</td>
+                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50
+                    {%- if outcome and outcome.linked_record_id == r.id %} border-l-2 border-green-400 bg-green-50/50
+                    {%- elif reverse_link and reverse_link.new_app_id == r.id %} border-l-2 border-blue-400 bg-blue-50/50{% endif %}"
+                    tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
+                    <td class="px-4 py-3 text-sm">
+                        {{ r.record_date }}
+                        {% if outcome and outcome.linked_record_id == r.id %}
+                        <div class="text-xs text-green-600 font-medium mt-0.5">→ {{ outcome.label }} for this application</div>
+                        {% elif reverse_link and reverse_link.new_app_id == r.id %}
+                        <div class="text-xs text-blue-600 font-medium mt-0.5">→ Original application</div>
+                        {% endif %}
+                    </td>
                     <td class="px-4 py-3 text-sm">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium badge-{{ r.section_type.split('_')[0] }}">
                             {{ r.section_type | section_label }}

@@ -14,6 +14,7 @@ from database import (
 from queries import insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
+from link_records import link_new_record, build_all_links
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -262,6 +263,7 @@ def scrape():
                         if is_new:
                             process_record(conn, rid, rec["license_type"])
                             link_record_source(conn, rid, source_id, "first_seen")
+                            link_new_record(conn, rid)
                             validate_record(conn, rid, client=av_client)
                             if rec.get("previous_business_location"):
                                 validate_previous_location(conn, rid, client=av_client)
@@ -338,6 +340,10 @@ if __name__ == "__main__":
     elif "--backfill-assumptions" in sys.argv or "--backfill-from-snapshots" in sys.argv:
         from backfill_snapshots import backfill_from_snapshots
         backfill_from_snapshots()
+    elif "--rebuild-links" in sys.argv:
+        init_db()
+        with get_db() as conn:
+            build_all_links(conn)
     else:
         # "scrape" is accepted as an explicit positional arg (used by
         # the wslcb-task@ systemd template) but is not required.
