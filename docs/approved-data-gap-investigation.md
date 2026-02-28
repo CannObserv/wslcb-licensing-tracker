@@ -131,6 +131,55 @@ RENEWAL represents license renewals — a routine process for existing licensees
 
 The approved/NEW APPLICATION gap remains a genuine loss of data visibility: the WSLCB is no longer publishing when NEW APPLICATION filings are approved. The linking engine should match new_application/NEW APPLICATION → approved/NEW APPLICATION (same type) and treat post-May-2025 NEW APPLICATION records as having no approval data available.
 
+## DISC. LIQUOR SALES → Discontinued Linking
+
+Investigated whether new_application/DISC. LIQUOR SALES records can be linked to corresponding discontinued/DISCONTINUED records — the discontinuance equivalent of linking new_application → approved.
+
+### Finding: Yes — near-perfect 1:1 correspondence
+
+DISC. LIQUOR SALES is a **notification of intent to discontinue** that appears in the new_application section, paralleling how NEW APPLICATION is a notification of intent to obtain a new license. The discontinued/DISCONTINUED record is the **official outcome**.
+
+| Metric | Value |
+|---|---|
+| Total DISC. LIQUOR SALES records | 825 |
+| Forward matches (has a discontinued record within ±7d) | 815 (98.8%) |
+| Mutual matches (bidirectional) | 814 (98.7%) |
+| Forward-only (ambiguous) | 1 |
+| No match (too recent or withdrawn) | 10 |
+
+### Date gap pattern
+
+Nearly identical to the approved date pattern:
+
+| Gap (discontinued_date − filing_date) | Count |
+|---|---|
+| −2 days | 1 |
+| −1 day | 533 (65%) |
+| 0 (same day) | 245 (30%) |
+| +10 to +41 days | 36 (4%) |
+
+The discontinued date **precedes** the DISC. LIQUOR SALES notification date by 1 day in 65% of cases — the same weekday-offset pattern seen with approved dates preceding notification dates.
+
+### Key observations
+
+1. **DISC. LIQUOR SALES only exists post-restructure** (first record: 2025-04-30). Before the March 2025 restructure, discontinuances appeared directly in the discontinued section with no prior notification in the new_application section.
+
+2. **Misnomer: covers all license types**, not just liquor. Cannabis licenses (CANNABIS PROCESSOR, CANNABIS RETAILER) also appear with this application type.
+
+3. **10 unmatched records**: 4 are from 2026-02-27 (too recent — discontinued record hasn't appeared yet), 5 from October 2025 (likely withdrawn requests), 1 is a duplicate from the Sept 11 bulk dump.
+
+4. **Not all discontinued records have a DISC. LIQUOR SALES notification**: of 2,084 post-restructure discontinued records, only 809 (39%) have a matching DISC. LIQUOR SALES filing. The remaining 1,275 appear directly in the discontinued section with no prior notification.
+
+5. **Different from lifecycle linking**: the DISC. LIQUOR SALES → discontinued link tracks a specific discontinuance request and its outcome. Separately, 1,170 discontinued records have a prior NEW APPLICATION filing for the same license — but that's lifecycle tracking (application → eventual discontinuance), not a request→outcome pair.
+
+### Implementation impact
+
+This is a natural extension of the record_links table:
+- Same bidirectional matching algorithm, same ±7-day tolerance
+- `new_app_id` → DISC. LIQUOR SALES record, `approved_id` column repurposed (or renamed to `outcome_id`) → discontinued record
+- Status display: "DISCONTINUED on DATE (N days after filing)" paralleling "APPROVED on DATE"
+- 98.7% match rate means almost every DISC. LIQUOR SALES record gets a link
+
 ## Verification
 
 ### Live source page (fetched 2026-02-27)
