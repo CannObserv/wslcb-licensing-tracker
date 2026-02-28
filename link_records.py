@@ -33,6 +33,69 @@ PENDING_CUTOFF_DAYS = 180
 # Date after which NEW APPLICATION approvals stopped being published
 _DATA_GAP_CUTOFF = "2025-05-12"
 
+# All application types eligible for outcome linking
+LINKABLE_TYPES = _APPROVAL_LINK_TYPES | {_DISC_LINK_TYPE}
+
+
+def outcome_filter_sql(
+    status: str,
+    *,
+    record_alias: str = "lr",
+) -> list[str]:
+    """Return SQL WHERE-clause fragments for an outcome_status filter.
+
+    Each element is a standalone condition to be ANDed into the query.
+    The *record_alias* must be the table alias for ``license_records``.
+
+    Valid *status* values: ``'approved'``, ``'discontinued'``,
+    ``'pending'``, ``'data_gap'``, ``'unknown'``.
+    Returns an empty list for unrecognised values.
+    """
+    r = record_alias
+    linkable = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
+    not_linked = f"{r}.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
+    not_data_gap = (
+        f"NOT ({r}.application_type = 'NEW APPLICATION'"
+        f" AND {r}.record_date > '{_DATA_GAP_CUTOFF}')"
+    )
+
+    if status == "approved":
+        return [
+            f"{r}.id IN (SELECT rl.new_app_id FROM record_links rl "
+            "JOIN license_records o ON o.id = rl.outcome_id "
+            "WHERE o.section_type = 'approved')",
+        ]
+    if status == "discontinued":
+        return [
+            f"{r}.id IN (SELECT rl.new_app_id FROM record_links rl "
+            "JOIN license_records o ON o.id = rl.outcome_id "
+            "WHERE o.section_type = 'discontinued')",
+        ]
+    if status == "pending":
+        return [
+            f"{r}.section_type = 'new_application'",
+            f"{r}.application_type IN ({linkable})",
+            not_linked,
+            f"{r}.record_date >= date('now', '-{PENDING_CUTOFF_DAYS} days')",
+            not_data_gap,
+        ]
+    if status == "data_gap":
+        return [
+            f"{r}.section_type = 'new_application'",
+            f"{r}.application_type = 'NEW APPLICATION'",
+            f"{r}.record_date > '{_DATA_GAP_CUTOFF}'",
+            not_linked,
+        ]
+    if status == "unknown":
+        return [
+            f"{r}.section_type = 'new_application'",
+            f"{r}.application_type IN ({linkable})",
+            not_linked,
+            f"{r}.record_date < date('now', '-{PENDING_CUTOFF_DAYS} days')",
+            not_data_gap,
+        ]
+    return []
+
 
 def _date_add(date_str: str, days: int) -> str:
     """Add *days* to an ISO date string.  Returns ISO date string."""
@@ -455,6 +518,8 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
                 "detail": f"Approved on {link['outcome_date']}" + (f" ({days_label} after application)" if days_label else ""),
                 "linked_record_id": link["outcome_id"],
                 "confidence": link["confidence"],
+                "outcome_date": link["outcome_date"],
+                "days_gap": days,
             }
         elif outcome_section == "discontinued":
             return {
@@ -468,6 +533,8 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
                 "detail": f"Discontinued on {link['outcome_date']}" + (f" ({days_label} after filing)" if days_label else ""),
                 "linked_record_id": link["outcome_id"],
                 "confidence": link["confidence"],
+                "outcome_date": link["outcome_date"],
+                "days_gap": days,
             }
 
     # No link — determine why

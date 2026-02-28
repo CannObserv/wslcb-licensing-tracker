@@ -43,7 +43,9 @@
             <div class="text-sm text-blue-600 mt-0.5">
                 {{ reverse_link.new_app_type }} filed on {{ reverse_link.new_app_date }}
                 {% if reverse_link.days_gap is not none %}
-                ({{ reverse_link.days_gap }} day{{ 's' if reverse_link.days_gap != 1 }} to {{ record.section_type | section_label | lower }})
+                {% set abs_gap = reverse_link.days_gap | abs %}
+                ({{ abs_gap }} day{{ 's' if abs_gap != 1 else '' }}
+                {%- if reverse_link.days_gap < 0 %} before{% else %} to{% endif %} {{ record.section_type | section_label | lower }})
                 {% endif %}
             </div>
             <a href="/record/{{ reverse_link.new_app_id }}" class="inline-flex items-center gap-1 text-sm text-blue-800 hover:underline mt-1 font-medium">

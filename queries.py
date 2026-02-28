@@ -278,69 +278,8 @@ def search_records(
         params.append(date_to)
 
     if outcome_status:
-        from link_records import _DATA_GAP_CUTOFF, PENDING_CUTOFF_DAYS, _APPROVAL_LINK_TYPES, _DISC_LINK_TYPE
-        linkable_types = ", ".join(
-            f"'{t}'" for t in (_APPROVAL_LINK_TYPES | {_DISC_LINK_TYPE})
-        )
-        if outcome_status == "approved":
-            conditions.append(
-                "lr.id IN (SELECT rl.new_app_id FROM record_links rl "
-                "JOIN license_records o ON o.id = rl.outcome_id "
-                "WHERE o.section_type = 'approved')"
-            )
-        elif outcome_status == "discontinued":
-            conditions.append(
-                "lr.id IN (SELECT rl.new_app_id FROM record_links rl "
-                "JOIN license_records o ON o.id = rl.outcome_id "
-                "WHERE o.section_type = 'discontinued')"
-            )
-        elif outcome_status == "pending":
-            conditions.append(
-                f"lr.section_type = 'new_application'"
-            )
-            conditions.append(
-                f"lr.application_type IN ({linkable_types})"
-            )
-            conditions.append(
-                "lr.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
-            )
-            conditions.append(
-                f"lr.record_date >= date('now', '-{PENDING_CUTOFF_DAYS} days')"
-            )
-            # Exclude data-gap NEW APPLICATION records
-            conditions.append(
-                f"NOT (lr.application_type = 'NEW APPLICATION' AND lr.record_date > '{_DATA_GAP_CUTOFF}')"
-            )
-        elif outcome_status == "data_gap":
-            conditions.append(
-                "lr.section_type = 'new_application'"
-            )
-            conditions.append(
-                "lr.application_type = 'NEW APPLICATION'"
-            )
-            conditions.append(
-                f"lr.record_date > '{_DATA_GAP_CUTOFF}'"
-            )
-            conditions.append(
-                "lr.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
-            )
-        elif outcome_status == "unknown":
-            conditions.append(
-                f"lr.section_type = 'new_application'"
-            )
-            conditions.append(
-                f"lr.application_type IN ({linkable_types})"
-            )
-            conditions.append(
-                "lr.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
-            )
-            conditions.append(
-                f"lr.record_date < date('now', '-{PENDING_CUTOFF_DAYS} days')"
-            )
-            # Exclude data-gap NEW APPLICATION records
-            conditions.append(
-                f"NOT (lr.application_type = 'NEW APPLICATION' AND lr.record_date > '{_DATA_GAP_CUTOFF}')"
-            )
+        from link_records import outcome_filter_sql
+        conditions.extend(outcome_filter_sql(outcome_status))
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
@@ -513,72 +452,27 @@ def get_stats(conn: sqlite3.Connection) -> dict:
 
 def _get_pipeline_stats(conn: sqlite3.Connection) -> dict:
     """Compute application pipeline outcome breakdown."""
-    from link_records import (
-        _APPROVAL_LINK_TYPES, _DISC_LINK_TYPE,
-        PENDING_CUTOFF_DAYS, _DATA_GAP_CUTOFF,
-    )
+    from link_records import outcome_filter_sql, LINKABLE_TYPES
 
-    linkable_types = ", ".join(
-        f"'{t}'" for t in (_APPROVAL_LINK_TYPES | {_DISC_LINK_TYPE})
-    )
+    linkable = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
 
-    # Total linkable new applications
     total = conn.execute(f"""
         SELECT COUNT(*) FROM license_records
         WHERE section_type = 'new_application'
-          AND application_type IN ({linkable_types})
+          AND application_type IN ({linkable})
     """).fetchone()[0]
 
-    # Linked to approved
-    approved = conn.execute("""
-        SELECT COUNT(*) FROM record_links rl
-        JOIN license_records o ON o.id = rl.outcome_id
-        WHERE o.section_type = 'approved'
-    """).fetchone()[0]
-
-    # Linked to discontinued
-    discontinued = conn.execute("""
-        SELECT COUNT(*) FROM record_links rl
-        JOIN license_records o ON o.id = rl.outcome_id
-        WHERE o.section_type = 'discontinued'
-    """).fetchone()[0]
-
-    # Data gap (unlinked post-gap NEW APPLICATION)
-    data_gap = conn.execute(f"""
-        SELECT COUNT(*) FROM license_records
-        WHERE section_type = 'new_application'
-          AND application_type = 'NEW APPLICATION'
-          AND record_date > '{_DATA_GAP_CUTOFF}'
-          AND id NOT IN (SELECT new_app_id FROM record_links)
-    """).fetchone()[0]
-
-    # Pending (unlinked, recent)
-    pending = conn.execute(f"""
-        SELECT COUNT(*) FROM license_records
-        WHERE section_type = 'new_application'
-          AND application_type IN ({linkable_types})
-          AND id NOT IN (SELECT new_app_id FROM record_links)
-          AND record_date >= date('now', '-{PENDING_CUTOFF_DAYS} days')
-          AND NOT (application_type = 'NEW APPLICATION' AND record_date > '{_DATA_GAP_CUTOFF}')
-    """).fetchone()[0]
-
-    # Unknown (unlinked, old, not data gap)
-    unknown = conn.execute(f"""
-        SELECT COUNT(*) FROM license_records
-        WHERE section_type = 'new_application'
-          AND application_type IN ({linkable_types})
-          AND id NOT IN (SELECT new_app_id FROM record_links)
-          AND record_date < date('now', '-{PENDING_CUTOFF_DAYS} days')
-          AND NOT (application_type = 'NEW APPLICATION' AND record_date > '{_DATA_GAP_CUTOFF}')
-    """).fetchone()[0]
+    counts = {}
+    for status in ("approved", "discontinued", "pending", "data_gap", "unknown"):
+        clauses = outcome_filter_sql(status, record_alias="lr")
+        where = " AND ".join(clauses)
+        counts[status] = conn.execute(
+            f"SELECT COUNT(*) FROM license_records lr WHERE {where}"
+        ).fetchone()[0]
 
     return {
         "total": total,
-        "approved": approved,
-        "discontinued": discontinued,
-        "pending": pending,
-        "data_gap": data_gap,
-        "unknown": unknown,
+        **counts,
     }
 
 

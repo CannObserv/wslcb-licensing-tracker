@@ -308,15 +308,9 @@ async def export_csv(
         ost = r.get("outcome_status", {})
         if ost and ost.get("status"):
             row["outcome_status"] = ost["status"]
-            row["outcome_date"] = ost.get("linked_record_id", "")  # placeholder
-            # Extract date from detail string if available
-            if ost.get("status") in ("approved", "discontinued") and ost.get("detail"):
-                import re
-                m = re.search(r'on (\d{4}-\d{2}-\d{2})', ost["detail"])
-                row["outcome_date"] = m.group(1) if m else ""
-                # days_gap from detail
-                m2 = re.search(r'(\d+) days?', ost["detail"])
-                row["days_to_outcome"] = m2.group(1) if m2 else ""
+            row["outcome_date"] = ost.get("outcome_date", "")
+            days = ost.get("days_gap")
+            row["days_to_outcome"] = days if days is not None else ""
         writer.writerow(row)
 
     output.seek(0)

@@ -1,5 +1,8 @@
 {# Shared record table — used by results.html and entity.html.
-   Expects `records` (list of enriched record dicts) in context. #}
+   Expects `records` (list of enriched record dicts) in context.
+   `show_outcome` controls the Outcome column: true if any record has an outcome status,
+   but hidden when the search is filtered to only approved or discontinued records. #}
+{% set show_outcome = (section_type|default('') not in ('approved', 'discontinued')) and records|selectattr('outcome_status')|selectattr('outcome_status.status')|list|length > 0 %}
 <div class="bg-white shadow-sm border border-gray-200 rounded-lg overflow-hidden">
     <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200">
@@ -11,7 +14,9 @@
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">License Type</th>
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">App Type</th>
+                    {% if show_outcome %}
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Outcome</th>
+                    {% endif %}
                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">License #</th>
                 </tr>
             </thead>
@@ -19,11 +24,11 @@
                 {% for r in records %}
                 {% set ost = r.outcome_status if r.outcome_status else {} %}
                 <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50
-                    {%- if ost.status == 'approved' %} border-l-2 border-green-300
-                    {%- elif ost.status == 'discontinued' %} border-l-2 border-red-300
-                    {%- elif ost.status == 'pending' %} border-l-2 border-amber-300
-                    {%- elif ost.status == 'data_gap' %} border-l-2 border-slate-300
-                    {%- elif ost.status == 'unknown' %} border-l-2 border-gray-300{% endif %}"
+                    {%- if show_outcome and ost.status == 'approved' %} border-l-2 border-green-300
+                    {%- elif show_outcome and ost.status == 'discontinued' %} border-l-2 border-red-300
+                    {%- elif show_outcome and ost.status == 'pending' %} border-l-2 border-amber-300
+                    {%- elif show_outcome and ost.status == 'data_gap' %} border-l-2 border-slate-300
+                    {%- elif show_outcome and ost.status == 'unknown' %} border-l-2 border-gray-300{% endif %}"
                     tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{{ r.record_date }}</td>
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
@@ -58,6 +63,7 @@
                         {% endif %}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-600">{{ r.application_type }}</td>
+                    {% if show_outcome %}
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                         {% if ost.status == 'approved' %}
                         <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 hover:bg-green-200" onclick="event.stopPropagation()">✅ Approved</a>
@@ -73,6 +79,7 @@
                         <span class="text-gray-300">—</span>
                         {% endif %}
                     </td>
+                    {% endif %}
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">{{ r.license_number }}</td>
                 </tr>
                 {% endfor %}

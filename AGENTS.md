@@ -38,7 +38,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
-| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()`, `get_reverse_link_info()`. |
+| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()`, `get_reverse_link_info()`, `outcome_filter_sql()`. |
 | `backfill_diffs.py` | Ingest from CO diff archives | Parses unified-diff files in `data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/`. Safe to re-run. |
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
@@ -113,7 +113,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - Links new_application records to their corresponding approved or discontinued outcome records
 - `new_app_id` — FK to `license_records(id)`, the new_application record
 - `outcome_id` — FK to `license_records(id)`, the approved or discontinued record
-- `confidence` — `'high'` (mutual match) or `'medium'` (forward-only match); constrained by CHECK
+- `confidence` — `'high'` (mutual match) or `'medium'` (forward-only match); CHECK constraint also allows `'low'` (reserved for future use, not currently produced)
 - `days_gap` — `outcome_date - new_app_date` in days (can be negative when outcome precedes notification)
 - `linked_at` — ISO 8601 timestamp of when the link was created
 - UNIQUE on `(new_app_id, outcome_id)` — prevents duplicate links
