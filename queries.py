@@ -5,6 +5,7 @@ combine data from multiple tables (records, locations, endorsements,
 entities).  Thin read/write layer on top of the core schema in
 ``database.py``.
 """
+import json
 import logging
 import sqlite3
 import time
@@ -577,4 +578,10 @@ def get_record_sources(
            ORDER BY s.captured_at DESC""",
         (record_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    results = []
+    for r in rows:
+        d = dict(r)
+        raw = d.get("metadata")
+        d["metadata"] = json.loads(raw) if raw else {}
+        results.append(d)
+    return results
