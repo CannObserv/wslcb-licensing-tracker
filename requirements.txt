@@ -1,0 +1,12 @@
+# Runtime
+fastapi
+uvicorn
+jinja2
+httpx
+beautifulsoup4
+lxml
+python-multipart
+python-json-logger
+
+# Development / testing
+pytest

@@ -46,6 +46,13 @@ license_records → locations (FK: location_id, previous_location_id)
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
 | `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
+| `requirements.txt` | Python dependencies | Runtime + dev (pytest) dependencies. Install with `pip install -r requirements.txt`. |
+| `pytest.ini` | Pytest configuration | Test paths and Python path settings. |
+| `tests/conftest.py` | Shared test fixtures | In-memory DB, sample record dicts, `FIXTURES_DIR` path constant. |
+| `tests/test_parser.py` | Parser tests | Tests for all `parser.py` functions using static HTML fixtures. |
+| `tests/test_database.py` | Database tests | Schema init, location/source helpers, provenance linking. |
+| `tests/test_queries.py` | Query tests | `insert_record()` with all record types, dedup, entity creation. |
+| `tests/fixtures/` | HTML test fixtures | Minimal realistic HTML for each record type and section. |
 
 ## Database Schema
 
@@ -179,8 +186,7 @@ If a playbook name exists in both files, the project-level definition takes prec
 
 ### Python
 - Python 3.12+ with venv at `./venv/`
-- Dependencies: `fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart python-json-logger`
-- No requirements.txt yet — add one if dependencies grow
+- Dependencies listed in `requirements.txt`; install with `pip install -r requirements.txt`
 - Use `datetime.now(timezone.utc)` not `datetime.utcnow()` (deprecated)
 - Module docstrings on every `.py` file
 
@@ -195,6 +201,37 @@ If a playbook name exists in both files, the project-level definition takes prec
   - `logger.error()` — unrecoverable failures (scrape crash, missing API key)
 - Format auto-detects: human-readable on TTY, JSON lines under systemd/pipe (via `python-json-logger`).
 - Use `%s`/`%d` style formatting in log calls (not f-strings) so messages are only formatted if the level is enabled.
+
+### Testing — Red/Green TDD
+
+This project follows a **red/green TDD** discipline for all new code and bug fixes:
+
+1. **Red** — Write a failing test that demonstrates the desired behavior (or reproduces the bug).
+2. **Green** — Write the minimum code to make the test pass.
+3. **Refactor** — Clean up while keeping tests green.
+
+**Rules:**
+- Every new feature, bug fix, or behavioral change **must** have a test written **before** the implementation.
+- All tests must pass (`pytest`) before committing. Run `python -m pytest tests/ -v` to verify.
+- Tests must be fast: no network calls, no disk-based databases. Use the in-memory `db` fixture from `conftest.py`.
+- HTML parsing tests use static fixture files in `tests/fixtures/`; keep them minimal and realistic.
+- Parser tests (`test_parser.py`) test pure functions — HTML in, dicts out. No database.
+- Database/query tests (`test_database.py`, `test_queries.py`) use the `db` fixture (in-memory SQLite with full schema).
+- Use the sample record fixtures from `conftest.py` (`standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`) for tests that need record dicts.
+
+**Infrastructure:**
+- pytest config in `pytest.ini`; test discovery in `tests/`
+- `tests/conftest.py` — shared fixtures (in-memory DB, sample records, `FIXTURES_DIR` path)
+- `tests/fixtures/` — static HTML files for parser tests
+- `requirements.txt` includes `pytest` in the dev section
+
+**When to add tests:**
+- Fixing a bug → write a test that fails with the bug, then fix it
+- Adding a feature → write tests for the expected behavior first
+- Refactoring → ensure existing tests cover the behavior, add more if needed
+- Modifying `parser.py` → add/update `test_parser.py` with fixture HTML
+- Modifying `database.py` → add/update `test_database.py`
+- Modifying `queries.py` → add/update `test_queries.py`
 
 ### Templates
 - Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`) with custom `tailwind.config` in `base.html`
@@ -354,6 +391,14 @@ data/
 
 ## Common Tasks
 
+### Run tests
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python -m pytest tests/ -v
+```
+All tests must pass before committing. Tests use in-memory SQLite and static fixtures — no network, no disk DB, runs in <1 second.
+
 ### Run a manual scrape
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
@@ -422,7 +467,6 @@ Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~8
 - FTS indexes raw `license_type` values — text search for endorsement names won't find approved/discontinued records that store numeric codes (the endorsement filter works correctly)
 - No authentication — the app is fully public
 - No rate limiting on search/export
-- No requirements.txt or pyproject.toml yet
 - The city extraction regex misses ~6% of records (suite info between street and city); the address validator handles these correctly
 - Two source records have malformed cities (#436924: zip in city field, #078771: street name in city field); corrected manually in the locations table but corrections are overwritten by `--refresh-addresses` — needs a durable data-override mechanism
 - `ON DELETE CASCADE` on endorsement FK columns only applies to fresh databases (existing DBs retain original schema; manual cleanup in `_merge_placeholders` handles this)

@@ -109,6 +109,14 @@ wslcb-licensing-tracker/
 │           ├── notifications/  # Unified diffs of the notifications section
 │           ├── approvals/      # Unified diffs of the approvals section
 │           └── discontinued/   # Unified diffs of the discontinued section
+├── requirements.txt        # Python dependencies (runtime + dev)
+├── pytest.ini              # Pytest configuration
+├── tests/                  # Test suite
+│   ├── conftest.py         # Shared fixtures (in-memory DB, sample records)
+│   ├── test_parser.py      # Parser function tests
+│   ├── test_database.py    # Schema and helper tests
+│   ├── test_queries.py     # Record insert/query tests
+│   └── fixtures/           # Minimal HTML fixtures for parser tests
 ├── wslcb-web.service       # systemd service for the web app
 ├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
 └── wslcb-scraper.timer     # systemd timer (twice-daily: 12:30 AM and 6:30 AM Pacific)
@@ -129,7 +137,7 @@ cd wslcb-licensing-tracker
 
 python3 -m venv venv
 source venv/bin/activate
-pip install fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart python-json-logger
+pip install -r requirements.txt
 ```
 
 ### Run the initial scrape
@@ -308,6 +316,27 @@ This runs a two-phase process:
 2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
 Safe to re-run at any time. Address validation is deferred; run `python cli.py backfill-addresses` afterward to validate new locations.
+
+## Testing
+
+The project uses pytest with in-memory SQLite databases and static HTML fixtures. Tests run in under 1 second with no network calls.
+
+```bash
+source venv/bin/activate
+python -m pytest tests/ -v
+```
+
+The project follows **red/green TDD**: every new feature and bug fix starts with a failing test, then the minimum code to make it pass, then refactoring.
+
+Test structure:
+
+| File | Scope |
+|---|---|
+| `tests/test_parser.py` | Pure HTML parsing functions — all record types, edge cases |
+| `tests/test_database.py` | Schema initialization, location/source helpers |
+| `tests/test_queries.py` | Record insertion, deduplication, entity creation |
+| `tests/conftest.py` | Shared fixtures: in-memory DB, sample record dicts |
+| `tests/fixtures/` | Minimal HTML files exercising each record type and section |
 
 ## Data Source
 

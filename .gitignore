@@ -4,3 +4,4 @@ __pycache__/
 # All persistent data (DB + HTML snapshots) lives under data/
 data/
 env
+.pytest_cache/
