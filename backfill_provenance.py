@@ -18,9 +18,7 @@ from database import (
     SOURCE_TYPE_LIVE_SCRAPE, SOURCE_TYPE_CO_ARCHIVE,
     SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
-from scraper import URL
-from backfill_snapshots import _parse_snapshot
-from backfill_diffs import _discover_diff_files, _parse_diff_timestamp
+from parser import parse_snapshot, discover_diff_files, parse_diff_timestamp
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -47,7 +45,7 @@ def _link_snapshot_records(
     Returns (linked, missed) counts.
     """
     try:
-        records = _parse_snapshot(snap_path)
+        records = parse_snapshot(snap_path)
     except Exception as e:
         logger.warning("Failed to parse %s: %s", snap_path.name, e)
         return 0, 0
@@ -86,7 +84,7 @@ def backfill_provenance():
                 conn,
                 SOURCE_TYPE_LIVE_SCRAPE,
                 snapshot_path=snap_rel,
-                url=URL,
+                url=WSLCB_SOURCE_URL,
                 captured_at=row["started_at"],
                 scrape_log_id=row["id"],
             )
@@ -163,7 +161,7 @@ def backfill_provenance():
         # are 45 MB), match orphan records to diff files via scraped_at
         # timestamps.  Each diff has --- (old) and +++ (new) header
         # timestamps that backfill_diffs.py used as scraped_at.
-        diff_files = _discover_diff_files()
+        diff_files = discover_diff_files()
         logger.info(
             "Phase 3: processing %d CO diff archive files",
             len(diff_files),
@@ -177,9 +175,9 @@ def backfill_provenance():
                 with open(diff_path, encoding="utf-8") as f:
                     for line in f:
                         if line.startswith("--- "):
-                            old_ts = _parse_diff_timestamp(line.rstrip("\n"))
+                            old_ts = parse_diff_timestamp(line.rstrip("\n"))
                         elif line.startswith("+++ "):
-                            new_ts = _parse_diff_timestamp(line.rstrip("\n"))
+                            new_ts = parse_diff_timestamp(line.rstrip("\n"))
                             break
             except Exception as e:
                 logger.warning("Failed to read %s: %s", diff_path.name, e)

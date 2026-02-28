@@ -10,10 +10,6 @@ Safe to re-run at any time.  Address validation is deferred to a
 separate ``scraper.py --backfill-addresses`` pass.
 """
 import logging
-import re
-from pathlib import Path
-
-from bs4 import BeautifulSoup
 
 from database import (
     DATA_DIR, get_db, init_db, get_or_create_location,
@@ -26,37 +22,9 @@ from entities import (
 )
 from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from log_config import setup_logging
-from scraper import parse_records_from_table, SECTION_MAP
+from parser import parse_records_from_table, SECTION_MAP, snapshot_paths, extract_snapshot_date, parse_snapshot
 
 logger = logging.getLogger(__name__)
-
-
-def _snapshot_paths() -> list[Path]:
-    """Return all archived snapshot paths, sorted chronologically."""
-    return sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
-
-
-def _extract_snapshot_date(path: Path) -> str | None:
-    """Extract date string from snapshot filename (e.g. '2025_12_16')."""
-    m = re.search(r'(\d{4}_\d{2}_\d{2})', path.name)
-    return m.group(1) if m else None
-
-
-def _parse_snapshot(path: Path) -> list[dict]:
-    """Parse a snapshot file and return a list of record dicts."""
-    html = path.read_text(encoding="utf-8")
-    soup = BeautifulSoup(html, "lxml")
-    records = []
-    for table in soup.find_all("table"):
-        th = table.find("th")
-        if not th:
-            continue
-        header = th.get_text(strip=True).replace('\xa0', ' ')
-        if header not in SECTION_MAP:
-            continue
-        section_type = SECTION_MAP[header]
-        records.extend(parse_records_from_table(table, section_type))
-    return records
 
 
 # ── Phase 1: Ingest ──────────────────────────────────────────────────
@@ -292,7 +260,7 @@ def backfill_from_snapshots():
     """Ingest records from archived snapshots, then repair broken records."""
     init_db()
 
-    snapshots = _snapshot_paths()
+    snapshots = snapshot_paths()
     if not snapshots:
         logger.info("No archived snapshots found.")
         return
@@ -309,9 +277,9 @@ def backfill_from_snapshots():
         repair_code_name_endorsements(conn)
 
         for snap_path in snapshots:
-            snap_date = _extract_snapshot_date(snap_path)
+            snap_date = extract_snapshot_date(snap_path)
             try:
-                records = _parse_snapshot(snap_path)
+                records = parse_snapshot(snap_path)
             except Exception:
                 logger.exception("Failed to parse %s — skipping", snap_path.name)
                 continue

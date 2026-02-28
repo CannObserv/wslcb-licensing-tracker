@@ -42,13 +42,9 @@ afterward.
 import argparse
 import csv
 import logging
-import re
 from collections import Counter
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path
-
-from bs4 import BeautifulSoup
 
 from database import (
     DATA_DIR, get_db, init_db, get_or_create_source, link_record_source,
@@ -56,208 +52,12 @@ from database import (
 )
 from endorsements import discover_code_mappings, process_record, seed_endorsements, repair_code_name_endorsements
 from log_config import setup_logging
+from parser import (
+    discover_diff_files, extract_records_from_diff, SECTION_DIR_MAP,
+)
 from queries import insert_record, hydrate_records, RECORD_COLUMNS, RECORD_JOINS
-from scraper import parse_records_from_table
 
 logger = logging.getLogger(__name__)
-
-DIFF_DIR = DATA_DIR / "wslcb" / "licensinginfo-diffs"
-
-# Maps subdirectory names to the section_type values used in the DB.
-SECTION_DIR_MAP = {
-    "notifications": "new_application",
-    "approvals": "approved",
-    "discontinued": "discontinued",
-}
-
-_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-
-# ── Diff parsing ─────────────────────────────────────────────────────
-
-
-def _parse_diff_timestamp(header_line: str) -> str:
-    """Extract an ISO 8601 timestamp from a ``---`` or ``+++`` diff header.
-
-    Expected format: ``--- @\tWed, 07 Sep 2022 06:15:05 -0700``
-    Returns the current UTC time as fallback if parsing fails.
-    """
-    try:
-        # Strip the "--- @\t" / "+++ @\t" prefix.
-        raw = header_line.split("\t", 1)[1]
-        return parsedate_to_datetime(raw).isoformat()
-    except Exception:
-        return datetime.now(timezone.utc).isoformat()
-
-
-def _split_diff_lines(content: str):
-    """Split a unified diff into added, removed, and context line lists.
-
-    Returns ``(added, removed, new_with_ctx, old_with_ctx, old_ts, new_ts)``
-    where:
-
-    - *added* / *removed* contain only ``+`` / ``-`` lines (prefix stripped).
-    - *new_with_ctx* / *old_with_ctx* include context lines on both sides.
-    - *old_ts* / *new_ts* are ISO 8601 timestamps extracted from the
-      ``---`` / ``+++`` headers (used as ``scraped_at`` for recovered records).
-    """
-    added: list[str] = []
-    removed: list[str] = []
-    new_ctx: list[str] = []
-    old_ctx: list[str] = []
-    fallback_ts = datetime.now(timezone.utc).isoformat()
-    old_ts = fallback_ts
-    new_ts = fallback_ts
-
-    for line in content.split("\n"):
-        if line.startswith("--- "):
-            old_ts = _parse_diff_timestamp(line)
-            continue
-        if line.startswith("+++ "):
-            new_ts = _parse_diff_timestamp(line)
-            continue
-        if line.startswith("@@"):
-            continue
-        if line.startswith("+"):
-            stripped = line[1:]
-            added.append(stripped)
-            new_ctx.append(stripped)
-        elif line.startswith("-"):
-            stripped = line[1:]
-            removed.append(stripped)
-            old_ctx.append(stripped)
-        else:
-            # Context line — belongs to both sides.
-            new_ctx.append(line)
-            old_ctx.append(line)
-
-    return added, removed, new_ctx, old_ctx, old_ts, new_ts
-
-
-def _parse_html_lines(lines: list[str], section_type: str) -> list[dict]:
-    """Wrap *lines* in a ``<table>`` and parse via the scraper's parser."""
-    if not lines:
-        return []
-    html = "<table>" + "\n".join(lines) + "</table>"
-    soup = BeautifulSoup(html, "lxml")
-    table = soup.find("table")
-    if not table:
-        return []
-    return parse_records_from_table(table, section_type)
-
-
-def _is_valid(record: dict) -> bool:
-    """Return True if a record has the minimum required fields."""
-    return bool(
-        record.get("section_type")
-        and record.get("record_date")
-        and _ISO_DATE_RE.match(record.get("record_date", ""))
-        and record.get("license_number")
-        and record.get("application_type")
-    )
-
-
-def extract_records_from_diff(
-    filepath: Path, section_type: str
-) -> list[dict]:
-    """Extract deduplicated, validated records from a single diff file.
-
-    Uses the two-pass strategy described in the module docstring.
-    The supplemental (with-context) pass is only run when the primary
-    pass produced incomplete records at hunk boundaries, keeping
-    overall parse time low.
-    """
-    content = filepath.read_text(encoding="utf-8")
-    added, removed, new_ctx, old_ctx, old_ts, new_ts = _split_diff_lines(content)
-
-    # ── Primary pass (no context) ──
-    primary: dict[tuple, dict] = {}
-    has_incomplete = False
-    for lines, ts in ((added, new_ts), (removed, old_ts)):
-        for rec in _parse_html_lines(lines, section_type):
-            if _is_valid(rec):
-                rec["scraped_at"] = ts
-                key = (
-                    rec["section_type"],
-                    rec["record_date"],
-                    rec["license_number"],
-                    rec["application_type"],
-                )
-                primary.setdefault(key, rec)
-            elif rec.get("license_number"):
-                # Partial record — boundary artifact.
-                has_incomplete = True
-
-    # Fast path: skip the expensive supplemental parse when nothing
-    # was incomplete in the primary pass.
-    if not has_incomplete:
-        return list(primary.values())
-
-    # ── Supplemental pass (with context) ──
-    # Only recover records whose full 4-tuple key is absent from the
-    # primary results.  This preserves cases where the same license
-    # has two different application_types on the same date.
-    for lines, ts in ((new_ctx, new_ts), (old_ctx, old_ts)):
-        for rec in _parse_html_lines(lines, section_type):
-            if _is_valid(rec):
-                key = (
-                    rec["section_type"],
-                    rec["record_date"],
-                    rec["license_number"],
-                    rec["application_type"],
-                )
-                if key not in primary:
-                    rec["scraped_at"] = ts
-                    primary.setdefault(key, rec)
-
-    return list(primary.values())
-
-
-# ── Diff file discovery ──────────────────────────────────────────────
-
-
-def _discover_diff_files(
-    section: str | None = None,
-    single_file: str | None = None,
-) -> list[tuple[Path, str]]:
-    """Return ``[(path, section_type), ...]`` sorted by filename.
-
-    *section* limits to a single subdirectory (e.g. ``"notifications"``).
-    *single_file* overrides everything and processes just one file.
-    """
-    if single_file:
-        p = Path(single_file).resolve()
-        if not p.exists():
-            logger.error("File not found: %s", p)
-            return []
-        # Infer section from parent directory name.
-        dir_name = p.parent.name
-        if dir_name not in SECTION_DIR_MAP:
-            logger.error(
-                "Cannot infer section from directory '%s'. "
-                "Expected one of: %s",
-                dir_name,
-                list(SECTION_DIR_MAP.keys()),
-            )
-            return []
-        return [(p, SECTION_DIR_MAP[dir_name])]
-
-    dirs = (
-        {section: SECTION_DIR_MAP[section]}
-        if section and section in SECTION_DIR_MAP
-        else SECTION_DIR_MAP
-    )
-
-    result: list[tuple[Path, str]] = []
-    for dir_name, sec_type in dirs.items():
-        dir_path = DIFF_DIR / dir_name
-        if not dir_path.is_dir():
-            logger.warning("Directory not found: %s", dir_path)
-            continue
-        for fp in sorted(dir_path.glob("*.txt")):
-            result.append((fp, sec_type))
-
-    return result
 
 
 # ── CSV export ───────────────────────────────────────────────────────
@@ -364,7 +164,7 @@ def backfill_diffs(
     """Parse diff files and insert recovered records into the database."""
     init_db()
 
-    diff_files = _discover_diff_files(section=section, single_file=single_file)
+    diff_files = discover_diff_files(section=section, single_file=single_file)
     if limit is not None:
         diff_files = diff_files[:limit]
 

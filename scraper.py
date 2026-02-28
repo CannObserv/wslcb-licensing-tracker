@@ -1,7 +1,10 @@
-"""Scraper for WSLCB licensing activity page."""
+"""Scraper for WSLCB licensing activity page.
+
+Fetches the live WSLCB licensing page, archives the HTML, parses records,
+and inserts them into the database with endorsement processing, address
+validation, and application→outcome linking.
+"""
 import logging
-import re
-import sys
 from pathlib import Path
 
 import httpx
@@ -11,147 +14,16 @@ from database import (
     DATA_DIR, get_db, init_db, get_or_create_source, link_record_source,
     SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL,
 )
+from parser import SECTION_MAP, parse_records_from_table
 from queries import insert_record
 from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
-from address_validator import validate_record, validate_previous_location, backfill_addresses, refresh_addresses, TIMEOUT as _AV_TIMEOUT
-from link_records import link_new_record, build_all_links
+from address_validator import validate_record, validate_previous_location, TIMEOUT as _AV_TIMEOUT
+from link_records import link_new_record
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
-URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
-
-SECTION_MAP = {
-    "STATEWIDE NEW LICENSE APPLICATIONS": "new_application",
-    "STATEWIDE RECENTLY APPROVED LICENSES": "approved",
-    "STATEWIDE DISCONTINUED LICENSES": "discontinued",
-}
-
-DATE_FIELD_MAP = {
-    "new_application": "Notification Date:",
-    "approved": "Approved Date:",
-    "discontinued": "Discontinued Date:",
-}
-
-
-def parse_location(location: str) -> tuple[str, str, str]:
-    """Extract city, state, zip from a location string like '123 MAIN ST, SEATTLE, WA 98101'."""
-    if not location:
-        return "", "WA", ""
-    # Try to match: ..., CITY, ST ZIP
-    m = re.search(r',\s*([A-Z][A-Z .]+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)', location)
-    if m:
-        return m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
-    # Fallback: try ..., CITY, ST
-    m = re.search(r',\s*([A-Z][A-Z .]+?),\s*([A-Z]{2})', location)
-    if m:
-        return m.group(1).strip(), m.group(2).strip(), ""
-    return "", "WA", ""
-
-
-def normalize_date(date_str: str) -> str:
-    """Convert M/D/YYYY to YYYY-MM-DD for proper sorting."""
-    if not date_str:
-        return ""
-    try:
-        dt = datetime.strptime(date_str.strip(), "%m/%d/%Y")
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        return date_str.strip()
-
-
-def parse_records_from_table(table, section_type: str) -> list[dict]:
-    """Parse all records from a section table."""
-    records = []
-    rows = table.find_all("tr")
-    current = {}
-    date_field = DATE_FIELD_MAP[section_type]
-    scraped_at = datetime.now(timezone.utc).isoformat()
-
-    for row in rows:
-        cells = row.find_all("td")
-        if len(cells) != 2:
-            # If we have a partially built record, save it before skipping
-            continue
-
-        label = cells[0].get_text(strip=True)
-        value = cells[1].get_text(strip=True)
-
-        if label == date_field:
-            # Start of a new record — save previous if complete
-            if current.get("license_number"):
-                records.append(current)
-            current = {
-                "section_type": section_type,
-                "record_date": normalize_date(value),
-                "business_name": "",
-                "business_location": "",
-                "applicants": "",
-                "license_type": "",
-                "application_type": "",
-                "license_number": "",
-                "contact_phone": "",
-                "city": "",
-                "state": "WA",
-                "zip_code": "",
-                "previous_business_name": "",
-                "previous_applicants": "",
-                "previous_business_location": "",
-                "previous_city": "",
-                "previous_state": "",
-                "previous_zip_code": "",
-                "scraped_at": scraped_at,
-            }
-        elif label == "Business Name:":
-            current["business_name"] = value
-        elif label == "New Business Name:":
-            # ASSUMPTION records: buyer's business name
-            current["business_name"] = value
-        elif label == "Current Business Name:":
-            # ASSUMPTION records: seller's business name
-            current["previous_business_name"] = value
-        elif label == "Business Location:":
-            current["business_location"] = value
-            city, state, zip_code = parse_location(value)
-            current["city"] = city
-            current["state"] = state
-            current["zip_code"] = zip_code
-        elif label == "New Business Location:":
-            # CHANGE OF LOCATION records: new (destination) address
-            current["business_location"] = value
-            city, state, zip_code = parse_location(value)
-            current["city"] = city
-            current["state"] = state
-            current["zip_code"] = zip_code
-        elif label == "Current Business Location:":
-            # CHANGE OF LOCATION records: previous (origin) address
-            current["previous_business_location"] = value
-            city, state, zip_code = parse_location(value)
-            current["previous_city"] = city
-            current["previous_state"] = state
-            current["previous_zip_code"] = zip_code
-        elif label == "Applicant(s):":
-            current["applicants"] = value
-        elif label == "New Applicant(s):":
-            # ASSUMPTION records: buyer's applicants
-            current["applicants"] = value
-        elif label == "Current Applicant(s):":
-            # ASSUMPTION records: seller's applicants
-            current["previous_applicants"] = value
-        elif label == "License Type:":
-            current["license_type"] = value
-        elif label in ("Application Type:", "\\Application Type:"):
-            current["application_type"] = value
-        elif label == "License Number:":
-            current["license_number"] = value
-        elif label == "Contact Phone:":
-            current["contact_phone"] = value
-
-    # Don't forget the last record
-    if current.get("license_number"):
-        records.append(current)
-
-    return records
+URL = WSLCB_SOURCE_URL
 
 
 def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
@@ -325,26 +197,3 @@ def scrape():
             conn.commit()
             logger.error("Scrape failed: %s", e)
             raise
-
-
-if __name__ == "__main__":
-    setup_logging()
-    if "--refresh-addresses" in sys.argv:
-        init_db()
-        with get_db() as conn:
-            refresh_addresses(conn)
-    elif "--backfill-addresses" in sys.argv:
-        init_db()
-        with get_db() as conn:
-            backfill_addresses(conn)
-    elif "--backfill-assumptions" in sys.argv or "--backfill-from-snapshots" in sys.argv:
-        from backfill_snapshots import backfill_from_snapshots
-        backfill_from_snapshots()
-    elif "--rebuild-links" in sys.argv:
-        init_db()
-        with get_db() as conn:
-            build_all_links(conn)
-    else:
-        # "scrape" is accepted as an explicit positional arg (used by
-        # the wslcb-task@ systemd template) but is not required.
-        scrape()
