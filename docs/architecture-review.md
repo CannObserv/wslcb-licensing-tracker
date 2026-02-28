@@ -10,7 +10,7 @@
 
 The WSLCB Licensing Tracker has grown organically from a simple scraper+dashboard into a data platform with 90K records, 60K entities, 280K provenance links, entity normalization, address validation, application→outcome linking, and multiple ingestion pipelines. The code works reliably, but it was designed one feature at a time. We're now at the point where the complexity exceeds what the current flat architecture can comfortably support.
 
-This document diagnoses the structural problems, then proposes a layered architecture that separates **source data preservation**, **replicable transformation**, **external service integration**, and **analysis/presentation** into distinct, independently testable concerns.
+This document diagnoses the structural problems, then proposes a practical refactoring plan focused on what we can do now: unifying the ingestion pipeline, separating concerns into layers, establishing data integrity guarantees, and making the codebase testable. Future capabilities like entity resolution services and network graph analysis are acknowledged as directions but don't drive the architecture — we design for them by keeping things clean and extensible, not by building frameworks for services that don't exist yet.
 
 ---
 
@@ -31,28 +31,26 @@ This document diagnoses the structural problems, then proposes a layered archite
 The codebase has a flat structure where any module can reach into any other:
 
 ```
-app.py ──→ queries.py ──→ endorsements.py
-    │          │──→ entities.py
-    │          │──→ link_records.py
-    │          │──→ database.py
-    │──→ entities.py
-    │──→ endorsements.py
-    │──→ link_records.py
-    │──→ database.py
-    │──→ log_config.py
+app.py ───→ queries.py ───→ endorsements.py
+    │          │───→ entities.py
+    │          │───→ link_records.py
+    │          │───→ database.py
+    │───→ entities.py
+    │───→ endorsements.py
+    │───→ link_records.py
+    │───→ database.py
+    │───→ log_config.py
 
-scraper.py ──→ queries.py
-    │──→ database.py
-    │──→ endorsements.py
-    │──→ address_validator.py
-    │──→ link_records.py
-    │──→ backfill_snapshots.py
+scraper.py ───→ queries.py
+    │───→ database.py
+    │───→ endorsements.py
+    │───→ address_validator.py
+    │───→ link_records.py
+    │───→ backfill_snapshots.py
 
-backfill_snapshots.py ──→ scraper.py (parse_records_from_table)
-backfill_diffs.py ──→ scraper.py (parse_records_from_table)
-backfill_provenance.py ──→ backfill_snapshots.py (_parse_snapshot)
-    │──→ backfill_diffs.py (_discover_diff_files)
-    │──→ scraper.py (URL)
+backfill_snapshots.py ───→ scraper.py (parse_records_from_table)
+backfill_diffs.py ───→ scraper.py (parse_records_from_table)
+backfill_provenance.py ───→ scraper.py, backfill_snapshots.py, backfill_diffs.py
 ```
 
 `queries.py` is a hub that imports from 4 other modules and uses 3 deferred imports to avoid circular dependencies — the classic symptom of missing layer boundaries. `app.py` imports 25+ symbols from 6 modules.
@@ -70,11 +68,11 @@ Three scripts independently implement the same "insert record → process endors
 | Link entities | ✓ | partial | ✗ |
 | Link outcomes | ✓ | ✗ | ✗ |
 
-Each copy has slightly different post-insert steps. Adding a new step (e.g., entity resolution via external service) requires editing 3 files and remembering which steps each one skips.
+Each copy has slightly different post-insert steps. Adding a new enrichment step requires editing 3 files and remembering which steps each one skips.
 
 #### Problem 3: Presentation Logic in Data Layer
 
-`get_outcome_status()` in `link_records.py` returns CSS class names (`bg-green-50 border-green-200`), emoji (`✅`, `🚫`), and display strings. This is presentation logic embedded in a data module, making it impossible to reuse the outcome logic for an API or different frontend.
+`get_outcome_status()` in `link_records.py` returns CSS class names (`bg-green-50 border-green-200`), emoji (`✅`, `🚫`), and display strings. This is presentation logic embedded in a data module.
 
 Similarly, `detail.html` contains an 8-variable provenance-aggregation loop that is really controller/service logic — untestable in Jinja2.
 
@@ -82,12 +80,11 @@ Similarly, `detail.html` contains an 8-variable provenance-aggregation loop that
 
 `init_db()` is 220 lines that mixes table creation, data seeding, index creation, and inline migrations (`try: ALTER TABLE ... except: pass`). Migrations in `migrate_locations.py` duplicate the `CREATE TABLE` DDL. There's no migration framework, no version tracking, no way to know which migrations have run.
 
-#### Problem 5: No Transformation Layer
+#### Problem 5: No Separation of Raw vs. Enriched Data
 
-Raw source data and derived/enriched data live in the same tables with no distinction. The `license_records` table contains both raw scraped fields and cleaned/normalized values. There's no way to:
-- Re-derive enrichments without re-scraping
-- Audit what the original source said vs. what we transformed it into
-- Replay transformations after fixing a bug in the cleaning logic
+Raw source data and derived/enriched data live in the same columns with no distinction. `business_name`, `previous_business_name`, `applicants`, and `previous_applicants` are cleaned in-place at ingest time (uppercased, punctuation stripped). If we fix a bug in the cleaning logic, we can't re-derive without re-scraping — or more precisely, without replaying from archived snapshots, which is possible but requires running the full backfill pipeline.
+
+The archived HTML snapshots are the true source of truth. But the path from snapshot → current DB state runs through ingestion code that has changed over time. There's no way to verify that the current DB state matches what a clean replay would produce.
 
 #### Problem 6: No Test Infrastructure
 
@@ -110,84 +107,80 @@ Zero tests. The module-level globals (`DATA_DIR`, `DB_PATH`), inline SQL, and in
 
 ### 2.1 Design Principles
 
-1. **Source truth is immutable.** Raw HTML snapshots and the parsed-but-untransformed records are never modified.
-2. **Transformations are replayable.** Every enrichment (address standardization, entity normalization, endorsement resolution, outcome linking) is a discrete step that can be re-run from source data.
-3. **External services are adapters.** Address validation, future entity resolution, etc. are behind clean interfaces that can be swapped, mocked, or rate-limited independently.
-4. **Layers enforce direction.** Data flows down (source → staging → enriched → presentation). Dependencies point inward. Presentation never writes to the DB.
+1. **Source truth is immutable.** Raw HTML snapshots are preserved. Parsed-but-untransformed field values are recoverable.
+2. **Transformations are replayable.** Every enrichment (address standardization, entity normalization, endorsement resolution, outcome linking) is a discrete step that can be re-run.
+3. **External services are behind clean interfaces.** `address_validator.py` already does this well. Future services should follow the same pattern: cacheable results, graceful degradation, no DB coupling in the adapter itself.
+4. **Layers have direction.** Data flows down (source → raw → enriched → presentation). Dependencies point inward. Presentation never writes to the DB.
 5. **Tests are possible.** Every module can be tested with an in-memory SQLite database and no network calls.
 
-### 2.2 Layered Architecture
+### 2.2 Three-Layer Architecture
+
+The current codebase has two implicit layers ("stuff that writes" and "stuff that reads/displays") with no boundary between them. We introduce three explicit layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      PRESENTATION LAYER                        │
-│   app.py (FastAPI routes)  │  templates/  │  future: REST API  │
-│   Reads from enriched views. No writes. No business logic.     │
+│   app.py (routes)  │  templates/  │  display.py (formatting)   │
+│   Reads enriched data. No writes. No business logic.           │
+│   Owns: CSS mappings, badge rendering, provenance summaries.   │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ reads
 ┌──────────────────────────────▼──────────────────────────────────┐
-│                      ANALYSIS / QUERY LAYER                    │
-│   queries.py    │  analysis.py (future)  │  export.py (future) │
-│   Search, filter, stats, network exploration.                  │
-│   Reads enriched data. Produces display-ready structures.      │
-│   Owns display formatting (outcome badges, provenance summary).│
+│                    DOMAIN LAYER                                 │
+│   queries.py (search/filter/stats)                              │
+│   endorsements.py │ entities.py │ link_records.py               │
+│   pipeline.py (unified ingest orchestration)                    │
+│   address_validator.py (external service client)                │
+│   Owns: all writes, all business logic, all enrichment.         │
+│   Returns semantic data (status strings, not CSS classes).      │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │ reads
+                               │ reads/writes
 ┌──────────────────────────────▼──────────────────────────────────┐
-│                     ENRICHMENT / TRANSFORM LAYER               │
-│   pipeline.py  │  endorsements.py  │  entities.py              │
-│   link_records.py  │  transformations are replayable           │
-│   Orchestrates: parse → insert_raw → enrich → link.            │
-│   Each enrichment step is idempotent.                          │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ reads raw, writes enriched
-┌──────────────────────────────▼──────────────────────────────────┐
-│                    EXTERNAL SERVICE ADAPTERS                    │
-│   address_validator.py  │  entity_resolver.py (future)         │
-│   Clean interfaces. Cacheable. Mockable. Rate-limited.         │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ called by enrichment layer
-┌──────────────────────────────▼──────────────────────────────────┐
-│                      INGESTION LAYER                           │
-│   parser.py (HTML→dicts)  │  ingest.py (dicts→raw DB rows)    │
-│   scraper.py (fetch+archive) │  backfill_*.py (replay sources) │
-│   Writes raw data + provenance. Never enriches.                │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ writes
-┌──────────────────────────────▼──────────────────────────────────┐
-│                      STORAGE LAYER                             │
-│   schema.py (DDL + migrations)  │  db.py (connections)         │
-│   SQLite tables, indexes, FTS, views.                          │
-│   Raw tables vs. enriched tables clearly separated.            │
-└────────────────────────────────────────────────────────────────┘
+│                      STORAGE LAYER                              │
+│   db.py (connections, WAL, pragmas)                             │
+│   schema.py (DDL, migrations, version tracking)                 │
+│   parser.py (HTML → dicts; pure, no DB)                         │
+│   SQLite: raw tables, enriched junction tables, FTS, indexes.   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.3 Key Architectural Changes
+This is deliberately simple. Three layers, not five. No `adapters/` package with a base class hierarchy for one concrete implementation. No `analysis/` package for code that doesn't exist yet. The package structure should reflect what the code actually does today, with room to split further when there's a real reason.
 
-#### A. Extract a Parser Module (`parser.py`)
+### 2.3 Concrete Changes
 
-**Problem:** `parse_records_from_table()` lives in `scraper.py` but is imported by `backfill_snapshots.py`, `backfill_diffs.py`, and `backfill_provenance.py`.
+#### A. Extract a Parser Module
 
-**Solution:** Move all HTML-to-dict parsing into `parser.py`. This module takes raw HTML and returns structured Python dicts. No DB access, no side effects.
+**Problem:** `parse_records_from_table()` lives in `scraper.py` but is imported by 3 other modules. `backfill_provenance.py` imports underscore-prefixed "private" functions from `backfill_snapshots.py` and `backfill_diffs.py`.
+
+**Solution:** Move all HTML/diff parsing into `parser.py`. Pure functions: HTML in, dicts out. No DB, no side effects.
 
 ```python
 # parser.py — Pure parsing, no side effects
-def parse_records_from_html(html: str) -> list[dict]:
-    """Parse WSLCB HTML into a list of record dicts."""
-    ...
+def parse_section_table(table_element, section_type: str) -> list[dict]:
+    """Parse a single WSLCB section <table> into record dicts."""
 
-def parse_records_from_table(table_element, section_type: str) -> list[dict]:
-    """Parse a single section table into record dicts."""
-    ...
+def parse_snapshot(html: str) -> dict[str, list[dict]]:
+    """Parse a full WSLCB page into {section_type: [records]}."""
+
+def parse_diff_records(diff_text: str, section_type: str) -> list[dict]:
+    """Extract records from a unified diff of a WSLCB section."""
+
+def discover_snapshots(data_dir: Path) -> list[SnapshotInfo]:
+    """Find all archived HTML snapshots, sorted by date."""
+
+def discover_diff_files(data_dir: Path) -> list[DiffFileInfo]:
+    """Find all archived diff files with parsed metadata."""
 ```
 
-**Effort:** Small. Mechanical move. Unblocks all other refactoring.
+This eliminates the circular `backfill_* → scraper → backfill_*` dependency and promotes private functions to a proper public API.
 
-#### B. Unified Ingestion Pipeline (`pipeline.py`)
+**Effort:** Small. Mechanical extraction and rename.
 
-**Problem:** Three scripts duplicate the insert→enrich→link chain with different subsets of steps.
+#### B. Unified Ingestion Pipeline
 
-**Solution:** A single pipeline function that all ingestion paths call:
+**Problem:** Three scripts independently implement insert→enrich→link with different subsets of steps.
+
+**Solution:** A single `ingest_record()` function that all ingestion paths call:
 
 ```python
 # pipeline.py — The one true ingestion path
@@ -203,403 +196,295 @@ class IngestOptions:
 def ingest_record(db, record: dict, options: IngestOptions) -> IngestResult:
     """Insert a raw record and run all enrichment steps.
     
-    Steps:
-    1. insert_raw_record (dedup, create locations)
-    2. process_endorsements
-    3. link_provenance (if source_id provided)
-    4. validate_address (if enabled)
-    5. link_entities (if enabled) 
-    6. link_outcome (if enabled)
+    Steps (each idempotent, each optional):
+    1. Insert raw record (dedup, create locations)
+    2. Process endorsements
+    3. Link provenance (if source_id provided)
+    4. Validate addresses (if enabled and API available)
+    5. Link entities (if enabled)
+    6. Link outcomes (if enabled)
     
-    Each step is idempotent. Failures in optional steps 
-    are logged but don't abort the pipeline.
+    Failures in steps 3-6 are logged but don't abort.
+    Returns the record ID and which steps succeeded.
     """
-    ...
 
 def ingest_batch(db, records: list[dict], options: IngestOptions) -> BatchResult:
     """Ingest multiple records with progress logging and batch commits."""
-    ...
 ```
 
-Then `scraper.py`, `backfill_snapshots.py`, and `backfill_diffs.py` each become thin shells:
-- **scraper.py:** Fetch HTML → archive → parse → `ingest_batch(options=IngestOptions())`
-- **backfill_snapshots.py:** Discover files → parse → `ingest_batch(options=IngestOptions(validate_addresses=False))`
-- **backfill_diffs.py:** Parse diffs → `ingest_batch(options=IngestOptions(validate_addresses=False, link_entities=False))`
+After this, each ingestion script becomes a thin shell:
+- **`scraper.py`:** Fetch HTML → archive → parse → `ingest_batch(options=IngestOptions())`
+- **`backfill_snapshots.py`:** Discover files → parse → `ingest_batch(options=IngestOptions(validate_addresses=False))`  
+- **`backfill_diffs.py`:** Parse diffs → `ingest_batch(options=IngestOptions(validate_addresses=False, link_entities=False))`
 
-**Effort:** Medium. Requires untangling the three scripts, but each step is already a callable function.
+The repair logic in `backfill_snapshots.py` (fixing broken ASSUMPTION and CHANGE OF LOCATION records) stays in that module — it's genuinely source-specific, not part of the general pipeline.
 
-#### C. Separate Raw vs. Enriched Data
+**Effort:** Medium. The individual steps already exist as callable functions. The work is wiring them into a single orchestrator and updating callers.
 
-**Problem:** Raw source data and derived enrichments are intermingled in `license_records`. If we fix a bug in entity cleaning or endorsement resolution, we can't replay without re-scraping.
+#### C. Presentation Separation
 
-**Solution:** Introduce a conceptual (and eventually physical) separation:
+**Problem:** `get_outcome_status()` returns CSS classes and emoji. `detail.html` aggregates provenance data in Jinja2.
 
-**Phase 1 — Logical separation (no schema change):**
-- Document which columns are "raw" (from source) vs. "enriched" (derived)
-- Ensure all enrichment is done via the pipeline, never inline during parsing
-- Add a `record_enrichments` metadata table tracking which enrichment steps have been applied to each record and when
+**Solution:** Two concrete changes:
 
-**Phase 2 — Physical separation (future, optional):**
-- Raw columns stay on `license_records`: `section_type`, `record_date`, `business_name` (raw), `license_type` (raw), `application_type`, `license_number`, `contact_phone`, `applicants` (raw), etc.
-- Enriched data lives in junction/satellite tables (already partially true): `record_endorsements`, `record_entities`, `record_links`, `locations` (with standardized fields)
-- The raw `applicants` text column and the normalized `record_entities` junction table coexist — the text is source truth, the junction is derived
+1. **`get_outcome_status()` returns semantic data:**
 
-This is already ~80% of the current design. The main gap is that `business_name`, `previous_business_name`, `applicants`, and `previous_applicants` are cleaned in-place at ingest time (uppercased, punctuation stripped). Instead:
-- Store the raw value as-is from the source
-- Apply cleaning as an enrichment step that writes to the entity junction table
-- For display/search, prefer the enriched entity names; fall back to raw
+```python
+# link_records.py — returns data, not CSS
+def get_outcome_status(db, record_id, section_type, ...) -> dict:
+    return {
+        'status': 'approved',        # semantic enum
+        'detail': 'Approved on 2025-06-15 (12 days)',
+        'link_id': 42,
+        'confidence': 'high',
+    }
 
-**Effort:** Phase 1 is small (documentation + metadata table). Phase 2 is medium (requires careful migration).
+# display.py — maps semantic status → presentation
+OUTCOME_STYLES = {
+    'approved':     {'icon': '✅', 'bg': 'bg-green-50',  'border': 'border-green-200',  'text': 'text-green-800'},
+    'discontinued': {'icon': '🚫', 'bg': 'bg-red-50',    'border': 'border-red-200',    'text': 'text-red-800'},
+    'pending':      {'icon': '⏳', 'bg': 'bg-yellow-50', 'border': 'border-yellow-200', 'text': 'text-yellow-800'},
+    'unknown':      {'icon': '❓', 'bg': 'bg-gray-50',   'border': 'border-gray-200',   'text': 'text-gray-600'},
+    'data_gap':     {'icon': '⚠️',  'bg': 'bg-amber-50',  'border': 'border-amber-200',  'text': 'text-amber-700'},
+}
+
+def format_outcome(outcome: dict) -> dict:
+    """Add display properties to a semantic outcome dict."""
+    style = OUTCOME_STYLES[outcome['status']]
+    return {**outcome, **style}
+```
+
+2. **Provenance aggregation moves to a Python function:**
+
+```python
+# In queries.py or a helper
+def summarize_provenance(sources: list[dict]) -> list[dict]:
+    """Group sources by type, compute counts and date ranges."""
+```
+
+The template receives pre-computed data and just renders it.
+
+**Effort:** Small. The logic already exists; it just needs to move.
 
 #### D. Schema Migration Framework
 
-**Problem:** Migrations are inline `try/except ALTER TABLE` blocks in `init_db()`. No version tracking. DDL duplicated in `migrate_locations.py`.
+**Problem:** Migrations are inline `try/except ALTER TABLE` blocks in `init_db()`. No version tracking.
 
-**Solution:** A simple, pragmatic migration system (not Alembic — overkill for SQLite):
+**Solution:** Use SQLite's built-in `PRAGMA user_version`:
 
 ```python
 # schema.py
-
 MIGRATIONS = [
-    (1, "initial_schema", _create_initial_tables),
-    (2, "add_locations", _migrate_to_locations),
-    (3, "add_provenance", _add_provenance_tables),
-    (4, "add_record_links", _add_record_links),
-    # ...
+    (1, "initial_schema",       _create_initial_tables),
+    (2, "add_locations",         _migrate_to_locations),
+    (3, "add_provenance",        _add_provenance_tables),
+    (4, "add_record_links",      _add_record_links),
+    (5, "add_enrichment_tracking", _add_enrichment_tracking),
 ]
 
 def migrate(db):
-    """Run all pending migrations in order."""
-    current = _get_schema_version(db)
+    """Run all pending migrations."""
+    current = db.execute("PRAGMA user_version").fetchone()[0]
     for version, name, fn in MIGRATIONS:
         if version > current:
+            logger.info("Running migration %d: %s", version, name)
             fn(db)
-            _set_schema_version(db, version)
+            db.execute(f"PRAGMA user_version = {version}")
             db.commit()
 ```
 
-Using SQLite's built-in `PRAGMA user_version` for version tracking. Each migration is a function. They run in order, once, tracked.
+For the existing database, we set `user_version` to the current state (say, 4) and only new migrations run going forward. The existing inline `try/except` blocks become unnecessary.
 
-**Effort:** Medium. Retrofitting requires declaring current state as version N and adding new migrations going forward. Existing inline migrations become no-ops once the current version is set.
+**Effort:** Medium. Retrofitting means declaring "version 4 = current state" and adding future migrations as functions. The existing code in `init_db()` can be gradually absorbed.
 
-#### E. Presentation Separation
+#### E. Split `database.py`
 
-**Problem:** `get_outcome_status()` returns CSS classes. `detail.html` aggregates provenance data. The query layer is coupled to the specific frontend.
+**Problem:** `database.py` (525 lines) mixes connection management, all DDL, FTS setup, data seeding, helper functions (`get_or_create_location`, `get_or_create_source`, `link_record_source`), and imports a migration module.
 
-**Solution:**
+**Solution:** Split into two files:
+- **`db.py`** — Connection management, `DATA_DIR`/`DB_PATH`, WAL mode, pragmas. Small.
+- **`schema.py`** — All DDL, migrations, FTS setup, index creation, seeding. Where `init_db()` lives (cleaned up).
 
-1. **`get_outcome_status()` returns semantic data, not CSS:**
-```python
-# Returns:
-@dataclass
-class OutcomeStatus:
-    status: str  # 'approved', 'discontinued', 'pending', 'unknown', 'data_gap'
-    detail: str  # 'Approved on 2025-06-15 (12 days)'
-    link_id: int | None
-    confidence: str | None
+The helper functions (`get_or_create_location`, `get_or_create_source`, `link_record_source`) move to whichever domain module uses them — `get_or_create_location` is called by `insert_record`, so it belongs near the pipeline. `get_or_create_source` and `link_record_source` are provenance operations.
 
-# Presentation layer maps status → CSS/emoji:
-OUTCOME_DISPLAY = {
-    'approved': {'icon': '✅', 'bg': 'bg-green-50', 'border': 'border-green-200', ...},
-    ...
-}
+**Effort:** Small-medium. Mostly file reorganization.
+
+#### F. Extract CLI from `scraper.py`
+
+**Problem:** `scraper.py`'s `__main__` block dispatches to `--refresh-addresses`, `--backfill-addresses`, `--backfill-from-snapshots`, `--rebuild-links` — none of which are scraping. It's a de-facto CLI entry point for the whole project.
+
+**Solution:** Either:
+- A `cli.py` with `argparse` subcommands (`scrape`, `backfill-snapshots`, `backfill-diffs`, `refresh-addresses`, `rebuild-links`), or
+- Keep each script as its own entry point but remove the dispatch from `scraper.py`
+
+The first option is cleaner. The systemd service files would change from `python scraper.py` to `python cli.py scrape`.
+
+**Effort:** Small.
+
+#### G. Test Infrastructure
+
+**Problem:** Zero tests. Untestable architecture (globals, side effects, no DI).
+
+**Solution:** Start with the highest-value, lowest-effort tests:
+
+```
+tests/
+├── conftest.py           # In-memory DB fixture, sample record dicts
+├── test_parser.py        # Pure functions, no DB needed
+├── test_pipeline.py      # Ingest into test DB, verify enrichments
+├── test_endorsements.py  # Seed + resolve codes
+├── test_entities.py      # Parse, clean, classify
+└── test_links.py         # Link matching algorithm
 ```
 
-2. **Provenance aggregation moves to a query/service function:**
-```python
-def get_provenance_summary(sources: list[dict]) -> dict:
-    """Aggregate source records into display-ready summary."""
-    # Returns: {type_slug: {label, count, date_range, icon, sources: [...]}}
-```
+The key enabler is making `get_db()` / `init_db()` accept a path parameter (or use a factory) so tests can use `:memory:` or a temp file. This is a small change with outsized impact.
 
-3. **Templates become dumb renderers** — they receive pre-computed display data, no business logic.
-
-**Effort:** Small-to-medium. Most of the logic already exists, just needs to move.
-
-#### F. External Service Adapter Pattern
-
-**Problem:** `address_validator.py` is well-isolated, but there's no consistent pattern for adding future services (entity resolution, geocoding, etc.).
-
-**Solution:** Establish a consistent adapter interface:
-
-```python
-# adapters/base.py
-class ServiceAdapter:
-    """Base for external service integrations."""
-    def __init__(self, api_key: str | None = None, base_url: str | None = None):
-        ...
-    
-    def is_available(self) -> bool:
-        """Check if the service is configured and reachable."""
-        ...
-    
-    def health_check(self) -> dict:
-        """Return service status for monitoring."""
-        ...
-
-# adapters/address_validator.py  (refactored from current)
-class AddressValidator(ServiceAdapter):
-    def validate(self, raw_address: str) -> StandardizedAddress | None:
-        ...
-    
-    def validate_batch(self, addresses: list[str]) -> list[StandardizedAddress | None]:
-        ...
-
-# adapters/entity_resolver.py  (future)
-class EntityResolver(ServiceAdapter):
-    def resolve(self, name: str, entity_type: str) -> ResolvedEntity | None:
-        """Match a name to a canonical entity via external service."""
-        ...
-    
-    def find_connections(self, entity_id: int) -> list[EntityConnection]:
-        """Discover relationships between entities."""
-        ...
-```
-
-Key properties:
-- **Cacheable:** Results are stored in the DB (like `locations.address_validated_at`). The adapter is only called for cache misses.
-- **Mockable:** Tests inject a fake adapter. No network calls in tests.
-- **Graceful degradation:** If the service is down, the pipeline continues and marks records for later enrichment.
-- **Rate-limited:** Adapters own their own rate limiting (sleep, backoff, concurrency).
-
-**Effort:** Small for the pattern. Individual service implementations are separate work items.
-
-#### G. Entity Network Analysis Foundation
-
-This is the primary analytical capability we're building toward. The current entity system stores names and links them to records. The next level is understanding **relationships between entities** — who works with whom, which entities appear across multiple businesses, how ownership networks form.
-
-**Data model extensions:**
-
-```sql
--- Entity aliases / canonical resolution
-CREATE TABLE entity_aliases (
-    id INTEGER PRIMARY KEY,
-    entity_id INTEGER NOT NULL REFERENCES entities(id),
-    alias_name TEXT NOT NULL,
-    source TEXT NOT NULL,  -- 'name_variant', 'external_resolution', 'manual'
-    confidence REAL DEFAULT 1.0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Entity-to-entity relationships (derived)
-CREATE TABLE entity_relationships (
-    id INTEGER PRIMARY KEY,
-    entity_a_id INTEGER NOT NULL REFERENCES entities(id),
-    entity_b_id INTEGER NOT NULL REFERENCES entities(id),
-    relationship_type TEXT NOT NULL,  -- 'co_applicant', 'successor', 'shared_address'
-    strength REAL DEFAULT 1.0,  -- number of shared records, normalized
-    first_seen_date TEXT,
-    last_seen_date TEXT,
-    metadata TEXT DEFAULT '{}',
-    UNIQUE(entity_a_id, entity_b_id, relationship_type)
-);
-
--- License lifecycle (one row per license_number, derived)
-CREATE TABLE license_profiles (
-    license_number TEXT PRIMARY KEY,
-    first_seen_date TEXT,
-    last_seen_date TEXT,
-    current_business_name TEXT,
-    current_location_id INTEGER REFERENCES locations(id),
-    application_count INTEGER DEFAULT 0,
-    assumption_count INTEGER DEFAULT 0,
-    endorsement_ids TEXT DEFAULT '[]',  -- JSON array
-    status TEXT,  -- 'active', 'discontinued', 'pending'
-    updated_at TEXT
-);
-```
-
-**Derived analysis queries (future `analysis.py`):**
-
-```python
-def build_entity_graph(db) -> None:
-    """Derive entity_relationships from co-occurrence in records.
-    
-    Two entities are 'co_applicant' if they appear on the same record.
-    Strength = number of shared records.
-    """
-
-def get_entity_network(db, entity_id: int, depth: int = 2) -> NetworkGraph:
-    """Get the N-hop neighborhood of an entity.
-    
-    Returns nodes (entities) and edges (relationships) for visualization.
-    """
-
-def get_license_timeline(db, license_number: str) -> list[TimelineEvent]:
-    """Complete lifecycle of a license: applications, approvals, 
-    transfers, location changes, discontinuances."""
-
-def find_entity_clusters(db) -> list[EntityCluster]:
-    """Identify groups of entities that frequently co-occur.
-    Connected components in the co-applicant graph."""
-```
-
-**Effort:** Medium-large. The schema changes are straightforward. The graph derivation requires careful SQL. The visualization is a separate frontend effort.
+**Effort:** Medium for initial setup + first batch of tests. Ongoing.
 
 ---
 
 ## Part 3: Implementation Roadmap
 
-Phased plan. Each phase delivers standalone value and can be paused.
+Three phases. Each delivers standalone value. No phase depends on hypothetical future services.
 
-### Phase 0: Foundation (prep work)
-**Goal:** Enable all subsequent refactoring without breaking the running system.
+### Phase 1: Untangle (foundation)
+**Goal:** Break the circular dependencies, enable testing, establish conventions.
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| 0.1 | Add `requirements.txt` / `pyproject.toml` | S |
-| 0.2 | Add basic test infrastructure (`pytest`, test DB fixture, `conftest.py`) | S |
-| 0.3 | Extract `parser.py` from `scraper.py` | S |
-| 0.4 | Extract CLI dispatch from `scraper.py` into `cli.py` or use proper arg parsing | S |
+| # | Task | Effort | Why |
+|---|------|--------|-----|
+| 1.1 | Add `requirements.txt` | S | Reproducible installs |
+| 1.2 | Extract `parser.py` from `scraper.py` | S | Breaks circular deps, enables pure-function tests |
+| 1.3 | Extract CLI dispatch from `scraper.py` into `cli.py` | S | `scraper.py` becomes single-purpose |
+| 1.4 | Make `get_db()`/`init_db()` accept a path parameter | S | Enables test fixtures |
+| 1.5 | Add `pytest` + `conftest.py` with in-memory DB fixture | S | First tests possible |
+| 1.6 | Write tests for parser (pure functions, no DB) | S | Highest-value first tests |
 
-### Phase 1: Pipeline Unification
-**Goal:** One ingestion path. All enrichments are discrete, replayable steps.
+**Outcome:** No behavioral changes. Cleaner imports. Tests exist.
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| 1.1 | Create `pipeline.py` with `ingest_record()` / `ingest_batch()` | M |
-| 1.2 | Refactor `scraper.py` to use pipeline | M |
-| 1.3 | Refactor `backfill_snapshots.py` to use pipeline | M |
-| 1.4 | Refactor `backfill_diffs.py` to use pipeline | M |
-| 1.5 | Add `record_enrichments` tracking table | S |
-| 1.6 | Write tests for the pipeline | M |
+### Phase 2: Unify (pipeline + layers)
+**Goal:** One ingestion path. Clear layer boundaries. Data integrity tracking.
 
-### Phase 2: Layer Separation  
-**Goal:** Clean dependency graph. Presentation can't reach into storage.
+| # | Task | Effort | Why |
+|---|------|--------|-----|
+| 2.1 | Create `pipeline.py` with `ingest_record()` / `ingest_batch()` | M | Eliminates triplicated insert→enrich→link |
+| 2.2 | Refactor `scraper.py` to use pipeline | M | First consumer |
+| 2.3 | Refactor `backfill_snapshots.py` to use pipeline | M | Second consumer |
+| 2.4 | Refactor `backfill_diffs.py` to use pipeline | M | Third consumer |
+| 2.5 | Move presentation out of `get_outcome_status()` into `display.py` | S | Data layer returns data, not CSS |
+| 2.6 | Move provenance aggregation out of `detail.html` | S | Controller logic in Python, not Jinja2 |
+| 2.7 | Split `database.py` into `db.py` + `schema.py` | M | Separate concerns |
+| 2.8 | Implement migration framework (`PRAGMA user_version`) | M | Tracked, versioned migrations |
+| 2.9 | Write tests for pipeline and enrichment modules | M | Confidence in the unified path |
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| 2.1 | Split `database.py` into `db.py` (connections) + `schema.py` (DDL/migrations) | M |
-| 2.2 | Implement migration framework with `PRAGMA user_version` | M |
-| 2.3 | Move presentation logic out of `get_outcome_status()` | S |
-| 2.4 | Move provenance aggregation out of `detail.html` into a service function | S |
-| 2.5 | Create `display.py` for all presentation formatting (badges, icons, CSS mappings) | S |
-| 2.6 | Deduplicate link_records.py (`_link_approvals` / `_link_discontinuances`) | S |
+**Outcome:** Adding a new enrichment step means editing one function in `pipeline.py`. Schema changes are versioned. Templates are dumb renderers.
 
-### Phase 3: External Service Framework
-**Goal:** Clean adapter pattern for current and future external services.
+### Phase 3: Harden (data integrity + replay)
+**Goal:** Confidence that DB state is correct and reproducible.
 
-| Task | Description | Effort |
-|------|-------------|--------|
-| 3.1 | Create `adapters/` package with base class | S |
-| 3.2 | Refactor `address_validator.py` into adapter pattern | M |
-| 3.3 | Add adapter health checks to `/api/stats` | S |
-| 3.4 | Design entity resolver adapter interface | S |
-| 3.5 | Implement entity resolver (when external service is ready) | M-L |
+| # | Task | Effort | Why |
+|---|------|--------|-----|
+| 3.1 | Add `record_enrichments` tracking table | S | Know which enrichments ran on which records |
+| 3.2 | Preserve raw field values (before cleaning) | M | Distinguish source truth from derived data |
+| 3.3 | Add `rebuild` CLI command (replay all archived HTML) | M | Prove we can reproduce from source truth |
+| 3.4 | Data integrity checks (orphan detection, FK validation) | M | Ongoing health monitoring |
+| 3.5 | Deduplicate `_link_approvals` / `_link_discontinuances` in `link_records.py` | S | 145 lines of structural duplication |
+| 3.6 | Clean up `endorsements.py` find-migrate-delete duplication | S | 4 near-identical patterns |
 
-### Phase 4: Analysis Layer
-**Goal:** Entity network exploration, license lifecycle views.
-
-| Task | Description | Effort |
-|------|-------------|--------|
-| 4.1 | Add `entity_relationships` and `entity_aliases` tables | S |
-| 4.2 | Build `analysis.py` with entity graph derivation | M |
-| 4.3 | Add `license_profiles` derived table | M |
-| 4.4 | Entity network API endpoint (`/api/entity/{id}/network`) | M |
-| 4.5 | Entity network visualization (D3.js or similar) | M-L |
-| 4.6 | License timeline view | M |
-| 4.7 | Entity cluster detection and reporting | M |
-
-### Phase 5: Data Integrity Hardening
-**Goal:** Rebuild-from-scratch capability, audit trail.
-
-| Task | Description | Effort |
-|------|-------------|--------|
-| 5.1 | Preserve raw field values separately from cleaned values | M |
-| 5.2 | Add `rebuild_from_sources` command that replays all archived HTML | M |
-| 5.3 | Checksums for source artifacts (some already in `sources.metadata`) | S |
-| 5.4 | Data integrity checks (orphan detection, FK validation, enrichment gaps) | M |
-| 5.5 | Scheduled integrity reports | S |
+**Outcome:** We can verify and rebuild the database from archived sources. Data quality is monitored.
 
 ---
 
 ## Part 4: Target File Structure
 
+This is what the codebase looks like after Phase 2. No speculative packages.
+
 ```
 wslcb-licensing-tracker/
-├── app.py                      # FastAPI routes only (thin)
+├── app.py                      # FastAPI routes (thin, reads only)
 ├── display.py                  # Presentation formatting (badges, CSS, icons)
-├── cli.py                      # CLI entry point (replaces scraper.py __main__)
+├── cli.py                      # CLI entry point (subcommands)
 │
-├── core/                       # Storage layer
-│   ├── db.py                   # Connection management, WAL, pragmas
-│   ├── schema.py               # Migrations, DDL, version tracking
-│   └── models.py               # Dataclasses/TypedDicts for record shapes
+├── db.py                       # Connection management, DATA_DIR, pragmas
+├── schema.py                   # DDL, migrations, FTS, seeding
 │
-├── ingest/                     # Ingestion layer
-│   ├── parser.py               # HTML → dicts (pure, no DB)
-│   ├── pipeline.py             # Unified ingest_record / ingest_batch
-│   ├── scraper.py              # HTTP fetch + archive (thin)
-│   ├── backfill_snapshots.py   # Replay archived HTML (thin)
-│   └── backfill_diffs.py       # Replay diff archives (thin)
+├── parser.py                   # HTML/diff → dicts (pure, no DB)
+├── pipeline.py                 # Unified ingest_record / ingest_batch
+├── scraper.py                  # HTTP fetch + archive → pipeline
+├── backfill_snapshots.py       # Replay archived HTML → pipeline (+ repairs)
+├── backfill_diffs.py           # Replay diff archives → pipeline
+├── backfill_provenance.py      # One-time provenance linking
 │
-├── enrich/                     # Enrichment / transformation layer
-│   ├── endorsements.py         # License type normalization
-│   ├── entities.py             # Applicant extraction & normalization
-│   ├── links.py                # Application → outcome linking
-│   └── provenance.py           # Source tracking
+├── endorsements.py             # License type normalization
+├── entities.py                 # Applicant extraction & normalization
+├── link_records.py             # Application → outcome linking
+├── address_validator.py        # External address standardization client
 │
-├── adapters/                   # External service adapters
-│   ├── base.py                 # ServiceAdapter base class
-│   ├── address_validator.py    # USPS address standardization
-│   └── entity_resolver.py      # Future: entity resolution service
+├── queries.py                  # Search, filter, stats, record hydration
+├── log_config.py               # Logging setup
 │
-├── analysis/                   # Analysis layer (future)
-│   ├── queries.py              # Search, filter, stats
-│   ├── entity_network.py       # Graph derivation, cluster detection
-│   ├── license_lifecycle.py    # License timeline construction
-│   └── export.py               # CSV/data export
-│
-├── templates/                  # Jinja2 templates (dumb renderers)
+├── templates/                  # Jinja2 (dumb renderers, no business logic)
 ├── static/
 ├── tests/
-│   ├── conftest.py             # Shared fixtures (in-memory DB, sample records)
+│   ├── conftest.py             # In-memory DB fixture, sample records
 │   ├── test_parser.py
 │   ├── test_pipeline.py
 │   ├── test_endorsements.py
 │   ├── test_entities.py
-│   ├── test_links.py
-│   └── test_queries.py
+│   └── test_links.py
 │
 ├── data/                       # Persistent data (gitignored)
-├── docs/                       # Architecture docs
+├── docs/
 ├── requirements.txt
 └── pyproject.toml
 ```
+
+Notice: still flat. No `core/`, `ingest/`, `enrich/`, `adapters/` packages. With ~15 Python files, a flat layout with clear naming is simpler than a package hierarchy. If the project grows to 25+ modules, we can introduce packages then — and the clean layer boundaries will make that reorganization straightforward.
 
 ---
 
 ## Part 5: What NOT to Change
 
-Some things are working well and should be preserved:
-
-1. **SQLite as the sole datastore.** The dataset is small. No need for Postgres, Redis, or any other infrastructure.
-2. **Server-rendered HTML + HTMX.** The frontend approach is right for this project. No SPA framework needed.
+1. **SQLite as the sole datastore.** 112 MB, single-writer. Perfect fit.
+2. **Server-rendered HTML + HTMX.** Right for this project's audience and complexity.
 3. **Twice-daily scraping via systemd timer.** Simple, reliable, observable.
-4. **The relational data model.** The normalized schema (locations, entities, endorsements as separate tables with junctions) is sound.
-5. **HTML snapshot archival.** The 3.8 GB archive is the ultimate source of truth. Keep archiving.
-6. **Provenance tracking.** The `sources` / `record_sources` system is a differentiator. Expand it, don't remove it.
+4. **The relational data model.** Normalized locations, entities, endorsements, junctions — sound.
+5. **HTML snapshot archival.** 3.8 GB of source truth. Keep archiving.
+6. **Provenance tracking.** The `sources` / `record_sources` system is a differentiator.
+7. **`address_validator.py`'s isolation pattern.** It's the best-structured module. Future external service clients should follow its example: stdlib + HTTP client, no project imports, cacheable results, graceful degradation.
 
 ---
 
-## Part 6: Decision Points
+## Part 6: Future Directions (Not Driving Current Work)
 
-Questions that should be answered before or during implementation:
+These are capabilities we expect to build eventually. The architecture above doesn't block any of them, but we're not pre-building abstractions for them either.
 
-1. **Raw value preservation (Phase 5.1):** Should we add `raw_*` columns to `license_records` and copy current values, or add a `record_raw_values` satellite table? The column approach is simpler; the satellite approach is cleaner.
+- **Entity resolution service.** When an external service exists for matching entity names to canonical identities, it'll plug in the same way `address_validator.py` does: a standalone client module, results cached in the DB, called from the pipeline. The `entities` table and `record_entities` junction are the right foundation.
 
-2. **Entity resolution service:** Build or buy? What's the external service? This determines the adapter interface design.
+- **Entity network analysis.** Co-occurrence analysis (which entities appear on the same records), ownership graphs, license transfer chains. This needs the unified pipeline (so entity links are reliably populated) and clean query interfaces. It doesn't need new architecture — it needs SQL queries and maybe a `license_profiles` materialized view.
 
-3. **Graph visualization library:** D3.js force-directed graph? Cytoscape.js? Sigma.js? Depends on the interaction model we want.
+- **Graph visualization.** D3.js, Cytoscape, etc. This is a frontend concern that will be informed by the analysis queries we build. Premature to choose a library.
 
-4. **API-first or template-first for analysis views?** The entity network and license timeline could be JSON API endpoints consumed by a JS frontend, or server-rendered. The current HTMX approach works but may not scale to interactive graph exploration.
+- **API endpoints for data consumers.** The current HTMX approach serves HTML. A JSON API layer would be additive, not a replacement. FastAPI makes this trivial to add alongside existing routes.
 
-5. **Package structure timing:** Moving to `core/`, `ingest/`, `enrich/`, etc. packages is a large diff that touches every import. It could be done incrementally (extract one package at a time) or in a big-bang reorganization. The former is safer; the latter is cleaner.
+- **Package reorganization.** If the module count doubles, introduce `core/`, `ingest/`, `enrich/` packages. The layer boundaries from Phase 2 make this a mechanical rename.
+
+The right time to design for these is when we're building them. The refactoring plan above ensures we won't have to undo anything when that time comes.
 
 ---
 
-## Appendix: Current Dependency Graph
+## Part 7: Decision Points (Resolve During Implementation)
 
+1. **Raw value preservation strategy (Phase 3.2):** Add `raw_*` shadow columns to `license_records` (simpler, self-contained) or add a `record_raw_values` satellite table (cleaner separation, but JOIN cost on every query)? Recommend: shadow columns for the 4 cleaned fields (`business_name`, `previous_business_name`, `applicants`, `previous_applicants`), since these are small strings and the alternative is a separate table for 4 values.
+
+2. **CLI tool choice (Phase 1.3):** `argparse` subcommands or `click`? `argparse` is stdlib and sufficient. Only consider `click` if the CLI grows complex.
+
+3. **Pipeline commit strategy (Phase 2.1):** Commit per-record (safest, slowest), per-batch (balanced), or per-source (fastest, riskiest)? Recommend: per-batch with configurable batch size, same as current `_validate_batch()` pattern.
+
+---
+
+## Appendix: Dependency Graph (Current → Target)
+
+### Current
 ```
                     ┌─────────┐
               ┌────→│ app.py  │←── presentation
@@ -624,20 +509,27 @@ Questions that should be answered before or during implementation:
     │backfill_diffs    │    entities, endorsements
     │backfill_provenance│──→ scraper, backfill_snapshots, backfill_diffs
     └──────────────────┘
-
-    ┌──────────────────┐
-    │address_validator │  ← isolated (only httpx + stdlib)
-    │log_config        │  ← isolated (only stdlib)
-    │migrate_locations │  ← isolated (only stdlib)
-    └──────────────────┘
 ```
 
-After refactoring, dependencies should flow strictly downward through layers:
-
+### Target (after Phase 2)
 ```
-    presentation  →  analysis/query  →  enrichment  →  ingestion  →  storage
-                                         ↑
-                                    adapters (called by enrichment)
-```
+    ┌────────────────┐
+    │ app.py         │──→ queries, display     PRESENTATION
+    │ display.py     │    (no domain imports)  (reads only)
+    └───────┬────────┘
+            │ reads
+    ┌───────▼────────────────────────────────┐
+    │ queries.py                             │
+    │ endorsements.py  entities.py           │  DOMAIN
+    │ link_records.py  address_validator.py   │  (all writes,
+    │ pipeline.py (orchestrates all ingest)  │   all logic)
+    └───────┬────────────────────────────────┘
+            │ uses
+    ┌───────▼────────────────────────────────┐
+    │ db.py    schema.py    parser.py        │  STORAGE +
+    │ scraper.py  backfill_*.py (thin)       │  INGESTION
+    └────────────────────────────────────────┘
 
-No upward or lateral dependencies. No circular imports. No deferred imports.
+    Dependencies flow strictly downward. No circular imports.
+    No deferred imports. No presentation in domain layer.
+```
