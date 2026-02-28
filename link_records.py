@@ -31,7 +31,7 @@ _DISC_LINK_TYPE = "DISC. LIQUOR SALES"
 PENDING_CUTOFF_DAYS = 180
 
 # Date after which NEW APPLICATION approvals stopped being published
-_DATA_GAP_CUTOFF = "2025-05-12"
+DATA_GAP_CUTOFF = "2025-05-12"
 
 # All application types eligible for outcome linking
 LINKABLE_TYPES = _APPROVAL_LINK_TYPES | {_DISC_LINK_TYPE}
@@ -56,7 +56,7 @@ def outcome_filter_sql(
     not_linked = f"{r}.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
     not_data_gap = (
         f"NOT ({r}.application_type = 'NEW APPLICATION'"
-        f" AND {r}.record_date > '{_DATA_GAP_CUTOFF}')"
+        f" AND {r}.record_date > '{DATA_GAP_CUTOFF}')"
     )
 
     if status == "approved":
@@ -83,7 +83,7 @@ def outcome_filter_sql(
         return [
             f"{r}.section_type = 'new_application'",
             f"{r}.application_type = 'NEW APPLICATION'",
-            f"{r}.record_date > '{_DATA_GAP_CUTOFF}'",
+            f"{r}.record_date > '{DATA_GAP_CUTOFF}'",
             not_linked,
         ]
     if status == "unknown":
@@ -541,7 +541,7 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
     rec_date = record.get("record_date", "")
 
     # Data gap: post-May 2025 NEW APPLICATION records
-    if app_type == "NEW APPLICATION" and rec_date > _DATA_GAP_CUTOFF:
+    if app_type == "NEW APPLICATION" and rec_date > DATA_GAP_CUTOFF:
         return {
             "status": "data_gap",
             "label": "Data Unavailable",

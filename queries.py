@@ -303,6 +303,7 @@ def search_records(
     per_page: int = 50,
 ) -> tuple[list[dict], int]:
     """Search records with filters.  Returns (records, total_count)."""
+    t0 = time.perf_counter()
     where, params, needs_location_join = _build_where_clause(
         query=query, section_type=section_type,
         application_type=application_type, endorsement=endorsement,
@@ -331,7 +332,12 @@ def search_records(
         params + [per_page, offset],
     ).fetchall()
 
-    return hydrate_records(conn, rows), total
+    results = hydrate_records(conn, rows)
+    logger.debug(
+        "search_records: %d/%d records, page %d, %.3fs",
+        len(results), total, page, time.perf_counter() - t0,
+    )
+    return results, total
 
 
 # ------------------------------------------------------------------
@@ -354,20 +360,23 @@ _EXPORT_SELECT = """
         COALESCE(loc.city, '')         AS city,
         COALESCE(loc.state, 'WA')      AS state,
         COALESCE(loc.zip_code, '')     AS zip_code,
-        COALESCE(NULLIF(loc.std_city, ''), loc.city, '')       AS std_city,
-        COALESCE(NULLIF(loc.std_state, ''), loc.state, 'WA')  AS std_state,
-        COALESCE(NULLIF(loc.std_zip, ''), loc.zip_code, '')    AS std_zip,
+        COALESCE(loc.std_city, '')   AS std_city,
+        COALESCE(loc.std_state, '') AS std_state,
+        COALESCE(loc.std_zip, '')   AS std_zip,
         COALESCE(ploc.raw_address, '') AS previous_business_location,
         COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
         COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
-        COALESCE(NULLIF(ploc.std_city, ''), ploc.city, '')     AS prev_std_city,
-        COALESCE(NULLIF(ploc.std_state, ''), ploc.state, '')   AS prev_std_state,
-        COALESCE(NULLIF(ploc.std_zip, ''), ploc.zip_code, '')  AS prev_std_zip,
+        COALESCE(ploc.std_city, '')   AS prev_std_city,
+        COALESCE(ploc.std_state, '') AS prev_std_state,
+        COALESCE(ploc.std_zip, '')   AS prev_std_zip,
         (
-            SELECT GROUP_CONCAT(le.name, '; ')
-            FROM record_endorsements re
-            JOIN license_endorsements le ON le.id = re.endorsement_id
-            WHERE re.record_id = lr.id
+            SELECT GROUP_CONCAT(name, '; ') FROM (
+                SELECT le.name
+                FROM record_endorsements re
+                JOIN license_endorsements le ON le.id = re.endorsement_id
+                WHERE re.record_id = lr.id
+                ORDER BY le.name
+            )
         ) AS endorsements,
         best_link.days_gap   AS days_to_outcome,
         best_link.outcome_date,
@@ -420,8 +429,9 @@ def export_records(
     directly in SQL and skips entity hydration entirely.  Returns a
     plain list of dicts (no total count).
     """
-    from link_records import PENDING_CUTOFF_DAYS, _DATA_GAP_CUTOFF, LINKABLE_TYPES
+    from link_records import PENDING_CUTOFF_DAYS, DATA_GAP_CUTOFF, LINKABLE_TYPES
 
+    t0 = time.perf_counter()
     where, params, _ = _build_where_clause(
         query=query, section_type=section_type,
         application_type=application_type, endorsement=endorsement,
@@ -431,7 +441,7 @@ def export_records(
 
     linkable_csv = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
     sql = _EXPORT_SELECT.format(
-        data_gap=_DATA_GAP_CUTOFF,
+        data_gap=DATA_GAP_CUTOFF,
         pending_days=PENDING_CUTOFF_DAYS,
         linkable_types=linkable_csv,
     )
@@ -444,7 +454,12 @@ def export_records(
         params + [limit],
     ).fetchall()
 
-    return [dict(r) for r in rows]
+    results = [dict(r) for r in rows]
+    logger.debug(
+        "export_records: %d records, %.3fs",
+        len(results), time.perf_counter() - t0,
+    )
+    return results
 
 
 # In-process cache for filter dropdown options.  The underlying data
