@@ -74,6 +74,8 @@ Uvicorn’s access and error logs are routed through the same formatter for cons
 ```
 wslcb-licensing-tracker/
 ├── app.py                  # FastAPI web application
+├── cli.py                  # Unified CLI entry point (argparse subcommands)
+├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
 ├── database.py             # SQLite schema, connections, FTS5 full-text search
 ├── queries.py              # Record search, filters, stats, CRUD
 ├── entities.py             # Entity (applicant) normalization
@@ -81,7 +83,7 @@ wslcb-licensing-tracker/
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── log_config.py           # Centralized logging configuration
 ├── address_validator.py    # Address validation API client
-├── scraper.py              # WSLCB page scraper (twice-daily)
+├── scraper.py              # WSLCB page scraper — fetch, archive, insert
 ├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots
 ├── backfill_diffs.py       # Ingest from CO diff archives
 ├── backfill_provenance.py  # One-time backfill of source provenance links
@@ -133,7 +135,7 @@ pip install fastapi uvicorn jinja2 httpx beautifulsoup4 lxml python-multipart py
 ### Run the initial scrape
 
 ```bash
-python scraper.py
+python cli.py scrape
 ```
 
 This fetches the current 30-day report, populates the SQLite database (`data/wslcb.db`), and archives a copy of the source HTML under `data/wslcb/licensinginfo/`.
@@ -214,13 +216,13 @@ Each location is standardized via an external address validation API into struct
 Locations are validated at scrape time. When a new record references an already-known address, it reuses the existing location row and skips the API call. Un-validated locations can be backfilled:
 
 ```bash
-python scraper.py --backfill-addresses
+python cli.py backfill-addresses
 ```
 
 To re-validate all locations (e.g., after the validation service is updated):
 
 ```bash
-python scraper.py --refresh-addresses
+python cli.py refresh-addresses
 ```
 
 This is safe to interrupt — progress is committed in batches and each location's timestamp is updated individually.
@@ -298,16 +300,14 @@ Provenance is displayed on record detail pages as collapsed summary badges (e.g.
 To ingest historical records and repair broken data from archived HTML snapshots:
 
 ```bash
-python backfill_snapshots.py
+python cli.py backfill-snapshots
 ```
 
 This runs a two-phase process:
 1. **Ingest** — insert new records from all archived snapshots (duplicates are safely skipped)
 2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
-Safe to re-run at any time. Address validation is deferred; run `python scraper.py --backfill-addresses` afterward to validate new locations.
-
-Also available via `python scraper.py --backfill-from-snapshots` (the old `--backfill-assumptions` flag is still accepted for compatibility).
+Safe to re-run at any time. Address validation is deferred; run `python cli.py backfill-addresses` afterward to validate new locations.
 
 ## Data Source
 

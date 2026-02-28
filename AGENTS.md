@@ -33,13 +33,15 @@ license_records → locations (FK: location_id, previous_location_id)
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
-| `scraper.py` | Fetches and parses the WSLCB page | Run standalone: `python scraper.py`. Logs to `scrape_log` table. Archives source HTML. `--backfill-addresses` validates un-validated records; `--refresh-addresses` re-validates all records; `--backfill-from-snapshots` delegates to `backfill_snapshots.py` (`--backfill-assumptions` still accepted). |
-| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `--backfill-addresses`. |
+| `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `database.DATA_DIR`. |
+| `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()` only (no `__main__`). Logs to `scrape_log` table. Archives source HTML. Use `cli.py scrape` to run. |
+| `cli.py` | Unified CLI entry point | Argparse subcommands for all operational tasks. Replaces `python scraper.py --flag` pattern. |
+| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `cli.py backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
 | `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()`, `get_reverse_link_info()`, `outcome_filter_sql()`. |
-| `backfill_diffs.py` | Ingest from CO diff archives | Parses unified-diff files in `data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/`. Safe to re-run. |
+| `backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records. Parsing logic lives in `parser.py`. Safe to re-run. |
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
@@ -319,11 +321,13 @@ data/
 - Runs on an exe.dev VM as systemd services
 - `wslcb-web.service` — uvicorn on port 8000, auto-restart
 - `wslcb-scraper.timer` — fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter
-- `wslcb-task@.service` — systemd template for oneshot tasks; instance name becomes the `scraper.py` argument
+- `wslcb-task@.service` — systemd template for oneshot tasks; instance name becomes the `cli.py` subcommand
   - `wslcb-task@scrape.service` — scrape (triggered by the timer)
-  - `wslcb-task@--refresh-addresses.service` — full address re-validation
-  - `wslcb-task@--backfill-addresses.service` — backfill un-validated addresses
-  - `wslcb-task@--backfill-from-snapshots.service` — recover ASSUMPTION/CHANGE OF LOCATION data from archived HTML
+  - `wslcb-task@refresh-addresses.service` — full address re-validation
+  - `wslcb-task@backfill-addresses.service` — backfill un-validated addresses
+  - `wslcb-task@backfill-snapshots.service` — recover ASSUMPTION/CHANGE OF LOCATION data from archived HTML
+  - `wslcb-task@backfill-provenance.service` — populate source provenance links
+  - `wslcb-task@rebuild-links.service` — rebuild application→outcome links
 - After changing service files: `sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
 - Under systemd (non-TTY), all log output is JSON lines — structured fields (`timestamp`, `level`, `name`, `message`) are captured by the journal. Uvicorn access/error logs are routed through the same formatter.
 - All persistent data lives in `./data/`
@@ -345,8 +349,8 @@ data/
 - Operates on the `locations` table — each unique raw address is validated once and shared across all records that reference it
 - At scrape time, `validate_record()` checks if the location is already validated; skips the API call if so
 - Systemd services load the env file via `EnvironmentFile=` directive
-- Backfill: `python scraper.py --backfill-addresses` (processes all locations where `address_validated_at IS NULL`)
-- Refresh: `python scraper.py --refresh-addresses` (re-validates all locations; safe to interrupt)
+- Backfill: `python cli.py backfill-addresses` (processes all locations where `address_validated_at IS NULL`)
+- Refresh: `python cli.py refresh-addresses` (re-validates all locations; safe to interrupt)
 
 ## Common Tasks
 
@@ -354,7 +358,7 @@ data/
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
 source venv/bin/activate
-python scraper.py
+python cli.py scrape
 ```
 
 ### Check scrape history
@@ -369,8 +373,8 @@ sudo systemctl restart wslcb-web.service
 
 ### Refresh all standardized addresses
 ```bash
-sudo systemctl start 'wslcb-task@--refresh-addresses.service'
-journalctl -u 'wslcb-task@--refresh-addresses.service' -f   # tail logs
+sudo systemctl start 'wslcb-task@refresh-addresses.service'
+journalctl -u 'wslcb-task@refresh-addresses.service' -f   # tail logs
 ```
 Re-validates every location against the address-validator API. Safe to interrupt — progress is committed in batches.
 
@@ -378,27 +382,26 @@ Or manually:
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
 source venv/bin/activate
-python -u scraper.py --refresh-addresses
+python cli.py refresh-addresses
 ```
 
 ### Backfill records from archived snapshots
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
 source venv/bin/activate
-python -u backfill_snapshots.py
+python cli.py backfill-snapshots
 ```
 Two-phase process:
 1. **Ingest** — insert new records from all archived HTML snapshots (duplicates skipped)
 2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
-Safe to re-run. Address validation is deferred; run `--backfill-addresses` afterward.
-Also available via `python scraper.py --backfill-from-snapshots` (delegates to `backfill_snapshots.py`; `--backfill-assumptions` still accepted for compatibility).
+Safe to re-run. Address validation is deferred; run `cli.py backfill-addresses` afterward.
 
 ### Rebuild application→outcome links
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
 source venv/bin/activate
-python scraper.py --rebuild-links
+python cli.py rebuild-links
 ```
 Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~85 seconds on current dataset). Links are also built incrementally during scraping and on first web app startup (if table is empty).
 
