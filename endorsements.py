@@ -147,7 +147,11 @@ SEED_CODE_MAP: dict[str, list[str]] = {
 # ---
 
 def _ensure_endorsement(conn: sqlite3.Connection, name: str) -> int:
-    """Return the id for *name*, creating the row if needed."""
+    """Return the id for *name*, creating the row if needed.
+
+    Names are upper-cased before lookup/insert for consistency.
+    """
+    name = name.upper()
     row = conn.execute(
         "SELECT id FROM license_endorsements WHERE name = ?", (name,)
     ).fetchone()
@@ -190,6 +194,95 @@ def seed_endorsements(conn: sqlite3.Connection) -> int:
             inserted += cur.rowcount
     conn.commit()
     return inserted
+
+
+# ---
+# Repair: merge mixed-case endorsement duplicates
+# ---
+
+def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
+    """Merge endorsements whose names differ only by case.
+
+    For each endorsement where ``name != UPPER(name)`` and an UPPER
+    counterpart already exists, migrate all record links and code
+    mappings to the canonical (upper-case) row, then delete the
+    mixed-case row.  If no upper-case counterpart exists, the
+    mixed-case row is simply renamed in place.
+
+    Returns the number of endorsements fixed.
+    """
+    dupes = conn.execute("""
+        SELECT mc.id AS mixed_id, mc.name AS mixed_name
+        FROM license_endorsements mc
+        WHERE mc.name != UPPER(mc.name)
+    """).fetchall()
+
+    if not dupes:
+        return 0
+
+    for row in dupes:
+        mixed_id, mixed_name = row[0], row[1]
+        upper_name = mixed_name.upper()
+
+        # Find or create the canonical upper-case row
+        upper_row = conn.execute(
+            "SELECT id FROM license_endorsements WHERE name = ?",
+            (upper_name,),
+        ).fetchone()
+
+        if not upper_row:
+            # No upper counterpart — rename in place
+            conn.execute(
+                "UPDATE license_endorsements SET name = ? WHERE id = ?",
+                (upper_name, mixed_id),
+            )
+            logger.info("Renamed endorsement %r → %r (id=%d)",
+                        mixed_name, upper_name, mixed_id)
+            continue
+
+        upper_id = upper_row[0]
+
+        # Migrate record_endorsements links
+        records = conn.execute(
+            "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
+            (mixed_id,),
+        ).fetchall()
+        for rec in records:
+            conn.execute(
+                """INSERT OR IGNORE INTO record_endorsements (record_id, endorsement_id)
+                   VALUES (?, ?)""",
+                (rec[0], upper_id),
+            )
+        conn.execute(
+            "DELETE FROM record_endorsements WHERE endorsement_id = ?",
+            (mixed_id,),
+        )
+
+        # Migrate endorsement_codes mappings
+        codes = conn.execute(
+            "SELECT code FROM endorsement_codes WHERE endorsement_id = ?",
+            (mixed_id,),
+        ).fetchall()
+        for c in codes:
+            conn.execute(
+                """INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id)
+                   VALUES (?, ?)""",
+                (c[0], upper_id),
+            )
+        conn.execute(
+            "DELETE FROM endorsement_codes WHERE endorsement_id = ?",
+            (mixed_id,),
+        )
+
+        # Delete the mixed-case endorsement row
+        conn.execute(
+            "DELETE FROM license_endorsements WHERE id = ?", (mixed_id,)
+        )
+        logger.info("Merged endorsement %r (id=%d) into %r (id=%d)",
+                    mixed_name, mixed_id, upper_name, upper_id)
+
+    conn.commit()
+    return len(dupes)
 
 
 # ---

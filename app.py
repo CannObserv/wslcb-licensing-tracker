@@ -20,7 +20,7 @@ from queries import (
     get_record_sources, get_record_link,
     hydrate_records,
 )
-from endorsements import seed_endorsements, backfill, repair_code_name_endorsements
+from endorsements import seed_endorsements, backfill, repair_code_name_endorsements, merge_mixed_case_endorsements
 from link_records import build_all_links, get_reverse_link_info, get_outcome_status
 from log_config import setup_logging
 
@@ -36,6 +36,9 @@ async def lifespan(app: FastAPI):
         if n:
             logger.info("Seeded %d endorsement code mapping(s)", n)
         repair_code_name_endorsements(conn)
+        merged = merge_mixed_case_endorsements(conn)
+        if merged:
+            logger.info("Merged %d mixed-case endorsement duplicate(s)", merged)
         processed = backfill(conn)
         if processed:
             logger.info("Backfilled endorsements for %d record(s)", processed)
