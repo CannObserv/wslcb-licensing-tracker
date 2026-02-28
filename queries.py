@@ -207,8 +207,7 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
 # Search and filter queries
 # ------------------------------------------------------------------
 
-def search_records(
-    conn: sqlite3.Connection,
+def _build_where_clause(
     query: str = "",
     section_type: str = "",
     application_type: str = "",
@@ -218,11 +217,14 @@ def search_records(
     date_from: str = "",
     date_to: str = "",
     outcome_status: str = "",
-    page: int = 1,
-    per_page: int = 50,
-) -> tuple[list[dict], int]:
-    """Search records with filters.  Returns (records, total_count)."""
-    conditions = []
+) -> tuple[str, list, bool]:
+    """Build a WHERE clause from search/filter parameters.
+
+    Returns ``(where_sql, params, needs_location_join)``.
+    ``where_sql`` includes the ``WHERE`` keyword, or is empty when
+    there are no conditions.
+    """
+    conditions: list[str] = []
     params: list = []
     needs_location_join = False
 
@@ -283,6 +285,30 @@ def search_records(
         conditions.extend(outcome_filter_sql(outcome_status))
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
+    return where, params, needs_location_join
+
+
+def search_records(
+    conn: sqlite3.Connection,
+    query: str = "",
+    section_type: str = "",
+    application_type: str = "",
+    endorsement: str = "",
+    state: str = "",
+    city: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    outcome_status: str = "",
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[dict], int]:
+    """Search records with filters.  Returns (records, total_count)."""
+    where, params, needs_location_join = _build_where_clause(
+        query=query, section_type=section_type,
+        application_type=application_type, endorsement=endorsement,
+        state=state, city=city, date_from=date_from, date_to=date_to,
+        outcome_status=outcome_status,
+    )
 
     # Only JOIN locations in the count query when needed (state/city filter).
     if needs_location_join:
@@ -306,6 +332,119 @@ def search_records(
     ).fetchall()
 
     return hydrate_records(conn, rows), total
+
+
+# ------------------------------------------------------------------
+# Lightweight export query
+# ------------------------------------------------------------------
+
+# SQL for the export query: inlines endorsements via GROUP_CONCAT and
+# outcome links via LEFT JOIN, computes display_city/display_zip in SQL,
+# and derives outcome_status with a CASE expression — all in a single
+# query.  Skips entity hydration entirely (unused in CSV output).
+_EXPORT_SELECT = """
+    SELECT
+        lr.id, lr.section_type, lr.record_date, lr.business_name,
+        lr.applicants, lr.license_type, lr.application_type,
+        lr.license_number, lr.contact_phone,
+        lr.previous_business_name, lr.previous_applicants,
+        COALESCE(loc.raw_address, '')  AS business_location,
+        COALESCE(loc.address_line_1, '') AS address_line_1,
+        COALESCE(loc.address_line_2, '') AS address_line_2,
+        COALESCE(loc.city, '')         AS city,
+        COALESCE(loc.state, 'WA')      AS state,
+        COALESCE(loc.zip_code, '')     AS zip_code,
+        COALESCE(NULLIF(loc.std_city, ''), loc.city, '')       AS std_city,
+        COALESCE(NULLIF(loc.std_state, ''), loc.state, 'WA')  AS std_state,
+        COALESCE(NULLIF(loc.std_zip, ''), loc.zip_code, '')    AS std_zip,
+        COALESCE(ploc.raw_address, '') AS previous_business_location,
+        COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
+        COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
+        COALESCE(NULLIF(ploc.std_city, ''), ploc.city, '')     AS prev_std_city,
+        COALESCE(NULLIF(ploc.std_state, ''), ploc.state, '')   AS prev_std_state,
+        COALESCE(NULLIF(ploc.std_zip, ''), ploc.zip_code, '')  AS prev_std_zip,
+        (
+            SELECT GROUP_CONCAT(le.name, '; ')
+            FROM record_endorsements re
+            JOIN license_endorsements le ON le.id = re.endorsement_id
+            WHERE re.record_id = lr.id
+        ) AS endorsements,
+        best_link.days_gap   AS days_to_outcome,
+        best_link.outcome_date,
+        CASE
+            WHEN best_link.outcome_section = 'approved'     THEN 'approved'
+            WHEN best_link.outcome_section = 'discontinued'  THEN 'discontinued'
+            WHEN lr.section_type != 'new_application' THEN NULL
+            WHEN lr.application_type NOT IN ({linkable_types})
+                 THEN NULL
+            WHEN lr.application_type = 'NEW APPLICATION'
+                 AND lr.record_date > '{data_gap}' THEN 'data_gap'
+            WHEN lr.record_date >= date('now', '-{pending_days} days')
+                 THEN 'pending'
+            ELSE 'unknown'
+        END AS outcome_status
+    FROM license_records lr
+    LEFT JOIN locations loc  ON loc.id  = lr.location_id
+    LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
+    LEFT JOIN (
+        SELECT rl.new_app_id, rl.days_gap,
+               olr.record_date AS outcome_date,
+               olr.section_type AS outcome_section,
+               ROW_NUMBER() OVER (
+                   PARTITION BY rl.new_app_id
+                   ORDER BY rl.confidence = 'high' DESC, rl.rowid
+               ) AS rn
+        FROM record_links rl
+        JOIN license_records olr ON olr.id = rl.outcome_id
+    ) best_link ON best_link.new_app_id = lr.id AND best_link.rn = 1
+"""
+
+
+def export_records(
+    conn: sqlite3.Connection,
+    query: str = "",
+    section_type: str = "",
+    application_type: str = "",
+    endorsement: str = "",
+    state: str = "",
+    city: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    outcome_status: str = "",
+    limit: int = 100_000,
+) -> list[dict]:
+    """Lightweight export query returning flat dicts ready for CSV.
+
+    Unlike :func:`search_records`, this function inlines endorsements
+    (via ``GROUP_CONCAT``), outcome links, and display-city fallbacks
+    directly in SQL and skips entity hydration entirely.  Returns a
+    plain list of dicts (no total count).
+    """
+    from link_records import PENDING_CUTOFF_DAYS, _DATA_GAP_CUTOFF, LINKABLE_TYPES
+
+    where, params, _ = _build_where_clause(
+        query=query, section_type=section_type,
+        application_type=application_type, endorsement=endorsement,
+        state=state, city=city, date_from=date_from, date_to=date_to,
+        outcome_status=outcome_status,
+    )
+
+    linkable_csv = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
+    sql = _EXPORT_SELECT.format(
+        data_gap=_DATA_GAP_CUTOFF,
+        pending_days=PENDING_CUTOFF_DAYS,
+        linkable_types=linkable_csv,
+    )
+
+    rows = conn.execute(
+        f"""{sql}
+            {where}
+            ORDER BY lr.record_date DESC, lr.id DESC
+            LIMIT ?""",
+        params + [limit],
+    ).fetchall()
+
+    return [dict(r) for r in rows]
 
 
 # In-process cache for filter dropdown options.  The underlying data

@@ -14,7 +14,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
 from entities import backfill_entities, get_entity_by_id
 from queries import (
-    search_records, get_filter_options, get_cities_for_state, US_STATES,
+    search_records, export_records,
+    get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
     get_record_sources, get_record_link,
@@ -273,12 +274,11 @@ async def export_csv(
     if not state:
         city = ""
     with get_db() as conn:
-        records, total = search_records(
+        records = export_records(
             conn, query=q, section_type=section_type,
             application_type=application_type, endorsement=endorsement,
             state=state, city=city, date_from=date_from, date_to=date_to,
             outcome_status=outcome_status,
-            page=1, per_page=100_000,
         )
 
     if not records:
@@ -306,14 +306,7 @@ async def export_csv(
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for r in records:
-        row = {k: r.get(k, "") for k in fieldnames}
-        row["endorsements"] = "; ".join(r.get("endorsements", []))
-        ost = r.get("outcome_status", {})
-        if ost and ost.get("status"):
-            row["outcome_status"] = ost["status"]
-            row["outcome_date"] = ost.get("outcome_date", "")
-            days = ost.get("days_gap")
-            row["days_to_outcome"] = days if days is not None else ""
+        row = {k: r.get(k, "") or "" for k in fieldnames}
         writer.writerow(row)
 
     output.seek(0)
