@@ -6,7 +6,7 @@ After=network.target
 Type=oneshot
 User=exedev
 WorkingDirectory=/home/exedev/wslcb-licensing-tracker
-ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/python scraper.py %i
+ExecStart=/home/exedev/wslcb-licensing-tracker/venv/bin/python cli.py %i
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/exedev/wslcb-licensing-tracker/env
 # Default TimeoutStartSec for oneshot is infinity on most distros;
