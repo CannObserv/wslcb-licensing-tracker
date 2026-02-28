@@ -38,6 +38,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
+| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()`, `get_reverse_link_info()`. |
 | `backfill_diffs.py` | Ingest from CO diff archives | Parses unified-diff files in `data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/`. Safe to re-run. |
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
@@ -106,6 +107,23 @@ license_records → locations (FK: location_id, previous_location_id)
 - `position` — 0-indexed ordering from the source document (after the business name)
 - Composite PK `(record_id, entity_id, role)`
 - Populated at ingest time by `_parse_and_link_entities()`; backfilled for existing data on startup
+- `ON DELETE CASCADE` on both FKs
+
+### `record_links` (application→outcome linking)
+- Links new_application records to their corresponding approved or discontinued outcome records
+- `new_app_id` — FK to `license_records(id)`, the new_application record
+- `outcome_id` — FK to `license_records(id)`, the approved or discontinued record
+- `confidence` — `'high'` (mutual match) or `'medium'` (forward-only match); constrained by CHECK
+- `days_gap` — `outcome_date - new_app_date` in days (can be negative when outcome precedes notification)
+- `linked_at` — ISO 8601 timestamp of when the link was created
+- UNIQUE on `(new_app_id, outcome_id)` — prevents duplicate links
+- Indexed on both `new_app_id` and `outcome_id` for fast lookups from either direction
+- Rebuilt from scratch by `build_all_links()` in `link_records.py`; incrementally updated by `link_new_record()` during scraping
+- `DATE_TOLERANCE_DAYS = 7` — the ±7-day window handles outcome-before-notification date patterns
+- Approval linking: `new_application` → `approved` with same `application_type` (RENEWAL, NEW APPLICATION, ASSUMPTION, etc.)
+- Discontinuance linking: `new_application/DISC. LIQUOR SALES` → `discontinued/DISCONTINUED`
+- `PENDING_CUTOFF_DAYS = 180` — unlinked applications older than this are classified as "unknown" instead of "pending"
+- `_DATA_GAP_CUTOFF = '2025-05-12'` — post-gap NEW APPLICATION records get "data_gap" status (WSLCB stopped publishing these approvals)
 - `ON DELETE CASCADE` on both FKs
 
 ### `license_records_fts` (FTS5 virtual table)
@@ -364,6 +382,14 @@ Two-phase process:
 
 Safe to re-run. Address validation is deferred; run `--backfill-addresses` afterward.
 Also available via `python scraper.py --backfill-from-snapshots` (delegates to `backfill_snapshots.py`; `--backfill-assumptions` still accepted for compatibility).
+
+### Rebuild application→outcome links
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python scraper.py --rebuild-links
+```
+Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~85 seconds on current dataset). Links are also built incrementally during scraping and on first web app startup (if table is empty).
 
 ### Add a new column to `locations`
 1. Add the column to the `CREATE TABLE IF NOT EXISTS locations` in `database.py`
