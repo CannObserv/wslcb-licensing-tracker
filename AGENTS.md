@@ -123,7 +123,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - Approval linking: `new_application` → `approved` with same `application_type` (RENEWAL, NEW APPLICATION, ASSUMPTION, etc.)
 - Discontinuance linking: `new_application/DISC. LIQUOR SALES` → `discontinued/DISCONTINUED`
 - `PENDING_CUTOFF_DAYS = 180` — unlinked applications older than this are classified as "unknown" instead of "pending"
-- `_DATA_GAP_CUTOFF = '2025-05-12'` — post-gap NEW APPLICATION records get "data_gap" status (WSLCB stopped publishing these approvals)
+- `DATA_GAP_CUTOFF = '2025-05-12'` — post-gap NEW APPLICATION records get "data_gap" status (WSLCB stopped publishing these approvals)
 - `ON DELETE CASCADE` on both FKs
 
 ### `license_records_fts` (FTS5 virtual table)
