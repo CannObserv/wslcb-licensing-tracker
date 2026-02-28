@@ -29,7 +29,7 @@ license_records → locations (FK: location_id, previous_location_id)
 |---|---|---|
 | `database.py` | Schema, connections, FTS | Core DB layer. `init_db()` is idempotent. Exports `DATA_DIR`, `get_or_create_location()`. |
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
-| `queries.py` | Record queries and CRUD | `search_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
+| `queries.py` | Record queries and CRUD | `search_records()`, `export_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
 | `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
 | `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
@@ -416,4 +416,5 @@ Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~8
 - Approved-section CHANGE OF LOCATION records lack `previous_location_id` because the source page only provides `Business Location:` (the new address) for approved records
 - `search_records()` runs separate COUNT and SELECT queries with the same WHERE clause; could use `COUNT(*) OVER()` window function (fine at current scale)
 - CSV export (`/export`) loads up to 100K rows into memory with no streaming; acceptable for current dataset size
+- `search_records()` and `export_records()` share filter logic via `_build_where_clause()` — when adding a new filter parameter, update the shared helper
 - Consider adding: email/webhook alerts for new records matching saved searches
