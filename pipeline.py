@@ -29,7 +29,7 @@ class IngestOptions:
     source_id: int | None = None
     source_role: str = "first_seen"
     batch_size: int = 200
-    av_client: object | None = None  # httpx.Client for address validation
+    av_client: "httpx.Client | None" = None
 
 
 @dataclass
@@ -58,7 +58,7 @@ def ingest_record(
     Returns an ``IngestResult`` on success (both new and duplicate),
     or ``None`` on unexpected error.
 
-    Steps 3–6 only run for newly inserted records; duplicates get
+    Steps 2–5 only run for newly inserted records; duplicates get
     provenance linked with role ``'confirmed'`` and skip other steps.
     """
     from queries import insert_record

@@ -1,8 +1,7 @@
 """Backfill historical records from unified-diff archives.
 
 Parses diff files in ``data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/``
-and inserts recovered records into the database via the standard ``insert_record()``
-pipeline.  Both added (+) and removed (-) lines are harvested — removals represent
+and inserts recovered records into the database via ``pipeline.ingest_record()``.  Both added (+) and removed (-) lines are harvested — removals represent
 records that aged off the WSLCB rolling window and are equally valid historical data.
 
 Two-pass extraction handles the diff boundary problem:

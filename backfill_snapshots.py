@@ -26,8 +26,6 @@ from pipeline import ingest_batch, IngestOptions
 logger = logging.getLogger(__name__)
 
 
-
-
 # ── Phase 2: Repair ──────────────────────────────────────────────────
 
 def _repair_assumptions(
