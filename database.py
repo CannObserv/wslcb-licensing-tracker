@@ -66,7 +66,7 @@ def _normalize_raw_address(raw: str) -> str:
     return re.sub(r'\xa0+', ' ', raw)
 
 
-def init_db(conn: sqlite3.Connection | None = None):
+def init_db(conn: sqlite3.Connection | None = None) -> sqlite3.Connection | None:
     """Create tables and indexes.  Safe to call repeatedly.
 
     If *conn* is provided it is used directly (and **not** closed);

@@ -5,16 +5,9 @@ dicts representing the main record variants, and path helpers for HTML
 fixtures.  All fixtures are designed for speed — no network calls, no
 disk I/O for the database.
 """
-import sys
 from pathlib import Path
 
 import pytest
-
-# Ensure the project root is on sys.path so tests can import modules
-# directly (flat layout, no package).
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 

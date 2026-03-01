@@ -15,7 +15,8 @@ from parser import (
     is_valid_record,
     SECTION_MAP,
 )
-from tests.conftest import FIXTURES_DIR
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 # ── Helper ────────────────────────────────────────────────────────────
@@ -315,15 +316,12 @@ class TestEdgeCases:
         records = _load_table("new_applications.html")
         assert len(records) == 2
 
-    def test_no_matching_sections_in_page(self):
+    def test_no_matching_sections_in_page(self, tmp_path):
         """A page with no recognized section headers returns empty."""
         html = "<html><body><table><tr><td>Nothing here</td></tr></table></body></html>"
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".html", mode="w", delete=False) as f:
-            f.write(html)
-            f.flush()
-            records = parse_snapshot(Path(f.name))
-        assert records == []
+        p = tmp_path / "empty.html"
+        p.write_text(html)
+        assert parse_snapshot(p) == []
 
     def test_record_without_license_number_skipped(self):
         """A partial record missing license_number is not emitted."""

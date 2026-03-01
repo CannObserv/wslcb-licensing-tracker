@@ -82,29 +82,11 @@ class TestInsertRecord:
         assert "JANE SMITH" in names
         assert "ACME CANNABIS CO" not in names  # business name excluded
 
-    def test_cleans_business_name(self, db):
+    def test_cleans_business_name(self, db, standard_new_application):
         """Stray trailing punctuation is stripped from business_name."""
-        record = {
-            "section_type": "new_application",
-            "record_date": "2025-01-01",
-            "business_name": "dirty name.",
-            "business_location": "",
-            "applicants": "",
-            "license_type": "TEST",
-            "application_type": "NEW APPLICATION",
-            "license_number": "CLEAN01",
-            "contact_phone": "",
-            "city": "",
-            "state": "WA",
-            "zip_code": "",
-            "previous_business_name": "",
-            "previous_applicants": "",
-            "previous_business_location": "",
-            "previous_city": "",
-            "previous_state": "",
-            "previous_zip_code": "",
-            "scraped_at": "2025-01-01T00:00:00+00:00",
-        }
+        record = {**standard_new_application,
+                  "business_name": "dirty name.",
+                  "license_number": "CLEAN01"}
         record_id, _ = insert_record(db, record)
         row = db.execute(
             "SELECT business_name FROM license_records WHERE id = ?",
@@ -112,29 +94,12 @@ class TestInsertRecord:
         ).fetchone()
         assert row["business_name"] == "DIRTY NAME"
 
-    def test_no_location_for_empty_address(self, db):
+    def test_no_location_for_empty_address(self, db, approved_numeric_code):
         """Records with no address should have location_id = NULL."""
-        record = {
-            "section_type": "approved",
-            "record_date": "2025-01-01",
-            "business_name": "NO ADDR BIZ",
-            "business_location": "",
-            "applicants": "",
-            "license_type": "349,",
-            "application_type": "NEW APPLICATION",
-            "license_number": "NOADDR01",
-            "contact_phone": "",
-            "city": "",
-            "state": "WA",
-            "zip_code": "",
-            "previous_business_name": "",
-            "previous_applicants": "",
-            "previous_business_location": "",
-            "previous_city": "",
-            "previous_state": "",
-            "previous_zip_code": "",
-            "scraped_at": "2025-01-01T00:00:00+00:00",
-        }
+        record = {**approved_numeric_code,
+                  "business_location": "",
+                  "city": "", "zip_code": "",
+                  "license_number": "NOADDR01"}
         record_id, _ = insert_record(db, record)
         row = db.execute(
             "SELECT location_id FROM license_records WHERE id = ?",

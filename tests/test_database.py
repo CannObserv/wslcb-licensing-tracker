@@ -79,21 +79,13 @@ class TestInitDb:
         assert result is conn
         conn.close()
 
-    def test_returns_none_when_no_conn(self, tmp_path):
+    def test_returns_none_when_no_conn(self, tmp_path, monkeypatch):
         """init_db returns None when using default path."""
-        # We can't easily test the default path without side effects,
-        # but we can test with a temp file path
         import database
-        original_db_path = database.DB_PATH
-        original_data_dir = database.DATA_DIR
-        try:
-            database.DATA_DIR = tmp_path
-            database.DB_PATH = tmp_path / "test.db"
-            result = init_db()
-            assert result is None
-        finally:
-            database.DATA_DIR = original_data_dir
-            database.DB_PATH = original_db_path
+        monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+        result = init_db()
+        assert result is None
 
 
 # ── get_connection ─────────────────────────────────────────────────
