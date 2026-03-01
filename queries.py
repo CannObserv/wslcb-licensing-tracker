@@ -15,6 +15,7 @@ from entities import (
     parse_and_link_entities, get_record_entities, clean_applicants_string,
     clean_entity_name,
 )
+from display import format_outcome
 from link_records import get_outcome_status
 
 logger = logging.getLogger(__name__)
@@ -105,9 +106,9 @@ def hydrate_records(
         d["entities"] = entity_map.get(
             d["id"], {"applicant": [], "previous_applicant": []}
         )
-        d["outcome_status"] = get_outcome_status(
+        d["outcome_status"] = format_outcome(get_outcome_status(
             d, link_map.get(d["id"]),
-        )
+        ))
         results.append(d)
     return results
 

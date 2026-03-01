@@ -486,10 +486,11 @@ def _link_outcome(
 
 
 def get_outcome_status(record: dict, link: dict | None) -> dict:
-    """Compute the outcome status for a record.
+    """Compute the semantic outcome status for a record.
 
-    Returns a dict with keys: status, label, css_class, icon, detail,
-    linked_record_id, confidence.
+    Returns a dict with keys: status, label, detail, linked_record_id,
+    confidence.  Does NOT include presentation properties (CSS, icons);
+    call ``display.format_outcome()`` to add those.
     """
     if record["section_type"] != "new_application":
         return {"status": None}
@@ -510,11 +511,6 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
             return {
                 "status": "approved",
                 "label": "Approved",
-                "icon": "✅",
-                "css_bg": "bg-green-50",
-                "css_border": "border-green-200",
-                "css_text": "text-green-800",
-                "css_accent": "text-green-600",
                 "detail": f"Approved on {link['outcome_date']}" + (f" ({days_label} after application)" if days_label else ""),
                 "linked_record_id": link["outcome_id"],
                 "confidence": link["confidence"],
@@ -525,11 +521,6 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
             return {
                 "status": "discontinued",
                 "label": "Discontinued",
-                "icon": "🚫",
-                "css_bg": "bg-red-50",
-                "css_border": "border-red-200",
-                "css_text": "text-red-800",
-                "css_accent": "text-red-600",
                 "detail": f"Discontinued on {link['outcome_date']}" + (f" ({days_label} after filing)" if days_label else ""),
                 "linked_record_id": link["outcome_id"],
                 "confidence": link["confidence"],
@@ -545,11 +536,6 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
         return {
             "status": "data_gap",
             "label": "Data Unavailable",
-            "icon": "📁",
-            "css_bg": "bg-slate-50",
-            "css_border": "border-slate-200",
-            "css_text": "text-slate-700",
-            "css_accent": "text-slate-500",
             "detail": "The WSLCB stopped publishing NEW APPLICATION approvals after May 2025 due to a data transfer issue.",
             "linked_record_id": None,
             "confidence": None,
@@ -564,11 +550,6 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
                 return {
                     "status": "pending",
                     "label": "Pending",
-                    "icon": "⏳",
-                    "css_bg": "bg-amber-50",
-                    "css_border": "border-amber-200",
-                    "css_text": "text-amber-800",
-                    "css_accent": "text-amber-600",
                     "detail": f"Filed {age_days} day{'s' if age_days != 1 else ''} ago. Typical time to approval: 50–90 days.",
                     "linked_record_id": None,
                     "confidence": None,
@@ -579,11 +560,6 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
     return {
         "status": "unknown",
         "label": "No Outcome Recorded",
-        "icon": "❓",
-        "css_bg": "bg-gray-50",
-        "css_border": "border-gray-200",
-        "css_text": "text-gray-600",
-        "css_accent": "text-gray-400",
         "detail": "No matching approved or discontinued record was found.",
         "linked_record_id": None,
         "confidence": None,

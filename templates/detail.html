@@ -183,61 +183,30 @@
                 <dt class="text-sm font-medium text-gray-500">First Scraped</dt>
                 <dd class="mt-1 text-sm text-gray-400">{{ record.scraped_at[:19] if record.scraped_at else '' }}</dd>
             </div>
-            {% if sources %}
+            {% if provenance and provenance.total > 0 %}
             <div class="md:col-span-2">
                 <dt class="text-sm font-medium text-gray-500 mb-2">Data Sources</dt>
                 <dd class="mt-1">
-                    {%- set ns = namespace(live=0, co=0, co_diff=0, ia=0, other=0, first_date='', last_date='', repaired=false) -%}
-                    {%- for s in sources -%}
-                        {%- if s.source_type == 'live_scrape' -%}{%- set ns.live = ns.live + 1 -%}
-                        {%- elif s.source_type == 'co_archive' -%}{%- set ns.co = ns.co + 1 -%}
-                        {%- elif s.source_type == 'co_diff_archive' -%}{%- set ns.co_diff = ns.co_diff + 1 -%}
-                        {%- elif s.source_type == 'internet_archive' -%}{%- set ns.ia = ns.ia + 1 -%}
-                        {%- else -%}{%- set ns.other = ns.other + 1 -%}{%- endif -%}
-                        {%- if s.role == 'repaired' -%}{%- set ns.repaired = true -%}{%- endif -%}
-                        {%- if s.captured_at -%}
-                            {%- if not ns.last_date or s.captured_at[:10] > ns.last_date -%}{%- set ns.last_date = s.captured_at[:10] -%}{%- endif -%}
-                            {%- if not ns.first_date or s.captured_at[:10] < ns.first_date -%}{%- set ns.first_date = s.captured_at[:10] -%}{%- endif -%}
-                        {%- endif -%}
-                    {%- endfor -%}
                     <div class="flex flex-wrap items-center gap-2">
-                        {% if ns.live %}
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200"
-                              title="Confirmed in {{ ns.live }} live scrape{{ 's' if ns.live != 1 }}">⚡ Live Scrape <span class="opacity-70">×{{ ns.live }}</span></span>
-                        {% endif %}
-                        {% if ns.co %}
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-co-purple-50 text-co-purple border border-co-purple-100"
-                              title="Confirmed in {{ ns.co }} CO archive snapshot{{ 's' if ns.co != 1 }}">📁 CO Archive <span class="opacity-70">×{{ ns.co }}</span></span>
-                        {% endif %}
-                        {% if ns.co_diff %}
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-co-purple-50 text-co-purple border border-co-purple-100"
-                              title="Confirmed in {{ ns.co_diff }} CO diff archive{{ 's' if ns.co_diff != 1 }}">📄 CO Diff Archive <span class="opacity-70">×{{ ns.co_diff }}</span></span>
-                        {% endif %}
-                        {% if ns.ia %}
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200"
-                              title="Confirmed in {{ ns.ia }} Internet Archive snapshot{{ 's' if ns.ia != 1 }}">🏛️ Internet Archive <span class="opacity-70">×{{ ns.ia }}</span></span>
-                        {% endif %}
-                        {% if ns.other %}
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200">Other <span class="opacity-70">×{{ ns.other }}</span></span>
-                        {% endif %}
-                        {% if ns.repaired %}
+                        {% for source_type, group in provenance.groups.items() %}
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }}"
+                              title="Confirmed in {{ group.count }} {{ group.label | lower }}{{ 's' if group.count != 1 }}">{{ group.icon }} {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></span>
+                        {% endfor %}
+                        {% if provenance.repaired %}
                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-sky-50 text-sky-700 border border-sky-200"
                               title="Data was repaired from a snapshot source">🔧 Repaired</span>
                         {% endif %}
-                        {% if ns.first_date and ns.last_date %}
-                        <span class="text-[11px] text-gray-400 ml-1">{% if ns.first_date == ns.last_date %}{{ ns.first_date }}{% else %}{{ ns.first_date }} – {{ ns.last_date }}{% endif %}</span>
+                        {% if provenance.first_date and provenance.last_date %}
+                        <span class="text-[11px] text-gray-400 ml-1">{% if provenance.first_date == provenance.last_date %}{{ provenance.first_date }}{% else %}{{ provenance.first_date }} – {{ provenance.last_date }}{% endif %}</span>
                         {% endif %}
                     </div>
-                    {% if sources|length > 3 %}
+                    {% if provenance.total > 3 %}
                     <details class="mt-2">
-                        <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-600">Show all {{ sources|length }} sources</summary>
+                        <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-600">Show all {{ provenance.total }} sources</summary>
                         <div class="mt-2 flex flex-wrap gap-1.5">
                             {% for s in sources %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium
-                                {% if s.source_type == 'live_scrape' %}bg-green-50 text-green-700 border border-green-200
-                                {% elif s.source_type in ('co_archive', 'co_diff_archive') %}bg-co-purple-50 text-co-purple border border-co-purple-100
-                                {% elif s.source_type == 'internet_archive' %}bg-amber-50 text-amber-700 border border-amber-200
-                                {% else %}bg-gray-50 text-gray-600 border border-gray-200{% endif %}"
+                            {% set sd = provenance.groups.get(s.source_type, {}) %}
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }}"
                                 title="{{ s.role }}">
                                 {{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} 🔧{% endif %}
                             </span>

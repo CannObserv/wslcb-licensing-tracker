@@ -23,6 +23,7 @@ from queries import (
 )
 from endorsements import seed_endorsements, backfill, repair_code_name_endorsements, merge_mixed_case_endorsements
 from link_records import build_all_links, get_reverse_link_info, get_outcome_status
+from display import format_outcome, summarize_provenance
 from log_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -211,16 +212,18 @@ async def record_detail(request: Request, record_id: int):
         related = hydrated[1:]
 
         sources = get_record_sources(conn, record_id)
+        provenance = summarize_provenance(sources)
 
         # Outcome link info for the detail page
         link = get_record_link(conn, record_id)
-        outcome = get_outcome_status(record, link)
+        outcome = format_outcome(get_outcome_status(record, link))
         reverse_link = get_reverse_link_info(conn, record)
 
     return templates.TemplateResponse(
         "detail.html", {
             "request": request, "record": record,
             "related": related, "sources": sources,
+            "provenance": provenance,
             "outcome": outcome, "reverse_link": reverse_link,
         }
     )
