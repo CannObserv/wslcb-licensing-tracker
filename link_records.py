@@ -142,25 +142,25 @@ def _link_section(
         na_type_filter = ", ".join(f"'{t}'" for t in _APPROVAL_LINK_TYPES)
         na_where = f"na.application_type IN ({na_type_filter})"
         out_section = "approved"
-        out_type_match = "ap.application_type = na.application_type"
-        bwd_na_extra = f"AND na.application_type IN ({na_type_filter})"
+        fwd_type_match = "out.application_type = na.application_type"
+        bwd_type_match = "na.application_type = out.application_type"
     elif mode == "discontinuance":
         na_where = f"na.application_type = '{_DISC_LINK_TYPE}'"
         out_section = "discontinued"
-        out_type_match = "ap.application_type = 'DISCONTINUED'"
-        bwd_na_extra = f"AND na.application_type = '{_DISC_LINK_TYPE}'"
+        fwd_type_match = "out.application_type = 'DISCONTINUED'"
+        bwd_type_match = f"na.application_type = '{_DISC_LINK_TYPE}'"
     else:
         raise ValueError(f"Unknown mode: {mode!r}")
 
     # Forward pass: for each new_app, find earliest outcome within tolerance.
     forward = conn.execute(f"""
         SELECT na.id AS new_app_id, (
-            SELECT ap.id FROM license_records ap
-            WHERE ap.section_type = '{out_section}'
-              AND ap.license_number = na.license_number
-              AND {out_type_match}
-              AND ap.record_date >= date(na.record_date, '-{DATE_TOLERANCE_DAYS} days')
-            ORDER BY ap.record_date ASC, ap.id ASC
+            SELECT out.id FROM license_records out
+            WHERE out.section_type = '{out_section}'
+              AND out.license_number = na.license_number
+              AND {fwd_type_match}
+              AND out.record_date >= date(na.record_date, '-{DATE_TOLERANCE_DAYS} days')
+            ORDER BY out.record_date ASC, out.id ASC
             LIMIT 1
         ) AS outcome_id
         FROM license_records na
@@ -179,18 +179,18 @@ def _link_section(
     # Backward pass: for each claimed outcome, find the best new_app.
     outcome_ids = set(fwd_map.values())
     backward = conn.execute(f"""
-        SELECT ap.id AS outcome_id, (
+        SELECT out.id AS outcome_id, (
             SELECT na.id FROM license_records na
             WHERE na.section_type = 'new_application'
-              AND na.license_number = ap.license_number
-              AND na.record_date <= date(ap.record_date, '+{DATE_TOLERANCE_DAYS} days')
-              {bwd_na_extra}
+              AND na.license_number = out.license_number
+              AND {bwd_type_match}
+              AND na.record_date <= date(out.record_date, '+{DATE_TOLERANCE_DAYS} days')
             ORDER BY na.record_date DESC, na.id DESC
             LIMIT 1
         ) AS new_app_id
-        FROM license_records ap
-        WHERE ap.section_type = '{out_section}'
-          AND ap.id IN ({','.join('?' for _ in outcome_ids)})
+        FROM license_records out
+        WHERE out.section_type = '{out_section}'
+          AND out.id IN ({','.join('?' for _ in outcome_ids)})
     """, list(outcome_ids)).fetchall()
 
     bwd_map: dict[int, int] = {}
@@ -349,7 +349,8 @@ def _link_incremental(
 
     elif direction == "backward":
         # outcome seeking a new_application
-        assert outcome_section is not None
+        if outcome_section is None:
+            return None
         if outcome_section == "discontinued" and app_type == "DISCONTINUED":
             na_type_val = _DISC_LINK_TYPE
             out_type_val = "DISCONTINUED"

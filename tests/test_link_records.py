@@ -12,8 +12,6 @@ from link_records import (
     link_new_record,
     get_outcome_status,
     get_reverse_link_info,
-    _link_section,
-    _link_incremental,
 )
 
 
@@ -46,11 +44,11 @@ def _make_record(db, **overrides):
     return result[0]
 
 
-# ── Bulk linking (_link_section) ─────────────────────────────────
+# ── Bulk linking (build_all_links) ─────────────────────────────────
 
 
-class TestLinkSection:
-    """Tests for the unified _link_section helper."""
+class TestBulkLinking:
+    """Tests for bulk bidirectional linking via build_all_links."""
 
     def test_approval_high_confidence(self, db):
         """Mutual best match → high confidence link."""
@@ -62,9 +60,9 @@ class TestLinkSection:
                             application_type="RENEWAL", license_number="L001",
                             record_date="2025-06-12", applicants="")
 
-        high, med = _link_section(db, mode="approval")
-        assert high == 1
-        assert med == 0
+        result = build_all_links(db)
+        assert result["high"] == 1
+        assert result["medium"] == 0
 
         link = db.execute(
             "SELECT * FROM record_links WHERE new_app_id = ?", (na_id,)
@@ -84,9 +82,8 @@ class TestLinkSection:
                             license_number="L002", record_date="2025-06-12",
                             applicants="")
 
-        high, med = _link_section(db, mode="discontinuance")
-        assert high == 1
-        assert med == 0
+        result = build_all_links(db)
+        assert result["high"] == 1
 
         link = db.execute(
             "SELECT * FROM record_links WHERE new_app_id = ?", (na_id,)
@@ -107,11 +104,11 @@ class TestLinkSection:
                             application_type="RENEWAL", license_number="L003",
                             record_date="2025-06-12", applicants="")
 
-        high, med = _link_section(db, mode="approval")
+        result = build_all_links(db)
         # na2 is the backward best match → high
         # na1 forward matches same outcome but backward prefers na2 → medium
-        assert high == 1
-        assert med == 1
+        assert result["high"] == 1
+        assert result["medium"] == 1
 
     def test_no_match_outside_tolerance(self, db):
         """Outcome too far before application → no link."""
@@ -123,9 +120,8 @@ class TestLinkSection:
                     application_type="RENEWAL", license_number="L004",
                     record_date="2025-06-01", applicants="")  # 19 days before
 
-        high, med = _link_section(db, mode="approval")
-        assert high == 0
-        assert med == 0
+        result = build_all_links(db)
+        assert result["total"] == 0
 
     def test_all_approval_link_types(self, db):
         """All application types in _APPROVAL_LINK_TYPES can link."""
@@ -141,15 +137,73 @@ class TestLinkSection:
                         application_type=app_type, license_number=lic,
                         record_date="2025-06-12", applicants="")
 
-        high, med = _link_section(db, mode="approval")
-        assert high == len(_APPROVAL_LINK_TYPES)
+        result = build_all_links(db)
+        assert result["high"] == len(_APPROVAL_LINK_TYPES)
+
+    def test_no_cross_type_match(self, db):
+        """Backward pass must match on application_type, not cross types."""
+        seed_endorsements(db)
+        # RENEWAL application, but ASSUMPTION approval for same license
+        _make_record(db, section_type="new_application",
+                    application_type="RENEWAL", license_number="L005",
+                    record_date="2025-06-10")
+        _make_record(db, section_type="approved",
+                    application_type="ASSUMPTION", license_number="L005",
+                    record_date="2025-06-12", applicants="")
+
+        result = build_all_links(db)
+        assert result["total"] == 0
+
+    def test_clears_and_rebuilds(self, db):
+        """build_all_links clears existing links and rebuilds."""
+        seed_endorsements(db)
+        na_id = _make_record(db, section_type="new_application",
+                            application_type="RENEWAL", license_number="L020",
+                            record_date="2025-06-10")
+        ap_id = _make_record(db, section_type="approved",
+                            application_type="RENEWAL", license_number="L020",
+                            record_date="2025-06-12", applicants="")
+
+        result1 = build_all_links(db)
+        assert result1["total"] == 1
+
+        # Rebuild should produce identical results
+        result2 = build_all_links(db)
+        assert result2["total"] == 1
+
+        # Exactly one link should exist
+        count = db.execute("SELECT count(*) FROM record_links").fetchone()[0]
+        assert count == 1
+
+    def test_mixed_approvals_and_discontinuances(self, db):
+        """Both approval and discontinuance links in one build."""
+        seed_endorsements(db)
+        # Approval
+        _make_record(db, section_type="new_application",
+                    application_type="RENEWAL", license_number="L021",
+                    record_date="2025-06-10")
+        _make_record(db, section_type="approved",
+                    application_type="RENEWAL", license_number="L021",
+                    record_date="2025-06-12", applicants="")
+        # Discontinuance
+        _make_record(db, section_type="new_application",
+                    application_type="DISC. LIQUOR SALES",
+                    license_number="L022", record_date="2025-06-10")
+        _make_record(db, section_type="discontinued",
+                    application_type="DISCONTINUED",
+                    license_number="L022", record_date="2025-06-12",
+                    applicants="")
+
+        result = build_all_links(db)
+        assert result["high"] == 2
+        assert result["total"] == 2
 
 
-# ── Incremental linking (_link_incremental / link_new_record) ────
+# ── Incremental linking (link_new_record) ────────────────────────
 
 
-class TestLinkIncremental:
-    """Tests for the unified _link_incremental helper."""
+class TestIncrementalLinking:
+    """Tests for incremental linking via link_new_record."""
 
     def test_new_app_finds_existing_outcome(self, db):
         """Inserting a new_application finds an existing approved record."""
@@ -205,55 +259,6 @@ class TestLinkIncremental:
         """Linking a record that doesn't exist returns None."""
         result = link_new_record(db, 99999)
         assert result is None
-
-
-# ── build_all_links ──────────────────────────────────────────────
-
-
-class TestBuildAllLinks:
-    def test_clears_and_rebuilds(self, db):
-        """build_all_links clears existing links and rebuilds."""
-        seed_endorsements(db)
-        na_id = _make_record(db, section_type="new_application",
-                            application_type="RENEWAL", license_number="L020",
-                            record_date="2025-06-10")
-        ap_id = _make_record(db, section_type="approved",
-                            application_type="RENEWAL", license_number="L020",
-                            record_date="2025-06-12", applicants="")
-
-        result1 = build_all_links(db)
-        assert result1["total"] == 1
-
-        # Rebuild should produce identical results
-        result2 = build_all_links(db)
-        assert result2["total"] == 1
-
-        # Exactly one link should exist
-        count = db.execute("SELECT count(*) FROM record_links").fetchone()[0]
-        assert count == 1
-
-    def test_mixed_approvals_and_discontinuances(self, db):
-        """Both approval and discontinuance links in one build."""
-        seed_endorsements(db)
-        # Approval
-        _make_record(db, section_type="new_application",
-                    application_type="RENEWAL", license_number="L021",
-                    record_date="2025-06-10")
-        _make_record(db, section_type="approved",
-                    application_type="RENEWAL", license_number="L021",
-                    record_date="2025-06-12", applicants="")
-        # Discontinuance
-        _make_record(db, section_type="new_application",
-                    application_type="DISC. LIQUOR SALES",
-                    license_number="L022", record_date="2025-06-10")
-        _make_record(db, section_type="discontinued",
-                    application_type="DISCONTINUED",
-                    license_number="L022", record_date="2025-06-12",
-                    applicants="")
-
-        result = build_all_links(db)
-        assert result["high"] == 2
-        assert result["total"] == 2
 
 
 # ── get_outcome_status ───────────────────────────────────────────

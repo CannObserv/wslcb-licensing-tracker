@@ -90,7 +90,7 @@ def cmd_check(args):
     with get_db() as conn:
         report = run_all_checks(conn, fix=args.fix)
         issues = print_report(report)
-    if issues and not args.fix:
+    if issues:
         sys.exit(1)
 
 

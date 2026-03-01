@@ -85,7 +85,9 @@ def check_unenriched_records(conn: sqlite3.Connection) -> dict:
     no_endorsements = conn.execute("""
         SELECT COUNT(*) FROM license_records lr
         WHERE lr.license_type IS NOT NULL AND lr.license_type != ''
-          AND lr.id NOT IN (SELECT record_id FROM record_endorsements)
+          AND NOT EXISTS (
+              SELECT 1 FROM record_endorsements re WHERE re.record_id = lr.id
+          )
     """).fetchone()[0]
 
     # Entities are only expected for records with applicants containing
@@ -93,18 +95,23 @@ def check_unenriched_records(conn: sqlite3.Connection) -> dict:
     no_entities = conn.execute("""
         SELECT COUNT(*) FROM license_records lr
         WHERE lr.applicants LIKE '%;%'
-          AND lr.id NOT IN (SELECT record_id FROM record_entities)
+          AND NOT EXISTS (
+              SELECT 1 FROM record_entities re WHERE re.record_id = lr.id
+          )
     """).fetchone()[0]
 
     no_provenance = conn.execute("""
         SELECT COUNT(*) FROM license_records lr
-        WHERE lr.id NOT IN (SELECT record_id FROM record_sources)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM record_sources rs WHERE rs.record_id = lr.id
+        )
     """).fetchone()[0]
 
     no_enrichment = conn.execute("""
         SELECT COUNT(*) FROM license_records lr
-        WHERE lr.id NOT IN (
-            SELECT record_id FROM record_enrichments WHERE step = 'endorsements'
+        WHERE NOT EXISTS (
+            SELECT 1 FROM record_enrichments re
+            WHERE re.record_id = lr.id AND re.step = 'endorsements'
         )
     """).fetchone()[0]
 
@@ -152,7 +159,7 @@ def check_entity_duplicates(conn: sqlite3.Connection) -> list[dict]:
     """Find entities that would merge under current cleaning rules.
 
     Detects entities whose names differ only by case.
-    Returns a list of dicts with ``name``, ``upper_name``, ``count``.
+    Returns a list of dicts with ``upper_name``, ``cnt``, ``names``.
     """
     rows = conn.execute("""
         SELECT UPPER(name) AS upper_name, COUNT(*) AS cnt,
