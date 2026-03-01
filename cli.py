@@ -118,7 +118,7 @@ def cmd_rebuild(args):
     print(f"  From snaps:   {result.from_snapshots:,}")
     print(f"  Locations:    {result.locations:,}")
     print(f"  Entities:     {result.entities:,}")
-    print(f"  Outcome links:{result.outcome_links:,}")
+    print(f"  Outcome links: {result.outcome_links:,}")
     print(f"  Endorsements: {result.endorsement_mappings_discovered} new mappings")
     print(f"  Elapsed:      {result.elapsed_seconds:.1f}s")
 
@@ -130,7 +130,7 @@ def cmd_rebuild(args):
         cmp = compare_databases(DB_PATH, output)
         print(f"  Production records:  {cmp.prod_count:,}")
         print(f"  Rebuilt records:     {cmp.rebuilt_count:,}")
-        print(f"  Missing from rebuilt:{cmp.missing_from_rebuilt:,}")
+        print(f"  Missing from rebuilt: {cmp.missing_from_rebuilt:,}")
         print(f"  Extra in rebuilt:    {cmp.extra_in_rebuilt:,}")
         if cmp.section_counts:
             print("  Per-section breakdown:")

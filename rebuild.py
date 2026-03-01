@@ -85,16 +85,7 @@ def rebuild_from_sources(
         seed_endorsements, discover_code_mappings,
         repair_code_name_endorsements,
     )
-    from parser import (
-        snapshot_paths, extract_snapshot_date, parse_snapshot,
-        discover_diff_files, extract_records_from_diff,
-    )
-    from database import (
-        get_or_create_source, link_record_source,
-        SOURCE_TYPE_CO_ARCHIVE, SOURCE_TYPE_CO_DIFF_ARCHIVE,
-        WSLCB_SOURCE_URL,
-    )
-    from pipeline import ingest_batch, ingest_record, IngestOptions
+    from parser import snapshot_paths, discover_diff_files
     from link_records import build_all_links
 
     # Create fresh database
@@ -109,11 +100,7 @@ def rebuild_from_sources(
         diff_files = discover_diff_files(data_dir)
         if diff_files:
             logger.info("Phase 1: Ingesting from %d diff file(s)", len(diff_files))
-            result.from_diffs = _ingest_diffs(
-                conn, diff_files, data_dir,
-                get_or_create_source, SOURCE_TYPE_CO_DIFF_ARCHIVE,
-                WSLCB_SOURCE_URL, ingest_record, IngestOptions,
-            )
+            result.from_diffs = _ingest_diffs(conn, diff_files, data_dir)
             logger.info("Phase 1 complete: %d records from diffs", result.from_diffs)
         else:
             logger.info("Phase 1: No diff files found, skipping")
@@ -124,9 +111,6 @@ def rebuild_from_sources(
             logger.info("Phase 2: Ingesting from %d snapshot(s)", len(snapshots))
             result.from_snapshots = _ingest_snapshots(
                 conn, snapshots, data_dir,
-                get_or_create_source, SOURCE_TYPE_CO_ARCHIVE,
-                WSLCB_SOURCE_URL, extract_snapshot_date, parse_snapshot,
-                ingest_batch, IngestOptions,
             )
             logger.info(
                 "Phase 2 complete: %d records from snapshots",
@@ -178,13 +162,13 @@ def rebuild_from_sources(
     return result
 
 
-def _ingest_diffs(
-    conn, diff_files, data_dir,
-    get_or_create_source, source_type, source_url,
-    ingest_record, IngestOptions,
-) -> int:
+def _ingest_diffs(conn, diff_files, data_dir) -> int:
     """Ingest records from diff archives.  Returns count of new records."""
     from parser import extract_records_from_diff
+    from database import (
+        get_or_create_source, SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
+    )
+    from pipeline import ingest_record, IngestOptions
 
     # Deduplicate across all diff files (same logic as backfill_diffs.py)
     all_records: dict[tuple, dict] = {}
@@ -237,9 +221,9 @@ def _ingest_diffs(
         if diff_path:
             if diff_path not in source_cache:
                 source_cache[diff_path] = get_or_create_source(
-                    conn, source_type,
+                    conn, SOURCE_TYPE_CO_DIFF_ARCHIVE,
                     snapshot_path=diff_path,
-                    url=source_url,
+                    url=WSLCB_SOURCE_URL,
                     captured_at=scraped_at,
                 )
             source_id = source_cache[diff_path]
@@ -265,13 +249,14 @@ def _ingest_diffs(
     return inserted
 
 
-def _ingest_snapshots(
-    conn, snapshots, data_dir,
-    get_or_create_source, source_type, source_url,
-    extract_snapshot_date, parse_snapshot,
-    ingest_batch, IngestOptions,
-) -> int:
+def _ingest_snapshots(conn, snapshots, data_dir) -> int:
     """Ingest records from HTML snapshots.  Returns count of new records."""
+    from parser import extract_snapshot_date, parse_snapshot
+    from database import (
+        get_or_create_source, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL,
+    )
+    from pipeline import ingest_batch, IngestOptions
+
     total_inserted = 0
 
     for snap_path in snapshots:
@@ -284,9 +269,9 @@ def _ingest_snapshots(
 
         rel_path = str(snap_path.relative_to(data_dir))
         source_id = get_or_create_source(
-            conn, source_type,
+            conn, SOURCE_TYPE_CO_ARCHIVE,
             snapshot_path=rel_path,
-            url=source_url,
+            url=WSLCB_SOURCE_URL,
             captured_at=(
                 snap_date.replace("_", "-") + "T00:00:00+00:00"
                 if snap_date else None
