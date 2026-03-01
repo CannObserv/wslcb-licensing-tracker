@@ -114,15 +114,10 @@ def build_all_links(conn: sqlite3.Connection) -> dict:
     high = 0
     medium = 0
 
-    # --- Phase A: approval linking (same application_type) ---
-    high_a, med_a = _link_approvals(conn)
-    high += high_a
-    medium += med_a
-
-    # --- Phase B: DISC. LIQUOR SALES → discontinued ---
-    high_b, med_b = _link_discontinuances(conn)
-    high += high_b
-    medium += med_b
+    for mode in ("approval", "discontinuance"):
+        h, m = _link_section(conn, mode=mode)
+        high += h
+        medium += m
 
     conn.commit()
     logger.info(
@@ -132,31 +127,47 @@ def build_all_links(conn: sqlite3.Connection) -> dict:
     return {"high": high, "medium": medium, "total": high + medium}
 
 
-def _link_approvals(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Link new_application → approved records (same application_type).
+def _link_section(
+    conn: sqlite3.Connection,
+    *,
+    mode: str,
+) -> tuple[int, int]:
+    """Bulk bidirectional linking for one mode.
+
+    *mode* is ``'approval'`` or ``'discontinuance'``.
 
     Returns (high_count, medium_count).
     """
-    type_list = ", ".join(f"'{t}'" for t in _APPROVAL_LINK_TYPES)
+    if mode == "approval":
+        na_type_filter = ", ".join(f"'{t}'" for t in _APPROVAL_LINK_TYPES)
+        na_where = f"na.application_type IN ({na_type_filter})"
+        out_section = "approved"
+        out_type_match = "ap.application_type = na.application_type"
+        bwd_na_extra = f"AND na.application_type IN ({na_type_filter})"
+    elif mode == "discontinuance":
+        na_where = f"na.application_type = '{_DISC_LINK_TYPE}'"
+        out_section = "discontinued"
+        out_type_match = "ap.application_type = 'DISCONTINUED'"
+        bwd_na_extra = f"AND na.application_type = '{_DISC_LINK_TYPE}'"
+    else:
+        raise ValueError(f"Unknown mode: {mode!r}")
 
-    # Forward pass: for each new_app, find earliest approved record
-    # for the same license_number + application_type within tolerance.
+    # Forward pass: for each new_app, find earliest outcome within tolerance.
     forward = conn.execute(f"""
         SELECT na.id AS new_app_id, (
             SELECT ap.id FROM license_records ap
-            WHERE ap.section_type = 'approved'
+            WHERE ap.section_type = '{out_section}'
               AND ap.license_number = na.license_number
-              AND ap.application_type = na.application_type
+              AND {out_type_match}
               AND ap.record_date >= date(na.record_date, '-{DATE_TOLERANCE_DAYS} days')
             ORDER BY ap.record_date ASC, ap.id ASC
             LIMIT 1
         ) AS outcome_id
         FROM license_records na
         WHERE na.section_type = 'new_application'
-          AND na.application_type IN ({type_list})
+          AND {na_where}
     """).fetchall()
 
-    # Build forward map: new_app_id → outcome_id
     fwd_map: dict[int, int] = {}
     for row in forward:
         if row["outcome_id"] is not None:
@@ -165,103 +176,29 @@ def _link_approvals(conn: sqlite3.Connection) -> tuple[int, int]:
     if not fwd_map:
         return 0, 0
 
-    # Backward pass: for each outcome that was claimed, find the latest
-    # new_app that points to it.
+    # Backward pass: for each claimed outcome, find the best new_app.
     outcome_ids = set(fwd_map.values())
     backward = conn.execute(f"""
         SELECT ap.id AS outcome_id, (
             SELECT na.id FROM license_records na
             WHERE na.section_type = 'new_application'
               AND na.license_number = ap.license_number
-              AND na.application_type = ap.application_type
               AND na.record_date <= date(ap.record_date, '+{DATE_TOLERANCE_DAYS} days')
-              AND na.application_type IN ({type_list})
+              {bwd_na_extra}
             ORDER BY na.record_date DESC, na.id DESC
             LIMIT 1
         ) AS new_app_id
         FROM license_records ap
-        WHERE ap.section_type = 'approved'
+        WHERE ap.section_type = '{out_section}'
           AND ap.id IN ({','.join('?' for _ in outcome_ids)})
     """, list(outcome_ids)).fetchall()
 
-    # Build backward map: outcome_id → new_app_id
     bwd_map: dict[int, int] = {}
     for row in backward:
         if row["new_app_id"] is not None:
             bwd_map[row["outcome_id"]] = row["new_app_id"]
 
-    # Mutual matches (high confidence): both passes agree
-    high = 0
-    medium = 0
-
-    for new_app_id, outcome_id in fwd_map.items():
-        if bwd_map.get(outcome_id) == new_app_id:
-            _insert_link(conn, new_app_id, outcome_id, "high")
-            high += 1
-
-    # Forward-only matches (medium confidence): new_app points to an
-    # outcome, but that outcome's backward pass prefers a different new_app.
-    linked_new_apps = {na for na, oid in fwd_map.items() if bwd_map.get(oid) == na}
-    for new_app_id, outcome_id in fwd_map.items():
-        if new_app_id not in linked_new_apps:
-            _insert_link(conn, new_app_id, outcome_id, "medium")
-            medium += 1
-
-    return high, medium
-
-
-def _link_discontinuances(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Link DISC. LIQUOR SALES → discontinued/DISCONTINUED.
-
-    Returns (high_count, medium_count).
-    """
-    # Forward pass
-    forward = conn.execute(f"""
-        SELECT na.id AS new_app_id, (
-            SELECT dc.id FROM license_records dc
-            WHERE dc.section_type = 'discontinued'
-              AND dc.license_number = na.license_number
-              AND dc.application_type = 'DISCONTINUED'
-              AND dc.record_date >= date(na.record_date, '-{DATE_TOLERANCE_DAYS} days')
-            ORDER BY dc.record_date ASC, dc.id ASC
-            LIMIT 1
-        ) AS outcome_id
-        FROM license_records na
-        WHERE na.section_type = 'new_application'
-          AND na.application_type = '{_DISC_LINK_TYPE}'
-    """).fetchall()
-
-    fwd_map: dict[int, int] = {}
-    for row in forward:
-        if row["outcome_id"] is not None:
-            fwd_map[row["new_app_id"]] = row["outcome_id"]
-
-    if not fwd_map:
-        return 0, 0
-
-    # Backward pass
-    outcome_ids = set(fwd_map.values())
-    backward = conn.execute(f"""
-        SELECT dc.id AS outcome_id, (
-            SELECT na.id FROM license_records na
-            WHERE na.section_type = 'new_application'
-              AND na.license_number = dc.license_number
-              AND na.application_type = '{_DISC_LINK_TYPE}'
-              AND na.record_date <= date(dc.record_date, '+{DATE_TOLERANCE_DAYS} days')
-            ORDER BY na.record_date DESC, na.id DESC
-            LIMIT 1
-        ) AS new_app_id
-        FROM license_records dc
-        WHERE dc.section_type = 'discontinued'
-          AND dc.application_type = 'DISCONTINUED'
-          AND dc.id IN ({','.join('?' for _ in outcome_ids)})
-    """, list(outcome_ids)).fetchall()
-
-    bwd_map: dict[int, int] = {}
-    for row in backward:
-        if row["new_app_id"] is not None:
-            bwd_map[row["outcome_id"]] = row["new_app_id"]
-
+    # Mutual matches = high confidence; forward-only = medium.
     high = 0
     medium = 0
 
@@ -332,66 +269,70 @@ def link_new_record(
     rec_date = rec["record_date"]
 
     if section == "new_application":
-        return _link_new_app(conn, record_id, app_type, lic_num, rec_date)
+        return _link_incremental(
+            conn, direction="forward",
+            record_id=record_id, app_type=app_type,
+            lic_num=lic_num, record_date=rec_date,
+        )
     elif section in ("approved", "discontinued"):
-        return _link_outcome(conn, record_id, section, app_type, lic_num, rec_date)
+        return _link_incremental(
+            conn, direction="backward",
+            record_id=record_id, app_type=app_type,
+            lic_num=lic_num, record_date=rec_date,
+            outcome_section=section,
+        )
     return None
 
 
-def _link_new_app(
+def _link_incremental(
     conn: sqlite3.Connection,
-    new_app_id: int,
+    *,
+    direction: str,
+    record_id: int,
     app_type: str,
     lic_num: str,
-    new_date: str,
+    record_date: str,
+    outcome_section: str | None = None,
 ) -> int | None:
-    """Try to link a new_application record to an existing outcome."""
-    if app_type == _DISC_LINK_TYPE:
+    """Incremental bidirectional linking for a single record.
+
+    *direction* is ``'forward'`` (new_app seeking outcome) or
+    ``'backward'`` (outcome seeking new_app).
+    """
+    # Determine the linking parameters based on application type.
+    if direction == "forward":
+        # new_application seeking an outcome
+        if app_type == _DISC_LINK_TYPE:
+            out_section = "discontinued"
+            out_type_val = "DISCONTINUED"
+            na_type_val = _DISC_LINK_TYPE
+        elif app_type in _APPROVAL_LINK_TYPES:
+            out_section = "approved"
+            out_type_val = app_type
+            na_type_val = app_type
+        else:
+            return None
+
+        # Forward: find earliest outcome for this new_app.
         outcome = conn.execute(f"""
             SELECT id FROM license_records
-            WHERE section_type = 'discontinued'
-              AND license_number = ?
-              AND application_type = 'DISCONTINUED'
-              AND record_date >= date(?, '-{DATE_TOLERANCE_DAYS} days')
-            ORDER BY record_date ASC, id ASC
-            LIMIT 1
-        """, (lic_num, new_date)).fetchone()
-    elif app_type in _APPROVAL_LINK_TYPES:
-        outcome = conn.execute(f"""
-            SELECT id FROM license_records
-            WHERE section_type = 'approved'
+            WHERE section_type = ?
               AND license_number = ?
               AND application_type = ?
               AND record_date >= date(?, '-{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date ASC, id ASC
             LIMIT 1
-        """, (lic_num, app_type, new_date)).fetchone()
-    else:
-        return None
+        """, (out_section, lic_num, out_type_val, record_date)).fetchone()
+        if not outcome:
+            return None
 
-    if not outcome:
-        return None
+        outcome_id = outcome["id"]
+        out_date = conn.execute(
+            "SELECT record_date FROM license_records WHERE id = ?",
+            (outcome_id,),
+        ).fetchone()["record_date"]
 
-    # Verify backward pass: is this new_app the best match for that outcome?
-    outcome_id = outcome["id"]
-    out_rec = conn.execute(
-        "SELECT record_date FROM license_records WHERE id = ?",
-        (outcome_id,),
-    ).fetchone()
-    if not out_rec:
-        return None
-
-    if app_type == _DISC_LINK_TYPE:
-        best_new = conn.execute(f"""
-            SELECT id FROM license_records
-            WHERE section_type = 'new_application'
-              AND license_number = ?
-              AND application_type = '{_DISC_LINK_TYPE}'
-              AND record_date <= date(?, '+{DATE_TOLERANCE_DAYS} days')
-            ORDER BY record_date DESC, id DESC
-            LIMIT 1
-        """, (lic_num, out_rec["record_date"])).fetchone()
-    else:
+        # Backward verification: is this new_app the best for that outcome?
         best_new = conn.execute(f"""
             SELECT id FROM license_records
             WHERE section_type = 'new_application'
@@ -400,37 +341,25 @@ def _link_new_app(
               AND record_date <= date(?, '+{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date DESC, id DESC
             LIMIT 1
-        """, (lic_num, app_type, out_rec["record_date"])).fetchone()
+        """, (lic_num, na_type_val, out_date)).fetchone()
 
-    if best_new and best_new["id"] == new_app_id:
-        confidence = "high"
-    else:
-        confidence = "medium"
+        confidence = "high" if (best_new and best_new["id"] == record_id) else "medium"
+        _insert_link(conn, record_id, outcome_id, confidence)
+        return outcome_id
 
-    _insert_link(conn, new_app_id, outcome_id, confidence)
-    return outcome_id
+    elif direction == "backward":
+        # outcome seeking a new_application
+        assert outcome_section is not None
+        if outcome_section == "discontinued" and app_type == "DISCONTINUED":
+            na_type_val = _DISC_LINK_TYPE
+            out_type_val = "DISCONTINUED"
+        elif outcome_section == "approved" and app_type in _APPROVAL_LINK_TYPES:
+            na_type_val = app_type
+            out_type_val = app_type
+        else:
+            return None
 
-
-def _link_outcome(
-    conn: sqlite3.Connection,
-    outcome_id: int,
-    section: str,
-    app_type: str,
-    lic_num: str,
-    out_date: str,
-) -> int | None:
-    """Try to link an outcome record to an existing new_application."""
-    if section == "discontinued" and app_type == "DISCONTINUED":
-        best_new = conn.execute(f"""
-            SELECT id FROM license_records
-            WHERE section_type = 'new_application'
-              AND license_number = ?
-              AND application_type = '{_DISC_LINK_TYPE}'
-              AND record_date <= date(?, '+{DATE_TOLERANCE_DAYS} days')
-            ORDER BY record_date DESC, id DESC
-            LIMIT 1
-        """, (lic_num, out_date)).fetchone()
-    elif section == "approved" and app_type in _APPROVAL_LINK_TYPES:
+        # Backward: find latest new_app for this outcome.
         best_new = conn.execute(f"""
             SELECT id FROM license_records
             WHERE section_type = 'new_application'
@@ -439,50 +368,32 @@ def _link_outcome(
               AND record_date <= date(?, '+{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date DESC, id DESC
             LIMIT 1
-        """, (lic_num, app_type, out_date)).fetchone()
-    else:
-        return None
+        """, (lic_num, na_type_val, record_date)).fetchone()
+        if not best_new:
+            return None
 
-    if not best_new:
-        return None
+        new_app_id = best_new["id"]
+        new_date = conn.execute(
+            "SELECT record_date FROM license_records WHERE id = ?",
+            (new_app_id,),
+        ).fetchone()["record_date"]
 
-    new_app_id = best_new["id"]
-    new_rec = conn.execute(
-        "SELECT record_date FROM license_records WHERE id = ?",
-        (new_app_id,),
-    ).fetchone()
-    if not new_rec:
-        return None
-
-    # Verify forward pass
-    if section == "discontinued":
+        # Forward verification: is this outcome the best for that new_app?
         best_out = conn.execute(f"""
             SELECT id FROM license_records
-            WHERE section_type = 'discontinued'
-              AND license_number = ?
-              AND application_type = 'DISCONTINUED'
-              AND record_date >= date(?, '-{DATE_TOLERANCE_DAYS} days')
-            ORDER BY record_date ASC, id ASC
-            LIMIT 1
-        """, (lic_num, new_rec["record_date"])).fetchone()
-    else:
-        best_out = conn.execute(f"""
-            SELECT id FROM license_records
-            WHERE section_type = 'approved'
+            WHERE section_type = ?
               AND license_number = ?
               AND application_type = ?
               AND record_date >= date(?, '-{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date ASC, id ASC
             LIMIT 1
-        """, (lic_num, app_type, new_rec["record_date"])).fetchone()
+        """, (outcome_section, lic_num, out_type_val, new_date)).fetchone()
 
-    if best_out and best_out["id"] == outcome_id:
-        confidence = "high"
-    else:
-        confidence = "medium"
+        confidence = "high" if (best_out and best_out["id"] == record_id) else "medium"
+        _insert_link(conn, new_app_id, record_id, confidence)
+        return new_app_id
 
-    _insert_link(conn, new_app_id, outcome_id, confidence)
-    return new_app_id
+    return None
 
 
 def get_outcome_status(record: dict, link: dict | None) -> dict:

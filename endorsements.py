@@ -178,6 +178,64 @@ def _link_endorsement(conn: sqlite3.Connection, record_id: int, endorsement_id: 
 
 
 # ---
+# Shared merge helper
+# ---
+
+
+def _merge_endorsement(
+    conn: sqlite3.Connection,
+    old_id: int,
+    new_id: int,
+    *,
+    delete_old: bool = True,
+) -> int:
+    """Migrate all links from endorsement *old_id* to *new_id*.
+
+    Migrates ``record_endorsements`` and ``endorsement_codes`` rows,
+    then optionally deletes the old ``license_endorsements`` row.
+
+    Returns the number of record links migrated.
+    """
+    # Migrate record_endorsements
+    records = conn.execute(
+        "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
+        (old_id,),
+    ).fetchall()
+    for rec in records:
+        conn.execute(
+            "INSERT OR IGNORE INTO record_endorsements (record_id, endorsement_id) "
+            "VALUES (?, ?)",
+            (rec[0], new_id),
+        )
+    conn.execute(
+        "DELETE FROM record_endorsements WHERE endorsement_id = ?", (old_id,)
+    )
+
+    # Migrate endorsement_codes
+    codes = conn.execute(
+        "SELECT code FROM endorsement_codes WHERE endorsement_id = ?",
+        (old_id,),
+    ).fetchall()
+    for c in codes:
+        conn.execute(
+            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) "
+            "VALUES (?, ?)",
+            (c[0], new_id),
+        )
+    conn.execute(
+        "DELETE FROM endorsement_codes WHERE endorsement_id = ?", (old_id,)
+    )
+
+    # Delete the old endorsement row
+    if delete_old:
+        conn.execute(
+            "DELETE FROM license_endorsements WHERE id = ?", (old_id,)
+        )
+
+    return len(records)
+
+
+# ---
 # Schema seeding
 # ---
 
@@ -217,9 +275,10 @@ def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
 
     For each endorsement where ``name != UPPER(name)`` and an UPPER
     counterpart already exists, migrate all record links and code
-    mappings to the canonical (upper-case) row, then delete the
-    mixed-case row.  If no upper-case counterpart exists, the
-    mixed-case row is simply renamed in place.
+    mappings to the canonical (upper-case) row via
+    ``_merge_endorsement()``, then delete the mixed-case row.  If no
+    upper-case counterpart exists, the mixed-case row is simply
+    renamed in place.
 
     Returns the number of endorsements fixed.
     """
@@ -236,7 +295,6 @@ def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
         mixed_id, mixed_name = row[0], row[1]
         upper_name = mixed_name.upper()
 
-        # Find or create the canonical upper-case row
         upper_row = conn.execute(
             "SELECT id FROM license_endorsements WHERE name = ?",
             (upper_name,),
@@ -252,46 +310,9 @@ def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
                         mixed_name, upper_name, mixed_id)
             continue
 
-        upper_id = upper_row[0]
-
-        # Migrate record_endorsements links
-        records = conn.execute(
-            "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
-            (mixed_id,),
-        ).fetchall()
-        for rec in records:
-            conn.execute(
-                """INSERT OR IGNORE INTO record_endorsements (record_id, endorsement_id)
-                   VALUES (?, ?)""",
-                (rec[0], upper_id),
-            )
-        conn.execute(
-            "DELETE FROM record_endorsements WHERE endorsement_id = ?",
-            (mixed_id,),
-        )
-
-        # Migrate endorsement_codes mappings
-        codes = conn.execute(
-            "SELECT code FROM endorsement_codes WHERE endorsement_id = ?",
-            (mixed_id,),
-        ).fetchall()
-        for c in codes:
-            conn.execute(
-                """INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id)
-                   VALUES (?, ?)""",
-                (c[0], upper_id),
-            )
-        conn.execute(
-            "DELETE FROM endorsement_codes WHERE endorsement_id = ?",
-            (mixed_id,),
-        )
-
-        # Delete the mixed-case endorsement row
-        conn.execute(
-            "DELETE FROM license_endorsements WHERE id = ?", (mixed_id,)
-        )
+        _merge_endorsement(conn, mixed_id, upper_row[0])
         logger.info("Merged endorsement %r (id=%d) into %r (id=%d)",
-                    mixed_name, mixed_id, upper_name, upper_id)
+                    mixed_name, mixed_id, upper_name, upper_row[0])
 
     conn.commit()
     return len(dupes)
@@ -358,26 +379,17 @@ def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
             )
             target_eids = [target_eid]
 
-        # Migrate all record links from the bogus endorsement to the target(s).
-        records = conn.execute(
-            "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
-            (eid_old,),
-        ).fetchall()
-        for rec in records:
-            for tgt in target_eids:
-                _link_endorsement(conn, rec[0], tgt)
-            migrated += 1
-
-        # Remove old links and the bogus endorsement.
-        conn.execute(
-            "DELETE FROM record_endorsements WHERE endorsement_id = ?", (eid_old,)
-        )
-        conn.execute(
-            "DELETE FROM endorsement_codes WHERE endorsement_id = ?", (eid_old,)
-        )
-        conn.execute(
-            "DELETE FROM license_endorsements WHERE id = ?", (eid_old,)
-        )
+        # Merge into first target, then add links to any extras.
+        migrated += _merge_endorsement(conn, eid_old, target_eids[0])
+        if len(target_eids) > 1:
+            # Link records to the additional target endorsements.
+            records = conn.execute(
+                "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
+                (target_eids[0],),
+            ).fetchall()
+            for rec in records:
+                for tgt in target_eids[1:]:
+                    _link_endorsement(conn, rec[0], tgt)
 
     # Clean up bogus endorsement_codes with spaces in the code column.
     _cleanup_space_codes(conn)
@@ -614,18 +626,19 @@ def _merge_placeholders(conn: sqlite3.Connection, learned: dict[str, list[str]])
         if not placeholder:
             continue
         pid = placeholder[0]
-        # Point all record links from placeholder to the real endorsement(s)
-        records = conn.execute(
-            "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?", (pid,)
-        ).fetchall()
-        for rec in records:
-            for name in names:
-                eid = _ensure_endorsement(conn, name)
-                _link_endorsement(conn, rec[0], eid)
-        # Remove old links and placeholder
-        conn.execute("DELETE FROM record_endorsements WHERE endorsement_id = ?", (pid,))
-        conn.execute("DELETE FROM endorsement_codes WHERE endorsement_id = ?", (pid,))
-        conn.execute("DELETE FROM license_endorsements WHERE id = ?", (pid,))
+        # Merge into the first real endorsement
+        first_eid = _ensure_endorsement(conn, names[0])
+        _merge_endorsement(conn, pid, first_eid)
+        # Link records to any additional endorsements
+        if len(names) > 1:
+            records = conn.execute(
+                "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
+                (first_eid,),
+            ).fetchall()
+            for rec in records:
+                for name in names[1:]:
+                    eid = _ensure_endorsement(conn, name)
+                    _link_endorsement(conn, rec[0], eid)
 
 
 def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
@@ -665,18 +678,18 @@ def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
         if not real_eids:
             continue
 
-        records = conn.execute(
-            "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
-            (pid,),
-        ).fetchall()
-        for rec in records:
-            for eid in real_eids:
-                _link_endorsement(conn, rec[0], eid)
-            migrated += 1
-
-        conn.execute("DELETE FROM record_endorsements WHERE endorsement_id = ?", (pid,))
-        conn.execute("DELETE FROM endorsement_codes WHERE endorsement_id = ?", (pid,))
-        conn.execute("DELETE FROM license_endorsements WHERE id = ?", (pid,))
+        # Merge into first real endorsement
+        count = _merge_endorsement(conn, pid, real_eids[0])
+        migrated += count
+        # Link records to any additional endorsements
+        if len(real_eids) > 1:
+            records = conn.execute(
+                "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
+                (real_eids[0],),
+            ).fetchall()
+            for rec in records:
+                for eid in real_eids[1:]:
+                    _link_endorsement(conn, rec[0], eid)
 
     if migrated:
         conn.commit()
