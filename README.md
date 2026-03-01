@@ -90,6 +90,7 @@ wslcb-licensing-tracker/
 ├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots via pipeline
 ├── backfill_diffs.py       # Ingest from CO diff archives via pipeline
 ├── backfill_provenance.py  # One-time backfill of source provenance links
+├── integrity.py            # Database integrity checks (used by cli.py check)
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
 │   ├── base.html           # Base layout template
@@ -121,6 +122,9 @@ wslcb-licensing-tracker/
 │   ├── test_schema.py      # Migration framework tests
 │   ├── test_database.py    # Database helper tests (location/source/provenance)
 │   ├── test_queries.py     # Record insert/query tests
+│   ├── test_link_records.py # Record linking tests (bulk + incremental)
+│   ├── test_endorsements.py # Endorsement normalization tests
+│   ├── test_integrity.py   # Integrity check tests
 │   └── fixtures/           # Minimal HTML fixtures for parser tests
 ├── wslcb-web.service       # systemd service for the web app
 ├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
@@ -240,6 +244,22 @@ python cli.py refresh-addresses
 
 This is safe to interrupt — progress is committed in batches and each location's timestamp is updated individually.
 
+## Integrity Checks
+
+To check the database for data quality issues:
+
+```bash
+python cli.py check
+```
+
+This reports orphaned locations, broken foreign keys, un-enriched records, endorsement anomalies, and entity duplicates.
+
+To auto-fix safe issues (e.g., remove orphaned locations):
+
+```bash
+python cli.py check --fix
+```
+
 The original raw address string is always preserved in `locations.raw_address`. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
 
 ## ASSUMPTION Records
@@ -343,6 +363,9 @@ Test structure:
 | `tests/test_database.py` | Location/source/provenance helper functions |
 | `tests/test_pipeline.py` | Unified ingestion pipeline — insert, endorsements, provenance, outcome linking |
 | `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
+| `tests/test_link_records.py` | Record linking — bulk, incremental, outcome status, reverse links |
+| `tests/test_endorsements.py` | Endorsement normalization — merge helper, processing, repair |
+| `tests/test_integrity.py` | Integrity checks — all check and fix functions |
 | `tests/test_queries.py` | Record insertion, deduplication, entity creation |
 | `tests/conftest.py` | Shared fixtures: in-memory DB, sample record dicts |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |

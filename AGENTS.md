@@ -45,9 +45,10 @@ license_records → locations (FK: location_id, previous_location_id)
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
 | `pipeline.py` | Unified ingestion pipeline | `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult`. All ingestion paths (scraper, snapshot backfill, diff backfill) go through this module. Tracks enrichment completion via `_record_enrichment()` after each step. Exports step name constants: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`. |
 | `display.py` | Presentation formatting | `format_outcome()`, `summarize_provenance()`, `OUTCOME_STYLES`. Owns CSS classes, icons, badge text; domain layer returns semantic data only. |
-| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()` (semantic only — no CSS), `get_reverse_link_info()`, `outcome_filter_sql()`. |
+| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()` (semantic only — no CSS), `get_reverse_link_info()`, `outcome_filter_sql()`. Internally: `_link_section(mode)` handles bulk linking (parameterized for approval/discontinuance), `_link_incremental(direction)` handles single-record linking (parameterized for forward/backward). |
 | `backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records via `pipeline.ingest_record()`. Parsing logic lives in `parser.py`. Safe to re-run. |
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
+| `integrity.py` | Database integrity checks | `check_orphaned_locations()`, `check_broken_fks()`, `check_unenriched_records()`, `check_endorsement_anomalies()`, `check_entity_duplicates()`, `run_all_checks()`, `fix_orphaned_locations()`. Used by `cli.py check`. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
 | `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
@@ -61,6 +62,9 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/test_pipeline.py` | Pipeline tests | `ingest_record()` and `ingest_batch()`: insertion, dedup, endorsements, provenance, entities, outcome linking. |
 | `tests/test_display.py` | Display tests | `format_outcome()` and `summarize_provenance()`: all outcome statuses, provenance grouping, date ranges. |
 | `tests/test_queries.py` | Query tests | `insert_record()` with all record types, dedup, entity creation. |
+| `tests/test_link_records.py` | Link records tests | `_link_section()`, `_link_incremental()`, `build_all_links()`, `get_outcome_status()`, `get_reverse_link_info()` — bulk and incremental linking. |
+| `tests/test_endorsements.py` | Endorsement tests | `_merge_endorsement()`, `process_record()`, `merge_mixed_case_endorsements()`, `repair_code_name_endorsements()`, query helpers. |
+| `tests/test_integrity.py` | Integrity check tests | All check functions, fix functions, aggregate runner. |
 | `tests/fixtures/` | HTML test fixtures | Minimal realistic HTML for each record type and section. |
 
 ## Database Schema
@@ -249,6 +253,9 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Database/query tests (`test_db.py`, `test_schema.py`, `test_database.py`, `test_queries.py`) use the `db` fixture or in-memory connections.
 - Pipeline tests (`test_pipeline.py`) verify end-to-end ingestion: insert, endorsements, provenance, entities, outcome linking.
 - Display tests (`test_display.py`) test pure presentation formatting — no database.
+- Link record tests (`test_link_records.py`) test bulk and incremental linking with the parameterized `_link_section()` and `_link_incremental()` functions.
+- Endorsement tests (`test_endorsements.py`) test `_merge_endorsement()`, `process_record()`, and all repair functions.
+- Integrity tests (`test_integrity.py`) test each check function and fix function.
 - Use the sample record fixtures from `conftest.py` (`standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`) for tests that need record dicts.
 
 **Infrastructure:**
@@ -268,6 +275,9 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Modifying `queries.py` → add/update `test_queries.py`
 - Modifying `pipeline.py` → add/update `test_pipeline.py`
 - Modifying `display.py` → add/update `test_display.py`
+- Modifying `link_records.py` → add/update `test_link_records.py`
+- Modifying `endorsements.py` → add/update `test_endorsements.py`
+- Modifying `integrity.py` → add/update `test_integrity.py`
 
 ### Templates
 - Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`) with custom `tailwind.config` in `base.html`
@@ -477,6 +487,15 @@ Two-phase process:
 2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
 Safe to re-run. Address validation is deferred; run `cli.py backfill-addresses` afterward.
+
+### Run integrity checks
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python cli.py check           # report issues
+python cli.py check --fix     # auto-fix safe issues (orphan cleanup)
+```
+Exits with code 1 when issues are found. Checks: orphaned locations, broken FKs, un-enriched records, endorsement anomalies, entity duplicates.
 
 ### Rebuild application→outcome links
 ```bash
