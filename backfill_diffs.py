@@ -46,12 +46,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from database import (
-    DATA_DIR, get_db, init_db, get_or_create_source, link_record_source,
+    DATA_DIR, get_db, init_db, get_or_create_source,
     SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
-from endorsements import discover_code_mappings, process_record, seed_endorsements, repair_code_name_endorsements
+from endorsements import discover_code_mappings, seed_endorsements, repair_code_name_endorsements
 from parser import discover_diff_files, extract_records_from_diff
-from queries import insert_record, hydrate_records, RECORD_COLUMNS, RECORD_JOINS
+from queries import hydrate_records, RECORD_COLUMNS, RECORD_JOINS
+from pipeline import ingest_record, IngestOptions, IngestResult
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,7 @@ def backfill_diffs(
         logger.info("Dry run complete — no database changes made.")
         return
 
-    # Phase 2: insert into database in batches.
+    # Phase 2: insert into database via unified pipeline.
     inserted_ids: list[int] = []
     skipped = 0
     errors = 0
@@ -266,28 +267,19 @@ def backfill_diffs(
         records.sort(key=lambda r: (r["record_date"], r["section_type"]))
 
         for i, rec in enumerate(records):
-            try:
-                result = insert_record(conn, rec)
-                if result is None:
-                    skipped += 1
-                else:
-                    rid, is_new = result
-                    if is_new:
-                        process_record(conn, rid, rec["license_type"])
-                        sid = _get_source_id(rec.get("scraped_at", ""))
-                        if sid is not None:
-                            link_record_source(conn, rid, sid, "first_seen")
-                        inserted_ids.append(rid)
-                    else:
-                        skipped += 1
-            except Exception:
-                logger.exception(
-                    "Error inserting record: %s/%s/#%s",
-                    rec.get("section_type"),
-                    rec.get("record_date"),
-                    rec.get("license_number"),
-                )
+            sid = _get_source_id(rec.get("scraped_at", ""))
+            opts = IngestOptions(
+                validate_addresses=False,
+                link_outcomes=False,
+                source_id=sid,
+            )
+            ir = ingest_record(conn, rec, opts)
+            if ir is None:
                 errors += 1
+            elif ir.is_new:
+                inserted_ids.append(ir.record_id)
+            else:
+                skipped += 1
 
             # Commit in batches to allow recovery from interruption.
             if (i + 1) % COMMIT_BATCH_SIZE == 0:

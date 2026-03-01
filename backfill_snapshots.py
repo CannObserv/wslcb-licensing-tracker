@@ -16,44 +16,16 @@ from database import (
     get_or_create_source, link_record_source, SOURCE_TYPE_CO_ARCHIVE,
     WSLCB_SOURCE_URL,
 )
-from queries import insert_record
 from entities import (
     parse_and_link_entities, clean_applicants_string, clean_entity_name,
 )
-from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
-from parser import parse_records_from_table, SECTION_MAP, snapshot_paths, extract_snapshot_date, parse_snapshot
+from endorsements import seed_endorsements, discover_code_mappings, repair_code_name_endorsements
+from parser import snapshot_paths, extract_snapshot_date, parse_snapshot
+from pipeline import ingest_batch, IngestOptions
 
 logger = logging.getLogger(__name__)
 
 
-# ── Phase 1: Ingest ──────────────────────────────────────────────────
-
-def _ingest_records(
-    conn, records: list[dict], source_id: int,
-) -> tuple[int, int]:
-    """Insert new records into the database.  Returns (inserted, skipped).
-
-    Links every record to *source_id*: newly-inserted records get
-    ``first_seen``, duplicates get ``confirmed``.
-    """
-    inserted = 0
-    skipped = 0
-    for rec in records:
-        result = insert_record(conn, rec)
-        if result is None:
-            skipped += 1
-            continue
-        rid, is_new = result
-        if is_new:
-            process_record(conn, rid, rec["license_type"])
-            link_record_source(conn, rid, source_id, "first_seen")
-            inserted += 1
-        else:
-            link_record_source(
-                conn, rid, source_id, "confirmed",
-            )
-            skipped += 1
-    return inserted, skipped
 
 
 # ── Phase 2: Repair ──────────────────────────────────────────────────
@@ -296,11 +268,13 @@ def backfill_from_snapshots():
                 ),
             )
 
-            # Phase 1: insert new records
-            inserted, skipped = _ingest_records(
-                conn, records, source_id,
+            # Phase 1: insert new records via unified pipeline
+            opts = IngestOptions(
+                validate_addresses=False,
+                link_outcomes=False,
+                source_id=source_id,
             )
-            conn.commit()
+            batch_result = ingest_batch(conn, records, opts)
 
             # Phase 2: repair broken records
             assumption_fixed += _repair_assumptions(
@@ -311,9 +285,9 @@ def backfill_from_snapshots():
             )
             conn.commit()
 
-            total_inserted += inserted
-            total_skipped += skipped
-            logger.debug("  %s: +%d new, %d skipped", snap_date, inserted, skipped)
+            total_inserted += batch_result.inserted
+            total_skipped += batch_result.skipped
+            logger.debug("  %s: +%d new, %d skipped", snap_date, batch_result.inserted, batch_result.skipped)
 
         # Discover any new code→endorsement mappings
         learned = discover_code_mappings(conn)

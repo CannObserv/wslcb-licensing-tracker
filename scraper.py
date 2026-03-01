@@ -1,8 +1,7 @@
 """Scraper for WSLCB licensing activity page.
 
 Fetches the live WSLCB licensing page, archives the HTML, parses records,
-and inserts them into the database with endorsement processing, address
-validation, and application→outcome linking.
+and inserts them into the database via the unified ingestion pipeline.
 """
 import logging
 from pathlib import Path
@@ -11,14 +10,13 @@ import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from database import (
-    DATA_DIR, get_db, init_db, get_or_create_source, link_record_source,
+    DATA_DIR, get_db, init_db, get_or_create_source,
     SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL,
 )
 from parser import SECTION_MAP, parse_records_from_table
-from queries import insert_record
-from endorsements import process_record, seed_endorsements, discover_code_mappings, repair_code_name_endorsements
-from address_validator import validate_record, validate_previous_location, TIMEOUT as _AV_TIMEOUT
-from link_records import link_new_record
+from endorsements import seed_endorsements, discover_code_mappings, repair_code_name_endorsements
+from address_validator import TIMEOUT as _AV_TIMEOUT
+from pipeline import ingest_batch, IngestOptions
 
 logger = logging.getLogger(__name__)
 
@@ -122,36 +120,22 @@ def scrape():
                     records = parse_records_from_table(table, section_type)
                     logger.debug("  %s: parsed %d records", section_type, len(records))
 
-                    inserted = 0
-                    for rec in records:
-                        result = insert_record(conn, rec)
-                        if result is None:
-                            counts["skipped"] += 1
-                            continue
-                        rid, is_new = result
-                        if is_new:
-                            process_record(conn, rid, rec["license_type"])
-                            link_record_source(conn, rid, source_id, "first_seen")
-                            link_new_record(conn, rid)
-                            validate_record(conn, rid, client=av_client)
-                            if rec.get("previous_business_location"):
-                                validate_previous_location(conn, rid, client=av_client)
-                            inserted += 1
-                        else:
-                            link_record_source(
-                                conn, rid, source_id, "confirmed",
-                            )
-                            counts["skipped"] += 1
+                    opts = IngestOptions(
+                        validate_addresses=True,
+                        link_outcomes=True,
+                        source_id=source_id,
+                        av_client=av_client,
+                    )
+                    batch_result = ingest_batch(conn, records, opts)
 
                     key = section_type.split("_")[0] if "_" in section_type else section_type
                     if key == "new":
-                        counts["new"] = inserted
+                        counts["new"] = batch_result.inserted
                     elif key == "approved":
-                        counts["approved"] = inserted
+                        counts["approved"] = batch_result.inserted
                     elif key == "discontinued":
-                        counts["discontinued"] = inserted
-
-                    conn.commit()
+                        counts["discontinued"] = batch_result.inserted
+                    counts["skipped"] += batch_result.skipped
 
             # Update log
             conn.execute(
