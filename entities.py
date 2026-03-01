@@ -223,6 +223,11 @@ def clean_record_strings(conn: sqlite3.Connection) -> int:
     Only updates rows that actually change.  Returns the number of rows
     updated.  Callers should commit afterward (this function does not
     commit, so it can participate in a larger transaction).
+
+    Note: the ``raw_*`` shadow columns are intentionally left untouched.
+    They preserve the as-parsed values from ingestion time (or the
+    backfilled cleaned values for pre-existing records) and should
+    never be overwritten by subsequent cleaning passes.
     """
     rows = conn.execute(
         """SELECT id, business_name, previous_business_name,

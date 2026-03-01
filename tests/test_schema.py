@@ -237,14 +237,12 @@ class TestMigration002RecordEnrichments:
         ]:
             assert col in cols, f"Missing column: {col}"
 
-    def test_migration_on_existing_db(self):
-        """Migration 002 should add table and columns to an existing DB."""
-        # Simulate a DB that was at version 1 (baseline already applied)
+    def test_fresh_db_reaches_version_2(self):
+        """A fresh DB should run both baseline and m002."""
         conn = get_connection(":memory:")
-        migrate(conn)  # applies baseline
+        migrate(conn)
         v1 = _get_user_version(conn)
 
-        # Verify we got past version 1 (002 applied)
         assert v1 >= 2
         # Verify table exists
         row = conn.execute(

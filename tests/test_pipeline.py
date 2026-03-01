@@ -306,8 +306,8 @@ class TestEnrichmentTracking:
             "SELECT count(*) FROM record_enrichments WHERE record_id = ?",
             (r1.record_id,),
         ).fetchone()[0]
-        # Should have exactly the enrichments from first insert, not doubled
-        assert count >= 1  # at least endorsements + entities
+        # Exactly endorsements + entities from the first insert, not doubled
+        assert count == 2
         # Verify no duplicates
         all_steps = db.execute(
             "SELECT step FROM record_enrichments WHERE record_id = ?",
@@ -315,6 +315,25 @@ class TestEnrichmentTracking:
         ).fetchall()
         step_names = [r["step"] for r in all_steps]
         assert len(step_names) == len(set(step_names)), "Duplicate enrichment steps found"
+
+    def test_record_enrichment_idempotent(self, db, standard_new_application):
+        """Calling _record_enrichment twice for the same step should upsert, not duplicate."""
+        from pipeline import ingest_record, IngestOptions, _record_enrichment
+
+        seed_endorsements(db)
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        result = ingest_record(db, standard_new_application, opts)
+
+        # Call again for a step that already exists
+        _record_enrichment(db, result.record_id, "endorsements", "2")
+
+        rows = db.execute(
+            "SELECT version FROM record_enrichments "
+            "WHERE record_id = ? AND step = 'endorsements'",
+            (result.record_id,),
+        ).fetchall()
+        assert len(rows) == 1, "Should have exactly one row, not a duplicate"
+        assert rows[0]["version"] == "2", "Version should be updated by the re-run"
 
     def test_find_unenriched_records(self, db, standard_new_application, assumption_record):
         """Query to find records missing a specific enrichment step."""

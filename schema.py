@@ -286,8 +286,9 @@ def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
 #
 # Prior ad-hoc migrations (inline ALTER TABLE blocks, migrate_locations.py,
 # record_sources PK rebuild) are all subsumed by the existing-DB stamp in
-# migrate(): databases created before this framework already have the full
-# schema, so they get stamped to the latest version without re-running DDL.
+# migrate(): databases created before this framework get stamped to
+# _EXISTING_DB_STAMP_VERSION (currently 1), then newer migrations run
+# normally.  See _EXISTING_DB_STAMP_VERSION for details.
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "baseline", _m001_baseline),
     (2, "enrichment_tracking", _m002_enrichment_tracking),
