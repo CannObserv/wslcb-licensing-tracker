@@ -75,6 +75,8 @@ Uvicorn’s access and error logs are routed through the same formatter for cons
 wslcb-licensing-tracker/
 ├── app.py                  # FastAPI web application
 ├── cli.py                  # Unified CLI entry point (argparse subcommands)
+├── pipeline.py             # Unified ingestion pipeline (ingest_record, ingest_batch)
+├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
 ├── database.py             # SQLite schema, connections, FTS5 full-text search
 ├── queries.py              # Record search, filters, stats, CRUD
@@ -83,9 +85,9 @@ wslcb-licensing-tracker/
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── log_config.py           # Centralized logging configuration
 ├── address_validator.py    # Address validation API client
-├── scraper.py              # WSLCB page scraper — fetch, archive, insert
-├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots
-├── backfill_diffs.py       # Ingest from CO diff archives
+├── scraper.py              # WSLCB page scraper — fetch, archive, ingest via pipeline
+├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots via pipeline
+├── backfill_diffs.py       # Ingest from CO diff archives via pipeline
 ├── backfill_provenance.py  # One-time backfill of source provenance links
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
@@ -334,6 +336,8 @@ Test structure:
 |---|---|
 | `tests/test_parser.py` | Pure HTML parsing functions — all record types, edge cases |
 | `tests/test_database.py` | Schema initialization, location/source helpers |
+| `tests/test_pipeline.py` | Unified ingestion pipeline — insert, endorsements, provenance, outcome linking |
+| `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
 | `tests/test_queries.py` | Record insertion, deduplication, entity creation |
 | `tests/conftest.py` | Shared fixtures: in-memory DB, sample record dicts |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |

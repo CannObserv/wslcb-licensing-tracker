@@ -12,15 +12,17 @@ This is a Python web application that scrapes Washington State Liquor and Cannab
 ## Architecture at a Glance
 
 ```
-scraper.py  →  data/wslcb.db (SQLite + FTS5)  ←  app.py (FastAPI)  →  templates/ (Jinja2 + HTMX)
-             ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html (archived snapshots)
+scraper.py ─┐
+backfill_snapshots.py ─┼─→ pipeline.py ─→ data/wslcb.db (SQLite + FTS5) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
+backfill_diffs.py ───┘                                                         ←─ display.py (presentation)
+                       ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html (archived snapshots)
 
 license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** The DB layer is split into `database.py` (core schema/connections), `entities.py` (applicant normalization), and `queries.py` (search/CRUD). Dependencies flow one-way: `queries → database, entities, endorsements`.
+- **Small modules.** The DB layer is split into `database.py` (core schema/connections), `entities.py` (applicant normalization), and `queries.py` (search/CRUD). All ingestion flows through `pipeline.py`. Dependencies flow one-way: `pipeline → queries, endorsements, entities, link_records, address_validator`; `queries → database, entities, endorsements, display`.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files
@@ -34,14 +36,16 @@ license_records → locations (FK: location_id, previous_location_id)
 | `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `database.DATA_DIR`. |
-| `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()` only (no `__main__`). Logs to `scrape_log` table. Archives source HTML. Use `cli.py scrape` to run. |
+| `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()` only (no `__main__`). Logs to `scrape_log` table. Archives source HTML. Uses `pipeline.ingest_batch()` for record insertion. Use `cli.py scrape` to run. |
 | `cli.py` | Unified CLI entry point | Argparse subcommands for all operational tasks. Replaces `python scraper.py --flag` pattern. |
-| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records from all snapshots, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `cli.py backfill-addresses`. |
+| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records via `pipeline.ingest_batch()`, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `cli.py backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
-| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()`, `get_reverse_link_info()`, `outcome_filter_sql()`. |
-| `backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records. Parsing logic lives in `parser.py`. Safe to re-run. |
+| `pipeline.py` | Unified ingestion pipeline | `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult`. All ingestion paths (scraper, snapshot backfill, diff backfill) go through this module. |
+| `display.py` | Presentation formatting | `format_outcome()`, `summarize_provenance()`, `OUTCOME_STYLES`. Owns CSS classes, icons, badge text; domain layer returns semantic data only. |
+| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()` (semantic only — no CSS), `get_reverse_link_info()`, `outcome_filter_sql()`. |
+| `backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records via `pipeline.ingest_record()`. Parsing logic lives in `parser.py`. Safe to re-run. |
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
@@ -51,6 +55,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/conftest.py` | Shared test fixtures | In-memory DB, sample record dicts, `FIXTURES_DIR` path constant. |
 | `tests/test_parser.py` | Parser tests | Tests for all `parser.py` functions using static HTML fixtures. |
 | `tests/test_database.py` | Database tests | Schema init, location/source helpers, provenance linking. |
+| `tests/test_pipeline.py` | Pipeline tests | `ingest_record()` and `ingest_batch()`: insertion, dedup, endorsements, provenance, entities, outcome linking. |
+| `tests/test_display.py` | Display tests | `format_outcome()` and `summarize_provenance()`: all outcome statuses, provenance grouping, date ranges. |
 | `tests/test_queries.py` | Query tests | `insert_record()` with all record types, dedup, entity creation. |
 | `tests/fixtures/` | HTML test fixtures | Minimal realistic HTML for each record type and section. |
 
@@ -217,6 +223,8 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - HTML parsing tests use static fixture files in `tests/fixtures/`; keep them minimal and realistic.
 - Parser tests (`test_parser.py`) test pure functions — HTML in, dicts out. No database.
 - Database/query tests (`test_database.py`, `test_queries.py`) use the `db` fixture (in-memory SQLite with full schema).
+- Pipeline tests (`test_pipeline.py`) verify end-to-end ingestion: insert, endorsements, provenance, entities, outcome linking.
+- Display tests (`test_display.py`) test pure presentation formatting — no database.
 - Use the sample record fixtures from `conftest.py` (`standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`) for tests that need record dicts.
 
 **Infrastructure:**
@@ -232,6 +240,8 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Modifying `parser.py` → add/update `test_parser.py` with fixture HTML
 - Modifying `database.py` → add/update `test_database.py`
 - Modifying `queries.py` → add/update `test_queries.py`
+- Modifying `pipeline.py` → add/update `test_pipeline.py`
+- Modifying `display.py` → add/update `test_display.py`
 
 ### Templates
 - Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`) with custom `tailwind.config` in `base.html`
