@@ -30,7 +30,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | File | Purpose | Notes |
 |---|---|---|
 | `db.py` | Connection management, constants | Thin base layer (<80 lines). `get_connection()`, `get_db()`, `DATA_DIR`, `DB_PATH`, source type constants, `WSLCB_SOURCE_URL`, `_normalize_raw_address()`. |
-| `schema.py` | DDL, migrations, FTS | All table creation, `PRAGMA user_version` migration framework, FTS5 setup, data seeding. `init_db()`, `migrate()`, `MIGRATIONS` list. |
+| `schema.py` | DDL, migrations, FTS | All table creation, `PRAGMA user_version` migration framework, FTS5 setup, data seeding. `init_db()`, `migrate()`, `MIGRATIONS` list. Migration 002 (`enrichment_tracking`) adds `record_enrichments` table and `raw_*` shadow columns. |
 | `database.py` | Backward-compat shim + helpers | Re-exports all symbols from `db.py` and `schema.py`. Contains `get_or_create_location()`, `get_or_create_source()`, `link_record_source()`. Existing `from database import ...` statements continue to work. |
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
 | `queries.py` | Record queries and CRUD | `search_records()`, `export_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
@@ -43,7 +43,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
-| `pipeline.py` | Unified ingestion pipeline | `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult`. All ingestion paths (scraper, snapshot backfill, diff backfill) go through this module. |
+| `pipeline.py` | Unified ingestion pipeline | `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult`. All ingestion paths (scraper, snapshot backfill, diff backfill) go through this module. Tracks enrichment completion via `_record_enrichment()` after each step. Exports step name constants: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`. |
 | `display.py` | Presentation formatting | `format_outcome()`, `summarize_provenance()`, `OUTCOME_STYLES`. Owns CSS classes, icons, badge text; domain layer returns semantic data only. |
 | `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()` (semantic only — no CSS), `get_reverse_link_info()`, `outcome_filter_sql()`. |
 | `backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records via `pipeline.ingest_record()`. Parsing logic lives in `parser.py`. Safe to re-run. |
@@ -118,6 +118,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - The `_LEGIT_TRAILING_DOT` regex in `entities.py` defines the suffix allowlist — add new entries there when the WSLCB source uses a new legitimate abbreviation ending with a period.  Current list: `INC`, `LLC`, `L.L.C`, `L.L.P`, `LTD`, `CORP`, `CO`, `L.P`, `PTY`, `JR`, `SR`, `S.P.A`, `F.O.E`, `U.P`, `D.B.A`, `P.C`, `N.A`, `P.A`, `W. & S`
 - `clean_applicants_string()` applies the same cleaning to each element of a semicolon-delimited applicants string — used at ingest time so the `applicants`/`previous_applicants` columns on `license_records` stay consistent with entity names
 - `insert_record()` in `queries.py` also cleans `business_name` and `previous_business_name` via `clean_entity_name()` before storage, so all name columns are consistently uppercased and stripped of stray punctuation
+- `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — shadow columns storing the as-parsed values from the source *before* name cleaning (uppercase, punctuation stripping); going forward, `insert_record()` saves the raw values here, then writes cleaned values to the primary columns; for existing records, these were backfilled with the already-cleaned values (originals lost)
 - `merge_duplicate_entities()` runs at web app startup (via `backfill_entities()` in the `app.py` lifespan) — cleans `business_name`, `previous_business_name`, `applicants`, and `previous_applicants` in `license_records` via `clean_record_strings()`, then merges duplicate entities and renames dirty ones in place; all work is committed in a single transaction
 
 ### `record_entities` (junction table)
@@ -144,6 +145,17 @@ license_records → locations (FK: location_id, previous_location_id)
 - `PENDING_CUTOFF_DAYS = 180` — unlinked applications older than this are classified as "unknown" instead of "pending"
 - `DATA_GAP_CUTOFF = '2025-05-12'` — post-gap NEW APPLICATION records get "data_gap" status (WSLCB stopped publishing these approvals)
 - `ON DELETE CASCADE` on both FKs
+
+### `record_enrichments` (enrichment tracking)
+- Tracks which enrichment steps have been applied to each record
+- `record_id` — FK to `license_records(id)`, `ON DELETE CASCADE`
+- `step` — enrichment step name: `'endorsements'`, `'entities'`, `'address'`, `'outcome_link'`
+- `completed_at` — ISO 8601 timestamp of when the step finished
+- `version` — schema/logic version of the step (default `'1'`); allows re-processing when step logic changes
+- Composite PK `(record_id, step)`
+- Written by `_record_enrichment()` in `pipeline.py` after each enrichment step succeeds; uses `INSERT OR REPLACE` so re-runs update the timestamp
+- Step name constants exported from `pipeline.py`: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`
+- Enables targeted re-processing queries, e.g., find records missing entity linking: `WHERE id NOT IN (SELECT record_id FROM record_enrichments WHERE step = 'entities')`
 
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
@@ -180,6 +192,15 @@ license_records → locations (FK: location_id, previous_location_id)
 - `link_record_source()` in `database.py` handles idempotent insert
 - `ON DELETE CASCADE` on both FKs
 - `get_record_sources()` in `queries.py` returns provenance for display on detail page
+
+### Migration framework
+- `PRAGMA user_version` tracks the current schema version; each migration bumps it
+- `MIGRATIONS` list in `schema.py`: `(version, name, function)` tuples run in order
+- Fresh databases run all migrations starting from 0 (baseline creates the full schema)
+- Existing databases (tables present, `user_version == 0`) are stamped to `_EXISTING_DB_STAMP_VERSION = 1` — the last version subsumed by their pre-framework schema — then the migration loop runs everything above it
+- Migration 001 (`baseline`): full initial schema (all tables, indexes, seed data)
+- Migration 002 (`enrichment_tracking`): adds `record_enrichments` table, adds `raw_*` shadow columns to `license_records` (conditionally via `PRAGMA table_info`), backfills `raw_* = cleaned values` for existing records
+- To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
 
 ## Playbooks
 
