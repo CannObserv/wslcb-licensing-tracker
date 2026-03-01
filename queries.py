@@ -170,17 +170,28 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
     cleaned_prev_applicants = clean_applicants_string(
         record.get("previous_applicants", "")
     )
+    # Preserve raw (as-parsed) values before cleaning
+    raw_biz = record.get("business_name", "")
+    raw_prev_biz = record.get("previous_business_name", "")
+    raw_applicants = record.get("applicants", "")
+    raw_prev_applicants = record.get("previous_applicants", "")
     try:
         cursor = conn.execute(
             """INSERT INTO license_records
                (section_type, record_date, business_name, location_id,
                 applicants, license_type, application_type, license_number,
                 contact_phone, previous_business_name, previous_applicants,
-                previous_location_id, scraped_at)
+                previous_location_id,
+                raw_business_name, raw_previous_business_name,
+                raw_applicants, raw_previous_applicants,
+                scraped_at)
                VALUES (:section_type, :record_date, :business_name, :location_id,
                        :applicants, :license_type, :application_type, :license_number,
                        :contact_phone, :previous_business_name, :previous_applicants,
-                       :previous_location_id, :scraped_at)""",
+                       :previous_location_id,
+                       :raw_business_name, :raw_previous_business_name,
+                       :raw_applicants, :raw_previous_applicants,
+                       :scraped_at)""",
             {
                 **record,
                 "location_id": location_id,
@@ -189,6 +200,10 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
                 "previous_business_name": cleaned_prev_biz,
                 "applicants": cleaned_applicants,
                 "previous_applicants": cleaned_prev_applicants,
+                "raw_business_name": raw_biz,
+                "raw_previous_business_name": raw_prev_biz,
+                "raw_applicants": raw_applicants,
+                "raw_previous_applicants": raw_prev_applicants,
             },
         )
         record_id = cursor.lastrowid

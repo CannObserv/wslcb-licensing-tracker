@@ -17,6 +17,7 @@ step 1.  Failures in steps 3–5 are logged but do not abort the pipeline.
 import logging
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,33 @@ class BatchResult:
     skipped: int = 0
     errors: int = 0
     record_ids: list[int] = field(default_factory=list)
+
+
+# ------------------------------------------------------------------
+# Enrichment step names (canonical values for record_enrichments.step)
+# ------------------------------------------------------------------
+
+STEP_ENDORSEMENTS = "endorsements"
+STEP_ENTITIES = "entities"
+STEP_ADDRESS = "address"
+STEP_OUTCOME_LINK = "outcome_link"
+
+
+def _record_enrichment(
+    conn: sqlite3.Connection,
+    record_id: int,
+    step: str,
+    version: str = "1",
+) -> None:
+    """Record that an enrichment step completed for a record.
+
+    Uses INSERT OR REPLACE so re-running a step updates the timestamp.
+    """
+    conn.execute(
+        "INSERT OR REPLACE INTO record_enrichments "
+        "(record_id, step, completed_at, version) VALUES (?, ?, ?, ?)",
+        (record_id, step, datetime.now(timezone.utc).isoformat(), version),
+    )
 
 
 def ingest_record(
@@ -86,10 +114,15 @@ def ingest_record(
         # Step 2: Process endorsements
         try:
             process_record(conn, record_id, record.get("license_type", ""))
+            _record_enrichment(conn, record_id, STEP_ENDORSEMENTS)
         except Exception:
             logger.exception(
                 "Error processing endorsements for record %d", record_id,
             )
+
+        # Entity linking is performed by insert_record (step 1), so
+        # we track it here unconditionally for new records.
+        _record_enrichment(conn, record_id, STEP_ENTITIES)
 
         # Step 3: Link provenance (first_seen)
         if options.source_id is not None:
@@ -111,6 +144,7 @@ def ingest_record(
                     validate_previous_location(
                         conn, record_id, client=options.av_client,
                     )
+                _record_enrichment(conn, record_id, STEP_ADDRESS)
             except Exception:
                 logger.exception(
                     "Error validating address for record %d", record_id,
@@ -121,6 +155,7 @@ def ingest_record(
             try:
                 from link_records import link_new_record
                 link_new_record(conn, record_id)
+                _record_enrichment(conn, record_id, STEP_OUTCOME_LINK)
             except Exception:
                 logger.exception(
                     "Error linking outcomes for record %d", record_id,

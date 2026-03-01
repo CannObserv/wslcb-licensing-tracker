@@ -230,3 +230,194 @@ class TestIngestBatch:
         )
         result = ingest_batch(db, records, opts)
         assert result.inserted == 5
+
+
+# ── Enrichment tracking ────────────────────────────────────────────
+
+
+class TestEnrichmentTracking:
+    def test_new_record_gets_endorsement_enrichment(self, db, standard_new_application):
+        """After ingest, the endorsements step should be tracked."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        result = ingest_record(db, standard_new_application, opts)
+
+        row = db.execute(
+            "SELECT step, version FROM record_enrichments "
+            "WHERE record_id = ? AND step = 'endorsements'",
+            (result.record_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["step"] == "endorsements"
+        assert row["version"] == "1"
+
+    def test_new_record_gets_entities_enrichment(self, db, standard_new_application):
+        """After ingest, the entities step should be tracked."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        result = ingest_record(db, standard_new_application, opts)
+
+        row = db.execute(
+            "SELECT step FROM record_enrichments "
+            "WHERE record_id = ? AND step = 'entities'",
+            (result.record_id,),
+        ).fetchone()
+        assert row is not None
+
+    def test_outcome_link_tracked_when_enabled(self, db, standard_new_application, approved_numeric_code):
+        """When link_outcomes=True and linking succeeds, it should be tracked."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        # Insert approved first
+        approved = {
+            **approved_numeric_code,
+            "license_number": standard_new_application["license_number"],
+            "application_type": "NEW APPLICATION",
+            "record_date": "2025-06-17",
+        }
+        opts_no_link = IngestOptions(validate_addresses=False, link_outcomes=False)
+        ingest_record(db, approved, opts_no_link)
+
+        opts_link = IngestOptions(validate_addresses=False, link_outcomes=True)
+        result = ingest_record(db, standard_new_application, opts_link)
+
+        row = db.execute(
+            "SELECT step FROM record_enrichments "
+            "WHERE record_id = ? AND step = 'outcome_link'",
+            (result.record_id,),
+        ).fetchone()
+        assert row is not None
+
+    def test_duplicate_record_no_enrichment_tracking(self, db, standard_new_application):
+        """Duplicate records should not add new enrichment rows."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        r1 = ingest_record(db, standard_new_application, opts)
+        r2 = ingest_record(db, standard_new_application, opts)
+
+        count = db.execute(
+            "SELECT count(*) FROM record_enrichments WHERE record_id = ?",
+            (r1.record_id,),
+        ).fetchone()[0]
+        # Should have exactly the enrichments from first insert, not doubled
+        assert count >= 1  # at least endorsements + entities
+        # Verify no duplicates
+        all_steps = db.execute(
+            "SELECT step FROM record_enrichments WHERE record_id = ?",
+            (r1.record_id,),
+        ).fetchall()
+        step_names = [r["step"] for r in all_steps]
+        assert len(step_names) == len(set(step_names)), "Duplicate enrichment steps found"
+
+    def test_find_unenriched_records(self, db, standard_new_application, assumption_record):
+        """Query to find records missing a specific enrichment step."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        r1 = ingest_record(db, standard_new_application, opts)
+        r2 = ingest_record(db, assumption_record, opts)
+
+        # Delete one record's endorsement tracking to simulate partial enrichment
+        db.execute(
+            "DELETE FROM record_enrichments WHERE record_id = ? AND step = 'endorsements'",
+            (r1.record_id,),
+        )
+
+        unenriched = db.execute(
+            "SELECT id FROM license_records "
+            "WHERE id NOT IN ("
+            "  SELECT record_id FROM record_enrichments WHERE step = 'endorsements'"
+            ")",
+        ).fetchall()
+        unenriched_ids = [r["id"] for r in unenriched]
+        assert r1.record_id in unenriched_ids
+        assert r2.record_id not in unenriched_ids
+
+
+# ── Raw value preservation ─────────────────────────────────────────
+
+
+class TestRawValuePreservation:
+    def test_new_record_preserves_raw_values(self, db, standard_new_application):
+        """Newly ingested records should store raw values before cleaning."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        result = ingest_record(db, standard_new_application, opts)
+
+        row = db.execute(
+            "SELECT raw_business_name, raw_applicants, "
+            "       raw_previous_business_name, raw_previous_applicants "
+            "FROM license_records WHERE id = ?",
+            (result.record_id,),
+        ).fetchone()
+        # Raw values should match what was passed in
+        assert row["raw_business_name"] == standard_new_application["business_name"]
+        assert row["raw_applicants"] == standard_new_application["applicants"]
+
+    def test_raw_differs_from_cleaned(self, db):
+        """When cleaning modifies a value, raw and cleaned should differ."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        record = {
+            "section_type": "new_application",
+            "record_date": "2025-06-15",
+            "business_name": "dirty name.",  # trailing dot gets cleaned
+            "business_location": "123 MAIN ST, SEATTLE, WA 98101",
+            "applicants": "dirty name.; JOHN DOE.",
+            "license_type": "CANNABIS RETAILER",
+            "application_type": "NEW APPLICATION",
+            "license_number": "RAW001",
+            "contact_phone": "",
+            "city": "SEATTLE",
+            "state": "WA",
+            "zip_code": "98101",
+            "previous_business_name": "",
+            "previous_applicants": "",
+            "previous_business_location": "",
+            "previous_city": "",
+            "previous_state": "",
+            "previous_zip_code": "",
+            "scraped_at": "2025-06-15T12:00:00+00:00",
+        }
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        result = ingest_record(db, record, opts)
+
+        row = db.execute(
+            "SELECT business_name, raw_business_name, "
+            "       applicants, raw_applicants "
+            "FROM license_records WHERE id = ?",
+            (result.record_id,),
+        ).fetchone()
+        # Raw preserves the original
+        assert row["raw_business_name"] == "dirty name."
+        # Cleaned is uppercased, dot stripped
+        assert row["business_name"] == "DIRTY NAME"
+        # Raw applicants preserves original
+        assert row["raw_applicants"] == "dirty name.; JOHN DOE."
+
+    def test_assumption_preserves_previous_raw(self, db, assumption_record):
+        """ASSUMPTION records should preserve raw previous_* values."""
+        from pipeline import ingest_record, IngestOptions
+
+        seed_endorsements(db)
+        opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+        result = ingest_record(db, assumption_record, opts)
+
+        row = db.execute(
+            "SELECT raw_previous_business_name, raw_previous_applicants "
+            "FROM license_records WHERE id = ?",
+            (result.record_id,),
+        ).fetchone()
+        assert row["raw_previous_business_name"] == assumption_record["previous_business_name"]
+        assert row["raw_previous_applicants"] == assumption_record["previous_applicants"]

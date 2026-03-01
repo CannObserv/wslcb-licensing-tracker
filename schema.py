@@ -124,6 +124,10 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             previous_business_name TEXT DEFAULT '',
             previous_applicants TEXT DEFAULT '',
             previous_location_id INTEGER REFERENCES locations(id),
+            raw_business_name TEXT,
+            raw_previous_business_name TEXT,
+            raw_applicants TEXT,
+            raw_previous_applicants TEXT,
             scraped_at TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(section_type, record_date, license_number, application_type)
@@ -174,6 +178,15 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_record_links_outcome
             ON record_links(outcome_id);
 
+        CREATE TABLE IF NOT EXISTS record_enrichments (
+            record_id INTEGER NOT NULL
+                REFERENCES license_records(id) ON DELETE CASCADE,
+            step TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '1',
+            PRIMARY KEY (record_id, step)
+        );
+
         CREATE TABLE IF NOT EXISTS record_sources (
             record_id INTEGER NOT NULL
                 REFERENCES license_records(id) ON DELETE CASCADE,
@@ -216,6 +229,57 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
         conn.execute(idx_sql)
 
 
+def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
+    """Add enrichment tracking table and raw value shadow columns.
+
+    Phase 3.1: ``record_enrichments`` tracks which enrichment steps
+    have been applied to each record (endorsements, entities, address,
+    outcome_link).  This enables targeted re-processing.
+
+    Phase 3.2: ``raw_*`` shadow columns preserve the as-parsed values
+    before name cleaning (uppercase, punctuation stripping).  Going
+    forward new records store originals here; for existing records
+    the cleaned value is backfilled (we've lost the originals).
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS record_enrichments (
+            record_id INTEGER NOT NULL
+                REFERENCES license_records(id) ON DELETE CASCADE,
+            step TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '1',
+            PRIMARY KEY (record_id, step)
+        )
+    """)
+
+    # Add raw_* shadow columns if they don't already exist (fresh DBs
+    # created with baseline already have them inline).
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(license_records)").fetchall()
+    }
+    for col in (
+        "raw_business_name",
+        "raw_previous_business_name",
+        "raw_applicants",
+        "raw_previous_applicants",
+    ):
+        if col not in existing:
+            conn.execute(
+                f"ALTER TABLE license_records ADD COLUMN {col} TEXT"
+            )
+
+    # Backfill raw_* columns with current cleaned values for existing records
+    conn.execute("""
+        UPDATE license_records SET
+            raw_business_name = business_name,
+            raw_previous_business_name = previous_business_name,
+            raw_applicants = applicants,
+            raw_previous_applicants = previous_applicants
+        WHERE raw_business_name IS NULL
+    """)
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -226,6 +290,7 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
 # schema, so they get stamped to the latest version without re-running DDL.
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "baseline", _m001_baseline),
+    (2, "enrichment_tracking", _m002_enrichment_tracking),
 ]
 
 
@@ -256,25 +321,32 @@ def _database_has_tables(conn: sqlite3.Connection) -> bool:
     return row[0] > 0
 
 
+# The highest migration version that is fully subsumed by the pre-framework
+# schema.  Existing databases (tables present, user_version == 0) are
+# stamped to this version and then the migration loop runs everything
+# above it.  Bump this ONLY if a new migration is purely a stamp for
+# existing DBs (i.e., the DDL already exists in the wild).
+_EXISTING_DB_STAMP_VERSION = 1
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """Run all pending migrations and return the final version.
 
     Existing databases (tables present, ``user_version == 0``) are
-    stamped to the latest version without re-running DDL, since all
-    prior schema changes have already been applied via the old ad-hoc
-    approach.
+    stamped to :data:`_EXISTING_DB_STAMP_VERSION` (the last version
+    subsumed by their existing schema), then the migration loop runs
+    any newer migrations normally.
     """
     current = _get_user_version(conn)
-    latest = MIGRATIONS[-1][0] if MIGRATIONS else 0
 
     # Existing database created before migration framework
     if current == 0 and _database_has_tables(conn):
         logger.info(
             "Existing database detected; stamping user_version to %d",
-            latest,
+            _EXISTING_DB_STAMP_VERSION,
         )
-        _set_user_version(conn, latest)
-        return latest
+        _set_user_version(conn, _EXISTING_DB_STAMP_VERSION)
+        current = _EXISTING_DB_STAMP_VERSION
 
     for version, name, fn in MIGRATIONS:
         if version > current:
