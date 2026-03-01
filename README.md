@@ -78,10 +78,12 @@ wslcb-licensing-tracker/
 ├── pipeline.py             # Unified ingestion pipeline (ingest_record, ingest_batch)
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
-├── database.py             # SQLite schema, connections, FTS5 full-text search
+├── db.py                   # Connection management, constants (thin base layer)
+├── schema.py               # DDL, PRAGMA user_version migrations, FTS5, seeding
+├── database.py             # Backward-compat shim + location/source/provenance helpers
 ├── queries.py              # Record search, filters, stats, CRUD
 ├── entities.py             # Entity (applicant) normalization
-├── migrate_locations.py    # One-time migration: inline address columns → locations table
+├── migrate_locations.py    # Legacy migration (absorbed into schema.py; retained for reference)
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── log_config.py           # Centralized logging configuration
 ├── address_validator.py    # Address validation API client
@@ -116,7 +118,9 @@ wslcb-licensing-tracker/
 ├── tests/                  # Test suite
 │   ├── conftest.py         # Shared fixtures (in-memory DB, sample records)
 │   ├── test_parser.py      # Parser function tests
-│   ├── test_database.py    # Schema and helper tests
+│   ├── test_db.py          # Connection management and constant tests
+│   ├── test_schema.py      # Migration framework tests
+│   ├── test_database.py    # Database helper tests (location/source/provenance)
 │   ├── test_queries.py     # Record insert/query tests
 │   └── fixtures/           # Minimal HTML fixtures for parser tests
 ├── wslcb-web.service       # systemd service for the web app
@@ -335,7 +339,9 @@ Test structure:
 | File | Scope |
 |---|---|
 | `tests/test_parser.py` | Pure HTML parsing functions — all record types, edge cases |
-| `tests/test_database.py` | Schema initialization, location/source helpers |
+| `tests/test_db.py` | Connection management, constants, raw address normalization |
+| `tests/test_schema.py` | Migration framework, user_version, existing DB detection |
+| `tests/test_database.py` | Location/source/provenance helper functions |
 | `tests/test_pipeline.py` | Unified ingestion pipeline — insert, endorsements, provenance, outcome linking |
 | `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
 | `tests/test_queries.py` | Record insertion, deduplication, entity creation |

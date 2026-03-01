@@ -22,17 +22,19 @@ license_records → locations (FK: location_id, previous_location_id)
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** The DB layer is split into `database.py` (core schema/connections), `entities.py` (applicant normalization), and `queries.py` (search/CRUD). All ingestion flows through `pipeline.py`. Dependencies flow one-way: `pipeline → queries, endorsements, entities, link_records, address_validator`; `queries → database, entities, endorsements, display`.
+- **Small modules.** The DB layer is split into `db.py` (connections/constants), `schema.py` (DDL/migrations/FTS), and `database.py` (backward-compat shim + helper functions). Entity normalization lives in `entities.py`; search/CRUD in `queries.py`. All ingestion flows through `pipeline.py`. Dependencies flow one-way: `pipeline → queries, endorsements, entities, link_records, address_validator`; `queries → database, entities, endorsements, display`.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files
 
 | File | Purpose | Notes |
 |---|---|---|
-| `database.py` | Schema, connections, FTS | Core DB layer. `init_db()` is idempotent. Exports `DATA_DIR`, `get_or_create_location()`. |
+| `db.py` | Connection management, constants | Thin base layer (<80 lines). `get_connection()`, `get_db()`, `DATA_DIR`, `DB_PATH`, source type constants, `WSLCB_SOURCE_URL`, `_normalize_raw_address()`. |
+| `schema.py` | DDL, migrations, FTS | All table creation, `PRAGMA user_version` migration framework, FTS5 setup, data seeding. `init_db()`, `migrate()`, `MIGRATIONS` list. |
+| `database.py` | Backward-compat shim + helpers | Re-exports all symbols from `db.py` and `schema.py`. Contains `get_or_create_location()`, `get_or_create_source()`, `link_record_source()`. Existing `from database import ...` statements continue to work. |
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`. |
 | `queries.py` | Record queries and CRUD | `search_records()`, `export_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
-| `migrate_locations.py` | One-time migration | Moves inline address columns to `locations` table. Imported lazily by `init_db()`; no-op after migration completes. |
+| `migrate_locations.py` | Legacy one-time migration | Moves inline address columns to `locations` table. No longer imported by `init_db()` (absorbed into `schema.py` baseline). Retained for reference only. |
 | `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `database.DATA_DIR`. |
@@ -54,7 +56,9 @@ license_records → locations (FK: location_id, previous_location_id)
 | `pytest.ini` | Pytest configuration | Test paths and Python path settings. |
 | `tests/conftest.py` | Shared test fixtures | In-memory DB, sample record dicts, `FIXTURES_DIR` path constant. |
 | `tests/test_parser.py` | Parser tests | Tests for all `parser.py` functions using static HTML fixtures. |
-| `tests/test_database.py` | Database tests | Schema init, location/source helpers, provenance linking. |
+| `tests/test_db.py` | Connection/constant tests | `db.py` connections, pragmas, raw address normalization, constant values. |
+| `tests/test_schema.py` | Migration framework tests | `PRAGMA user_version`, migration runner, existing DB detection, registry sanity checks. |
+| `tests/test_database.py` | Database helper tests | `database.py` shim: schema init, location/source helpers, provenance linking. |
 | `tests/test_pipeline.py` | Pipeline tests | `ingest_record()` and `ingest_batch()`: insertion, dedup, endorsements, provenance, entities, outcome linking. |
 | `tests/test_display.py` | Display tests | `format_outcome()` and `summarize_provenance()`: all outcome statuses, provenance grouping, date ranges. |
 | `tests/test_queries.py` | Query tests | `insert_record()` with all record types, dedup, entity creation. |
@@ -74,7 +78,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
 - All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
-- `get_or_create_location()` in `database.py` handles the upsert logic
+- `get_or_create_location()` in `database.py` handles the upsert logic (uses `_normalize_raw_address()` from `db.py`)
 
 ### `license_records` (main table)
 - Uniqueness constraint: `(section_type, record_date, license_number, application_type)`
@@ -155,7 +159,7 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### `source_types` (provenance enum)
 - Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`
-- Python constants in `database.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc.
+- Python constants in `db.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc. (re-exported by `database.py`)
 - Seeded by `init_db()` via `INSERT OR IGNORE`
 
 ### `sources` (provenance artifacts)
@@ -199,7 +203,7 @@ If a playbook name exists in both files, the project-level definition takes prec
 ### Logging
 - **Never use `print()` for operational output.** All logging goes through Python's `logging` module.
 - Each module declares `logger = logging.getLogger(__name__)` at the top.
-- Entry points (`app.py` lifespan, `scraper.py` main, `backfill_snapshots.py` main, `database.py` main) call `setup_logging()` from `log_config.py` before doing any work.
+- Entry points (`app.py` lifespan, `scraper.py` main, `backfill_snapshots.py` main, `database.py` `__main__`) call `setup_logging()` from `log_config.py` before doing any work.
 - Log levels:
   - `logger.debug()` — progress counters, verbose operational detail ("Fetched 12,000,000 bytes", "Found 3 data sections")
   - `logger.info()` — meaningful events (records inserted, scrape complete, migrations, summaries)
@@ -222,7 +226,7 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Tests must be fast: no network calls, no disk-based databases. Use the in-memory `db` fixture from `conftest.py`.
 - HTML parsing tests use static fixture files in `tests/fixtures/`; keep them minimal and realistic.
 - Parser tests (`test_parser.py`) test pure functions — HTML in, dicts out. No database.
-- Database/query tests (`test_database.py`, `test_queries.py`) use the `db` fixture (in-memory SQLite with full schema).
+- Database/query tests (`test_db.py`, `test_schema.py`, `test_database.py`, `test_queries.py`) use the `db` fixture or in-memory connections.
 - Pipeline tests (`test_pipeline.py`) verify end-to-end ingestion: insert, endorsements, provenance, entities, outcome linking.
 - Display tests (`test_display.py`) test pure presentation formatting — no database.
 - Use the sample record fixtures from `conftest.py` (`standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`) for tests that need record dicts.
@@ -238,6 +242,8 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Adding a feature → write tests for the expected behavior first
 - Refactoring → ensure existing tests cover the behavior, add more if needed
 - Modifying `parser.py` → add/update `test_parser.py` with fixture HTML
+- Modifying `db.py` → add/update `test_db.py`
+- Modifying `schema.py` → add/update `test_schema.py`
 - Modifying `database.py` → add/update `test_database.py`
 - Modifying `queries.py` → add/update `test_queries.py`
 - Modifying `pipeline.py` → add/update `test_pipeline.py`
@@ -461,15 +467,17 @@ python cli.py rebuild-links
 Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~85 seconds on current dataset). Links are also built incrementally during scraping and on first web app startup (if table is empty).
 
 ### Add a new column to `locations`
-1. Add the column to the `CREATE TABLE IF NOT EXISTS locations` in `database.py`
-2. Add a try/except `ALTER TABLE locations ADD COLUMN ...` migration block in `init_db()` for existing installs
-3. If the column should be searchable via FTS, add it to the `license_records_fts_content` view in `_ensure_fts()` (in `database.py`)
-4. If needed in display, add it to `RECORD_COLUMNS` in `queries.py` and update templates
+1. Add the column to `_m001_baseline()` in `schema.py` (for fresh installs)
+2. Add a new migration function (e.g., `_m002_add_column()`) that runs `ALTER TABLE locations ADD COLUMN ...`
+3. Append the migration tuple to `MIGRATIONS` in `schema.py`
+4. If the column should be searchable via FTS, add it to the `license_records_fts_content` view in `_ensure_fts()` (in `schema.py`)
+5. If needed in display, add it to `RECORD_COLUMNS` in `queries.py` and update templates
 
 ### Add a new column to `license_records`
-1. Add the column to both `CREATE TABLE IF NOT EXISTS license_records` in `database.py` and the rebuild SQL in `migrate_locations.py`
-2. Add a try/except `ALTER TABLE` migration in `init_db()` for existing installs
-3. Update `insert_record()` and `RECORD_COLUMNS` in `queries.py`, `search_records()`, and templates as needed
+1. Add the column to `_m001_baseline()` in `schema.py` (for fresh installs)
+2. Add a new migration function that runs `ALTER TABLE license_records ADD COLUMN ...`
+3. Append the migration tuple to `MIGRATIONS` in `schema.py`
+4. Update `insert_record()` and `RECORD_COLUMNS` in `queries.py`, `search_records()`, and templates as needed
 
 ## Known Issues & Future Work
 
