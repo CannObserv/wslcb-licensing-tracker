@@ -251,3 +251,71 @@ class TestMigration002RecordEnrichments:
         ).fetchone()
         assert row[0] == 1
         conn.close()
+
+
+class TestMigration003ContentHash:
+    """Migration 003 adds content_hash column to scrape_log."""
+
+    def test_column_exists_after_migration(self, db):
+        """content_hash column should exist in scrape_log after init_db."""
+        cols = {
+            row[1]
+            for row in db.execute("PRAGMA table_info(scrape_log)").fetchall()
+        }
+        assert "content_hash" in cols
+
+    def test_column_is_nullable(self, db):
+        """content_hash should allow NULL (for legacy rows)."""
+        db.execute(
+            "INSERT INTO scrape_log (started_at, status) VALUES ('2025-01-01', 'success')"
+        )
+        row = db.execute(
+            "SELECT content_hash FROM scrape_log WHERE started_at = '2025-01-01'"
+        ).fetchone()
+        assert row[0] is None
+
+    def test_fresh_db_has_column_inline(self, db):
+        """Fresh databases get content_hash from baseline, not ALTER TABLE."""
+        sql = db.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'scrape_log'"
+        ).fetchone()[0]
+        assert "content_hash" in sql
+
+    def test_migration_on_existing_db(self):
+        """Existing DB without content_hash gets it via ALTER TABLE."""
+        from db import get_connection
+
+        conn = get_connection(":memory:")
+        # Simulate an existing DB at version 2 (before this migration)
+        conn.execute("PRAGMA user_version = 2")
+        conn.executescript("""
+            CREATE TABLE license_records (
+                id INTEGER PRIMARY KEY,
+                section_type TEXT, record_date TEXT,
+                license_number TEXT, application_type TEXT,
+                scraped_at TEXT,
+                UNIQUE(section_type, record_date, license_number, application_type)
+            );
+            CREATE TABLE scrape_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL DEFAULT 'running',
+                records_new INTEGER DEFAULT 0,
+                records_approved INTEGER DEFAULT 0,
+                records_discontinued INTEGER DEFAULT 0,
+                records_skipped INTEGER DEFAULT 0,
+                error_message TEXT,
+                snapshot_path TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        """)
+
+        migrate(conn)
+
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(scrape_log)").fetchall()
+        }
+        assert "content_hash" in cols
+        conn.close()

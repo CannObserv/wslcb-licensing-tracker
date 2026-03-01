@@ -86,6 +86,7 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             records_skipped INTEGER DEFAULT 0,
             error_message TEXT,
             snapshot_path TEXT,
+            content_hash TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -280,6 +281,33 @@ def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _m003_content_hash(conn: sqlite3.Connection) -> None:
+    """Add content_hash column to scrape_log for duplicate detection.
+
+    Stores the SHA-256 hex digest of fetched HTML so the scraper can
+    short-circuit when the WSLCB page hasn't changed since the last run.
+    """
+    # Guard: scrape_log may not exist in minimal test databases that
+    # only create license_records before running migrate().
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "scrape_log" not in tables:
+        return
+
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(scrape_log)").fetchall()
+    }
+    if "content_hash" not in existing:
+        conn.execute(
+            "ALTER TABLE scrape_log ADD COLUMN content_hash TEXT"
+        )
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -292,6 +320,7 @@ def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "baseline", _m001_baseline),
     (2, "enrichment_tracking", _m002_enrichment_tracking),
+    (3, "content_hash", _m003_content_hash),
 ]
 
 

@@ -37,8 +37,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, `_merge_endorsement()` (shared merge helper), query helpers. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `database.DATA_DIR`. |
-| `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()` only (no `__main__`). Logs to `scrape_log` table. Archives source HTML. Uses `pipeline.ingest_batch()` for record insertion. Use `cli.py scrape` to run. |
-| `cli.py` | Unified CLI entry point | Argparse subcommands for all operational tasks. Replaces `python scraper.py --flag` pattern. |
+| `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()`, `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`. Logs to `scrape_log` table. Archives source HTML. Uses `pipeline.ingest_batch()` for record insertion. Skips parse/ingest when content hash matches last successful scrape (`status='unchanged'`). Use `cli.py scrape` to run. |
+| `cli.py` | Unified CLI entry point | Argparse subcommands for all operational tasks. Includes `cleanup-redundant` for removing data from zero-new-record scrapes. Replaces `python scraper.py --flag` pattern. |
 | `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records via `pipeline.ingest_batch()`, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `cli.py backfill-addresses`. |
 | `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. |
 | `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. |
@@ -67,6 +67,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/test_endorsements.py` | Endorsement tests | `_merge_endorsement()`, `process_record()`, `merge_mixed_case_endorsements()`, `repair_code_name_endorsements()`, query helpers. |
 | `tests/test_integrity.py` | Integrity check tests | All check functions, fix functions, aggregate runner. |
 | `tests/test_rebuild.py` | Rebuild tests | `rebuild_from_sources()`: empty data, DB creation, overwrite protection, force mode, snapshot ingestion, timing. `compare_databases()`: identical DBs, missing records, extra records, per-section breakdown. |
+| `tests/test_scraper.py` | Scraper tests | `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`: hash computation, last-hash retrieval, redundant data cleanup. |
 | `tests/fixtures/` | HTML test fixtures | Minimal realistic HTML for each record type and section. |
 
 ## Database Schema
@@ -172,7 +173,9 @@ license_records → locations (FK: location_id, previous_location_id)
 
 ### `scrape_log`
 - One row per scrape run with status, record counts, timestamps, error messages
-- `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed
+- `status` values: `'running'`, `'success'`, `'error'`, `'unchanged'` (page content identical to last scrape)
+- `content_hash` — SHA-256 hex digest of the fetched HTML; used to detect unchanged pages and skip redundant parsing/ingestion
+- `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed or scrape was `unchanged`
 
 ### `source_types` (provenance enum)
 - Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`
@@ -206,6 +209,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - Existing databases (tables present, `user_version == 0`) are stamped to `_EXISTING_DB_STAMP_VERSION = 1` — the last version subsumed by their pre-framework schema — then the migration loop runs everything above it
 - Migration 001 (`baseline`): full initial schema (all tables, indexes, seed data)
 - Migration 002 (`enrichment_tracking`): adds `record_enrichments` table, adds `raw_*` shadow columns to `license_records` (conditionally via `PRAGMA table_info`), backfills `raw_* = cleaned values` for existing records
+- Migration 003 (`content_hash`): adds `content_hash TEXT` column to `scrape_log` for SHA-256 deduplication of fetched HTML
 - To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
 
 ## Playbooks
@@ -281,6 +285,7 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Modifying `endorsements.py` → add/update `test_endorsements.py`
 - Modifying `integrity.py` → add/update `test_integrity.py`
 - Modifying `rebuild.py` → add/update `test_rebuild.py`
+- Modifying `scraper.py` → add/update `test_scraper.py`
 
 ### Templates
 - Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`) with custom `tailwind.config` in `base.html`
@@ -520,6 +525,14 @@ python cli.py rebuild --output data/wslcb-rebuilt.db --verify
 Verification compares record natural keys `(section_type, record_date, license_number, application_type)` and reports missing/extra records with per-section breakdown. Exits with code 1 if discrepancies are found.
 
 **Note:** This is a long-running operation. Diff extraction alone can take 20+ minutes on the full archive (4400+ diff files). Run via `tmux` or systemd.
+
+### Clean up redundant scrape data
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python cli.py cleanup-redundant
+```
+Removes `record_sources` (confirmed) rows and `sources` rows from scrapes that inserted zero new records, deletes their duplicate snapshot files, and re-stamps their `scrape_log` entries as `status='unchanged'`. Use `--keep-files` to skip file deletion. Safe to re-run.
 
 ### Rebuild application→outcome links
 ```bash

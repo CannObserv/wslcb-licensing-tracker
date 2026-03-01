@@ -22,6 +22,7 @@ A project of [Cannabis Observer](https://cannabis.observer/) 🌱🏛️🔍
 - **Location change tracking** — CHANGE OF LOCATION records capture both previous and new business addresses
 - **Entity normalization** — applicant names (people and organizations) are extracted into a shared `entities` table with name cleaning (uppercasing, stray punctuation removal), enabling cross-license analysis (e.g., "show all licenses for person X")
 - **Deduplication** — safe to re-scrape; duplicate records are automatically skipped
+- **Content hash detection** — scrapes are skipped entirely when the page hasn't changed (common on weekends), avoiding redundant parsing, snapshot files, and provenance noise
 
 ## Data
 
@@ -388,6 +389,7 @@ Test structure:
 | `tests/test_endorsements.py` | Endorsement normalization — merge helper, processing, repair |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions |
 | `tests/test_rebuild.py` | Rebuild from sources — empty data, snapshot ingestion, overwrite/force, DB comparison |
+| `tests/test_scraper.py` | Scraper logic — content hash deduplication, redundant data cleanup |
 | `tests/test_queries.py` | Record insertion, deduplication, entity creation |
 | `tests/conftest.py` | Shared fixtures: in-memory DB, sample record dicts |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |

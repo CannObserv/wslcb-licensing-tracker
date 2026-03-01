@@ -96,6 +96,27 @@ def cmd_check(args):
         sys.exit(1)
 
 
+def cmd_cleanup_redundant(args):
+    """Remove data from scrapes that found no new records."""
+    from database import get_db, init_db
+    from scraper import cleanup_redundant_scrapes
+
+    init_db()
+    with get_db() as conn:
+        result = cleanup_redundant_scrapes(
+            conn, delete_files=not args.keep_files,
+        )
+    if result["scrape_logs"] == 0:
+        print("Nothing to clean up.")
+    else:
+        print(
+            f"Cleaned {result['scrape_logs']} redundant scrape(s): "
+            f"{result['record_sources']} record_sources rows, "
+            f"{result['sources']} source rows, "
+            f"{result['files']} snapshot files removed."
+        )
+
+
 def cmd_rebuild(args):
     """Rebuild the database from archived sources."""
     import logging
@@ -237,6 +258,18 @@ def main():
         help="Auto-fix safe issues (orphan cleanup, re-run enrichments)",
     )
     p.set_defaults(func=cmd_check)
+
+    # cleanup-redundant
+    p = sub.add_parser(
+        "cleanup-redundant",
+        help="Remove data from scrapes that found no new records",
+    )
+    p.add_argument(
+        "--keep-files",
+        action="store_true",
+        help="Don't delete snapshot files from disk",
+    )
+    p.set_defaults(func=cmd_cleanup_redundant)
 
     # rebuild
     p = sub.add_parser(
