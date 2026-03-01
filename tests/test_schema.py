@@ -11,7 +11,6 @@ import pytest
 from db import get_connection
 from schema import (
     MIGRATIONS,
-    _ensure_fts,
     _get_user_version,
     _set_user_version,
     _database_has_tables,
@@ -61,7 +60,8 @@ class TestMigrate:
         conn.close()
 
     def test_existing_database_stamps_without_rerun(self):
-        """An existing DB (tables present, user_version=0) gets stamped."""
+        """An existing DB (tables present, user_version=0) gets stamped
+        without re-running baseline DDL."""
         conn = get_connection(":memory:")
         # Simulate an existing database by creating the sentinel table
         conn.execute("""
@@ -81,6 +81,14 @@ class TestMigrate:
         version = migrate(conn)
         assert version == MIGRATIONS[-1][0]
         assert _get_user_version(conn) == MIGRATIONS[-1][0]
+        # Verify baseline was skipped — tables it would create don't exist
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "locations" not in tables, "baseline ran when it should have been skipped"
         conn.close()
 
     def test_already_current_is_noop(self, db):

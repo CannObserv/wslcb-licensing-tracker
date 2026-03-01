@@ -9,6 +9,7 @@ tuple to :data:`MIGRATIONS`.
 """
 import logging
 import sqlite3
+from collections.abc import Callable
 
 from db import get_db
 
@@ -71,6 +72,9 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (code, endorsement_id)
         );
 
+        -- Note: pre-existing DBs have snapshot_path as a trailing ALTER TABLE
+        -- column rather than inline.  Functionally identical; only the
+        -- sqlite_master DDL text differs.
         CREATE TABLE IF NOT EXISTS scrape_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             started_at TEXT NOT NULL,
@@ -214,7 +218,13 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
 
 # -- Migration registry ------------------------------------------------
 
-MIGRATIONS: list[tuple[int, str, callable]] = [
+# Migration registry.
+#
+# Prior ad-hoc migrations (inline ALTER TABLE blocks, migrate_locations.py,
+# record_sources PK rebuild) are all subsumed by the existing-DB stamp in
+# migrate(): databases created before this framework already have the full
+# schema, so they get stamped to the latest version without re-running DDL.
+MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "baseline", _m001_baseline),
 ]
 

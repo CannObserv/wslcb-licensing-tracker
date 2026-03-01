@@ -83,7 +83,6 @@ wslcb-licensing-tracker/
 ├── database.py             # Backward-compat shim + location/source/provenance helpers
 ├── queries.py              # Record search, filters, stats, CRUD
 ├── entities.py             # Entity (applicant) normalization
-├── migrate_locations.py    # Legacy migration (absorbed into schema.py; retained for reference)
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
 ├── log_config.py           # Centralized logging configuration
 ├── address_validator.py    # Address validation API client
