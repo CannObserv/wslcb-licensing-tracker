@@ -63,8 +63,8 @@ class TestGetLastContentHash:
         db.commit()
         assert get_last_content_hash(db) == "good_hash"
 
-    def test_ignores_unchanged_scrapes(self, db):
-        """Unchanged scrapes should not be considered as the latest hash source."""
+    def test_returns_hash_from_unchanged_scrape(self, db):
+        """Unchanged scrapes carry the same hash and should be considered."""
         db.execute(
             "INSERT INTO scrape_log (started_at, finished_at, status, content_hash) "
             "VALUES (?, ?, 'success', ?)",
@@ -76,7 +76,6 @@ class TestGetLastContentHash:
             ("2025-01-02T00:00:00", "2025-01-02T00:01:00", "real_hash"),
         )
         db.commit()
-        # Should still return the hash (from either status is fine)
         assert get_last_content_hash(db) == "real_hash"
 
     def test_null_hash_returns_none(self, db):

@@ -231,7 +231,7 @@ If a playbook name exists in both files, the project-level definition takes prec
 - Module docstrings on every `.py` file
 
 ### Logging
-- **Never use `print()` for operational output.** All logging goes through Python's `logging` module.
+- **Never use `print()` for operational output** except in CLI summary lines (final human-readable output from `cli.py` subcommands). All other output goes through Python's `logging` module.
 - Each module declares `logger = logging.getLogger(__name__)` at the top.
 - Entry points (`app.py` lifespan, `scraper.py` main, `backfill_snapshots.py` main, `database.py` `__main__`) call `setup_logging()` from `log_config.py` before doing any work.
 - Log levels:

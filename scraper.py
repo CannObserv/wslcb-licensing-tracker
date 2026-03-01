@@ -276,17 +276,36 @@ def cleanup_redundant_scrapes(
     rs_deleted = 0
     if source_ids:
         s_placeholders = ",".join("?" * len(source_ids))
-        # Delete record_sources (confirmed provenance noise)
+
+        # Safety check: warn if any non-confirmed rows would be affected
+        non_confirmed = conn.execute(
+            f"SELECT COUNT(*) FROM record_sources "
+            f"WHERE source_id IN ({s_placeholders}) AND role != 'confirmed'",
+            source_ids,
+        ).fetchone()[0]
+        if non_confirmed:
+            logger.warning(
+                "Found %d non-confirmed record_sources rows for redundant "
+                "scrapes; these will NOT be deleted",
+                non_confirmed,
+            )
+
+        # Delete only confirmed record_sources (provenance noise)
         cur = conn.execute(
-            f"DELETE FROM record_sources WHERE source_id IN ({s_placeholders})",
+            f"DELETE FROM record_sources "
+            f"WHERE source_id IN ({s_placeholders}) AND role = 'confirmed'",
             source_ids,
         )
         rs_deleted = cur.rowcount
 
-        # Delete the sources rows
+        # Delete the sources rows (only if no non-confirmed links remain)
         conn.execute(
-            f"DELETE FROM sources WHERE id IN ({s_placeholders})",
-            source_ids,
+            f"DELETE FROM sources WHERE id IN ({s_placeholders}) "
+            f"AND id NOT IN ("
+            f"  SELECT source_id FROM record_sources "
+            f"  WHERE source_id IN ({s_placeholders})"
+            f")",
+            source_ids + source_ids,
         )
 
     # Re-stamp scrape_log rows as 'unchanged'
