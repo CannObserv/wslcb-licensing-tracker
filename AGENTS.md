@@ -49,6 +49,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records via `pipeline.ingest_record()`. Parsing logic lives in `parser.py`. Safe to re-run. |
 | `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
 | `integrity.py` | Database integrity checks | `check_orphaned_locations()`, `check_broken_fks()`, `check_unenriched_records()`, `check_endorsement_anomalies()`, `check_entity_duplicates()`, `run_all_checks()`, `fix_orphaned_locations()`. Used by `cli.py check`. |
+| `rebuild.py` | Rebuild database from sources | `rebuild_from_sources()`, `compare_databases()`, `RebuildResult`, `ComparisonResult`. Four-phase rebuild: (1) replay diff archives, (2) replay HTML snapshots, (3) endorsement discovery, (4) build outcome links. Verification compares natural keys between production and rebuilt DBs. Used by `cli.py rebuild`. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
 | `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
@@ -65,6 +66,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/test_link_records.py` | Link records tests | `_link_section()`, `_link_incremental()`, `build_all_links()`, `get_outcome_status()`, `get_reverse_link_info()` — bulk and incremental linking. |
 | `tests/test_endorsements.py` | Endorsement tests | `_merge_endorsement()`, `process_record()`, `merge_mixed_case_endorsements()`, `repair_code_name_endorsements()`, query helpers. |
 | `tests/test_integrity.py` | Integrity check tests | All check functions, fix functions, aggregate runner. |
+| `tests/test_rebuild.py` | Rebuild tests | `rebuild_from_sources()`: empty data, DB creation, overwrite protection, force mode, snapshot ingestion, timing. `compare_databases()`: identical DBs, missing records, extra records, per-section breakdown. |
 | `tests/fixtures/` | HTML test fixtures | Minimal realistic HTML for each record type and section. |
 
 ## Database Schema
@@ -278,6 +280,7 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Modifying `link_records.py` → add/update `test_link_records.py`
 - Modifying `endorsements.py` → add/update `test_endorsements.py`
 - Modifying `integrity.py` → add/update `test_integrity.py`
+- Modifying `rebuild.py` → add/update `test_rebuild.py`
 
 ### Templates
 - Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`) with custom `tailwind.config` in `base.html`
@@ -496,6 +499,27 @@ python cli.py check           # report issues
 python cli.py check --fix     # auto-fix safe issues (orphan cleanup)
 ```
 Exits with code 1 when issues are found. Checks: orphaned locations, broken FKs, un-enriched records, endorsement anomalies, entity duplicates.
+
+### Rebuild database from archived sources
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python cli.py rebuild --output data/wslcb-rebuilt.db
+```
+Creates a fresh database by replaying all archived diff files and HTML snapshots through the ingestion pipeline. Four phases: (1) ingest diff archives, (2) ingest HTML snapshots, (3) endorsement discovery, (4) build outcome links.
+
+To overwrite an existing output file:
+```bash
+python cli.py rebuild --output data/wslcb-rebuilt.db --force
+```
+
+To rebuild and verify against the production database:
+```bash
+python cli.py rebuild --output data/wslcb-rebuilt.db --verify
+```
+Verification compares record natural keys `(section_type, record_date, license_number, application_type)` and reports missing/extra records with per-section breakdown. Exits with code 1 if discrepancies are found.
+
+**Note:** This is a long-running operation. Diff extraction alone can take 20+ minutes on the full archive (4400+ diff files). Run via `tmux` or systemd.
 
 ### Rebuild application→outcome links
 ```bash

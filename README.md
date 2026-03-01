@@ -91,6 +91,7 @@ wslcb-licensing-tracker/
 ├── backfill_diffs.py       # Ingest from CO diff archives via pipeline
 ├── backfill_provenance.py  # One-time backfill of source provenance links
 ├── integrity.py            # Database integrity checks (used by cli.py check)
+├── rebuild.py              # Rebuild database from archived sources (used by cli.py rebuild)
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
 │   ├── base.html           # Base layout template
@@ -262,6 +263,26 @@ python cli.py check --fix
 
 The original raw address string is always preserved in `locations.raw_address`. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
 
+## Rebuilding from Sources
+
+To create a fresh database from all archived diff files and HTML snapshots:
+
+```bash
+python cli.py rebuild --output data/wslcb-rebuilt.db
+```
+
+This replays all historical data through the ingestion pipeline in four phases: diff archive ingestion, snapshot ingestion, endorsement discovery, and outcome link building.
+
+Use `--force` to overwrite an existing output file, and `--verify` to compare the rebuilt database against the production database:
+
+```bash
+python cli.py rebuild --output data/wslcb-rebuilt.db --verify --force
+```
+
+Verification compares record natural keys and reports missing/extra records with a per-section breakdown. Exits with code 1 if discrepancies are found.
+
+**Note:** This is a long-running operation (20+ minutes on the full archive of 4400+ diff files).
+
 ## ASSUMPTION Records
 
 ASSUMPTION records represent one business assuming (purchasing) a license from another. They contain data about both the seller and buyer, using different field labels than standard records:
@@ -366,6 +387,7 @@ Test structure:
 | `tests/test_link_records.py` | Record linking — bulk, incremental, outcome status, reverse links |
 | `tests/test_endorsements.py` | Endorsement normalization — merge helper, processing, repair |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions |
+| `tests/test_rebuild.py` | Rebuild from sources — empty data, snapshot ingestion, overwrite/force, DB comparison |
 | `tests/test_queries.py` | Record insertion, deduplication, entity creation |
 | `tests/conftest.py` | Shared fixtures: in-memory DB, sample record dicts |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |

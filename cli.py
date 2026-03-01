@@ -15,6 +15,8 @@ Usage::
     python cli.py rebuild-links           # rebuild application→outcome links
     python cli.py check                   # run integrity checks
     python cli.py check --fix             # run checks and auto-fix safe issues
+    python cli.py rebuild --output data/wslcb-rebuilt.db           # rebuild from sources
+    python cli.py rebuild --output data/wslcb-rebuilt.db --verify  # rebuild and compare
 
 Extracted from ``scraper.py`` as part of the Phase 1 architecture
 refactor (#17).
@@ -92,6 +94,62 @@ def cmd_check(args):
         issues = print_report(report)
     if issues:
         sys.exit(1)
+
+
+def cmd_rebuild(args):
+    """Rebuild the database from archived sources."""
+    import logging
+    from pathlib import Path
+    from database import DATA_DIR, DB_PATH
+    from rebuild import rebuild_from_sources, compare_databases
+
+    logger = logging.getLogger(__name__)
+    output = Path(args.output)
+
+    result = rebuild_from_sources(
+        output_path=output,
+        data_dir=DATA_DIR,
+        force=args.force,
+    )
+
+    print(f"\nRebuilt database: {output}")
+    print(f"  Records:      {result.records:,}")
+    print(f"  From diffs:   {result.from_diffs:,}")
+    print(f"  From snaps:   {result.from_snapshots:,}")
+    print(f"  Locations:    {result.locations:,}")
+    print(f"  Entities:     {result.entities:,}")
+    print(f"  Outcome links:{result.outcome_links:,}")
+    print(f"  Endorsements: {result.endorsement_mappings_discovered} new mappings")
+    print(f"  Elapsed:      {result.elapsed_seconds:.1f}s")
+
+    if args.verify:
+        print(f"\nVerifying against production database: {DB_PATH}")
+        if not DB_PATH.exists():
+            logger.error("Production database not found: %s", DB_PATH)
+            sys.exit(1)
+        cmp = compare_databases(DB_PATH, output)
+        print(f"  Production records:  {cmp.prod_count:,}")
+        print(f"  Rebuilt records:     {cmp.rebuilt_count:,}")
+        print(f"  Missing from rebuilt:{cmp.missing_from_rebuilt:,}")
+        print(f"  Extra in rebuilt:    {cmp.extra_in_rebuilt:,}")
+        if cmp.section_counts:
+            print("  Per-section breakdown:")
+            for sec, counts in sorted(cmp.section_counts.items()):
+                diff = counts['rebuilt'] - counts['prod']
+                sign = '+' if diff > 0 else ''
+                print(f"    {sec:<20} prod={counts['prod']:,}  rebuilt={counts['rebuilt']:,}  ({sign}{diff:,})")
+        if cmp.sample_missing:
+            print("  Sample missing records (in prod, not rebuilt):")
+            for key in cmp.sample_missing[:5]:
+                print(f"    {key}")
+        if cmp.sample_extra:
+            print("  Sample extra records (in rebuilt, not prod):")
+            for key in cmp.sample_extra[:5]:
+                print(f"    {key}")
+        if cmp.missing_from_rebuilt > 0 or cmp.extra_in_rebuilt > 0:
+            sys.exit(1)
+        else:
+            print("  \u2705 Databases match!")
 
 
 def main():
@@ -179,6 +237,28 @@ def main():
         help="Auto-fix safe issues (orphan cleanup, re-run enrichments)",
     )
     p.set_defaults(func=cmd_check)
+
+    # rebuild
+    p = sub.add_parser(
+        "rebuild",
+        help="Rebuild database from archived sources",
+    )
+    p.add_argument(
+        "--output",
+        required=True,
+        help="Path for the rebuilt database file",
+    )
+    p.add_argument(
+        "--verify",
+        action="store_true",
+        help="Compare rebuilt DB against production and report differences",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing output file",
+    )
+    p.set_defaults(func=cmd_rebuild)
 
     args = top.parse_args()
     if not args.command:
