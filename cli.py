@@ -13,6 +13,8 @@ Usage::
     python cli.py backfill-addresses      # validate un-validated locations
     python cli.py refresh-addresses       # re-validate all locations
     python cli.py rebuild-links           # rebuild application→outcome links
+    python cli.py check                   # run integrity checks
+    python cli.py check --fix             # run checks and auto-fix safe issues
 
 Extracted from ``scraper.py`` as part of the Phase 1 architecture
 refactor (#17).
@@ -78,6 +80,18 @@ def cmd_rebuild_links(args):
     init_db()
     with get_db() as conn:
         build_all_links(conn)
+
+
+def cmd_check(args):
+    """Run database integrity checks."""
+    from database import init_db, get_db
+    from integrity import run_all_checks, print_report
+    init_db()
+    with get_db() as conn:
+        report = run_all_checks(conn, fix=args.fix)
+        issues = print_report(report)
+    if issues and not args.fix:
+        sys.exit(1)
 
 
 def main():
@@ -153,6 +167,18 @@ def main():
         help="Rebuild all application→outcome links",
     )
     p.set_defaults(func=cmd_rebuild_links)
+
+    # check
+    p = sub.add_parser(
+        "check",
+        help="Run database integrity checks",
+    )
+    p.add_argument(
+        "--fix",
+        action="store_true",
+        help="Auto-fix safe issues (orphan cleanup, re-run enrichments)",
+    )
+    p.set_defaults(func=cmd_check)
 
     args = top.parse_args()
     if not args.command:
