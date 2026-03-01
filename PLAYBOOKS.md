@@ -87,3 +87,56 @@ If the reviewed changes affect:
 - Deployment or CLI → update AGENTS.md Common Tasks
 
 The review should flag missing documentation updates as numbered items.
+
+---
+
+## `ship` — Commit, Push, and Close GitHub Issues
+
+**Triggers:** "ship it", "push GH", "close GH", "wrap up"
+
+**Purpose:** Finalize work by ensuring everything is committed, pushed, and reflected on GitHub.
+
+### Scope Detection
+
+Determine which GitHub issue(s) to close, in priority order:
+1. **Explicit scope** — user specifies issue number(s) (e.g., `wrap up #19 #20`)
+2. **Conversation context** — infer from issues referenced in recent commit messages or discussion
+3. **Ask** — if ambiguous, confirm before closing anything
+
+### Procedure
+
+#### Step 1: Ensure Clean Working Tree
+- Check `git status` for uncommitted changes
+- If changes exist, commit them with the `#<number>: ` message prefix convention
+- If multiple issues are in scope, prefix with all (e.g., `#19, #20: ...`)
+
+#### Step 2: Ensure on `main`
+- If on a feature branch, merge to `main` first
+- If already on `main`, continue
+
+#### Step 3: Push to Origin
+- `git push origin main`
+- Confirm push succeeded
+
+#### Step 4: Comment on GitHub Issues
+- For each issue in scope, post a summary comment via `gh issue comment`
+- Comment should include:
+  - What was implemented (brief, 2–4 bullets)
+  - Commit range or key commit SHAs
+  - Any follow-up items or known limitations noted during implementation
+
+#### Step 5: Close GitHub Issues
+- `gh issue close <number>` for each issue in scope
+- Confirm closure succeeded
+
+#### Step 6: Report
+- Present a summary table:
+
+| Issue | Title | Status | Comment |
+|---|---|---|---|
+| #19 | ... | ✅ Closed | Summary posted |
+
+### Notes
+- If `gh` CLI hits errors (e.g., Projects Classic deprecation), use `--json` flag workarounds as needed
+- Never close an issue that wasn't fully implemented — ask first if uncertain
+- If tests haven't been run this session, run them before pushing
