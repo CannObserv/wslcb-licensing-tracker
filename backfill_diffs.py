@@ -63,11 +63,11 @@ CSV_FIELDS = [
     "section_type", "record_date", "business_name", "business_location",
     "address_line_1", "address_line_2", "applicants", "license_type",
     "endorsements", "application_type", "license_number", "contact_phone",
-    "city", "state", "zip_code", "std_city", "std_state", "std_zip",
+    "city", "state", "zip_code", "std_city", "std_region", "std_postal_code", "std_country",
     "previous_business_name", "previous_applicants",
     "previous_business_location",
     "prev_address_line_1", "prev_address_line_2",
-    "prev_std_city", "prev_std_state", "prev_std_zip",
+    "prev_std_city", "prev_std_region", "prev_std_postal_code",
 ]
 
 # Lightweight field list for dry-run exports (no DB to query).

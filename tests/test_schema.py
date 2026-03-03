@@ -319,3 +319,127 @@ class TestMigration003ContentHash:
         }
         assert "content_hash" in cols
         conn.close()
+
+
+class TestMigration004AddressValidatorV1:
+    """Migration 004: rename std_state/std_zip, add std_country."""
+
+    def test_fresh_db_has_renamed_columns(self, db):
+        """Fresh DB baseline has std_region, std_postal_code, std_country."""
+        cols = {
+            row[1]
+            for row in db.execute("PRAGMA table_info(locations)").fetchall()
+        }
+        assert "std_region" in cols
+        assert "std_postal_code" in cols
+        assert "std_country" in cols
+        assert "std_state" not in cols
+        assert "std_zip" not in cols
+
+    def test_fresh_db_has_postal_code_index(self, db):
+        """Fresh DB has idx_locations_std_postal_code, not the old std_zip index."""
+        indexes = {
+            row[1]
+            for row in db.execute(
+                "SELECT * FROM sqlite_master WHERE type='index' AND tbl_name='locations'"
+            ).fetchall()
+        }
+        assert "idx_locations_std_postal_code" in indexes
+        assert "idx_locations_std_zip" not in indexes
+
+    def test_migration_renames_columns_on_existing_db(self):
+        """Existing DB with old column names gets them renamed by migration 004."""
+        from db import get_connection
+        from schema import migrate
+
+        conn = get_connection(":memory:")
+        conn.execute("PRAGMA user_version = 3")
+        conn.executescript("""
+            CREATE TABLE locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_address TEXT NOT NULL UNIQUE,
+                city TEXT DEFAULT '',
+                state TEXT DEFAULT 'WA',
+                zip_code TEXT DEFAULT '',
+                address_line_1 TEXT DEFAULT '',
+                address_line_2 TEXT DEFAULT '',
+                std_city TEXT DEFAULT '',
+                std_state TEXT DEFAULT '',
+                std_zip TEXT DEFAULT '',
+                address_validated_at TEXT
+            );
+            CREATE INDEX idx_locations_std_zip ON locations(std_zip);
+        """)
+        migrate(conn)
+
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(locations)").fetchall()
+        }
+        assert "std_region" in cols
+        assert "std_postal_code" in cols
+        assert "std_country" in cols
+        assert "std_state" not in cols
+        assert "std_zip" not in cols
+        conn.close()
+
+    def test_migration_backfills_country_for_validated_rows(self):
+        """Existing validated rows get std_country = 'US' after migration 004."""
+        from db import get_connection
+        from schema import migrate
+
+        conn = get_connection(":memory:")
+        conn.execute("PRAGMA user_version = 3")
+        conn.executescript("""
+            CREATE TABLE locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_address TEXT NOT NULL UNIQUE,
+                city TEXT DEFAULT '',
+                state TEXT DEFAULT 'WA',
+                zip_code TEXT DEFAULT '',
+                address_line_1 TEXT DEFAULT '',
+                address_line_2 TEXT DEFAULT '',
+                std_city TEXT DEFAULT '',
+                std_state TEXT DEFAULT '',
+                std_zip TEXT DEFAULT '',
+                address_validated_at TEXT
+            );
+        """)
+        conn.execute(
+            "INSERT INTO locations (raw_address, std_state, address_validated_at)"
+            " VALUES ('123 MAIN ST, SEATTLE, WA 98101', 'WA', '2025-01-01T00:00:00+00:00')"
+        )
+        conn.execute(
+            "INSERT INTO locations (raw_address) VALUES ('456 OAK AVE, TACOMA, WA 98401')"
+        )
+        conn.commit()
+
+        migrate(conn)
+
+        rows = conn.execute(
+            "SELECT raw_address, std_country FROM locations ORDER BY id"
+        ).fetchall()
+        # Validated row gets 'US'; unvalidated row stays ''
+        assert rows[0][1] == "US"
+        assert rows[1][1] == ""
+        conn.close()
+
+    def test_migration_skips_gracefully_without_locations_table(self):
+        """Migration 004 does not crash when locations table doesn't exist."""
+        from db import get_connection
+        from schema import migrate
+
+        conn = get_connection(":memory:")
+        conn.execute("PRAGMA user_version = 3")
+        conn.executescript("""
+            CREATE TABLE license_records (
+                id INTEGER PRIMARY KEY,
+                section_type TEXT, record_date TEXT,
+                license_number TEXT, application_type TEXT,
+                scraped_at TEXT,
+                UNIQUE(section_type, record_date, license_number, application_type)
+            );
+        """)
+        # Should not raise
+        migrate(conn)
+        conn.close()

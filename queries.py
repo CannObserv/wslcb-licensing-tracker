@@ -39,8 +39,9 @@ RECORD_COLUMNS = """
     COALESCE(loc.address_line_1, '') AS address_line_1,
     COALESCE(loc.address_line_2, '') AS address_line_2,
     COALESCE(loc.std_city, '') AS std_city,
-    COALESCE(loc.std_state, '') AS std_state,
-    COALESCE(loc.std_zip, '') AS std_zip,
+    COALESCE(loc.std_region, '') AS std_region,
+    COALESCE(loc.std_postal_code, '') AS std_postal_code,
+    COALESCE(loc.std_country, '') AS std_country,
     loc.address_validated_at,
     COALESCE(ploc.raw_address, '') AS previous_business_location,
     COALESCE(ploc.city, '') AS previous_city,
@@ -49,8 +50,8 @@ RECORD_COLUMNS = """
     COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
     COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
     COALESCE(ploc.std_city, '') AS prev_std_city,
-    COALESCE(ploc.std_state, '') AS prev_std_state,
-    COALESCE(ploc.std_zip, '') AS prev_std_zip,
+    COALESCE(ploc.std_region, '') AS prev_std_region,
+    COALESCE(ploc.std_postal_code, '') AS prev_std_postal_code,
     ploc.address_validated_at AS prev_address_validated_at"""
 
 RECORD_JOINS = """
@@ -69,12 +70,12 @@ def enrich_record(record: dict) -> dict:
     """Add display-ready fields with standardized-first fallback.
 
     Works with joined query results that include location columns
-    aliased as business_location, city, std_city, etc.
+    aliased as business_location, city, std_city, std_region, std_postal_code, etc.
     """
     record["display_city"] = record.get("std_city") or record.get("city") or ""
-    record["display_zip"] = record.get("std_zip") or record.get("zip_code") or ""
+    record["display_zip"] = record.get("std_postal_code") or record.get("zip_code") or ""
     record["display_previous_city"] = record.get("prev_std_city") or record.get("previous_city") or ""
-    record["display_previous_zip"] = record.get("prev_std_zip") or record.get("previous_zip_code") or ""
+    record["display_previous_zip"] = record.get("prev_std_postal_code") or record.get("previous_zip_code") or ""
     return record
 
 
@@ -274,8 +275,8 @@ def _build_where_clause(
     if state:
         needs_location_join = True
         conditions.append(
-            "(COALESCE(NULLIF(loc.std_state, ''), loc.state) = ?"
-            " OR COALESCE(NULLIF(ploc.std_state, ''), ploc.state) = ?)"
+            "(COALESCE(NULLIF(loc.std_region, ''), loc.state) = ?"
+            " OR COALESCE(NULLIF(ploc.std_region, ''), ploc.state) = ?)"
         )
         params.extend([state, state])
 
@@ -284,7 +285,7 @@ def _build_where_clause(
         needs_location_join = True
         conditions.append(
             "(COALESCE(NULLIF(loc.std_city, ''), loc.city) = ?"
-            " OR COALESCE(NULLIF(ploc.std_city, ''), ploc.city) = ?)"
+            " OR COALESCE(NULLIF(ploc.std_city, ''), ploc.city) = ?)"  # std_city unchanged
         )
         params.extend([city, city])
 
@@ -376,15 +377,15 @@ _EXPORT_SELECT = """
         COALESCE(loc.city, '')         AS city,
         COALESCE(loc.state, 'WA')      AS state,
         COALESCE(loc.zip_code, '')     AS zip_code,
-        COALESCE(loc.std_city, '')   AS std_city,
-        COALESCE(loc.std_state, '') AS std_state,
-        COALESCE(loc.std_zip, '')   AS std_zip,
+        COALESCE(loc.std_city, '')        AS std_city,
+        COALESCE(loc.std_region, '')      AS std_region,
+        COALESCE(loc.std_postal_code, '') AS std_postal_code,
         COALESCE(ploc.raw_address, '') AS previous_business_location,
         COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
         COALESCE(ploc.address_line_2, '') AS prev_address_line_2,
-        COALESCE(ploc.std_city, '')   AS prev_std_city,
-        COALESCE(ploc.std_state, '') AS prev_std_state,
-        COALESCE(ploc.std_zip, '')   AS prev_std_zip,
+        COALESCE(ploc.std_city, '')        AS prev_std_city,
+        COALESCE(ploc.std_region, '')      AS prev_std_region,
+        COALESCE(ploc.std_postal_code, '') AS prev_std_postal_code,
         (
             SELECT GROUP_CONCAT(name, '; ') FROM (
                 SELECT le.name
@@ -527,7 +528,7 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
     # States: only valid US state codes that appear in the data.
     rows = conn.execute(
         f"SELECT DISTINCT display_state FROM ("
-        f"  SELECT COALESCE(NULLIF(l.std_state, ''), l.state) AS display_state"
+        f"  SELECT COALESCE(NULLIF(l.std_region, ''), l.state) AS display_state"
         f"  FROM locations l"
         f"  WHERE l.id IN ({_LOCATION_IDS_SUBQUERY})"
         f") WHERE display_state IN ({','.join('?' for _ in US_STATES)})"
@@ -566,7 +567,7 @@ def get_cities_for_state(
     rows = conn.execute(
         f"SELECT DISTINCT display_city FROM ("
         f"  SELECT COALESCE(NULLIF(l.std_city, ''), l.city) AS display_city,"
-        f"         COALESCE(NULLIF(l.std_state, ''), l.state) AS display_state"
+        f"         COALESCE(NULLIF(l.std_region, ''), l.state) AS display_state"
         f"  FROM locations l"
         f"  WHERE l.id IN ({_LOCATION_IDS_SUBQUERY})"
         f") WHERE display_state = ? AND display_city IS NOT NULL"

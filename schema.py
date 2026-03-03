@@ -48,8 +48,9 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             address_line_1 TEXT DEFAULT '',
             address_line_2 TEXT DEFAULT '',
             std_city TEXT DEFAULT '',
-            std_state TEXT DEFAULT '',
-            std_zip TEXT DEFAULT '',
+            std_region TEXT DEFAULT '',
+            std_postal_code TEXT DEFAULT '',
+            std_country TEXT DEFAULT '',
             address_validated_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(raw_address)
@@ -57,7 +58,7 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_locations_city ON locations(city);
         CREATE INDEX IF NOT EXISTS idx_locations_zip ON locations(zip_code);
         CREATE INDEX IF NOT EXISTS idx_locations_std_city ON locations(std_city);
-        CREATE INDEX IF NOT EXISTS idx_locations_std_zip ON locations(std_zip);
+        CREATE INDEX IF NOT EXISTS idx_locations_std_postal_code ON locations(std_postal_code);
 
         CREATE TABLE IF NOT EXISTS license_endorsements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,6 +282,54 @@ def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
+    """Migrate locations table to match address-validator API v1 field names.
+
+    Renames std_state -> std_region and std_zip -> std_postal_code to mirror
+    the v1 response fields (geography-neutral names).  Adds std_country
+    (ISO 3166-1 alpha-2) and backfills 'US' for all already-validated rows.
+    Also drops the old std_zip index and creates std_postal_code in its place.
+    """
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "locations" not in tables:
+        return
+
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(locations)").fetchall()
+    }
+
+    # Rename std_state -> std_region (SQLite RENAME COLUMN requires 3.25+)
+    if "std_state" in existing and "std_region" not in existing:
+        conn.execute("ALTER TABLE locations RENAME COLUMN std_state TO std_region")
+
+    # Rename std_zip -> std_postal_code
+    if "std_zip" in existing and "std_postal_code" not in existing:
+        conn.execute("ALTER TABLE locations RENAME COLUMN std_zip TO std_postal_code")
+
+    # Add std_country
+    if "std_country" not in existing:
+        conn.execute("ALTER TABLE locations ADD COLUMN std_country TEXT DEFAULT ''")
+
+    # Backfill country for all already-validated rows (all US addresses)
+    conn.execute(
+        "UPDATE locations SET std_country = 'US'"
+        " WHERE address_validated_at IS NOT NULL AND std_country = ''"
+    )
+
+    # Update indexes: drop old std_zip index, create std_postal_code index
+    conn.executescript("""
+        DROP INDEX IF EXISTS idx_locations_std_zip;
+        CREATE INDEX IF NOT EXISTS idx_locations_std_postal_code
+            ON locations(std_postal_code);
+    """)
+
+
 def _m003_content_hash(conn: sqlite3.Connection) -> None:
     """Add content_hash column to scrape_log for duplicate detection.
 
@@ -321,6 +370,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "baseline", _m001_baseline),
     (2, "enrichment_tracking", _m002_enrichment_tracking),
     (3, "content_hash", _m003_content_hash),
+    (4, "address_validator_v1", _m004_address_validator_v1),
 ]
 
 

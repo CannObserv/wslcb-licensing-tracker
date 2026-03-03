@@ -61,7 +61,7 @@ def _load_api_key() -> str:
 def standardize(address: str, client: httpx.Client | None = None) -> dict | None:
     """Standardize an address via the address validation API.
 
-    Calls POST /api/standardize with the given address string.
+    Calls POST /api/v1/standardize with the given address string.
 
     Args:
         address: The raw address string to standardize.
@@ -69,9 +69,9 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
             If None, a one-shot request is made.
 
     Returns:
-        A dict with keys (address_line_1, address_line_2, city, state,
-        zip_code, standardized, components) on success, or None on any
-        failure (network error, non-200 status, timeout).
+        A dict with keys (address_line_1, address_line_2, city, region,
+        postal_code, country, standardized, components) on success, or
+        None on any failure (network error, non-200 status, timeout).
 
     Note:
         When *client* is provided its timeout setting takes precedence
@@ -82,7 +82,7 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
     if not api_key:
         return None
 
-    url = f"{BASE_URL}/api/standardize"
+    url = f"{BASE_URL}/api/v1/standardize"
     headers = {"X-API-Key": api_key}
     payload = {"address": address}
 
@@ -122,7 +122,7 @@ def validate_location(
 
     Calls standardize() on the raw_address, then UPDATEs the location's
     standardized columns (address_line_1, address_line_2, std_city,
-    std_state, std_zip, address_validated_at).
+    std_region, std_postal_code, std_country, address_validated_at).
 
     Does NOT commit — the caller is responsible for committing.
     Skips (returns False) if raw_address is empty or None.
@@ -144,18 +144,23 @@ def validate_location(
         return False
 
     try:
+        raw_country = result.get("country", "")
+        # Only store country if it is a valid ISO 3166-1 alpha-2 code (2 ASCII letters)
+        std_country = raw_country if (len(raw_country) == 2 and raw_country.isalpha()) else ""
+
         conn.execute(
             """UPDATE locations SET
                 address_line_1 = ?, address_line_2 = ?,
-                std_city = ?, std_state = ?, std_zip = ?,
+                std_city = ?, std_region = ?, std_postal_code = ?, std_country = ?,
                 address_validated_at = ?
             WHERE id = ?""",
             (
                 result.get("address_line_1", ""),
                 result.get("address_line_2", ""),
                 result.get("city", ""),
-                result.get("state", ""),
-                result.get("zip_code", ""),
+                result.get("region", ""),
+                result.get("postal_code", ""),
+                std_country,
                 datetime.now(timezone.utc).isoformat(),
                 location_id,
             ),
