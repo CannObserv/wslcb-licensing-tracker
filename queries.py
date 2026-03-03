@@ -52,6 +52,7 @@ RECORD_COLUMNS = """
     COALESCE(ploc.std_city, '') AS prev_std_city,
     COALESCE(ploc.std_region, '') AS prev_std_region,
     COALESCE(ploc.std_postal_code, '') AS prev_std_postal_code,
+    COALESCE(ploc.std_country, '') AS prev_std_country,
     ploc.address_validated_at AS prev_address_validated_at"""
 
 RECORD_JOINS = """
@@ -285,7 +286,7 @@ def _build_where_clause(
         needs_location_join = True
         conditions.append(
             "(COALESCE(NULLIF(loc.std_city, ''), loc.city) = ?"
-            " OR COALESCE(NULLIF(ploc.std_city, ''), ploc.city) = ?)"  # std_city unchanged
+            " OR COALESCE(NULLIF(ploc.std_city, ''), ploc.city) = ?)"
         )
         params.extend([city, city])
 
@@ -380,6 +381,7 @@ _EXPORT_SELECT = """
         COALESCE(loc.std_city, '')        AS std_city,
         COALESCE(loc.std_region, '')      AS std_region,
         COALESCE(loc.std_postal_code, '') AS std_postal_code,
+        COALESCE(loc.std_country, '')     AS std_country,
         COALESCE(ploc.raw_address, '') AS previous_business_location,
         COALESCE(ploc.address_line_1, '') AS prev_address_line_1,
         COALESCE(ploc.address_line_2, '') AS prev_address_line_2,

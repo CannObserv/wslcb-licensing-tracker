@@ -282,6 +282,33 @@ def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _m003_content_hash(conn: sqlite3.Connection) -> None:
+    """Add content_hash column to scrape_log for duplicate detection.
+
+    Stores the SHA-256 hex digest of fetched HTML so the scraper can
+    short-circuit when the WSLCB page hasn't changed since the last run.
+    """
+    # Guard: scrape_log may not exist in minimal test databases that
+    # only create license_records before running migrate().
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "scrape_log" not in tables:
+        return
+
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(scrape_log)").fetchall()
+    }
+    if "content_hash" not in existing:
+        conn.execute(
+            "ALTER TABLE scrape_log ADD COLUMN content_hash TEXT"
+        )
+
+
 def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
     """Migrate locations table to match address-validator API v1 field names.
 
@@ -328,33 +355,6 @@ def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_locations_std_postal_code
             ON locations(std_postal_code);
     """)
-
-
-def _m003_content_hash(conn: sqlite3.Connection) -> None:
-    """Add content_hash column to scrape_log for duplicate detection.
-
-    Stores the SHA-256 hex digest of fetched HTML so the scraper can
-    short-circuit when the WSLCB page hasn't changed since the last run.
-    """
-    # Guard: scrape_log may not exist in minimal test databases that
-    # only create license_records before running migrate().
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "scrape_log" not in tables:
-        return
-
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(scrape_log)").fetchall()
-    }
-    if "content_hash" not in existing:
-        conn.execute(
-            "ALTER TABLE scrape_log ADD COLUMN content_hash TEXT"
-        )
 
 
 # -- Migration registry ------------------------------------------------

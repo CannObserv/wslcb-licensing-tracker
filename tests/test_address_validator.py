@@ -138,18 +138,27 @@ def test_validate_location_writes_renamed_columns(db, monkeypatch):
     assert row["address_validated_at"] is not None
 
 
-def test_validate_location_rejects_non_alpha2_country(db, monkeypatch):
-    """validate_location() stores '' when country is not a 2-char ISO alpha-2 code."""
+@pytest.mark.parametrize("bad_country", [
+    "USA",   # 3 chars
+    "U",     # 1 char
+    "",      # empty
+    "U1",    # contains digit
+    "ÜS",    # non-ASCII letter — isalpha() returns True but isascii() returns False
+])
+def test_validate_location_rejects_non_alpha2_country(db, monkeypatch, bad_country):
+    """validate_location() stores '' when country is not a valid ISO 3166-1 alpha-2 code.
+
+    Covers: wrong length, digit, and non-ASCII Unicode letters that pass
+    str.isalpha() but fail str.isascii().
+    """
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
-    bad_response = dict(_GOOD_RESPONSE, country="USA")  # 3-char — invalid
-    db.execute(
-        "INSERT INTO locations (raw_address) VALUES (?)",
-        ("123 MAIN ST, SEATTLE, WA 98101",),
-    )
+    bad_response = dict(_GOOD_RESPONSE, country=bad_country)
+    raw = f"123 MAIN ST TEST {repr(bad_country)}, SEATTLE, WA 98101"
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", (raw,))
     loc_id = db.execute("SELECT id FROM locations WHERE raw_address = ?",
-                        ("123 MAIN ST, SEATTLE, WA 98101",)).fetchone()[0]
+                        (raw,)).fetchone()[0]
     client = _mock_client(bad_response)
-    av.validate_location(db, loc_id, "123 MAIN ST, SEATTLE, WA 98101", client=client)
+    av.validate_location(db, loc_id, raw, client=client)
     row = db.execute("SELECT std_country FROM locations WHERE id = ?", (loc_id,)).fetchone()
     assert row["std_country"] == ""
 

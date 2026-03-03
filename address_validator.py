@@ -145,8 +145,13 @@ def validate_location(
 
     try:
         raw_country = result.get("country", "")
-        # Only store country if it is a valid ISO 3166-1 alpha-2 code (2 ASCII letters)
-        std_country = raw_country if (len(raw_country) == 2 and raw_country.isalpha()) else ""
+        # Only store country if it is a valid ISO 3166-1 alpha-2 code (2 ASCII letters).
+        # .isascii() guards against Unicode letters that pass .isalpha() (e.g. 'ÜS').
+        std_country = (
+            raw_country
+            if (len(raw_country) == 2 and raw_country.isalpha() and raw_country.isascii())
+            else ""
+        )
 
         conn.execute(
             """UPDATE locations SET
