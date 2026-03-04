@@ -375,14 +375,8 @@ async def admin_audit_log(
     total_pages = max(1, (total_count + per_page - 1) // per_page)
 
     def _page_url(p: int) -> str:
-        params = {k: v for k, v in {
-            "page": p,
-            "action": action,
-            "target_type": target_type,
-            "admin_email": admin_email,
-            "date_from": date_from,
-            "date_to": date_to,
-        }.items() if v and not (k == "page" and p == 1)}
+        # `filters` already contains only non-empty values; add page only when > 1
+        params = {**filters, **({"page": p} if p > 1 else {})}
         qs = urlencode(params)
         return f"/admin/audit-log{'?' + qs if qs else ''}"
 

@@ -53,6 +53,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
 | `admin_auth.py` | Admin authentication middleware | `require_admin()` FastAPI dependency (redirects to exe.dev login or 403). `get_current_user()` non-enforcing variant (caches result on `request.state`). `AdminRedirectException` sentinel class. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. |
+| `admin_audit.py` | Admin audit log | `log_action(conn, email, action, target_type, target_id=None, details=None)` inserts one audit row (caller commits); serialises `details` dict to JSON. `get_audit_log(conn, page, per_page, filters)` returns `(rows, total_count)` with optional filters: `action`, `target_type`, `admin_email`, `date_from`/`date_to`; each row includes `details_parsed` (decoded dict or `None`). |
 | `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
 | `requirements.txt` | Python dependencies | Runtime + dev (pytest) dependencies. Install with `pip install -r requirements.txt`. |
 | `pytest.ini` | Pytest configuration | Test paths and Python path settings. |
@@ -69,6 +70,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/test_integrity.py` | Integrity check tests | All check functions, fix functions, aggregate runner. |
 | `tests/test_rebuild.py` | Rebuild tests | `rebuild_from_sources()`: empty data, DB creation, overwrite protection, force mode, snapshot ingestion, timing. `compare_databases()`: identical DBs, missing records, extra records, per-section breakdown. |
 | `tests/test_scraper.py` | Scraper tests | `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`: hash computation, last-hash retrieval, redundant data cleanup. |
+| `tests/test_admin_auth.py` | Auth middleware tests | `require_admin()`, `get_current_user()`: header extraction, env-var fallback, admin lookup, redirect and 403 behaviour. |
+| `tests/test_admin_audit.py` | Audit log tests | `log_action`: insert, target_id, NULL details, dict round-trip. `get_audit_log`: pagination, newest-first ordering, all filter types (action, target_type, admin_email, date_from, date_to), empty-table edge case. |
 | `tests/fixtures/` | HTML test fixtures | Minimal realistic HTML for each record type and section. |
 
 ## Database Schema
