@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
-from admin_auth import get_current_user, require_admin, _RedirectException
+from admin_auth import get_current_user, require_admin, AdminRedirectException
 from entities import backfill_entities, get_entity_by_id
 from queries import (
     search_records, export_records,
@@ -67,11 +67,6 @@ app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-async def _redirect_exception_handler(request: Request, exc: _RedirectException):
-    return RedirectResponse(url=exc.location, status_code=302)
-
-app.add_exception_handler(_RedirectException, _redirect_exception_handler)
-
 PER_PAGE = 50
 
 SECTION_LABELS = {
@@ -99,6 +94,13 @@ async def _tpl(request: Request, template: str, ctx: dict, status_code: int = 20
     """Render a template with ``current_user`` injected into the context."""
     ctx.setdefault("current_user", await get_current_user(request))
     return templates.TemplateResponse(template, ctx, status_code=status_code)
+
+
+async def _admin_redirect_handler(request: Request, exc: AdminRedirectException):
+    return RedirectResponse(url=exc.location, status_code=302)
+
+
+app.add_exception_handler(AdminRedirectException, _admin_redirect_handler)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -341,5 +343,5 @@ async def api_stats():
 async def admin_dashboard(request: Request, admin: dict = Depends(require_admin)):
     """Admin dashboard — stub confirming auth works."""
     return await _tpl(request, "admin/dashboard.html", {
-        "request": request, "admin": admin, "current_user": admin,
+        "request": request, "admin": admin, "active_section": "dashboard",
     })

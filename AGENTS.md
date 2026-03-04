@@ -52,6 +52,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `rebuild.py` | Rebuild database from sources | `rebuild_from_sources()`, `compare_databases()`, `RebuildResult`, `ComparisonResult`. Four-phase rebuild: (1) replay diff archives, (2) replay HTML snapshots, (3) endorsement discovery, (4) build outcome links. Verification compares natural keys between production and rebuilt DBs. Used by `cli.py rebuild`. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
+| `admin_auth.py` | Admin authentication middleware | `require_admin()` FastAPI dependency (redirects to exe.dev login or 403). `get_current_user()` non-enforcing variant (caches result on `request.state`). `AdminRedirectException` sentinel class. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. |
 | `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
 | `requirements.txt` | Python dependencies | Runtime + dev (pytest) dependencies. Install with `pip install -r requirements.txt`. |
 | `pytest.ini` | Pytest configuration | Test paths and Python path settings. |
@@ -171,6 +172,20 @@ license_records → locations (FK: location_id, previous_location_id)
 - Never write to the FTS table directly
 - **Known limitation:** indexes raw `license_type`, so FTS text search won't match endorsement names for records that store numeric codes. The endorsement dropdown filter works correctly (uses junction table).
 
+### `admin_users`
+- One row per admin user; keyed by email (`COLLATE NOCASE`)
+- `role` — `'admin'` (only value currently); column exists for future RBAC extensibility
+- `created_by` — `'system'` for seed rows, `'cli'` for CLI-added users, email of creating admin for UI-added users
+- Managed via `python cli.py admin add-user / list-users / remove-user`; removing the last admin is blocked
+- Auth middleware in `admin_auth.py` checks this table on every admin request (result cached on `request.state`)
+
+### `admin_audit_log`
+- One row per admin mutation; written by `admin_audit.py` `log_action()`
+- `action` — `{domain}.{verb}` pattern (e.g., `endorsement.set_canonical`, `admin_user.add`)
+- `target_type` — entity type affected (e.g., `'endorsement'`, `'admin_user'`)
+- `target_id` — optional FK to the affected row
+- `details` — JSON-serialized dict with action-specific context (old/new values, counts); `NULL` if not applicable
+
 ### `scrape_log`
 - One row per scrape run with status, record counts, timestamps, error messages
 - `status` values: `'running'`, `'success'`, `'error'`, `'unchanged'` (page content identical to last scrape)
@@ -210,6 +225,9 @@ license_records → locations (FK: location_id, previous_location_id)
 - Migration 001 (`baseline`): full initial schema (all tables, indexes, seed data)
 - Migration 002 (`enrichment_tracking`): adds `record_enrichments` table, adds `raw_*` shadow columns to `license_records` (conditionally via `PRAGMA table_info`), backfills `raw_* = cleaned values` for existing records
 - Migration 003 (`content_hash`): adds `content_hash TEXT` column to `scrape_log` for SHA-256 deduplication of fetched HTML
+- Migration 004 (`address_validator_v1`): renames `std_state`→`std_region`, `std_zip`→`std_postal_code`, adds `std_country`; backfills `'US'` for validated rows
+- Migration 005 (`admin_users`): adds `admin_users` table
+- Migration 006 (`admin_audit_log`): adds `admin_audit_log` table
 - To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
 
 ## Playbooks
@@ -452,6 +470,16 @@ source venv/bin/activate
 python -m pytest tests/ -v
 ```
 All tests must pass before committing. Tests use in-memory SQLite and static fixtures — no network, no disk DB, runs in <1 second.
+
+### Manage admin users
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python cli.py admin add-user you@example.com    # add an admin
+python cli.py admin list-users                  # show all admins
+python cli.py admin remove-user you@example.com # remove (blocks last user)
+```
+The first admin must be bootstrapped via CLI. Subsequent admins can be added via the web UI (`/admin/users`) once auth is working.
 
 ### Run a manual scrape
 ```bash

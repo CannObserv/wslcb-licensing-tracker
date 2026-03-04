@@ -1,12 +1,12 @@
 """Tests for admin_auth.py — authentication middleware and helpers."""
 import os
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 from admin_auth import (
     get_current_user,
     require_admin,
-    _RedirectException,
+    AdminRedirectException,
     _lookup_admin,
 )
 
@@ -24,11 +24,17 @@ def _seed_admin(db, email="admin@example.com", role="admin"):
 
 
 def _make_request(headers: dict | None = None) -> MagicMock:
-    """Build a mock FastAPI Request with the given headers."""
+    """Build a mock FastAPI Request with the given headers.
+
+    ``request.state`` uses a real ``SimpleNamespace`` so that
+    ``hasattr`` / attribute assignment behave like the real Starlette State.
+    """
+    import types
     req = MagicMock()
     req.headers = headers or {}
     req.url.path = "/admin/"
     req.url.query = ""
+    req.state = types.SimpleNamespace()
     return req
 
 
@@ -132,7 +138,7 @@ async def test_require_admin_no_credentials_raises_redirect(db):
     req = _make_request({})
     with patch.dict(os.environ, {}, clear=True):
         os.environ.pop("ADMIN_DEV_EMAIL", None)
-        with pytest.raises(_RedirectException) as exc_info:
+        with pytest.raises(AdminRedirectException) as exc_info:
             await require_admin(req)
     assert "/__exe.dev/login" in exc_info.value.location
 
@@ -150,13 +156,6 @@ async def test_require_admin_not_in_table_raises_403(db):
 
 
 # ---- CLI admin commands -------------------------------------------
-
-def _run_cli(args_list, db_conn):
-    """Invoke a CLI admin command function directly with a mock args object."""
-    import types
-    args = types.SimpleNamespace(**args_list)
-    return args
-
 
 def _patch_db(db):
     """Context manager that patches database.get_db to use the in-memory db."""
