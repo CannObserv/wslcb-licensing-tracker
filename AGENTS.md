@@ -628,6 +628,32 @@ python cli.py cleanup-redundant
 ```
 Removes `record_sources` (confirmed) rows and `sources` rows from scrapes that inserted zero new records, deletes their duplicate snapshot files, and re-stamps their `scrape_log` entries as `status='unchanged'`. Use `--keep-files` to skip file deletion. Safe to re-run.
 
+### Reprocess entity links
+```bash
+cd /home/exedev/wslcb-licensing-tracker
+source venv/bin/activate
+python cli.py reprocess-entities              # all records
+python cli.py reprocess-entities --record-id 12345  # single record
+python cli.py reprocess-entities --dry-run    # preview without writing
+```
+
+Regenerates `record_entities` rows from `license_records.applicants` /
+`previous_applicants` using the current entity-normalization logic.  Existing
+links for each targeted record are deleted and rebuilt (idempotent).  The
+`record_enrichments.version` stamp is bumped to `'2'` for every reprocessed
+record, enabling queries like:
+
+```sql
+-- Records that haven't been reprocessed with the current entity logic:
+SELECT record_id FROM record_enrichments
+WHERE step = 'entities' AND CAST(version AS INTEGER) < 2;
+```
+
+Use this after:
+- Adding a new suffix to `_LEGIT_TRAILING_DOT` in `entities.py`
+- A `merge_duplicate_entities()` run that merges entity rows
+- Any other change to name-normalization or cleaning rules
+
 ### Rebuild application→outcome links
 ```bash
 cd /home/exedev/wslcb-licensing-tracker

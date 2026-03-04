@@ -104,6 +104,8 @@ def parse_and_link_entities(
     record_id: int,
     applicants_str: str,
     role: str = "applicant",
+    *,
+    delete_existing: bool = False,
 ) -> int:
     """Split a semicolon-delimited applicants string, skip the first
     element (business name), create entities, and link them to the record.
@@ -111,12 +113,29 @@ def parse_and_link_entities(
     Assigns contiguous 0-based positions to successfully linked entities
     (skipped names do not leave gaps).  Returns the number of entities
     linked.
+
+    Parameters
+    ----------
+    delete_existing:
+        If True, delete any existing ``record_entities`` rows for this
+        ``(record_id, role)`` pair before inserting.  Use this when
+        reprocessing to ensure stale links are removed (idempotent mode).
     """
     if not applicants_str or ";" not in applicants_str:
+        if delete_existing:
+            conn.execute(
+                "DELETE FROM record_entities WHERE record_id = ? AND role = ?",
+                (record_id, role),
+            )
         return 0
     parts = [p.strip() for p in applicants_str.split(";")]
     # First element is always the business name — skip it
     entity_names = [p for p in parts[1:] if p]
+    if delete_existing:
+        conn.execute(
+            "DELETE FROM record_entities WHERE record_id = ? AND role = ?",
+            (record_id, role),
+        )
     linked = 0
     for name in entity_names:
         try:
@@ -357,3 +376,99 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
         logger.info("Merged/renamed %d entities with stray trailing punctuation",
                     merged)
     return merged
+
+
+# Enrichment version written by reprocess_entities.
+# Bump this integer when entity processing logic changes to enable
+# selective re-processing of affected records.
+# Stored as TEXT in record_enrichments.version; compare in SQL with
+# CAST(version AS INTEGER) < _ENTITY_REPROCESS_VERSION.
+_ENTITY_REPROCESS_VERSION = 2
+
+
+def reprocess_entities(
+    conn: sqlite3.Connection,
+    *,
+    record_id: int | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Regenerate ``record_entities`` for all or a subset of records.
+
+    Treats ``record_entities`` as *derived* data: existing rows for each
+    targeted ``(record_id, role)`` pair are deleted and rebuilt from
+    ``license_records.applicants`` / ``previous_applicants`` using the
+    current entity-normalization logic.  The ``record_enrichments``
+    version stamp is updated to ``_ENTITY_REPROCESS_VERSION`` for every
+    processed record.
+
+    Parameters
+    ----------
+    conn:
+        Open database connection.  The caller is responsible for committing
+        (or rolling back) after this function returns.
+    record_id:
+        If given, only reprocess this single record.
+    dry_run:
+        If True, compute what *would* be done and return the counts without
+        making any database changes.
+
+    Returns
+    -------
+    dict
+        ``{"records_processed": int, "entities_linked": int}``
+    """
+    from datetime import datetime, timezone
+
+    if record_id is not None:
+        rows = conn.execute(
+            "SELECT id, applicants, previous_applicants "
+            "FROM license_records WHERE id = ?",
+            (record_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, applicants, previous_applicants FROM license_records"
+        ).fetchall()
+
+    records_processed = 0
+    entities_linked = 0
+    now = datetime.now(timezone.utc).isoformat()
+
+    for row in rows:
+        rid = row[0]
+        applicants = row[1] or ""
+        previous_applicants = row[2] or ""
+
+        if dry_run:
+            records_processed += 1
+            continue
+
+        linked = parse_and_link_entities(
+            conn, rid, applicants, "applicant", delete_existing=True
+        )
+        linked += parse_and_link_entities(
+            conn, rid, previous_applicants, "previous_applicant", delete_existing=True
+        )
+        entities_linked += linked
+        records_processed += 1
+
+        # Update enrichment version stamp.
+        conn.execute(
+            """INSERT OR REPLACE INTO record_enrichments
+               (record_id, step, completed_at, version)
+               VALUES (?, 'entities', ?, ?)""",
+            (rid, now, str(_ENTITY_REPROCESS_VERSION)),
+        )
+
+    if dry_run:
+        logger.info(
+            "reprocess_entities (dry-run): would process %d record(s).",
+            records_processed,
+        )
+    else:
+        logger.info(
+            "reprocess_entities: processed %d record(s), linked %d entity link(s).",
+            records_processed, entities_linked,
+        )
+
+    return {"records_processed": records_processed, "entities_linked": entities_linked}

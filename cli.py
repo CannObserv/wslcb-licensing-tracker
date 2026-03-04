@@ -142,6 +142,30 @@ def cmd_reprocess_endorsements(args):
         )
 
 
+def cmd_reprocess_entities(args):
+    """Regenerate record_entities from current applicants data."""
+    from database import init_db, get_db
+    from entities import reprocess_entities
+
+    init_db()
+    with get_db() as conn:
+        result = reprocess_entities(
+            conn,
+            record_id=args.record_id,
+            dry_run=args.dry_run,
+        )
+        if not args.dry_run:
+            conn.commit()
+
+    if args.dry_run:
+        print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
+    else:
+        print(
+            f"Reprocessed {result['records_processed']:,} record(s); "
+            f"{result['entities_linked']:,} entity link(s) written."
+        )
+
+
 def cmd_rebuild(args):
     """Rebuild the database from archived sources."""
     import logging
@@ -378,6 +402,25 @@ def main():
         help="Report what would change without writing to the database",
     )
     p.set_defaults(func=cmd_reprocess_endorsements)
+
+    # reprocess-entities
+    p = sub.add_parser(
+        "reprocess-entities",
+        help="Regenerate record_entities from current applicants data",
+    )
+    p.add_argument(
+        "--record-id",
+        type=int,
+        default=None,
+        dest="record_id",
+        help="Only reprocess this single record ID",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change without writing to the database",
+    )
+    p.set_defaults(func=cmd_reprocess_entities)
 
     # rebuild
     p = sub.add_parser(
