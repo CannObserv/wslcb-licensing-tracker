@@ -130,12 +130,16 @@ def cmd_reprocess_endorsements(args):
             code=args.code,
             dry_run=args.dry_run,
         )
+        if not args.dry_run:
+            conn.commit()
 
-    prefix = "[dry-run] " if args.dry_run else ""
-    print(
-        f"{prefix}Reprocessed {result['records_processed']:,} record(s); "
-        f"{result['endorsements_linked']:,} endorsement link(s) written."
-    )
+    if args.dry_run:
+        print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
+    else:
+        print(
+            f"Reprocessed {result['records_processed']:,} record(s); "
+            f"{result['endorsements_linked']:,} endorsement link(s) written."
+        )
 
 
 def cmd_rebuild(args):

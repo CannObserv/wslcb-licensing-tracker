@@ -709,6 +709,7 @@ class TestReprocessEndorsements:
         db.commit()
 
         result = reprocess_endorsements(db)
+        db.commit()
         assert result["records_processed"] >= 2
         # Both records should have endorsements again
         for rid in (rec1, rec2):
@@ -733,6 +734,7 @@ class TestReprocessEndorsements:
         db.commit()
 
         result = reprocess_endorsements(db, record_id=rec1)
+        db.commit()
         assert result["records_processed"] == 1
 
         # rec1 should have endorsements, rec2 should not
@@ -765,6 +767,7 @@ class TestReprocessEndorsements:
         db.commit()
 
         result = reprocess_endorsements(db, code="394")
+        db.commit()
         assert result["records_processed"] == 1
 
         c_target = db.execute(
@@ -781,7 +784,6 @@ class TestReprocessEndorsements:
     def test_reprocess_updates_enrichment_version(self, db):
         """reprocess_endorsements() bumps the record_enrichments version stamp."""
         from endorsements import reprocess_endorsements
-        from schema import init_db
 
         seed_endorsements(db)
         rec_id = _make_record(db, license_number="RP007", license_type="CANNABIS RETAILER")
@@ -794,7 +796,8 @@ class TestReprocessEndorsements:
         )
         db.commit()
 
-        reprocess_endorsements(db)
+        reprocess_endorsements(db, record_id=rec_id)
+        db.commit()
 
         row = db.execute(
             "SELECT version FROM record_enrichments WHERE record_id = ? AND step = 'endorsements'",

@@ -517,9 +517,11 @@ def process_record(conn: sqlite3.Connection, record_id: int,
 
 
 # Enrichment version written by reprocess_endorsements.
-# Bump this constant when the endorsement processing logic changes
+# Bump this integer when the endorsement processing logic changes
 # to trigger selective re-processing of affected records.
-_ENDORSEMENT_REPROCESS_VERSION = "2"
+# Stored as TEXT in record_enrichments.version; compare in SQL with
+# CAST(version AS INTEGER) < _ENDORSEMENT_REPROCESS_VERSION.
+_ENDORSEMENT_REPROCESS_VERSION = 2
 
 
 def reprocess_endorsements(
@@ -540,8 +542,10 @@ def reprocess_endorsements(
     Parameters
     ----------
     conn:
-        Open database connection.  The caller does **not** need to commit;
-        changes are committed inside this function (unless *dry_run* is True).
+        Open database connection.  The caller is responsible for committing
+        (or rolling back) after this function returns.  This allows the
+        caller to pair reprocessing with other writes (e.g., audit log) in
+        a single atomic transaction.
     record_id:
         If given, only reprocess this single record.
     code:
@@ -589,9 +593,6 @@ def reprocess_endorsements(
             continue
 
         if dry_run:
-            # Simulate without committing — just count what would be linked.
-            # We can't easily count without actually running process_record,
-            # so we just count the record.
             records_processed += 1
             continue
 
@@ -604,19 +605,18 @@ def reprocess_endorsements(
             """INSERT OR REPLACE INTO record_enrichments
                (record_id, step, completed_at, version)
                VALUES (?, 'endorsements', ?, ?)""",
-            (rid, now, _ENDORSEMENT_REPROCESS_VERSION),
+            (rid, now, str(_ENDORSEMENT_REPROCESS_VERSION)),
         )
 
-    if not dry_run:
-        conn.commit()
-        logger.info(
-            "reprocess_endorsements: processed %d record(s), linked %d endorsement(s).",
-            records_processed, endorsements_linked,
-        )
-    else:
+    if dry_run:
         logger.info(
             "reprocess_endorsements (dry-run): would process %d record(s).",
             records_processed,
+        )
+    else:
+        logger.info(
+            "reprocess_endorsements: processed %d record(s), linked %d endorsement(s).",
+            records_processed, endorsements_linked,
         )
 
     return {"records_processed": records_processed, "endorsements_linked": endorsements_linked}

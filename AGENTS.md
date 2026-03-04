@@ -121,7 +121,7 @@ The `record_enrichments.version` stamp is bumped to `'2'` for every reprocessed 
 ```sql
 -- Records that haven't been reprocessed with the current logic:
 SELECT record_id FROM record_enrichments
-WHERE step = 'endorsements' AND version < '2';
+WHERE step = 'endorsements' AND CAST(version AS INTEGER) < 2;
 ```
 
 ## Database Schema
