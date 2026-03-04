@@ -23,6 +23,11 @@ from queries import (
     get_record_sources, get_record_link,
     hydrate_records,
 )
+from integrity import (
+    check_orphaned_locations,
+    check_unenriched_records,
+    check_endorsement_anomalies,
+)
 from endorsements import (
     seed_endorsements, backfill, repair_code_name_endorsements,
     merge_mixed_case_endorsements,
@@ -346,10 +351,142 @@ async def api_stats():
 
 @app.get("/admin/", response_class=HTMLResponse)
 async def admin_dashboard(request: Request, admin: dict = Depends(require_admin)):
-    """Admin dashboard — stub confirming auth works."""
+    """Admin dashboard — record counts, scrape status, data quality metrics."""
+    with get_db() as conn:
+        # Record counts
+        agg = conn.execute("""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN section_type = 'new_application' THEN 1 ELSE 0 END) AS new_apps,
+                SUM(CASE WHEN section_type = 'approved' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN section_type = 'discontinued' THEN 1 ELSE 0 END) AS discontinued
+            FROM license_records
+        """).fetchone()
+        recent = conn.execute("""
+            SELECT
+                SUM(CASE WHEN record_date >= date('now', '-1 day') THEN 1 ELSE 0 END) AS last_24h,
+                SUM(CASE WHEN record_date >= date('now', '-7 days') THEN 1 ELSE 0 END) AS last_7d
+            FROM license_records
+        """).fetchone()
+        # Last 5 scrape runs
+        scrapes = conn.execute("""
+            SELECT id, status, records_new, records_approved, records_discontinued,
+                   records_skipped, started_at, finished_at
+            FROM scrape_log
+            ORDER BY id DESC LIMIT 5
+        """).fetchall()
+        # Data quality
+        orphans = check_orphaned_locations(conn)
+        unenriched = check_unenriched_records(conn)
+        endorsement_issues = check_endorsement_anomalies(conn)
+        user_count = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
+
     return await _tpl(request, "admin/dashboard.html", {
-        "request": request, "admin": admin, "active_section": "dashboard",
+        "request": request,
+        "admin": admin,
+        "active_section": "dashboard",
+        "record_counts": {
+            "total": agg["total"],
+            "new_apps": agg["new_apps"],
+            "approved": agg["approved"],
+            "discontinued": agg["discontinued"],
+            "last_24h": recent["last_24h"] or 0,
+            "last_7d": recent["last_7d"] or 0,
+        },
+        "scrapes": [dict(r) for r in scrapes],
+        "data_quality": {
+            "orphaned_locations": len(orphans),
+            "no_endorsements": unenriched["no_endorsements"],
+            "no_entities": unenriched["no_entities"],
+            "unresolved_codes": endorsement_issues["unresolved_codes"],
+            "placeholder_endorsements": endorsement_issues["placeholder_endorsements"],
+        },
+        "user_count": user_count,
     })
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users(request: Request, admin: dict = Depends(require_admin)):
+    """List all admin users."""
+    with get_db() as conn:
+        users = conn.execute(
+            "SELECT id, email, role, created_at, created_by FROM admin_users ORDER BY created_at"
+        ).fetchall()
+    return await _tpl(request, "admin/users.html", {
+        "request": request,
+        "admin": admin,
+        "active_section": "users",
+        "users": [dict(u) for u in users],
+        "error": request.query_params.get("error", ""),
+    })
+
+
+@app.post("/admin/users/add", response_class=HTMLResponse)
+async def admin_users_add(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    email: str = Form(...),
+):
+    """Add a new admin user."""
+    email = email.strip().lower()
+    if not email:
+        return RedirectResponse("/admin/users?error=Email+is+required", status_code=303)
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
+        ).fetchone()
+        if existing:
+            return RedirectResponse(
+                f"/admin/users?error=User+{email}+already+exists", status_code=303
+            )
+        conn.execute(
+            "INSERT INTO admin_users (email, role, created_by) VALUES (?, 'admin', ?)",
+            (email, admin["email"]),
+        )
+        new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        log_action(
+            conn,
+            email=admin["email"],
+            action="admin_user.add",
+            target_type="admin_user",
+            target_id=new_id,
+            details={"added_email": email},
+        )
+        conn.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@app.post("/admin/users/remove", response_class=HTMLResponse)
+async def admin_users_remove(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    email: str = Form(...),
+):
+    """Remove an admin user. Cannot remove yourself."""
+    email = email.strip().lower()
+    if email == admin["email"].lower():
+        return RedirectResponse("/admin/users?error=Cannot+remove+yourself", status_code=303)
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
+        ).fetchone()
+        if not row:
+            return RedirectResponse(
+                f"/admin/users?error=User+{email}+not+found", status_code=303
+            )
+        conn.execute(
+            "DELETE FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
+        )
+        log_action(
+            conn,
+            email=admin["email"],
+            action="admin_user.remove",
+            target_type="admin_user",
+            target_id=row["id"],
+            details={"removed_email": email},
+        )
+        conn.commit()
+    return RedirectResponse("/admin/users", status_code=303)
 
 
 @app.get("/admin/audit-log", response_class=HTMLResponse)

@@ -1,0 +1,86 @@
+{% extends "admin/base.html" %}
+{% block title %}Admin Users — WSLCB Licensing Tracker{% endblock %}
+
+{% block admin_content %}
+<div class="space-y-6">
+    <h1 class="text-2xl font-bold text-gray-900">Admin Users</h1>
+
+    {% if error %}
+    <div class="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
+        ⚠️ {{ error }}
+    </div>
+    {% endif %}
+
+    {# ── Add user ─────────────────────────────────────────────────── #}
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+        <h2 class="text-sm font-semibold text-gray-700 mb-3">Add Admin User</h2>
+        <form method="POST" action="/admin/users/add" class="flex gap-2 items-center">
+            <input
+                type="email"
+                name="email"
+                required
+                placeholder="user@example.com"
+                class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm
+                       focus:outline-none focus:border-co-purple focus:ring-1 focus:ring-co-purple"
+            >
+            <button
+                type="submit"
+                class="bg-co-purple text-white text-sm font-medium px-4 py-1.5 rounded
+                       hover:bg-co-purple-700 transition-colors"
+            >Add</button>
+        </form>
+    </div>
+
+    {# ── User table ───────────────────────────────────────────────── #}
+    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                    <th class="text-left px-4 py-3 font-medium text-gray-600">Email</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-600">Role</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-600">Added</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-600">Added By</th>
+                    <th class="px-4 py-3"></th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for user in users %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 font-mono text-gray-900">{{ user.email }}</td>
+                    <td class="px-4 py-3">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                                     bg-co-purple-50 text-co-purple">
+                            {{ user.role }}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-gray-500">
+                        {{ user.created_at[:10] if user.created_at else '—' }}
+                    </td>
+                    <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ user.created_by }}</td>
+                    <td class="px-4 py-3 text-right">
+                        {% if user.email|lower != admin.email|lower %}
+                        <form method="POST" action="/admin/users/remove"
+                              onsubmit="return confirm('Remove {{ user.email }} as admin?')">
+                            <input type="hidden" name="email" value="{{ user.email }}">
+                            <button type="submit"
+                                    class="text-xs text-red-600 hover:text-red-800 hover:underline">
+                                Remove
+                            </button>
+                        </form>
+                        {% else %}
+                        <span class="text-xs text-gray-400 italic">you</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="px-4 py-6 text-center text-gray-400 text-sm">
+                        No admin users found.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
