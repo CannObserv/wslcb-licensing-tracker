@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, Request, Query
+from fastapi import Depends, FastAPI, Form, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
 from admin_auth import get_current_user, require_admin, AdminRedirectException
-from admin_audit import get_audit_log
+from admin_audit import get_audit_log, log_action
 from entities import backfill_entities, get_entity_by_id
 from queries import (
     search_records, export_records,
@@ -23,7 +23,11 @@ from queries import (
     get_record_sources, get_record_link,
     hydrate_records,
 )
-from endorsements import seed_endorsements, backfill, repair_code_name_endorsements, merge_mixed_case_endorsements
+from endorsements import (
+    seed_endorsements, backfill, repair_code_name_endorsements,
+    merge_mixed_case_endorsements,
+    get_endorsement_groups, set_canonical_endorsement, rename_endorsement,
+)
 from link_records import build_all_links, get_reverse_link_info, get_outcome_status
 from display import format_outcome, summarize_provenance
 from log_config import setup_logging
@@ -397,3 +401,108 @@ async def admin_audit_log(
         "filter_date_from": date_from,
         "filter_date_to": date_to,
     })
+
+
+@app.get("/admin/endorsements", response_class=HTMLResponse)
+async def admin_endorsements(
+    request: Request,
+    admin: dict = Depends(require_admin),
+):
+    """Endorsement management page — grouped by numeric code with alias controls."""
+    with get_db() as conn:
+        groups = get_endorsement_groups(conn)
+    return await _tpl(request, "admin/endorsements.html", {
+        "request": request,
+        "admin": admin,
+        "active_section": "endorsements",
+        "groups": groups,
+    })
+
+
+@app.post("/admin/endorsements/set-canonical", response_class=HTMLResponse)
+async def admin_set_canonical(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    canonical_id: int = Form(...),
+    variant_ids: list[int] = Form(default=[]),
+):
+    """Designate a canonical endorsement and alias the selected variants to it."""
+    with get_db() as conn:
+        # Resolve canonical name for audit details
+        canonical_name = conn.execute(
+            "SELECT name FROM license_endorsements WHERE id = ?",
+            (canonical_id,),
+        ).fetchone()
+        canonical_name = canonical_name[0] if canonical_name else str(canonical_id)
+
+        # Resolve variant names for audit details
+        variant_names = []
+        for vid in variant_ids:
+            row = conn.execute(
+                "SELECT name FROM license_endorsements WHERE id = ?",
+                (vid,),
+            ).fetchone()
+            if row:
+                variant_names.append(row[0])
+
+        written = set_canonical_endorsement(
+            conn,
+            canonical_id=canonical_id,
+            variant_ids=variant_ids,
+            created_by=admin["email"],
+        )
+        log_action(
+            conn,
+            email=admin["email"],
+            action="endorsement.set_canonical",
+            target_type="endorsement",
+            target_id=canonical_id,
+            details={
+                "canonical_name": canonical_name,
+                "variant_ids": variant_ids,
+                "variant_names": variant_names,
+                "aliases_written": written,
+            },
+        )
+        conn.commit()
+
+    return RedirectResponse("/admin/endorsements", status_code=303)
+
+
+@app.post("/admin/endorsements/rename", response_class=HTMLResponse)
+async def admin_rename_endorsement(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    endorsement_id: int = Form(...),
+    new_name: str = Form(...),
+):
+    """Assign a text name to a bare numeric-code endorsement."""
+    new_name = new_name.strip()
+    with get_db() as conn:
+        old_name = conn.execute(
+            "SELECT name FROM license_endorsements WHERE id = ?",
+            (endorsement_id,),
+        ).fetchone()
+        old_name = old_name[0] if old_name else str(endorsement_id)
+
+        canonical_id = rename_endorsement(
+            conn,
+            endorsement_id=endorsement_id,
+            new_name=new_name,
+            created_by=admin["email"],
+        )
+        log_action(
+            conn,
+            email=admin["email"],
+            action="endorsement.rename",
+            target_type="endorsement",
+            target_id=endorsement_id,
+            details={
+                "old_name": old_name,
+                "new_name": new_name,
+                "canonical_id": canonical_id,
+            },
+        )
+        conn.commit()
+
+    return RedirectResponse("/admin/endorsements", status_code=303)

@@ -218,6 +218,17 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             details TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS endorsement_aliases (
+            id INTEGER PRIMARY KEY,
+            endorsement_id INTEGER NOT NULL
+                REFERENCES license_endorsements(id) ON DELETE CASCADE,
+            canonical_endorsement_id INTEGER NOT NULL
+                REFERENCES license_endorsements(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT,
+            UNIQUE(endorsement_id)
+        );
     """)
 
     # Seed the fixed source_types rows
@@ -417,6 +428,35 @@ def _m006_admin_audit_log(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _m007_endorsement_aliases(conn: sqlite3.Connection) -> None:
+    """Add endorsement_aliases table for non-destructive alias resolution.
+
+    Each row maps a variant endorsement to a canonical endorsement.  Query
+    time resolution replaces variant names with their canonical counterparts
+    in filter dropdowns, record display, and CSV export.  Original rows in
+    ``license_endorsements`` and ``record_endorsements`` are untouched.
+    """
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "endorsement_aliases" not in tables:
+        conn.executescript("""
+            CREATE TABLE endorsement_aliases (
+                id INTEGER PRIMARY KEY,
+                endorsement_id INTEGER NOT NULL
+                    REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                canonical_endorsement_id INTEGER NOT NULL
+                    REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_by TEXT,
+                UNIQUE(endorsement_id)
+            );
+        """)
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -433,6 +473,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (4, "address_validator_v1", _m004_address_validator_v1),
     (5, "admin_users", _m005_admin_users),
     (6, "admin_audit_log", _m006_admin_audit_log),
+    (7, "endorsement_aliases", _m007_endorsement_aliases),
 ]
 
 

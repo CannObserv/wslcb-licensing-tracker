@@ -282,3 +282,276 @@ class TestQueryHelpers:
         result = get_record_endorsements(db, [id1, id2])
         assert "CANNABIS RETAILER" in result[id1]
         assert "CANNABIS PROCESSOR" in result[id2]
+
+
+# ── Alias system (#7) ─────────────────────────────────────────
+
+
+class TestResolveEndorsement:
+    """Tests for resolve_endorsement()."""
+
+    def test_returns_same_id_when_no_alias(self, db):
+        """Non-aliased endorsement resolves to itself."""
+        from endorsements import resolve_endorsement
+        eid = _ensure_endorsement(db, "STANDALONE")
+        db.commit()
+        assert resolve_endorsement(db, eid) == eid
+
+    def test_returns_canonical_for_aliased(self, db):
+        """Aliased endorsement resolves to its canonical."""
+        from endorsements import resolve_endorsement
+        variant_id = _ensure_endorsement(db, "VARIANT NAME")
+        canonical_id = _ensure_endorsement(db, "CANONICAL NAME")
+        db.execute(
+            "INSERT INTO endorsement_aliases (endorsement_id, canonical_endorsement_id)"
+            " VALUES (?, ?)",
+            (variant_id, canonical_id),
+        )
+        db.commit()
+        assert resolve_endorsement(db, variant_id) == canonical_id
+
+    def test_alias_does_not_affect_canonical_itself(self, db):
+        """Canonical ID is not changed by its own alias records."""
+        from endorsements import resolve_endorsement
+        variant_id = _ensure_endorsement(db, "VARIANT B")
+        canonical_id = _ensure_endorsement(db, "CANONICAL B")
+        db.execute(
+            "INSERT INTO endorsement_aliases (endorsement_id, canonical_endorsement_id)"
+            " VALUES (?, ?)",
+            (variant_id, canonical_id),
+        )
+        db.commit()
+        assert resolve_endorsement(db, canonical_id) == canonical_id
+
+
+class TestGetEndorsementGroups:
+    """Tests for get_endorsement_groups()."""
+
+    def test_groups_by_code(self, db):
+        """Endorsements sharing a code appear in the same group."""
+        from endorsements import get_endorsement_groups
+        seed_endorsements(db)
+        db.commit()
+
+        groups = get_endorsement_groups(db)
+        # At minimum a dict is returned
+        assert isinstance(groups, list)
+
+    def test_includes_record_counts(self, db):
+        """Each endorsement entry has a record count."""
+        from endorsements import get_endorsement_groups
+        seed_endorsements(db)
+        rec_id = _make_record(db)
+        process_record(db, rec_id, "CANNABIS RETAILER")
+        db.commit()
+
+        groups = get_endorsement_groups(db)
+        # Find the CANNABIS RETAILER group
+        found = None
+        for g in groups:
+            for e in g["endorsements"]:
+                if e["name"] == "CANNABIS RETAILER":
+                    found = e
+                    break
+        assert found is not None
+        assert found["record_count"] >= 1
+
+    def test_includes_canonical_flag(self, db):
+        """Endorsed marked canonical when alias points to them."""
+        from endorsements import get_endorsement_groups, resolve_endorsement
+        seed_endorsements(db)
+        rec_id = _make_record(db)
+        process_record(db, rec_id, "CANNABIS RETAILER")
+        db.commit()
+
+        # Manually create a variant + alias
+        variant_id = _ensure_endorsement(db, "CANNABIS RETAILER VARIANT")
+        canonical_id = db.execute(
+            "SELECT id FROM license_endorsements WHERE name = ?",
+            ("CANNABIS RETAILER",),
+        ).fetchone()[0]
+        db.execute(
+            "INSERT INTO endorsement_aliases (endorsement_id, canonical_endorsement_id)"
+            " VALUES (?, ?)",
+            (variant_id, canonical_id),
+        )
+        db.commit()
+
+        groups = get_endorsement_groups(db)
+        # canonical_id should appear as is_canonical in some group
+        all_endorsements = [e for g in groups for e in g["endorsements"]]
+        canonical_entries = [e for e in all_endorsements if e["id"] == canonical_id]
+        assert any(e["is_canonical"] for e in canonical_entries)
+
+
+class TestSetCanonical:
+    """Tests for set_canonical_endorsement()."""
+
+    def test_creates_alias_rows(self, db):
+        """set_canonical creates alias rows for all variants pointing to canonical."""
+        from endorsements import set_canonical_endorsement, _ensure_endorsement
+        seed_endorsements(db)
+
+        # Create two variants and a canonical, all sharing a code
+        code = "TESTCODE"
+        v1_id = _ensure_endorsement(db, "VARIANT ONE")
+        v2_id = _ensure_endorsement(db, "VARIANT TWO")
+        canonical_id = _ensure_endorsement(db, "CANONICAL ONE")
+        for eid in (v1_id, v2_id, canonical_id):
+            db.execute(
+                "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
+                (code, eid),
+            )
+        db.commit()
+
+        set_canonical_endorsement(
+            db,
+            canonical_id=canonical_id,
+            variant_ids=[v1_id, v2_id],
+            created_by="test@example.com",
+        )
+        db.commit()
+
+        aliases = db.execute(
+            "SELECT endorsement_id FROM endorsement_aliases"
+            " WHERE canonical_endorsement_id = ?",
+            (canonical_id,),
+        ).fetchall()
+        aliased_ids = {row[0] for row in aliases}
+        assert v1_id in aliased_ids
+        assert v2_id in aliased_ids
+
+    def test_idempotent(self, db):
+        """Calling set_canonical twice doesn't duplicate alias rows."""
+        from endorsements import set_canonical_endorsement
+        v_id = _ensure_endorsement(db, "VARIANT IDEM")
+        c_id = _ensure_endorsement(db, "CANONICAL IDEM")
+        db.commit()
+
+        set_canonical_endorsement(db, canonical_id=c_id, variant_ids=[v_id], created_by="t@t.com")
+        db.commit()
+        set_canonical_endorsement(db, canonical_id=c_id, variant_ids=[v_id], created_by="t@t.com")
+        db.commit()
+
+        count = db.execute(
+            "SELECT COUNT(*) FROM endorsement_aliases WHERE endorsement_id = ?",
+            (v_id,),
+        ).fetchone()[0]
+        assert count == 1
+
+
+class TestRenameEndorsement:
+    """Tests for rename_endorsement() — bare numeric code → text name."""
+
+    def test_creates_named_endorsement_and_alias(self, db):
+        """Renaming a bare code creates a new named endorsement and alias row."""
+        from endorsements import rename_endorsement
+        seed_endorsements(db)
+
+        # Create a bare numeric-code endorsement
+        bare_id = _ensure_endorsement(db, "9999")
+        db.commit()
+
+        new_id = rename_endorsement(
+            db,
+            endorsement_id=bare_id,
+            new_name="SPECIAL EVENT PERMIT",
+            created_by="admin@example.com",
+        )
+        db.commit()
+
+        # New endorsement exists
+        row = db.execute(
+            "SELECT name FROM license_endorsements WHERE id = ?", (new_id,)
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "SPECIAL EVENT PERMIT"
+
+        # Alias from bare → new
+        alias = db.execute(
+            "SELECT canonical_endorsement_id FROM endorsement_aliases WHERE endorsement_id = ?",
+            (bare_id,),
+        ).fetchone()
+        assert alias is not None
+        assert alias[0] == new_id
+
+    def test_rename_returns_existing_if_name_taken(self, db):
+        """Rename to an existing name reuses that endorsement."""
+        from endorsements import rename_endorsement
+        seed_endorsements(db)
+
+        bare_id = _ensure_endorsement(db, "8888")
+        existing_id = _ensure_endorsement(db, "EXISTING ENDORSEMENT")
+        db.commit()
+
+        returned_id = rename_endorsement(
+            db,
+            endorsement_id=bare_id,
+            new_name="EXISTING ENDORSEMENT",
+            created_by="admin@example.com",
+        )
+        db.commit()
+        assert returned_id == existing_id
+
+
+class TestAliasResolutionInFilterOptions:
+    """get_endorsement_options() should deduplicate via aliases."""
+
+    def test_aliased_variant_excluded_from_options(self, db):
+        """Variants with aliases don't appear in filter dropdown."""
+        from endorsements import get_endorsement_options
+        seed_endorsements(db)
+
+        rec_id_v = _make_record(db, license_number="ALIAS001")
+        rec_id_c = _make_record(db, license_number="ALIAS002")
+        variant_id = _ensure_endorsement(db, "VARIANT FILTER")
+        canonical_id = _ensure_endorsement(db, "CANONICAL FILTER")
+
+        # Link both records to each endorsement
+        db.execute(
+            "INSERT OR IGNORE INTO record_endorsements VALUES (?, ?)",
+            (rec_id_v, variant_id),
+        )
+        db.execute(
+            "INSERT OR IGNORE INTO record_endorsements VALUES (?, ?)",
+            (rec_id_c, canonical_id),
+        )
+        # Create alias: variant → canonical
+        db.execute(
+            "INSERT INTO endorsement_aliases (endorsement_id, canonical_endorsement_id)"
+            " VALUES (?, ?)",
+            (variant_id, canonical_id),
+        )
+        db.commit()
+
+        options = get_endorsement_options(db)
+        assert "CANONICAL FILTER" in options
+        assert "VARIANT FILTER" not in options
+
+
+class TestAliasResolutionInRecordEndorsements:
+    """get_record_endorsements() should resolve aliases to canonical names."""
+
+    def test_returns_canonical_name_for_aliased_record(self, db):
+        """Records linked to a variant show the canonical name."""
+        from endorsements import get_record_endorsements
+        seed_endorsements(db)
+
+        rec_id = _make_record(db, license_number="ALIAS003")
+        variant_id = _ensure_endorsement(db, "VARIANT DISPLAY")
+        canonical_id = _ensure_endorsement(db, "CANONICAL DISPLAY")
+
+        db.execute(
+            "INSERT OR IGNORE INTO record_endorsements VALUES (?, ?)",
+            (rec_id, variant_id),
+        )
+        db.execute(
+            "INSERT INTO endorsement_aliases (endorsement_id, canonical_endorsement_id)"
+            " VALUES (?, ?)",
+            (variant_id, canonical_id),
+        )
+        db.commit()
+
+        result = get_record_endorsements(db, [rec_id])
+        assert "CANONICAL DISPLAY" in result[rec_id]
+        assert "VARIANT DISPLAY" not in result[rec_id]

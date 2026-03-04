@@ -705,19 +705,32 @@ def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
 # ---
 
 def get_endorsement_options(conn: sqlite3.Connection) -> list[str]:
-    """Distinct endorsement names that are linked to at least one record."""
+    """Distinct canonical endorsement names linked to at least one record.
+
+    Aliases are resolved: if an endorsement has an alias row, its canonical
+    name is used instead.  This deduplicates the filter dropdown so each
+    semantic endorsement appears only once.
+    """
     rows = conn.execute("""
-        SELECT DISTINCT le.name
+        SELECT DISTINCT
+            COALESCE(canonical.name, le.name) AS display_name
         FROM license_endorsements le
         JOIN record_endorsements re ON re.endorsement_id = le.id
-        ORDER BY le.name
+        LEFT JOIN endorsement_aliases ea ON ea.endorsement_id = le.id
+        LEFT JOIN license_endorsements canonical
+               ON canonical.id = ea.canonical_endorsement_id
+        ORDER BY display_name
     """).fetchall()
     return [r[0] for r in rows]
 
 
 def get_record_endorsements(conn: sqlite3.Connection,
                             record_ids: list[int]) -> dict[int, list[str]]:
-    """Batch-fetch endorsement names for a list of record ids."""
+    """Batch-fetch canonical endorsement names for a list of record ids.
+
+    Alias resolution is applied: if the endorsement linked to a record has an
+    alias row, the canonical name is returned instead of the variant name.
+    """
     if not record_ids:
         return {}
     CHUNK = 500
@@ -726,12 +739,227 @@ def get_record_endorsements(conn: sqlite3.Connection,
         batch = record_ids[i:i + CHUNK]
         placeholders = ",".join("?" * len(batch))
         rows = conn.execute(f"""
-            SELECT re.record_id, le.name
+            SELECT re.record_id,
+                   COALESCE(canonical.name, le.name) AS display_name
             FROM record_endorsements re
             JOIN license_endorsements le ON le.id = re.endorsement_id
+            LEFT JOIN endorsement_aliases ea ON ea.endorsement_id = le.id
+            LEFT JOIN license_endorsements canonical
+                   ON canonical.id = ea.canonical_endorsement_id
             WHERE re.record_id IN ({placeholders})
-            ORDER BY re.record_id, le.name
+            ORDER BY re.record_id, display_name
         """, batch).fetchall()
         for r in rows:
             result[r[0]].append(r[1])
     return result
+
+
+# ---
+# Alias management (admin interface helpers)
+# ---
+
+def resolve_endorsement(conn: sqlite3.Connection, endorsement_id: int) -> int:
+    """Return the canonical endorsement ID for *endorsement_id*.
+
+    If *endorsement_id* has an alias row, the ``canonical_endorsement_id``
+    is returned.  Otherwise the same ID is returned unchanged.
+
+    Parameters
+    ----------
+    conn:
+        Open database connection.
+    endorsement_id:
+        Primary key of the endorsement to resolve.
+    """
+    row = conn.execute(
+        "SELECT canonical_endorsement_id FROM endorsement_aliases"
+        " WHERE endorsement_id = ?",
+        (endorsement_id,),
+    ).fetchone()
+    return row[0] if row else endorsement_id
+
+
+def set_canonical_endorsement(
+    conn: sqlite3.Connection,
+    canonical_id: int,
+    variant_ids: list[int],
+    created_by: str | None = None,
+) -> int:
+    """Create alias rows mapping each *variant_id* to *canonical_id*.
+
+    Uses ``INSERT OR REPLACE`` so re-running is idempotent: existing alias
+    rows for the same ``endorsement_id`` are updated in place.
+
+    Parameters
+    ----------
+    conn:
+        Open database connection — caller must commit.
+    canonical_id:
+        Primary key of the endorsement to mark as canonical.
+    variant_ids:
+        Primary keys of endorsements that should alias to *canonical_id*.
+    created_by:
+        Admin email to record in the audit trail column.
+
+    Returns
+    -------
+    int
+        Number of alias rows written (created or updated).
+    """
+    written = 0
+    for vid in variant_ids:
+        if vid == canonical_id:
+            continue  # never alias an endorsement to itself
+        conn.execute(
+            """
+            INSERT INTO endorsement_aliases
+                (endorsement_id, canonical_endorsement_id, created_by)
+            VALUES (?, ?, ?)
+            ON CONFLICT(endorsement_id) DO UPDATE SET
+                canonical_endorsement_id = excluded.canonical_endorsement_id,
+                created_by = excluded.created_by,
+                created_at = datetime('now')
+            """,
+            (vid, canonical_id, created_by),
+        )
+        written += 1
+    logger.info(
+        "set_canonical: %d alias(es) → endorsement#%d by %s",
+        written, canonical_id, created_by,
+    )
+    return written
+
+
+def rename_endorsement(
+    conn: sqlite3.Connection,
+    endorsement_id: int,
+    new_name: str,
+    created_by: str | None = None,
+) -> int:
+    """Assign a text name to an endorsement (typically a bare numeric code).
+
+    Creates a new ``license_endorsements`` row with *new_name* (or reuses one
+    that already exists), then creates an alias row mapping *endorsement_id*
+    to the new (canonical) ID.  The original row is left intact for history.
+
+    Parameters
+    ----------
+    conn:
+        Open database connection — caller must commit.
+    endorsement_id:
+        Primary key of the endorsement to rename (the variant / bare code).
+    new_name:
+        Human-readable canonical name.
+    created_by:
+        Admin email for the audit trail.
+
+    Returns
+    -------
+    int
+        Primary key of the canonical (named) endorsement.
+    """
+    # Reuse an existing endorsement with that name, or create one
+    existing = conn.execute(
+        "SELECT id FROM license_endorsements WHERE name = ?",
+        (new_name,),
+    ).fetchone()
+    if existing:
+        canonical_id = existing[0]
+    else:
+        canonical_id = conn.execute(
+            "INSERT INTO license_endorsements (name) VALUES (?)",
+            (new_name,),
+        ).lastrowid
+
+    # Create the alias (idempotent)
+    set_canonical_endorsement(
+        conn,
+        canonical_id=canonical_id,
+        variant_ids=[endorsement_id],
+        created_by=created_by,
+    )
+    logger.info(
+        "rename_endorsement: #%d → '%s' (#%d) by %s",
+        endorsement_id, new_name, canonical_id, created_by,
+    )
+    return canonical_id
+
+
+def get_endorsement_groups(
+    conn: sqlite3.Connection,
+) -> list[dict]:
+    """Return all endorsements grouped by numeric code for the admin UI.
+
+    Returns a list of group dicts, each with keys:
+
+    - ``code`` — the WSLCB numeric code string (or ``None`` for ungrouped)
+    - ``endorsements`` — list of endorsement dicts with keys:
+        - ``id``, ``name``, ``record_count``, ``is_canonical``, ``is_variant``,
+          ``canonical_id`` (None if not a variant)
+
+    Groups are ordered by code (numeric), with the ungrouped section last.
+    """
+    # Fetch all endorsements with record counts
+    rows = conn.execute("""
+        SELECT
+            le.id,
+            le.name,
+            COUNT(re.record_id) AS record_count
+        FROM license_endorsements le
+        LEFT JOIN record_endorsements re ON re.endorsement_id = le.id
+        GROUP BY le.id
+        ORDER BY le.name
+    """).fetchall()
+
+    # Fetch alias map: variant_id → canonical_id
+    alias_rows = conn.execute(
+        "SELECT endorsement_id, canonical_endorsement_id FROM endorsement_aliases"
+    ).fetchall()
+    alias_map: dict[int, int] = {r[0]: r[1] for r in alias_rows}
+    # Set of IDs that are canonical for at least one alias
+    canonical_ids: set[int] = set(alias_map.values())
+
+    # Fetch code memberships: endorsement_id → list[code]
+    code_rows = conn.execute(
+        "SELECT endorsement_id, code FROM endorsement_codes"
+    ).fetchall()
+    eid_to_codes: dict[int, list[str]] = {}
+    for eid, code in code_rows:
+        eid_to_codes.setdefault(eid, []).append(code)
+
+    # Build per-code buckets
+    code_buckets: dict[str, list[dict]] = {}
+    ungrouped: list[dict] = []
+
+    for row in rows:
+        eid, name, count = row
+        entry = {
+            "id": eid,
+            "name": name,
+            "record_count": count,
+            "is_canonical": eid in canonical_ids,
+            "is_variant": eid in alias_map,
+            "canonical_id": alias_map.get(eid),
+        }
+        codes = eid_to_codes.get(eid, [])
+        if codes:
+            for code in codes:
+                code_buckets.setdefault(code, []).append(entry)
+        else:
+            ungrouped.append(entry)
+
+    # Sort groups numerically where possible
+    def _code_sort_key(code: str) -> tuple:
+        try:
+            return (0, int(code))
+        except ValueError:
+            return (1, code)
+
+    groups: list[dict] = [
+        {"code": code, "endorsements": entries}
+        for code, entries in sorted(code_buckets.items(), key=lambda kv: _code_sort_key(kv[0]))
+    ]
+    if ungrouped:
+        groups.append({"code": None, "endorsements": ungrouped})
+
+    return groups

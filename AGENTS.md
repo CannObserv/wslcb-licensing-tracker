@@ -54,6 +54,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
 | `admin_auth.py` | Admin authentication middleware | `require_admin()` FastAPI dependency (redirects to exe.dev login or 403). `get_current_user()` non-enforcing variant (caches result on `request.state`). `AdminRedirectException` sentinel class. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. |
 | `admin_audit.py` | Admin audit log | `log_action(conn, email, action, target_type, target_id=None, details=None)` inserts one audit row (caller commits); serialises `details` dict to JSON. `get_audit_log(conn, page, per_page, filters)` returns `(rows, total_count)` with optional filters: `action`, `target_type`, `admin_email`, `date_from`/`date_to`; each row includes `details_parsed` (decoded dict or `None`). |
+| `templates/admin/endorsements.html` | Endorsement management UI | Lists all endorsements grouped by numeric code. Multi-name groups show a "Set canonical" form (dropdown + checkbox list) and an "Alias these variants" panel. Single-code bare numeric codes show a "Rename…" button that opens a modal. |
 | `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
 | `requirements.txt` | Python dependencies | Runtime + dev (pytest) dependencies. Install with `pip install -r requirements.txt`. |
 | `pytest.ini` | Pytest configuration | Test paths and Python path settings. |
@@ -72,6 +73,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/test_scraper.py` | Scraper tests | `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`: hash computation, last-hash retrieval, redundant data cleanup. |
 | `tests/test_admin_auth.py` | Auth middleware tests | `require_admin()`, `get_current_user()`: header extraction, env-var fallback, admin lookup, redirect and 403 behaviour. |
 | `tests/test_admin_audit.py` | Audit log tests | `log_action`: insert, target_id, NULL details, dict round-trip. `get_audit_log`: pagination, newest-first ordering, all filter types (action, target_type, admin_email, date_from, date_to), empty-table edge case. |
+| `tests/test_endorsements.py` | Endorsement tests (extended) | Alias system: `resolve_endorsement` (no-alias, aliased, canonical passthrough), `get_endorsement_groups` (structure, record counts, canonical flag), `set_canonical_endorsement` (creates aliases, idempotent), `rename_endorsement` (creates named endorsement + alias, reuses existing name), alias resolution in `get_endorsement_options` (variants excluded) and `get_record_endorsements` (canonical name returned). |
 | `tests/fixtures/` | HTML test fixtures | Minimal realistic HTML for each record type and section. |
 
 ## Database Schema
@@ -114,6 +116,18 @@ license_records → locations (FK: location_id, previous_location_id)
 - Maps WSLCB numeric codes → `license_endorsements` (many-to-many)
 - Composite PK `(code, endorsement_id)` — multiple codes can map to the same endorsement, and one code can expand to multiple endorsements
 - Seeded from `SEED_CODE_MAP` in `endorsements.py` (103 codes); auto-discovered codes are added by `discover_code_mappings()`
+
+### `endorsement_aliases` (alias resolution table)
+- One row per aliased endorsement; maps a variant `license_endorsements` row to its canonical counterpart
+- `endorsement_id` — FK to the variant (UNIQUE — each endorsement can have at most one canonical)
+- `canonical_endorsement_id` — FK to the preferred canonical endorsement
+- `created_by` — admin email of the person who created the alias
+- Original rows in `license_endorsements` and `record_endorsements` are never modified; alias resolution happens at query time
+- `resolve_endorsement(conn, id)` in `endorsements.py` returns the canonical ID (or the same ID if no alias exists)
+- `set_canonical_endorsement(conn, canonical_id, variant_ids, created_by)` creates alias rows via `INSERT … ON CONFLICT DO UPDATE` (idempotent)
+- `rename_endorsement(conn, endorsement_id, new_name, created_by)` creates a new named endorsement and aliases the bare-code row to it
+- `get_endorsement_groups(conn)` returns all endorsements grouped by code for the admin UI, including `is_canonical`, `is_variant`, `canonical_id`, and `record_count` per entry
+- `get_endorsement_options()` and `get_record_endorsements()` both apply alias resolution via a LEFT JOIN so the filter dropdown and record display show canonical names only
 
 ### `record_endorsements`
 - Junction table linking `license_records` ↔ `license_endorsements`
@@ -231,6 +245,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - Migration 004 (`address_validator_v1`): renames `std_state`→`std_region`, `std_zip`→`std_postal_code`, adds `std_country`; backfills `'US'` for validated rows
 - Migration 005 (`admin_users`): adds `admin_users` table
 - Migration 006 (`admin_audit_log`): adds `admin_audit_log` table
+- Migration 007 (`endorsement_aliases`): adds `endorsement_aliases` table with `UNIQUE(endorsement_id)` constraint
 - To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
 
 ## Playbooks
