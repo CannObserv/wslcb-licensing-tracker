@@ -137,7 +137,6 @@ class TestReprocessEntities:
         from entities import reprocess_entities
         result = reprocess_entities(db, record_id=rid1)
         assert result["records_processed"] == 1
-        # rid2 untouched by record_id filter — but both exist
 
     def test_idempotent(self, db, standard_new_application):
         rid = _insert_record(db, standard_new_application)

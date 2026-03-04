@@ -121,21 +121,16 @@ def parse_and_link_entities(
         ``(record_id, role)`` pair before inserting.  Use this when
         reprocessing to ensure stale links are removed (idempotent mode).
     """
-    if not applicants_str or ";" not in applicants_str:
-        if delete_existing:
-            conn.execute(
-                "DELETE FROM record_entities WHERE record_id = ? AND role = ?",
-                (record_id, role),
-            )
-        return 0
-    parts = [p.strip() for p in applicants_str.split(";")]
-    # First element is always the business name — skip it
-    entity_names = [p for p in parts[1:] if p]
     if delete_existing:
         conn.execute(
             "DELETE FROM record_entities WHERE record_id = ? AND role = ?",
             (record_id, role),
         )
+    if not applicants_str or ";" not in applicants_str:
+        return 0
+    parts = [p.strip() for p in applicants_str.split(";")]
+    # First element is always the business name — skip it
+    entity_names = [p for p in parts[1:] if p]
     linked = 0
     for name in entity_names:
         try:
