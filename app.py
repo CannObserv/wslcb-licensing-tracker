@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
 from admin_auth import get_current_user, require_admin, AdminRedirectException
+from admin_audit import get_audit_log
 from entities import backfill_entities, get_entity_by_id
 from queries import (
     search_records, export_records,
@@ -344,4 +345,61 @@ async def admin_dashboard(request: Request, admin: dict = Depends(require_admin)
     """Admin dashboard — stub confirming auth works."""
     return await _tpl(request, "admin/dashboard.html", {
         "request": request, "admin": admin, "active_section": "dashboard",
+    })
+
+
+@app.get("/admin/audit-log", response_class=HTMLResponse)
+async def admin_audit_log(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    page: int = Query(default=1, ge=1),
+    action: str = "",
+    target_type: str = "",
+    admin_email: str = "",
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Paginated audit log viewer with optional filters."""
+    per_page = 50
+    filters = {
+        k: v for k, v in {
+            "action": action,
+            "target_type": target_type,
+            "admin_email": admin_email,
+            "date_from": date_from,
+            "date_to": date_to,
+        }.items() if v
+    }
+    with get_db() as conn:
+        rows, total_count = get_audit_log(conn, page=page, per_page=per_page, filters=filters)
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+
+    def _page_url(p: int) -> str:
+        params = {k: v for k, v in {
+            "page": p,
+            "action": action,
+            "target_type": target_type,
+            "admin_email": admin_email,
+            "date_from": date_from,
+            "date_to": date_to,
+        }.items() if v and not (k == "page" and p == 1)}
+        qs = urlencode(params)
+        return f"/admin/audit-log{'?' + qs if qs else ''}"
+
+    return await _tpl(request, "admin/audit_log.html", {
+        "request": request,
+        "admin": admin,
+        "active_section": "audit-log",
+        "rows": rows,
+        "total_count": total_count,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "page_url": _page_url,
+        # filter values for form repopulation
+        "filter_action": action,
+        "filter_target_type": target_type,
+        "filter_admin_email": admin_email,
+        "filter_date_from": date_from,
+        "filter_date_to": date_to,
     })
