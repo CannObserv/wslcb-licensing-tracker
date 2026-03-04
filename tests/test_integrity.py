@@ -55,7 +55,7 @@ class TestCheckOrphanedLocations:
         db.commit()
 
         orphans = check_orphaned_locations(db)
-        assert len(orphans) >= 1
+        assert orphans["count"] >= 1
 
     def test_no_orphans(self, db):
         """Locations referenced by records should not be flagged."""
@@ -66,7 +66,7 @@ class TestCheckOrphanedLocations:
         db.commit()
 
         orphans = check_orphaned_locations(db)
-        assert len(orphans) == 0
+        assert orphans["count"] == 0
 
     def test_fix_removes_orphans(self, db):
         """fix_orphaned_locations should delete unreferenced rows."""
@@ -81,7 +81,7 @@ class TestCheckOrphanedLocations:
 
         removed = fix_orphaned_locations(db)
         assert removed >= 1
-        assert len(check_orphaned_locations(db)) == 0
+        assert check_orphaned_locations(db)["count"] == 0
 
 
 # ── Broken FKs ───────────────────────────────────────────────

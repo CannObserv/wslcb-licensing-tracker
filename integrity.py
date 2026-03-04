@@ -12,10 +12,12 @@ logger = logging.getLogger(__name__)
 # ── Orphaned locations ───────────────────────────────────────
 
 
-def check_orphaned_locations(conn: sqlite3.Connection) -> list[dict]:
+def check_orphaned_locations(conn: sqlite3.Connection) -> dict:
     """Find locations not referenced by any license_records row.
 
-    Returns a list of dicts with ``id`` and ``raw_address``.
+    Returns a dict with ``count`` (int) and ``details`` (list of dicts
+    with ``id`` and ``raw_address``), matching the shape of other check
+    functions.
     """
     rows = conn.execute("""
         SELECT l.id, l.raw_address
@@ -26,15 +28,16 @@ def check_orphaned_locations(conn: sqlite3.Connection) -> list[dict]:
             SELECT DISTINCT previous_location_id FROM license_records WHERE previous_location_id IS NOT NULL
         )
     """).fetchall()
-    return [dict(r) for r in rows]
+    details = [dict(r) for r in rows]
+    return {"count": len(details), "details": details}
 
 
 def fix_orphaned_locations(conn: sqlite3.Connection) -> int:
     """Delete orphaned locations.  Returns the number removed."""
-    orphans = check_orphaned_locations(conn)
-    if not orphans:
+    result = check_orphaned_locations(conn)
+    if not result["count"]:
         return 0
-    ids = [o["id"] for o in orphans]
+    ids = [o["id"] for o in result["details"]]
     placeholders = ",".join("?" * len(ids))
     conn.execute(f"DELETE FROM locations WHERE id IN ({placeholders})", ids)
     conn.commit()
@@ -186,9 +189,9 @@ def run_all_checks(
     report: dict = {}
 
     # Orphaned locations
-    orphans = check_orphaned_locations(conn)
-    entry: dict = {"count": len(orphans)}
-    if fix and orphans:
+    orphaned = check_orphaned_locations(conn)
+    entry: dict = {"count": orphaned["count"]}
+    if fix and orphaned["count"]:
         entry["fixed"] = fix_orphaned_locations(conn)
     report["orphaned_locations"] = entry
 

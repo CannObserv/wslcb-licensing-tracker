@@ -56,6 +56,7 @@
                         <th class="text-right px-4 py-2 font-medium text-gray-600">Disc.</th>
                         <th class="text-right px-4 py-2 font-medium text-gray-600">Skipped</th>
                         <th class="text-left px-4 py-2 font-medium text-gray-600">Started</th>
+                        <th class="text-right px-4 py-2 font-medium text-gray-600">Duration</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100">
@@ -81,6 +82,13 @@
                         <td class="px-4 py-2 text-right text-gray-500">{{ s.records_skipped or 0 }}</td>
                         <td class="px-4 py-2 text-gray-500 text-xs font-mono">
                             {{ s.started_at[:16] if s.started_at else '—' }}
+                        </td>
+                        <td class="px-4 py-2 text-right text-gray-500 text-xs">
+                            {% if s.duration_secs is not none %}
+                                {% set secs = s.duration_secs | int %}
+                                {% if secs >= 60 %}{{ (secs // 60) }}m {{ secs % 60 }}s
+                                {% else %}{{ secs }}s{% endif %}
+                            {% else %}—{% endif %}
                         </td>
                     </tr>
                     {% endfor %}

@@ -59,10 +59,11 @@
                     <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ user.created_by }}</td>
                     <td class="px-4 py-3 text-right">
                         {% if user.email|lower != admin.email|lower %}
-                        <form method="POST" action="/admin/users/remove"
-                              onsubmit="return confirm('Remove {{ user.email }} as admin?')">
+                        <form method="POST" action="/admin/users/remove">
                             <input type="hidden" name="email" value="{{ user.email }}">
                             <button type="submit"
+                                    data-email="{{ user.email }}"
+                                    onclick="return confirm('Remove ' + this.dataset.email + ' as admin?')"
                                     class="text-xs text-red-600 hover:text-red-800 hover:underline">
                                 Remove
                             </button>

@@ -364,17 +364,21 @@ async def admin_dashboard(request: Request, admin: dict = Depends(require_admin)
         """).fetchone()
         recent = conn.execute("""
             SELECT
-                SUM(CASE WHEN record_date >= date('now', '-1 day') THEN 1 ELSE 0 END) AS last_24h,
-                SUM(CASE WHEN record_date >= date('now', '-7 days') THEN 1 ELSE 0 END) AS last_7d
+                SUM(CASE WHEN created_at >= datetime('now', '-1 day') THEN 1 ELSE 0 END) AS last_24h,
+                SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS last_7d
             FROM license_records
         """).fetchone()
-        # Last 5 scrape runs
-        scrapes = conn.execute("""
+        # Last 5 scrape runs (with computed duration in seconds)
+        scrapes_raw = conn.execute("""
             SELECT id, status, records_new, records_approved, records_discontinued,
-                   records_skipped, started_at, finished_at
+                   records_skipped, started_at, finished_at,
+                   ROUND(
+                       (julianday(finished_at) - julianday(started_at)) * 86400
+                   ) AS duration_secs
             FROM scrape_log
             ORDER BY id DESC LIMIT 5
         """).fetchall()
+        scrapes = [dict(r) for r in scrapes_raw]
         # Data quality
         orphans = check_orphaned_locations(conn)
         unenriched = check_unenriched_records(conn)
@@ -393,9 +397,9 @@ async def admin_dashboard(request: Request, admin: dict = Depends(require_admin)
             "last_24h": recent["last_24h"] or 0,
             "last_7d": recent["last_7d"] or 0,
         },
-        "scrapes": [dict(r) for r in scrapes],
+        "scrapes": scrapes,
         "data_quality": {
-            "orphaned_locations": len(orphans),
+            "orphaned_locations": orphans["count"],
             "no_endorsements": unenriched["no_endorsements"],
             "no_entities": unenriched["no_entities"],
             "unresolved_codes": endorsement_issues["unresolved_codes"],
@@ -430,14 +434,17 @@ async def admin_users_add(
     """Add a new admin user."""
     email = email.strip().lower()
     if not email:
-        return RedirectResponse("/admin/users?error=Email+is+required", status_code=303)
+        return RedirectResponse(
+            "/admin/users?" + urlencode({"error": "Email is required"}), status_code=303
+        )
     with get_db() as conn:
         existing = conn.execute(
             "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
         ).fetchone()
         if existing:
             return RedirectResponse(
-                f"/admin/users?error=User+{email}+already+exists", status_code=303
+                "/admin/users?" + urlencode({"error": f"User {email} already exists"}),
+                status_code=303,
             )
         conn.execute(
             "INSERT INTO admin_users (email, role, created_by) VALUES (?, 'admin', ?)",
@@ -465,14 +472,17 @@ async def admin_users_remove(
     """Remove an admin user. Cannot remove yourself."""
     email = email.strip().lower()
     if email == admin["email"].lower():
-        return RedirectResponse("/admin/users?error=Cannot+remove+yourself", status_code=303)
+        return RedirectResponse(
+            "/admin/users?" + urlencode({"error": "Cannot remove yourself"}), status_code=303
+        )
     with get_db() as conn:
         row = conn.execute(
             "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
         ).fetchone()
         if not row:
             return RedirectResponse(
-                f"/admin/users?error=User+{email}+not+found", status_code=303
+                "/admin/users?" + urlencode({"error": f"User {email} not found"}),
+                status_code=303,
             )
         conn.execute(
             "DELETE FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
