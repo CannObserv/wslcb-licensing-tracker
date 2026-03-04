@@ -472,6 +472,10 @@ def process_record(conn: sqlite3.Connection, record_id: int,
                    raw_license_type: str) -> int:
     """Parse a record's raw license_type and create endorsement links.
 
+    Idempotent: deletes any existing ``record_endorsements`` rows for
+    *record_id* before inserting fresh ones, so calling this function
+    multiple times on the same record is safe.
+
     Handles three formats:
     - Numeric code: ``"450,"`` → look up code in endorsement_codes
     - Code + name: ``"450, GROCERY STORE - BEER/WINE"`` → extract code,
@@ -483,6 +487,11 @@ def process_record(conn: sqlite3.Connection, record_id: int,
     """
     if not raw_license_type:
         return 0
+
+    # Delete existing links so re-processing is idempotent.
+    conn.execute(
+        "DELETE FROM record_endorsements WHERE record_id = ?", (record_id,)
+    )
 
     cleaned = raw_license_type.rstrip(",").strip()
 
@@ -505,6 +514,112 @@ def process_record(conn: sqlite3.Connection, record_id: int,
             _link_endorsement(conn, record_id, eid)
             linked += 1
     return linked
+
+
+# Enrichment version written by reprocess_endorsements.
+# Bump this constant when the endorsement processing logic changes
+# to trigger selective re-processing of affected records.
+_ENDORSEMENT_REPROCESS_VERSION = "2"
+
+
+def reprocess_endorsements(
+    conn: sqlite3.Connection,
+    *,
+    record_id: int | None = None,
+    code: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Regenerate record_endorsements for all or a subset of records.
+
+    This treats ``record_endorsements`` as *derived* data: existing rows
+    are deleted and rebuilt from ``license_records.license_type`` using the
+    current ``endorsement_codes`` mappings.  The ``record_enrichments``
+    version stamp is updated to ``_ENDORSEMENT_REPROCESS_VERSION`` for
+    every processed record.
+
+    Parameters
+    ----------
+    conn:
+        Open database connection.  The caller does **not** need to commit;
+        changes are committed inside this function (unless *dry_run* is True).
+    record_id:
+        If given, only reprocess this single record.
+    code:
+        If given, only reprocess records whose ``license_type`` column
+        matches this numeric code (handles both ``"450,"`` and
+        ``"450, NAME"`` formats).
+    dry_run:
+        If True, compute what *would* be done and return the counts without
+        making any database changes.
+
+    Returns
+    -------
+    dict
+        ``{"records_processed": int, "endorsements_linked": int}``
+    """
+    from datetime import datetime, timezone
+
+    # Build the query to select target records.
+    if record_id is not None:
+        rows = conn.execute(
+            "SELECT id, license_type FROM license_records WHERE id = ?",
+            (record_id,),
+        ).fetchall()
+    elif code is not None:
+        # Match both bare "CODE," and "CODE, NAME" forms.
+        code_stripped = code.rstrip(",").strip()
+        rows = conn.execute(
+            """SELECT id, license_type FROM license_records
+               WHERE RTRIM(license_type, ',') = ?
+                  OR license_type GLOB ? || ', *'""",
+            (code_stripped, code_stripped),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, license_type FROM license_records"
+        ).fetchall()
+
+    records_processed = 0
+    endorsements_linked = 0
+    now = datetime.now(timezone.utc).isoformat()
+
+    for row in rows:
+        rid, license_type = row[0], row[1]
+        if not license_type:
+            continue
+
+        if dry_run:
+            # Simulate without committing — just count what would be linked.
+            # We can't easily count without actually running process_record,
+            # so we just count the record.
+            records_processed += 1
+            continue
+
+        linked = process_record(conn, rid, license_type)
+        endorsements_linked += linked
+        records_processed += 1
+
+        # Update enrichment version stamp.
+        conn.execute(
+            """INSERT OR REPLACE INTO record_enrichments
+               (record_id, step, completed_at, version)
+               VALUES (?, 'endorsements', ?, ?)""",
+            (rid, now, _ENDORSEMENT_REPROCESS_VERSION),
+        )
+
+    if not dry_run:
+        conn.commit()
+        logger.info(
+            "reprocess_endorsements: processed %d record(s), linked %d endorsement(s).",
+            records_processed, endorsements_linked,
+        )
+    else:
+        logger.info(
+            "reprocess_endorsements (dry-run): would process %d record(s).",
+            records_processed,
+        )
+
+    return {"records_processed": records_processed, "endorsements_linked": endorsements_linked}
 
 
 def backfill(conn: sqlite3.Connection) -> int:

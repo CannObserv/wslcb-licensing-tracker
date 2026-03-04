@@ -117,6 +117,27 @@ def cmd_cleanup_redundant(args):
         )
 
 
+def cmd_reprocess_endorsements(args):
+    """Regenerate record_endorsements from current code mappings."""
+    from database import init_db, get_db
+    from endorsements import reprocess_endorsements
+
+    init_db()
+    with get_db() as conn:
+        result = reprocess_endorsements(
+            conn,
+            record_id=args.record_id,
+            code=args.code,
+            dry_run=args.dry_run,
+        )
+
+    prefix = "[dry-run] " if args.dry_run else ""
+    print(
+        f"{prefix}Reprocessed {result['records_processed']:,} record(s); "
+        f"{result['endorsements_linked']:,} endorsement link(s) written."
+    )
+
+
 def cmd_rebuild(args):
     """Rebuild the database from archived sources."""
     import logging
@@ -329,6 +350,30 @@ def main():
         help="Don't delete snapshot files from disk",
     )
     p.set_defaults(func=cmd_cleanup_redundant)
+
+    # reprocess-endorsements
+    p = sub.add_parser(
+        "reprocess-endorsements",
+        help="Regenerate record_endorsements from current code mappings",
+    )
+    p.add_argument(
+        "--record-id",
+        type=int,
+        default=None,
+        dest="record_id",
+        help="Only reprocess this single record ID",
+    )
+    p.add_argument(
+        "--code",
+        default=None,
+        help="Only reprocess records with this numeric license-type code (e.g. '394')",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change without writing to the database",
+    )
+    p.set_defaults(func=cmd_reprocess_endorsements)
 
     # rebuild
     p = sub.add_parser(

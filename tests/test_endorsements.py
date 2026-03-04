@@ -633,3 +633,194 @@ class TestSearchFilterAliasResolution:
         assert "SF001" in found_nums, "variant-linked record must appear under canonical filter"
         assert "SF002" in found_nums, "canonical-linked record must appear"
         assert total == 2
+
+
+# ── process_record idempotency ───────────────────────────────────────────────
+
+
+class TestProcessRecordIdempotent:
+    """process_record() must be safe to call multiple times on the same record."""
+
+    def test_second_call_does_not_duplicate_links(self, db):
+        """Calling process_record twice produces the same endorsement count."""
+        seed_endorsements(db)
+        rec_id = _make_record(db, license_type="CANNABIS RETAILER")
+
+        count1 = process_record(db, rec_id, "CANNABIS RETAILER")
+        db.commit()
+        rows_after_first = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?",
+            (rec_id,),
+        ).fetchone()[0]
+
+        count2 = process_record(db, rec_id, "CANNABIS RETAILER")
+        db.commit()
+        rows_after_second = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?",
+            (rec_id,),
+        ).fetchone()[0]
+
+        assert count1 == count2
+        assert rows_after_first == rows_after_second
+
+    def test_second_call_with_different_type_replaces_links(self, db):
+        """Re-calling with a different license_type replaces the old endorsements."""
+        seed_endorsements(db)
+        rec_id = _make_record(db, license_type="CANNABIS RETAILER")
+
+        process_record(db, rec_id, "CANNABIS RETAILER")
+        db.commit()
+
+        process_record(db, rec_id, "CANNABIS PROCESSOR")
+        db.commit()
+
+        names = [
+            r[0]
+            for r in db.execute(
+                """SELECT le.name FROM record_endorsements re
+                   JOIN license_endorsements le ON le.id = re.endorsement_id
+                   WHERE re.record_id = ?""",
+                (rec_id,),
+            ).fetchall()
+        ]
+        assert "CANNABIS PROCESSOR" in names
+        assert "CANNABIS RETAILER" not in names
+
+
+# ── reprocess_endorsements ───────────────────────────────────────────────────
+
+
+class TestReprocessEndorsements:
+    """reprocess_endorsements() should regenerate record_endorsements rows."""
+
+    def test_reprocess_all_records(self, db):
+        """reprocess_endorsements() with no filter reprocesses all records."""
+        from endorsements import reprocess_endorsements
+
+        seed_endorsements(db)
+        rec1 = _make_record(db, license_number="RP001", license_type="CANNABIS RETAILER")
+        rec2 = _make_record(db, license_number="RP002", license_type="CANNABIS PROCESSOR")
+        process_record(db, rec1, "CANNABIS RETAILER")
+        process_record(db, rec2, "CANNABIS PROCESSOR")
+        db.commit()
+
+        # Manually corrupt endorsements to verify reprocess fixes them
+        db.execute("DELETE FROM record_endorsements")
+        db.commit()
+
+        result = reprocess_endorsements(db)
+        assert result["records_processed"] >= 2
+        # Both records should have endorsements again
+        for rid in (rec1, rec2):
+            count = db.execute(
+                "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?",
+                (rid,),
+            ).fetchone()[0]
+            assert count >= 1
+
+    def test_reprocess_by_record_id(self, db):
+        """reprocess_endorsements(record_id=X) only touches that record."""
+        from endorsements import reprocess_endorsements
+
+        seed_endorsements(db)
+        rec1 = _make_record(db, license_number="RP003", license_type="CANNABIS RETAILER")
+        rec2 = _make_record(db, license_number="RP004", license_type="CANNABIS PROCESSOR")
+        process_record(db, rec1, "CANNABIS RETAILER")
+        process_record(db, rec2, "CANNABIS PROCESSOR")
+        db.commit()
+
+        db.execute("DELETE FROM record_endorsements")
+        db.commit()
+
+        result = reprocess_endorsements(db, record_id=rec1)
+        assert result["records_processed"] == 1
+
+        # rec1 should have endorsements, rec2 should not
+        c1 = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?", (rec1,)
+        ).fetchone()[0]
+        c2 = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?", (rec2,)
+        ).fetchone()[0]
+        assert c1 >= 1
+        assert c2 == 0
+
+    def test_reprocess_by_code(self, db):
+        """reprocess_endorsements(code=X) only touches records with that code."""
+        from endorsements import reprocess_endorsements
+
+        seed_endorsements(db)
+        # code 394 = CANNABIS RETAILER
+        rec_target = _make_record(db, license_number="RP005",
+                                  license_type="394,",
+                                  section_type="approved")
+        rec_other = _make_record(db, license_number="RP006",
+                                 license_type="393,",
+                                 section_type="approved")
+        process_record(db, rec_target, "394,")
+        process_record(db, rec_other, "393,")
+        db.commit()
+
+        db.execute("DELETE FROM record_endorsements")
+        db.commit()
+
+        result = reprocess_endorsements(db, code="394")
+        assert result["records_processed"] == 1
+
+        c_target = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?",
+            (rec_target,),
+        ).fetchone()[0]
+        c_other = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?",
+            (rec_other,),
+        ).fetchone()[0]
+        assert c_target >= 1
+        assert c_other == 0
+
+    def test_reprocess_updates_enrichment_version(self, db):
+        """reprocess_endorsements() bumps the record_enrichments version stamp."""
+        from endorsements import reprocess_endorsements
+        from schema import init_db
+
+        seed_endorsements(db)
+        rec_id = _make_record(db, license_number="RP007", license_type="CANNABIS RETAILER")
+        process_record(db, rec_id, "CANNABIS RETAILER")
+        # Seed an old enrichment stamp with version='1'
+        db.execute(
+            "INSERT OR REPLACE INTO record_enrichments (record_id, step, completed_at, version)"
+            " VALUES (?, 'endorsements', '2025-01-01T00:00:00+00:00', '1')",
+            (rec_id,),
+        )
+        db.commit()
+
+        reprocess_endorsements(db)
+
+        row = db.execute(
+            "SELECT version FROM record_enrichments WHERE record_id = ? AND step = 'endorsements'",
+            (rec_id,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "2"  # bumped from '1' to '2'
+
+    def test_dry_run_makes_no_changes(self, db):
+        """dry_run=True reports counts without writing to the database."""
+        from endorsements import reprocess_endorsements
+
+        seed_endorsements(db)
+        rec_id = _make_record(db, license_number="RP008", license_type="CANNABIS RETAILER")
+        process_record(db, rec_id, "CANNABIS RETAILER")
+        db.commit()
+
+        before = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?", (rec_id,)
+        ).fetchone()[0]
+
+        result = reprocess_endorsements(db, dry_run=True)
+
+        after = db.execute(
+            "SELECT COUNT(*) FROM record_endorsements WHERE record_id = ?", (rec_id,)
+        ).fetchone()[0]
+
+        assert result["records_processed"] >= 1
+        assert before == after  # no changes written
