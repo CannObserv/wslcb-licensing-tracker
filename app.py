@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, Form, Request, Query
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -478,6 +478,8 @@ async def admin_rename_endorsement(
 ):
     """Assign a text name to a bare numeric-code endorsement."""
     new_name = new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=422, detail="new_name must not be empty")
     with get_db() as conn:
         old_name = conn.execute(
             "SELECT name FROM license_endorsements WHERE id = ?",

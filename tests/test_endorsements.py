@@ -331,11 +331,56 @@ class TestGetEndorsementGroups:
         """Endorsements sharing a code appear in the same group."""
         from endorsements import get_endorsement_groups
         seed_endorsements(db)
+
+        # Manually create two endorsements that share a code
+        eid_a = _ensure_endorsement(db, "GROUP CODE A")
+        eid_b = _ensure_endorsement(db, "GROUP CODE B")
+        shared_code = "TESTGROUP"
+        db.execute(
+            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
+            (shared_code, eid_a),
+        )
+        db.execute(
+            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
+            (shared_code, eid_b),
+        )
         db.commit()
 
         groups = get_endorsement_groups(db)
-        # At minimum a dict is returned
         assert isinstance(groups, list)
+
+        # Find the TESTGROUP group
+        test_group = next((g for g in groups if g["code"] == shared_code), None)
+        assert test_group is not None, "group for shared code must exist"
+        group_ids = {e["id"] for e in test_group["endorsements"]}
+        assert eid_a in group_ids, "first endorsement must appear in the group"
+        assert eid_b in group_ids, "second endorsement must appear in the group"
+
+    def test_group_entries_are_independent_copies(self, db):
+        """Modifying one group's entry dict must not affect another group."""
+        from endorsements import get_endorsement_groups
+        seed_endorsements(db)
+
+        # Create an endorsement that belongs to two codes
+        eid = _ensure_endorsement(db, "MULTI CODE")
+        for code in ("CODE_X", "CODE_Y"):
+            db.execute(
+                "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
+                (code, eid),
+            )
+        db.commit()
+
+        groups = get_endorsement_groups(db)
+        group_x = next((g for g in groups if g["code"] == "CODE_X"), None)
+        group_y = next((g for g in groups if g["code"] == "CODE_Y"), None)
+        assert group_x and group_y
+
+        entry_x = next(e for e in group_x["endorsements"] if e["id"] == eid)
+        entry_y = next(e for e in group_y["endorsements"] if e["id"] == eid)
+
+        # Mutate one; the other must be unaffected
+        entry_x["name"] = "MUTATED"
+        assert entry_y["name"] != "MUTATED", "entries must be independent copies"
 
     def test_includes_record_counts(self, db):
         """Each endorsement entry has a record count."""
@@ -555,3 +600,36 @@ class TestAliasResolutionInRecordEndorsements:
         result = get_record_endorsements(db, [rec_id])
         assert "CANONICAL DISPLAY" in result[rec_id]
         assert "VARIANT DISPLAY" not in result[rec_id]
+
+
+class TestSearchFilterAliasResolution:
+    """search_records endorsement filter must match variant-linked records."""
+
+    def test_canonical_filter_matches_variant_linked_records(self, db):
+        """Filtering by canonical name returns records linked to variants."""
+        from endorsements import set_canonical_endorsement, _ensure_endorsement
+        from queries import search_records
+        seed_endorsements(db)
+
+        rec_variant = _make_record(db, license_number="SF001")
+        rec_canonical = _make_record(db, license_number="SF002")
+
+        variant_id = _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        canonical_id = _ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        db.execute(
+            "INSERT OR IGNORE INTO record_endorsements VALUES (?, ?)",
+            (rec_variant, variant_id),
+        )
+        db.execute(
+            "INSERT OR IGNORE INTO record_endorsements VALUES (?, ?)",
+            (rec_canonical, canonical_id),
+        )
+        set_canonical_endorsement(db, canonical_id=canonical_id,
+                                  variant_ids=[variant_id], created_by="t@t.com")
+        db.commit()
+
+        results, total = search_records(db, endorsement="TAKEOUT/DELIVERY")
+        found_nums = {r["license_number"] for r in results}
+        assert "SF001" in found_nums, "variant-linked record must appear under canonical filter"
+        assert "SF002" in found_nums, "canonical-linked record must appear"
+        assert total == 2

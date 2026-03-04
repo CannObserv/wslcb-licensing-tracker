@@ -787,8 +787,9 @@ def set_canonical_endorsement(
 ) -> int:
     """Create alias rows mapping each *variant_id* to *canonical_id*.
 
-    Uses ``INSERT OR REPLACE`` so re-running is idempotent: existing alias
-    rows for the same ``endorsement_id`` are updated in place.
+    Uses ``INSERT … ON CONFLICT(endorsement_id) DO UPDATE`` so re-running is
+    idempotent: existing alias rows for the same ``endorsement_id`` are
+    updated in place (preserving their ``id`` primary key).
 
     Parameters
     ----------
@@ -858,6 +859,9 @@ def rename_endorsement(
     int
         Primary key of the canonical (named) endorsement.
     """
+    if not new_name:
+        raise ValueError("new_name must be a non-empty string")
+
     # Reuse an existing endorsement with that name, or create one
     existing = conn.execute(
         "SELECT id FROM license_endorsements WHERE name = ?",
@@ -944,9 +948,11 @@ def get_endorsement_groups(
         codes = eid_to_codes.get(eid, [])
         if codes:
             for code in codes:
-                code_buckets.setdefault(code, []).append(entry)
+                # Use a shallow copy so each group's list holds independent
+                # dicts even when one endorsement belongs to multiple codes.
+                code_buckets.setdefault(code, []).append(dict(entry))
         else:
-            ungrouped.append(entry)
+            ungrouped.append(dict(entry))
 
     # Sort groups numerically where possible
     def _code_sort_key(code: str) -> tuple:

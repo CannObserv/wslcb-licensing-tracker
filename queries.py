@@ -225,7 +225,38 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
 # Search and filter queries
 # ------------------------------------------------------------------
 
+def _resolve_endorsement_ids(
+    conn: sqlite3.Connection,
+    name: str,
+) -> list[int]:
+    """Return all endorsement IDs that map to *name* under alias resolution.
+
+    Returns a list containing the direct endorsement ID for *name* plus any
+    variant IDs that alias to it via ``endorsement_aliases``.  Uses
+    ``idx_re_endorsement`` for fast record lookups — never scans
+    ``record_endorsements``.
+
+    Returns an empty list when no endorsement with that name exists.
+    """
+    row = conn.execute(
+        "SELECT id FROM license_endorsements WHERE name = ?",
+        (name,),
+    ).fetchone()
+    if not row:
+        return []
+    canonical_id = row[0]
+    variant_ids = [
+        r[0] for r in conn.execute(
+            "SELECT endorsement_id FROM endorsement_aliases"
+            " WHERE canonical_endorsement_id = ?",
+            (canonical_id,),
+        ).fetchall()
+    ]
+    return [canonical_id] + variant_ids
+
+
 def _build_where_clause(
+    conn: sqlite3.Connection,
     query: str = "",
     section_type: str = "",
     application_type: str = "",
@@ -241,6 +272,13 @@ def _build_where_clause(
     Returns ``(where_sql, params, needs_location_join)``.
     ``where_sql`` includes the ``WHERE`` keyword, or is empty when
     there are no conditions.
+
+    The *endorsement* filter is alias-aware: if the named endorsement is
+    canonical for one or more variants, records linked to any of those
+    variants are included.  Alias resolution uses two cheap PK/index
+    lookups (``license_endorsements`` name index → ``endorsement_aliases``
+    unique index) so the main ``record_endorsements`` scan always uses
+    ``idx_re_endorsement``.
     """
     conditions: list[str] = []
     params: list = []
@@ -265,13 +303,18 @@ def _build_where_clause(
         params.append(application_type)
 
     if endorsement:
-        conditions.append("""
-            lr.id IN (
-                SELECT re.record_id FROM record_endorsements re
-                JOIN license_endorsements le ON le.id = re.endorsement_id
-                WHERE le.name = ?
-            )""")
-        params.append(endorsement)
+        eid_list = _resolve_endorsement_ids(conn, endorsement)
+        if eid_list:
+            placeholders = ",".join("?" * len(eid_list))
+            conditions.append(
+                f"lr.id IN ("
+                f"SELECT record_id FROM record_endorsements"
+                f" WHERE endorsement_id IN ({placeholders}))"
+            )
+            params.extend(eid_list)
+        else:
+            # No matching endorsement — force zero results
+            conditions.append("1 = 0")
 
     if state:
         needs_location_join = True
@@ -323,6 +366,7 @@ def search_records(
     """Search records with filters.  Returns (records, total_count)."""
     t0 = time.perf_counter()
     where, params, needs_location_join = _build_where_clause(
+        conn,
         query=query, section_type=section_type,
         application_type=application_type, endorsement=endorsement,
         state=state, city=city, date_from=date_from, date_to=date_to,
@@ -389,12 +433,15 @@ _EXPORT_SELECT = """
         COALESCE(ploc.std_region, '')      AS prev_std_region,
         COALESCE(ploc.std_postal_code, '') AS prev_std_postal_code,
         (
-            SELECT GROUP_CONCAT(name, '; ') FROM (
-                SELECT le.name
+            SELECT GROUP_CONCAT(display_name, '; ') FROM (
+                SELECT COALESCE(canonical.name, le.name) AS display_name
                 FROM record_endorsements re
                 JOIN license_endorsements le ON le.id = re.endorsement_id
+                LEFT JOIN endorsement_aliases ea ON ea.endorsement_id = le.id
+                LEFT JOIN license_endorsements canonical
+                       ON canonical.id = ea.canonical_endorsement_id
                 WHERE re.record_id = lr.id
-                ORDER BY le.name
+                ORDER BY display_name
             )
         ) AS endorsements,
         best_link.days_gap   AS days_to_outcome,
@@ -452,6 +499,7 @@ def export_records(
 
     t0 = time.perf_counter()
     where, params, _ = _build_where_clause(
+        conn,
         query=query, section_type=section_type,
         application_type=application_type, endorsement=endorsement,
         state=state, city=city, date_from=date_from, date_to=date_to,

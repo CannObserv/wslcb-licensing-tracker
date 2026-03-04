@@ -27,9 +27,10 @@
             <span class="text-sm font-semibold text-gray-500 italic">No code mapping</span>
             {% endif %}
             <span class="text-xs text-gray-400">{{ endorsements | length }} endorsement{{ 's' if endorsements | length != 1 }}</span>
-            {% if multi %}
+            {% set alias_count = endorsements | selectattr('is_variant') | list | length %}
+            {% if multi and alias_count > 0 %}
             <span class="ml-auto inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
-                {{ endorsements | selectattr('is_variant') | list | length }} aliased
+                {{ alias_count }} aliased
             </span>
             {% endif %}
         </div>
@@ -80,12 +81,14 @@
 
         {# Set canonical form — shown only for multi-name groups #}
         {% if multi %}
+        {% set form_id = 'form-' ~ loop.index %}
         <div class="px-4 py-3 bg-co-purple-50 border-t border-co-purple-100">
-            <form method="post" action="/admin/endorsements/set-canonical"
+            <form id="{{ form_id }}" method="post" action="/admin/endorsements/set-canonical"
                   class="flex flex-wrap items-end gap-3">
                 <div class="flex-1 min-w-0">
                     <label class="block text-xs font-medium text-co-purple mb-1">Set canonical</label>
                     <select name="canonical_id"
+                            onchange="syncCanonicalCheckbox(this)"
                             class="w-full border border-co-purple-100 rounded px-2 py-1.5 text-sm bg-white
                                    focus:border-co-purple focus:ring-1 focus:ring-co-purple focus:outline-none">
                         {% for e in endorsements %}
@@ -99,8 +102,9 @@
                     <label class="block text-xs font-medium text-co-purple mb-1">Alias these variants</label>
                     <div class="space-y-1">
                         {% for e in endorsements %}
-                        <label class="flex items-center gap-2 text-sm text-gray-700">
+                        <label class="flex items-center gap-2 text-sm text-gray-700" id="label-{{ e.id }}">
                             <input type="checkbox" name="variant_ids" value="{{ e.id }}"
+                                   id="chk-{{ e.id }}"
                                    {% if e.is_variant %}checked{% endif %}
                                    class="rounded border-gray-300 text-co-purple focus:ring-co-purple">
                             {{ e.name }}
@@ -158,5 +162,22 @@ function openRenameModal(id, codeName) {
     document.getElementById('rename-code-label').textContent = codeName;
     document.getElementById('rename-modal').showModal();
 }
+
+function syncCanonicalCheckbox(select) {
+    // Within the same form, disable the checkbox whose value matches the
+    // selected canonical so the admin can't accidentally alias it to itself.
+    const form = select.closest('form');
+    form.querySelectorAll('input[type=checkbox][name=variant_ids]').forEach(cb => {
+        const isCanonical = cb.value === select.value;
+        cb.disabled = isCanonical;
+        cb.closest('label').classList.toggle('opacity-40', isCanonical);
+        if (isCanonical) cb.checked = false;
+    });
+}
+
+// On page load, disable the already-selected canonical in each form.
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('select[name=canonical_id]').forEach(syncCanonicalCheckbox);
+});
 </script>
 {% endblock %}
