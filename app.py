@@ -5,13 +5,14 @@ import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, Request, Query
+from fastapi import Depends, FastAPI, Request, Query
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import get_db, init_db
+from admin_auth import get_current_user, require_admin, _RedirectException
 from entities import backfill_entities, get_entity_by_id
 from queries import (
     search_records, export_records,
@@ -66,6 +67,11 @@ app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+async def _redirect_exception_handler(request: Request, exc: _RedirectException):
+    return RedirectResponse(url=exc.location, status_code=302)
+
+app.add_exception_handler(_RedirectException, _redirect_exception_handler)
+
 PER_PAGE = 50
 
 SECTION_LABELS = {
@@ -89,13 +95,17 @@ templates.env.filters["section_label"] = section_label
 templates.env.filters["phone_format"] = phone_format
 
 
+async def _tpl(request: Request, template: str, ctx: dict, status_code: int = 200):
+    """Render a template with ``current_user`` injected into the context."""
+    ctx.setdefault("current_user", await get_current_user(request))
+    return templates.TemplateResponse(template, ctx, status_code=status_code)
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Render HTML 404 (and other HTTP errors) instead of raw JSON."""
     if exc.status_code == 404:
-        return templates.TemplateResponse(
-            "404.html", {"request": request}, status_code=404,
-        )
+        return await _tpl(request, "404.html", {"request": request}, status_code=404)
     # For other HTTP errors, return a simple styled page
     return HTMLResponse(
         f"<html><body style='font-family:sans-serif;padding:2rem'>"
@@ -108,8 +118,8 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Render HTML 404 for malformed path parameters (e.g. /record/abc)."""
-    return templates.TemplateResponse(
-        "404.html", {"request": request, "message": "Invalid URL."},
+    return await _tpl(
+        request, "404.html", {"request": request, "message": "Invalid URL."},
         status_code=404,
     )
 
@@ -118,9 +128,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def index(request: Request):
     with get_db() as conn:
         stats = get_stats(conn)
-    return templates.TemplateResponse(
-        "index.html", {"request": request, "stats": stats}
-    )
+    return await _tpl(request, "index.html", {"request": request, "stats": stats})
 
 
 @app.get("/search", response_class=HTMLResponse)
@@ -189,9 +197,9 @@ async def search(
     }
 
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("partials/results.html", ctx)
+        return await _tpl(request, "partials/results.html", ctx)
 
-    return templates.TemplateResponse("search.html", ctx)
+    return await _tpl(request, "search.html", ctx)
 
 
 @app.get("/record/{record_id}", response_class=HTMLResponse)
@@ -199,8 +207,8 @@ async def record_detail(request: Request, record_id: int):
     with get_db() as conn:
         record = get_record_by_id(conn, record_id)
         if not record:
-            return templates.TemplateResponse(
-                "404.html", {"request": request, "message": "Record not found."},
+            return await _tpl(
+                request, "404.html", {"request": request, "message": "Record not found."},
                 status_code=404,
             )
 
@@ -219,14 +227,12 @@ async def record_detail(request: Request, record_id: int):
         outcome = format_outcome(get_outcome_status(record, link))
         reverse_link = get_reverse_link_info(conn, record)
 
-    return templates.TemplateResponse(
-        "detail.html", {
-            "request": request, "record": record,
-            "related": related, "sources": sources,
-            "provenance": provenance,
-            "outcome": outcome, "reverse_link": reverse_link,
-        }
-    )
+    return await _tpl(request, "detail.html", {
+        "request": request, "record": record,
+        "related": related, "sources": sources,
+        "provenance": provenance,
+        "outcome": outcome, "reverse_link": reverse_link,
+    })
 
 
 @app.get("/entity/{entity_id}", response_class=HTMLResponse)
@@ -234,21 +240,19 @@ async def entity_detail(request: Request, entity_id: int):
     with get_db() as conn:
         entity = get_entity_by_id(conn, entity_id)
         if not entity:
-            return templates.TemplateResponse(
-                "404.html", {"request": request, "message": "Entity not found."},
+            return await _tpl(
+                request, "404.html", {"request": request, "message": "Entity not found."},
                 status_code=404,
             )
         records = get_entity_records(conn, entity_id)
         # Count distinct license numbers
         license_numbers = set(r["license_number"] for r in records)
-    return templates.TemplateResponse(
-        "entity.html", {
-            "request": request,
-            "entity": entity,
-            "records": records,
-            "unique_licenses": len(license_numbers),
-        }
-    )
+    return await _tpl(request, "entity.html", {
+        "request": request,
+        "entity": entity,
+        "records": records,
+        "unique_licenses": len(license_numbers),
+    })
 
 
 @app.get("/api/cities")
@@ -329,3 +333,13 @@ async def api_stats():
     if stats.get("last_scrape"):
         stats["last_scrape"] = dict(stats["last_scrape"])
     return stats
+
+
+# -- Admin routes -------------------------------------------------------
+
+@app.get("/admin/", response_class=HTMLResponse)
+async def admin_dashboard(request: Request, admin: dict = Depends(require_admin)):
+    """Admin dashboard — stub confirming auth works."""
+    return await _tpl(request, "admin/dashboard.html", {
+        "request": request, "admin": admin, "current_user": admin,
+    })

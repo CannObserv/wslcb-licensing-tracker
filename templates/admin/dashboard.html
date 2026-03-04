@@ -1,0 +1,15 @@
+{% extends "admin/base.html" %}
+{% block title %}Admin Dashboard — WSLCB Licensing Tracker{% endblock %}
+
+{% block admin_content %}
+<div class="space-y-4">
+    <h1 class="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
+    <p class="text-sm text-gray-600">
+        Authenticated as <span class="font-mono text-co-purple">{{ admin.email }}</span>
+        <span class="text-gray-400">({{ admin.role }})</span>
+    </p>
+    <div class="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
+        ✅ Auth is working. More admin features coming soon.
+    </div>
+</div>
+{% endblock %}

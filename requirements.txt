@@ -10,3 +10,4 @@ python-json-logger
 
 # Development / testing
 pytest
+pytest-asyncio

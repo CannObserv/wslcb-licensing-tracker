@@ -48,6 +48,10 @@
                 <div class="flex items-center gap-4">
                     <a href="/" class="text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
                     <a href="/search" class="text-sm text-gray-600 hover:text-co-purple-700">Search</a>
+                    {% if current_user %}
+                    <a href="/admin/" class="text-sm text-co-purple hover:text-co-purple-700 font-medium">Admin</a>
+                    <span class="text-xs text-gray-400 font-mono hidden sm:inline">{{ current_user.email }}</span>
+                    {% endif %}
                 </div>
             </div>
         </div>

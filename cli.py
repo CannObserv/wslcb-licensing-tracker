@@ -173,6 +173,65 @@ def cmd_rebuild(args):
             print("  \u2705 Databases match!")
 
 
+# -- Admin subcommands -----------------------------------------------
+
+def cmd_admin_add_user(args):
+    """Add an admin user by email."""
+    from database import get_db
+    email = args.email.strip()
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
+        ).fetchone()
+        if existing:
+            print(f"User already exists: {email}")
+            return
+        conn.execute(
+            "INSERT INTO admin_users (email, created_by) VALUES (?, 'cli')",
+            (email,),
+        )
+        conn.commit()
+    print(f"Added admin user: {email}")
+
+
+def cmd_admin_list_users(args):
+    """List all admin users."""
+    from database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT email, role, created_at, created_by FROM admin_users ORDER BY created_at"
+        ).fetchall()
+    if not rows:
+        print("No admin users.")
+        return
+    print(f"{'Email':<40} {'Role':<10} {'Created At':<20} {'Created By'}")
+    print("-" * 90)
+    for email, role, created_at, created_by in rows:
+        print(f"{email:<40} {role:<10} {created_at:<20} {created_by}")
+
+
+def cmd_admin_remove_user(args):
+    """Remove an admin user by email."""
+    from database import get_db
+    email = args.email.strip()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
+        ).fetchone()
+        if not row:
+            print(f"User not found: {email}")
+            sys.exit(1)
+        count = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
+        if count <= 1:
+            print("Cannot remove the last admin user.")
+            sys.exit(1)
+        conn.execute(
+            "DELETE FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
+        )
+        conn.commit()
+    print(f"Removed admin user: {email}")
+
+
 def main():
     setup_logging()
 
@@ -293,10 +352,30 @@ def main():
     )
     p.set_defaults(func=cmd_rebuild)
 
+    # admin subcommand group
+    p_admin = sub.add_parser("admin", help="Admin user management")
+    admin_sub = p_admin.add_subparsers(dest="admin_command")
+
+    p_add = admin_sub.add_parser("add-user", help="Add an admin user")
+    p_add.add_argument("email", help="Email address to add")
+    p_add.set_defaults(func=cmd_admin_add_user)
+
+    p_list = admin_sub.add_parser("list-users", help="List all admin users")
+    p_list.set_defaults(func=cmd_admin_list_users)
+
+    p_rm = admin_sub.add_parser("remove-user", help="Remove an admin user")
+    p_rm.add_argument("email", help="Email address to remove")
+    p_rm.set_defaults(func=cmd_admin_remove_user)
+
     args = top.parse_args()
     if not args.command:
         top.print_help()
         sys.exit(1)
+
+    if args.command == "admin":
+        if not getattr(args, "admin_command", None):
+            p_admin.print_help()
+            sys.exit(1)
 
     args.func(args)
 

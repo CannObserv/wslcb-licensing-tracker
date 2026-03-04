@@ -200,6 +200,24 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_rs_source
             ON record_sources(source_id);
+
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            role TEXT NOT NULL DEFAULT 'admin',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT NOT NULL DEFAULT 'system'
+        );
+
+        CREATE TABLE IF NOT EXISTS admin_audit_log (
+            id INTEGER PRIMARY KEY,
+            admin_email TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id INTEGER,
+            details TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
     """)
 
     # Seed the fixed source_types rows
@@ -357,6 +375,48 @@ def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _m005_admin_users(conn: sqlite3.Connection) -> None:
+    """Add admin_users table for admin authentication."""
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "admin_users" not in tables:
+        conn.executescript("""
+            CREATE TABLE admin_users (
+                id INTEGER PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                role TEXT NOT NULL DEFAULT 'admin',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_by TEXT NOT NULL DEFAULT 'system'
+            );
+        """)
+
+
+def _m006_admin_audit_log(conn: sqlite3.Connection) -> None:
+    """Add admin_audit_log table for tracking admin mutations."""
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "admin_audit_log" not in tables:
+        conn.executescript("""
+            CREATE TABLE admin_audit_log (
+                id INTEGER PRIMARY KEY,
+                admin_email TEXT NOT NULL,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id INTEGER,
+                details TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        """)
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -371,6 +431,8 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (2, "enrichment_tracking", _m002_enrichment_tracking),
     (3, "content_hash", _m003_content_hash),
     (4, "address_validator_v1", _m004_address_validator_v1),
+    (5, "admin_users", _m005_admin_users),
+    (6, "admin_audit_log", _m006_admin_audit_log),
 ]
 
 

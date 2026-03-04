@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex gap-6">
+    {# Admin side nav #}
+    <aside class="w-48 flex-shrink-0">
+        <nav aria-label="Admin navigation" class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div class="px-4 py-3 bg-co-purple-50 border-b border-co-purple-100">
+                <span class="text-xs font-semibold text-co-purple uppercase tracking-wide">Admin</span>
+            </div>
+            <ul class="py-1">
+                <li>
+                    <a href="/admin/"
+                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-co-purple-50 hover:text-co-purple {% if request.url.path == '/admin/' %}bg-co-purple-50 text-co-purple font-medium{% endif %}">
+                        Dashboard
+                    </a>
+                </li>
+                <li>
+                    <a href="/admin/endorsements"
+                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-co-purple-50 hover:text-co-purple {% if request.url.path.startswith('/admin/endorsements') %}bg-co-purple-50 text-co-purple font-medium{% endif %}">
+                        Endorsements
+                    </a>
+                </li>
+                <li>
+                    <a href="/admin/audit-log"
+                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-co-purple-50 hover:text-co-purple {% if request.url.path.startswith('/admin/audit-log') %}bg-co-purple-50 text-co-purple font-medium{% endif %}">
+                        Audit Log
+                    </a>
+                </li>
+                <li>
+                    <a href="/admin/users"
+                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-co-purple-50 hover:text-co-purple {% if request.url.path.startswith('/admin/users') %}bg-co-purple-50 text-co-purple font-medium{% endif %}">
+                        Users
+                    </a>
+                </li>
+            </ul>
+        </nav>
+    </aside>
+
+    {# Main admin content area #}
+    <div class="flex-1 min-w-0">
+        {% block admin_content %}{% endblock %}
+    </div>
+</div>
+{% endblock %}
