@@ -10,7 +10,9 @@ import logging
 import sqlite3
 import time
 
-from endorsements import get_endorsement_options, get_record_endorsements
+from endorsements import (
+    get_endorsement_options, get_record_endorsements, get_regulated_substances,
+)
 from entities import (
     parse_and_link_entities, get_record_entities, clean_applicants_string,
     clean_entity_name,
@@ -260,7 +262,8 @@ def _build_where_clause(
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",
+    endorsement: str = "",       # legacy single-value (kept for compat)
+    endorsements: list[str] | None = None,  # multi-value; supersedes endorsement
     state: str = "",
     city: str = "",
     date_from: str = "",
@@ -273,12 +276,16 @@ def _build_where_clause(
     ``where_sql`` includes the ``WHERE`` keyword, or is empty when
     there are no conditions.
 
-    The *endorsement* filter is alias-aware: if the named endorsement is
-    canonical for one or more variants, records linked to any of those
-    variants are included.  Alias resolution uses two cheap PK/index
-    lookups (``license_endorsements`` name index → ``endorsement_aliases``
-    unique index) so the main ``record_endorsements`` scan always uses
-    ``idx_re_endorsement``.
+    The endorsement filter accepts either the legacy scalar *endorsement*
+    parameter or the new *endorsements* list.  When *endorsements* is
+    provided it takes precedence; when *endorsement* is provided as a
+    non-empty string it is wrapped in a single-element list for uniform
+    handling.  An empty list means "no endorsement filter".
+
+    Filtering is alias-aware: canonical endorsements automatically include
+    records linked to any of their variants.  OR semantics apply across
+    multiple endorsement names — records matching *any* of the requested
+    endorsements are returned.
     """
     conditions: list[str] = []
     params: list = []
@@ -302,18 +309,31 @@ def _build_where_clause(
         conditions.append("lr.application_type = ?")
         params.append(application_type)
 
-    if endorsement:
-        eid_list = _resolve_endorsement_ids(conn, endorsement)
-        if eid_list:
-            placeholders = ",".join("?" * len(eid_list))
+    # Resolve endorsement filter: prefer multi-value list, fall back to scalar.
+    _enames: list[str] = endorsements if endorsements is not None else (
+        [endorsement] if endorsement else []
+    )
+    if _enames:
+        all_eids: list[int] = []
+        any_unknown = False
+        for ename in _enames:
+            ids = _resolve_endorsement_ids(conn, ename)
+            if ids:
+                all_eids.extend(ids)
+            else:
+                any_unknown = True
+        if all_eids:
+            # De-duplicate IDs before building the IN clause.
+            unique_eids = list(dict.fromkeys(all_eids))
+            placeholders = ",".join("?" * len(unique_eids))
             conditions.append(
                 f"lr.id IN ("
                 f"SELECT record_id FROM record_endorsements"
                 f" WHERE endorsement_id IN ({placeholders}))"
             )
-            params.extend(eid_list)
-        else:
-            # No matching endorsement — force zero results
+            params.extend(unique_eids)
+        elif any_unknown:
+            # Every requested endorsement name was unknown — force zero results.
             conditions.append("1 = 0")
 
     if state:
@@ -354,7 +374,8 @@ def search_records(
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",
+    endorsement: str = "",           # legacy scalar; use endorsements for multi-select
+    endorsements: list[str] | None = None,
     state: str = "",
     city: str = "",
     date_from: str = "",
@@ -369,6 +390,7 @@ def search_records(
         conn,
         query=query, section_type=section_type,
         application_type=application_type, endorsement=endorsement,
+        endorsements=endorsements,
         state=state, city=city, date_from=date_from, date_to=date_to,
         outcome_status=outcome_status,
     )
@@ -480,7 +502,8 @@ def export_records(
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",
+    endorsement: str = "",           # legacy scalar
+    endorsements: list[str] | None = None,
     state: str = "",
     city: str = "",
     date_from: str = "",
@@ -502,6 +525,7 @@ def export_records(
         conn,
         query=query, section_type=section_type,
         application_type=application_type, endorsement=endorsement,
+        endorsements=endorsements,
         state=state, city=city, date_from=date_from, date_to=date_to,
         outcome_status=outcome_status,
     )
@@ -590,6 +614,7 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
     ]
 
     options["endorsement"] = get_endorsement_options(conn)
+    options["regulated_substance"] = get_regulated_substances(conn)
     _filter_cache["data"] = options
     _filter_cache["ts"] = now
     return options

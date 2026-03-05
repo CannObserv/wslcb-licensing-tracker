@@ -496,7 +496,7 @@ class TestMigration008EndorsementDismissedSuggestions:
             ).fetchall()
         }
         assert "endorsement_dismissed_suggestions" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == MIGRATIONS[-1][0]
         conn.close()
 
     def test_dismissed_suggestions_schema(self):
@@ -542,3 +542,86 @@ class TestMigration008EndorsementDismissedSuggestions:
                 (b, a),
             )
         conn.close()
+
+
+class TestMigration009RegulatedSubstances:
+    """Migration 009 — regulated_substances + junction table."""
+
+    def test_tables_exist_on_fresh_db(self, db):
+        tables = {r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "regulated_substances" in tables
+        assert "regulated_substance_endorsements" in tables
+
+    def test_index_exists_on_fresh_db(self, db):
+        indexes = {r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        ).fetchall()}
+        assert "idx_rse_endorsement" in indexes
+
+    def test_migration_adds_tables_to_existing_db(self):
+        """Existing DB (user_version=0, tables present) gets migrated."""
+        from schema import migrate, _get_user_version
+        conn = get_connection(":memory:")
+        # Simulate pre-existing DB by running baseline only
+        from schema import _m001_baseline
+        _m001_baseline(conn)
+        conn.commit()
+        version = migrate(conn)
+        assert version == MIGRATIONS[-1][0]
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "regulated_substances" in tables
+        assert "regulated_substance_endorsements" in tables
+        conn.close()
+
+    def test_seed_cannabis_substance_exists(self, db):
+        row = db.execute(
+            "SELECT id FROM regulated_substances WHERE name = 'Cannabis'"
+        ).fetchone()
+        assert row is not None
+
+    def test_seed_alcohol_substance_exists(self, db):
+        row = db.execute(
+            "SELECT id FROM regulated_substances WHERE name = 'Alcohol'"
+        ).fetchone()
+        assert row is not None
+
+    def test_seed_cannabis_has_endorsements_after_endorsement_seed(self, db):
+        """After seeding endorsements and re-running the migration, Cannabis
+        should have all its expected endorsements linked."""
+        from endorsements import seed_endorsements
+        from schema import _m009_regulated_substances
+        seed_endorsements(db)
+        db.commit()
+        # Re-run seed (idempotent via INSERT OR IGNORE)
+        _m009_regulated_substances(db)
+        db.commit()
+        sub_id = db.execute(
+            "SELECT id FROM regulated_substances WHERE name = 'Cannabis'"
+        ).fetchone()[0]
+        count = db.execute(
+            "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?",
+            (sub_id,),
+        ).fetchone()[0]
+        # Cannabis retailer + processor + tiers 1-3 + transportation + research
+        # + retail cert holder + SE cannabis retailer + tribal compact = 10 from seed.
+        # SE RETAIL CERTIFICATE HOLDER and MEDICAL CANNABIS ENDORSEMENT are
+        # auto-discovered from live data and added when the scraper runs.
+        assert count >= 10
+
+    def test_undefined_endorsement_has_no_substance(self, db):
+        from endorsements import seed_endorsements, _ensure_endorsement
+        seed_endorsements(db)
+        undef_id = _ensure_endorsement(db, "UNDEFINED")
+        db.commit()
+        from schema import _m009_regulated_substances
+        _m009_regulated_substances(db)
+        db.commit()
+        row = db.execute(
+            "SELECT 1 FROM regulated_substance_endorsements WHERE endorsement_id = ?",
+            (undef_id,),
+        ).fetchone()
+        assert row is None

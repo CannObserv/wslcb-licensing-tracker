@@ -1460,3 +1460,116 @@ def create_code(
         if add_code_mapping(conn, code, eid):
             inserted += 1
     return inserted
+
+
+# ── Regulated Substances ─────────────────────────────────────────────────────
+
+
+def get_regulated_substances(conn: sqlite3.Connection) -> list[dict]:
+    """Return all substances ordered by display_order, each with endorsement names.
+
+    Each entry is a dict with keys ``id``, ``name``, ``display_order``,
+    and ``endorsements`` (a sorted list of canonical endorsement name strings).
+    """
+    substances = conn.execute(
+        "SELECT id, name, display_order FROM regulated_substances ORDER BY display_order, name"
+    ).fetchall()
+    results = []
+    for row in substances:
+        sid, name, order = row
+        enames = conn.execute(
+            """
+            SELECT le.name FROM regulated_substance_endorsements rse
+            JOIN license_endorsements le ON le.id = rse.endorsement_id
+            WHERE rse.substance_id = ?
+            ORDER BY le.name
+            """,
+            (sid,),
+        ).fetchall()
+        results.append({
+            "id": sid,
+            "name": name,
+            "display_order": order,
+            "endorsements": [r[0] for r in enames],
+        })
+    return results
+
+
+def get_substance_endorsement_ids(conn: sqlite3.Connection, substance_id: int) -> list[int]:
+    """Return the endorsement IDs associated with *substance_id*."""
+    rows = conn.execute(
+        "SELECT endorsement_id FROM regulated_substance_endorsements WHERE substance_id = ?",
+        (substance_id,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def set_substance_endorsements(
+    conn: sqlite3.Connection,
+    substance_id: int,
+    endorsement_ids: list[int],
+    set_by: str,
+) -> None:
+    """Replace the full endorsement list for *substance_id*.
+
+    Deletes all existing junction rows then inserts the new set.
+    Writes an audit log entry.
+    """
+    conn.execute(
+        "DELETE FROM regulated_substance_endorsements WHERE substance_id = ?",
+        (substance_id,),
+    )
+    for eid in endorsement_ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO regulated_substance_endorsements (substance_id, endorsement_id)"
+            " VALUES (?, ?)",
+            (substance_id, eid),
+        )
+    import json as _json
+    conn.execute(
+        "INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, details)"
+        " VALUES (?, 'substance.set_endorsements', 'regulated_substance', ?, ?)",
+        (set_by, substance_id, _json.dumps({"endorsement_count": len(endorsement_ids)})),
+    )
+
+
+def add_substance(
+    conn: sqlite3.Connection,
+    name: str,
+    display_order: int,
+    created_by: str,
+) -> int:
+    """Insert a new regulated substance and return its id. Audit-logged."""
+    import json as _json
+    cursor = conn.execute(
+        "INSERT INTO regulated_substances (name, display_order) VALUES (?, ?)",
+        (name, display_order),
+    )
+    sid = cursor.lastrowid
+    conn.execute(
+        "INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, details)"
+        " VALUES (?, 'substance.add', 'regulated_substance', ?, ?)",
+        (created_by, sid, _json.dumps({"name": name})),
+    )
+    return sid
+
+
+def remove_substance(
+    conn: sqlite3.Connection,
+    substance_id: int,
+    removed_by: str,
+) -> None:
+    """Delete a regulated substance (cascades to junction rows). Audit-logged."""
+    import json as _json
+    row = conn.execute(
+        "SELECT name FROM regulated_substances WHERE id = ?", (substance_id,)
+    ).fetchone()
+    name = row[0] if row else str(substance_id)
+    conn.execute(
+        "DELETE FROM regulated_substances WHERE id = ?", (substance_id,)
+    )
+    conn.execute(
+        "INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, details)"
+        " VALUES (?, 'substance.remove', 'regulated_substance', ?, ?)",
+        (removed_by, substance_id, _json.dumps({"name": name})),
+    )

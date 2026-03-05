@@ -1146,3 +1146,168 @@ class TestCodeMappingMutations:
         # Should not raise; inserted count = 0 for the duplicate
         inserted = create_code(db, "893", [eid])
         assert inserted == 0
+
+
+# ── Regulated Substances ──────────────────────────────────────────────────────
+
+def _ensure_substance(conn, name: str, display_order: int = 0) -> int:
+    """Helper: insert a substance and return its id."""
+    conn.execute(
+        "INSERT OR IGNORE INTO regulated_substances (name, display_order) VALUES (?, ?)",
+        (name, display_order),
+    )
+    return conn.execute(
+        "SELECT id FROM regulated_substances WHERE name = ?", (name,)
+    ).fetchone()[0]
+
+
+class TestGetRegulatedSubstances:
+    def test_returns_substances_in_display_order(self, db):
+        from endorsements import get_regulated_substances
+        _ensure_substance(db, "Alcohol", 2)
+        _ensure_substance(db, "Cannabis", 1)
+        db.commit()
+        results = get_regulated_substances(db)
+        names = [r["name"] for r in results]
+        assert names == ["Cannabis", "Alcohol"]
+
+    def test_includes_endorsements_list(self, db):
+        from endorsements import get_regulated_substances
+        eid = _ensure_endorsement(db, "CANNABIS RETAILER")
+        sid = _ensure_substance(db, "Cannabis", 1)
+        db.execute(
+            "INSERT OR IGNORE INTO regulated_substance_endorsements (substance_id, endorsement_id) VALUES (?, ?)",
+            (sid, eid),
+        )
+        db.commit()
+        results = get_regulated_substances(db)
+        cannabis = next(r for r in results if r["name"] == "Cannabis")
+        assert "CANNABIS RETAILER" in cannabis["endorsements"]
+
+    def test_empty_when_no_seeded_endorsements(self, db):
+        """Without seeded endorsements the substances exist but have no
+        endorsement associations (junction rows reference non-existent eids)."""
+        from endorsements import get_regulated_substances
+        results = get_regulated_substances(db)
+        # Substances are seeded by migration 009; endorsements list is empty
+        # until endorsements are seeded.
+        cannabis = next((r for r in results if r["name"] == "Cannabis"), None)
+        assert cannabis is not None
+        assert cannabis["endorsements"] == []
+
+
+class TestGetSubstanceEndorsementIds:
+    def test_returns_ids_for_substance(self, db):
+        from endorsements import get_substance_endorsement_ids
+        eid1 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
+        eid2 = _ensure_endorsement(db, "WINE DISTRIBUTOR")
+        sid = _ensure_substance(db, "Alcohol", 2)
+        db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid1))
+        db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid2))
+        db.commit()
+        ids = get_substance_endorsement_ids(db, sid)
+        assert set(ids) == {eid1, eid2}
+
+    def test_returns_empty_for_unknown_substance(self, db):
+        from endorsements import get_substance_endorsement_ids
+        assert get_substance_endorsement_ids(db, 9999) == []
+
+
+class TestSetSubstanceEndorsements:
+    def test_replaces_associations(self, db):
+        from endorsements import set_substance_endorsements
+        eid1 = _ensure_endorsement(db, "OLD ENDORSEMENT")
+        eid2 = _ensure_endorsement(db, "NEW ENDORSEMENT")
+        sid = _ensure_substance(db, "Test Substance")
+        db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid1))
+        db.commit()
+        set_substance_endorsements(db, sid, [eid2], set_by="test@example.com")
+        db.commit()
+        ids = db.execute(
+            "SELECT endorsement_id FROM regulated_substance_endorsements WHERE substance_id = ?",
+            (sid,),
+        ).fetchall()
+        assert {r[0] for r in ids} == {eid2}
+
+    def test_writes_audit_log(self, db):
+        from endorsements import set_substance_endorsements
+        sid = _ensure_substance(db, "Audit Test")
+        set_substance_endorsements(db, sid, [], set_by="admin@example.com")
+        db.commit()
+        row = db.execute(
+            "SELECT admin_email, action FROM admin_audit_log WHERE action = 'substance.set_endorsements'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "admin@example.com"
+
+    def test_clearing_all_endorsements(self, db):
+        from endorsements import set_substance_endorsements
+        eid = _ensure_endorsement(db, "CLEAR ME")
+        sid = _ensure_substance(db, "Clear Test")
+        db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
+        db.commit()
+        set_substance_endorsements(db, sid, [], set_by="admin@example.com")
+        db.commit()
+        count = db.execute(
+            "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?", (sid,)
+        ).fetchone()[0]
+        assert count == 0
+
+
+class TestAddSubstance:
+    def test_inserts_and_returns_id(self, db):
+        from endorsements import add_substance
+        sid = add_substance(db, "Test Sub", display_order=5, created_by="admin@example.com")
+        db.commit()
+        row = db.execute(
+            "SELECT name, display_order FROM regulated_substances WHERE id = ?", (sid,)
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "Test Sub"
+        assert row[1] == 5
+
+    def test_writes_audit_log(self, db):
+        from endorsements import add_substance
+        add_substance(db, "Audit Sub", display_order=1, created_by="admin@x.com")
+        db.commit()
+        row = db.execute(
+            "SELECT action FROM admin_audit_log WHERE action = 'substance.add'"
+        ).fetchone()
+        assert row is not None
+
+
+class TestRemoveSubstance:
+    def test_deletes_substance(self, db):
+        from endorsements import add_substance, remove_substance
+        sid = add_substance(db, "Delete Me", display_order=1, created_by="a@b.com")
+        db.commit()
+        remove_substance(db, sid, removed_by="a@b.com")
+        db.commit()
+        row = db.execute(
+            "SELECT id FROM regulated_substances WHERE id = ?", (sid,)
+        ).fetchone()
+        assert row is None
+
+    def test_cascades_to_junction(self, db):
+        from endorsements import add_substance, remove_substance
+        eid = _ensure_endorsement(db, "CASCADE TEST")
+        sid = add_substance(db, "Cascade Sub", display_order=1, created_by="a@b.com")
+        db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
+        db.commit()
+        remove_substance(db, sid, removed_by="a@b.com")
+        db.commit()
+        count = db.execute(
+            "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?", (sid,)
+        ).fetchone()[0]
+        assert count == 0
+
+    def test_writes_audit_log(self, db):
+        from endorsements import add_substance, remove_substance
+        sid = add_substance(db, "Audit Remove", display_order=1, created_by="a@b.com")
+        db.commit()
+        remove_substance(db, sid, removed_by="a@b.com")
+        db.commit()
+        row = db.execute(
+            "SELECT action FROM admin_audit_log WHERE action = 'substance.remove'"
+        ).fetchone()
+        assert row is not None

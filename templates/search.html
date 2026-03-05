@@ -14,6 +14,10 @@
                    aria-label="Search records"
                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple px-4 py-2 border">
         </div>
+        <!-- Substance→endorsement map for client-side pre-selection -->
+        <script>
+        const SUBSTANCE_ENDORSEMENTS = {{ filters.regulated_substance | tojson }};
+        </script>
         <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3">
             <div>
                 <label for="section_type" class="block text-xs font-medium text-gray-500 mb-1">Record Type</label>
@@ -33,14 +37,46 @@
                     {% endfor %}
                 </select>
             </div>
+            <!-- Regulated Substance shortcut (client-side only, no name attr) -->
             <div>
-                <label for="endorsement" class="block text-xs font-medium text-gray-500 mb-1">License Type</label>
-                <select name="endorsement" id="endorsement" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                <label for="regulated_substance" class="block text-xs font-medium text-gray-500 mb-1">Regulated Substance</label>
+                <select id="regulated_substance" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
                     <option value="">All</option>
-                    {% for e in filters.endorsement %}
-                    <option value="{{ e }}" {{ 'selected' if endorsement == e }}>{{ e }}</option>
+                    {% for s in filters.regulated_substance %}
+                    <option value="{{ s.id }}">{{ s.name }}</option>
                     {% endfor %}
                 </select>
+            </div>
+            <!-- License Type — multi-select dropdown -->
+            <div class="relative" id="endorsement-filter">
+                <label class="block text-xs font-medium text-gray-500 mb-1">License Type</label>
+                <button type="button" id="endorsement-toggle"
+                        class="w-full text-left rounded-md border border-gray-300 shadow-sm text-sm px-3 py-1.5 bg-white flex items-center justify-between"
+                        aria-haspopup="listbox" aria-expanded="false">
+                    <span id="endorsement-label" class="truncate">All</span>
+                    <svg class="w-4 h-4 text-gray-400 flex-shrink-0 ml-1" fill="none" viewBox="0 0 20 20"><path stroke="currentColor" stroke-width="1.5" d="M6 8l4 4 4-4"/></svg>
+                </button>
+                <div id="endorsement-panel"
+                     class="hidden absolute left-0 z-20 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg">
+                    <div class="p-2 border-b border-gray-100">
+                        <input type="text" id="endorsement-search" placeholder="Filter…"
+                               class="w-full text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-co-purple">
+                    </div>
+                    <div class="overflow-y-auto max-h-60" role="listbox" aria-multiselectable="true">
+                        {% for e in filters.endorsement %}
+                        <label class="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer endorsement-option">
+                            <input type="checkbox" name="endorsement" value="{{ e }}"
+                                   {% if e in endorsement %}checked{% endif %}
+                                   class="rounded border-gray-300 accent-co-purple">
+                            <span class="text-sm text-gray-700 leading-tight">{{ e }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <div class="p-2 border-t border-gray-100">
+                        <button type="button" id="endorsement-clear"
+                                class="text-xs text-co-purple hover:text-co-purple-700">Clear selection</button>
+                    </div>
+                </div>
             </div>
             <div>
                 <label for="state" class="block text-xs font-medium text-gray-500 mb-1">State</label>
@@ -139,5 +175,105 @@ document.getElementById('state').addEventListener('change', async function() {
 
     wrapper.style.display = '';
 });
+
+// ── Multi-select endorsement dropdown ────────────────────────────────────
+(function () {
+    const toggle = document.getElementById('endorsement-toggle');
+    const panel  = document.getElementById('endorsement-panel');
+    const label  = document.getElementById('endorsement-label');
+    const search = document.getElementById('endorsement-search');
+    const clearBtn = document.getElementById('endorsement-clear');
+    const substanceSelect = document.getElementById('regulated_substance');
+
+    function getChecked() {
+        return Array.from(document.querySelectorAll('input[name="endorsement"]:checked'));
+    }
+
+    function updateLabel() {
+        const checked = getChecked();
+        if (checked.length === 0) {
+            label.textContent = 'All';
+        } else if (checked.length === 1) {
+            label.textContent = checked[0].value;
+        } else {
+            label.textContent = checked.length + ' selected';
+        }
+    }
+
+    // Auto-detect substance match and update the substance dropdown.
+    function syncSubstanceDropdown() {
+        const checked = new Set(getChecked().map(cb => cb.value));
+        let matched = '';
+        if (checked.size > 0) {
+            for (const s of SUBSTANCE_ENDORSEMENTS) {
+                const sSet = new Set(s.endorsements);
+                if (sSet.size === checked.size && [...checked].every(v => sSet.has(v))) {
+                    matched = String(s.id);
+                    break;
+                }
+            }
+        }
+        substanceSelect.value = matched;
+    }
+
+    // Toggle panel open/closed.
+    toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const open = !panel.classList.contains('hidden');
+        panel.classList.toggle('hidden', open);
+        toggle.setAttribute('aria-expanded', String(!open));
+        if (!open) search.focus();
+    });
+
+    // Close when clicking outside.
+    document.addEventListener('click', function (e) {
+        if (!document.getElementById('endorsement-filter').contains(e.target)) {
+            panel.classList.add('hidden');
+            toggle.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    // Filter visible options.
+    search.addEventListener('input', function () {
+        const q = this.value.toLowerCase();
+        document.querySelectorAll('.endorsement-option').forEach(function (el) {
+            el.style.display = el.querySelector('span').textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+    });
+
+    // Clear button.
+    clearBtn.addEventListener('click', function () {
+        document.querySelectorAll('input[name="endorsement"]').forEach(cb => cb.checked = false);
+        updateLabel();
+        substanceSelect.value = '';
+    });
+
+    // Update label when any checkbox changes; also sync substance dropdown.
+    document.querySelectorAll('input[name="endorsement"]').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+            updateLabel();
+            syncSubstanceDropdown();
+        });
+    });
+
+    // Regulated Substance shortcut: pre-check matching endorsements.
+    substanceSelect.addEventListener('change', function () {
+        const substanceId = parseInt(this.value);
+        const all = document.querySelectorAll('input[name="endorsement"]');
+        all.forEach(cb => cb.checked = false);
+        if (substanceId) {
+            const substance = SUBSTANCE_ENDORSEMENTS.find(s => s.id === substanceId);
+            if (substance) {
+                const set = new Set(substance.endorsements);
+                all.forEach(cb => { if (set.has(cb.value)) cb.checked = true; });
+            }
+        }
+        updateLabel();
+    });
+
+    // Initialise label on page load.
+    updateLabel();
+    syncSubstanceDropdown();
+}());
 </script>
 {% endblock %}

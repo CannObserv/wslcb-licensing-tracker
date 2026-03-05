@@ -29,8 +29,14 @@
 
   {# Tab bar #}
   <div class="border-b border-gray-200" x-data="{}">
-    <nav class="-mb-px flex gap-6" aria-label="Sections">
+    <nav class="-mb-px flex gap-6 flex-wrap" aria-label="Sections">
       {% set q_param = ('&q=' ~ q) if q else '' %}
+      <a href="?section=substances{{ q_param }}"
+         class="pb-3 text-sm font-medium border-b-2 {% if active_tab == 'substances' %}border-co-purple text-co-purple{% else %}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{% endif %}"
+         id="tab-substances">
+        Regulated Substances
+        <span class="ml-1.5 rounded-full px-2 py-0.5 text-xs {% if active_tab == 'substances' %}bg-co-purple text-white{% else %}bg-gray-100 text-gray-600{% endif %}">{{ substances | length }}</span>
+      </a>
       <a href="?section=endorsements{{ q_param }}"
          class="pb-3 text-sm font-medium border-b-2 {% if active_tab == 'endorsements' %}border-co-purple text-co-purple{% else %}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{% endif %}"
          id="tab-endorsements">
@@ -53,6 +59,126 @@
       </a>
     </nav>
   </div>
+
+  {# ── Section 0: Regulated Substances ──────────────────────────────── #}
+  {% if active_tab == 'substances' %}
+  {# Selected substance id (from redirect after save) #}
+  {% set selected_id = request.query_params.get('selected', '') | int if request.query_params.get('selected') else 0 %}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="substances-panel">
+
+    {# Left: substance list + add form #}
+    <div class="space-y-3">
+      {% for s in substances %}
+      <div class="bg-white border border-gray-200 rounded-lg p-4 flex items-start justify-between gap-3
+                  {% if selected_id == s.id %}ring-2 ring-co-purple{% endif %}"
+           id="substance-{{ s.id }}">
+        <div class="min-w-0">
+          <div class="font-semibold text-gray-900">{{ s.name }}</div>
+          <div class="text-xs text-gray-500 mt-0.5">{{ s.endorsements | length }} endorsement{{ '' if s.endorsements | length == 1 else 's' }}</div>
+        </div>
+        <div class="flex gap-2 flex-shrink-0">
+          <a href="?section=substances&selected={{ s.id }}"
+             class="text-xs bg-co-purple text-white px-2.5 py-1 rounded hover:bg-co-purple-700">Edit</a>
+          <button type="button"
+                  onclick="openSubstanceDeleteModal({{ s.id }}, '{{ s.name | replace("'", "\\'" ) }}')"
+                  class="text-xs bg-red-600 text-white px-2.5 py-1 rounded hover:bg-red-700">Delete</button>
+        </div>
+      </div>
+      {% else %}
+      <p class="text-sm text-gray-500">No regulated substances defined yet.</p>
+      {% endfor %}
+
+      {# Add substance form #}
+      <form method="post" action="/admin/endorsements/substances/add"
+            class="bg-gray-50 border border-gray-200 rounded-lg p-3 flex gap-2">
+        <input type="text" name="name" placeholder="New substance name…"
+               class="flex-1 text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:border-co-purple" required>
+        <button type="submit"
+                class="bg-co-purple text-white text-sm px-4 py-1.5 rounded hover:bg-co-purple-700">Add</button>
+      </form>
+    </div>
+
+    {# Right: endorsement assignment panel #}
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+      {% if selected_id and (substances | selectattr('id', 'eq', selected_id) | list) %}
+        {% set sel = (substances | selectattr('id', 'eq', selected_id) | list)[0] %}
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Assign endorsements — <span class="text-co-purple">{{ sel.name }}</span></h3>
+        <input type="text" id="substance-endorsement-search" placeholder="Filter endorsements…"
+               class="w-full text-sm border border-gray-200 rounded px-3 py-1.5 mb-2 focus:outline-none focus:border-co-purple">
+        <form method="post" action="/admin/endorsements/substances/set-endorsements">
+          <input type="hidden" name="substance_id" value="{{ sel.id }}">
+          <div class="overflow-y-auto max-h-96 border border-gray-100 rounded divide-y divide-gray-50" id="substance-endorsement-list">
+            {% for e in all_endorsements_for_select %}
+            <label class="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer substance-endorse-option">
+              <input type="checkbox" name="endorsement_ids" value="{{ e.id }}"
+                     {% if e.name in sel.endorsements %}checked{% endif %}
+                     class="rounded border-gray-300 accent-co-purple">
+              <span class="text-sm text-gray-700 flex-1 leading-tight">{{ e.name }}</span>
+              <span class="text-xs text-gray-400">{{ e.record_count }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          <div class="mt-3 flex justify-end">
+            <button type="submit"
+                    class="bg-co-purple text-white text-sm px-5 py-2 rounded hover:bg-co-purple-700">Save</button>
+          </div>
+        </form>
+      {% else %}
+        <div class="text-sm text-gray-400 flex items-center justify-center h-32">
+          Select a substance to assign endorsements.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# Delete confirmation modal #}
+  <div id="substance-delete-modal"
+       class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+      <h2 class="text-lg font-semibold text-gray-900 mb-2">Delete Regulated Substance</h2>
+      <p class="text-sm text-gray-600 mb-1">This will permanently delete the substance and remove all its endorsement associations.</p>
+      <p class="text-sm text-gray-600 mb-4">Type <strong id="modal-substance-name"></strong> to confirm.</p>
+      <input type="text" id="modal-confirm-input" placeholder="Type substance name here…"
+             class="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-4 focus:outline-none focus:border-red-400">
+      <form method="post" action="/admin/endorsements/substances/remove" id="modal-delete-form">
+        <input type="hidden" name="substance_id" id="modal-substance-id">
+        <div class="flex justify-end gap-3">
+          <button type="button" onclick="closeSubstanceDeleteModal()"
+                  class="text-sm text-gray-600 hover:text-gray-800 px-4 py-2">Cancel</button>
+          <button type="submit" id="modal-confirm-btn" disabled
+                  class="bg-red-600 text-white text-sm px-5 py-2 rounded hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script>
+  function openSubstanceDeleteModal(id, name) {
+    document.getElementById('modal-substance-name').textContent = name;
+    document.getElementById('modal-substance-id').value = id;
+    document.getElementById('modal-confirm-input').value = '';
+    document.getElementById('modal-confirm-btn').disabled = true;
+    document.getElementById('substance-delete-modal').classList.remove('hidden');
+    document.getElementById('modal-confirm-input').focus();
+  }
+  function closeSubstanceDeleteModal() {
+    document.getElementById('substance-delete-modal').classList.add('hidden');
+  }
+  document.getElementById('modal-confirm-input').addEventListener('input', function () {
+    const expected = document.getElementById('modal-substance-name').textContent;
+    document.getElementById('modal-confirm-btn').disabled = (this.value !== expected);
+  });
+  // Endorsement filter search
+  const substEndSearch = document.getElementById('substance-endorsement-search');
+  if (substEndSearch) {
+    substEndSearch.addEventListener('input', function () {
+      const q = this.value.toLowerCase();
+      document.querySelectorAll('.substance-endorse-option').forEach(function (el) {
+        el.style.display = el.querySelector('span').textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+  }
+  </script>
+  {% endif %}
 
   {# ── Section 1: Endorsement List ──────────────────────────────────── #}
   {% if active_tab == 'endorsements' %}

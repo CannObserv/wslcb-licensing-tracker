@@ -36,6 +36,8 @@ from endorsements import (
     suggest_duplicate_endorsements, dismiss_suggestion,
     add_code_mapping, remove_code_mapping, create_code,
     reprocess_endorsements,
+    get_regulated_substances, get_substance_endorsement_ids,
+    set_substance_endorsements, add_substance, remove_substance,
 )
 from link_records import build_all_links, get_reverse_link_info, get_outcome_status
 from display import format_outcome, summarize_provenance
@@ -153,7 +155,7 @@ async def search(
     q: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",
+    endorsement: list[str] = Query(default=[]),
     state: str = "",
     city: str = "",
     date_from: str = "",
@@ -171,7 +173,7 @@ async def search(
             query=q,
             section_type=section_type,
             application_type=application_type,
-            endorsement=endorsement,
+            endorsements=endorsement,
             state=state,
             city=city,
             date_from=date_from,
@@ -184,13 +186,17 @@ async def search(
 
     total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
 
-    export_params = urlencode({
-        "q": q, "section_type": section_type,
-        "application_type": application_type, "endorsement": endorsement,
-        "state": state, "city": city,
-        "date_from": date_from, "date_to": date_to,
-        "outcome_status": outcome_status,
-    })
+    # Build export URL with multi-value endorsement params.
+    base_params = [
+        ("q", q), ("section_type", section_type),
+        ("application_type", application_type),
+        ("state", state), ("city", city),
+        ("date_from", date_from), ("date_to", date_to),
+        ("outcome_status", outcome_status),
+    ]
+    export_params = urlencode(
+        base_params + [("endorsement", e) for e in endorsement]
+    )
 
     ctx = {
         "request": request,
@@ -203,7 +209,7 @@ async def search(
         "q": q,
         "section_type": section_type,
         "application_type": application_type,
-        "endorsement": endorsement,
+        "endorsement": endorsement,  # now a list
         "state": state,
         "city": city,
         "date_from": date_from,
@@ -286,7 +292,7 @@ async def export_csv(
     q: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",
+    endorsement: list[str] = Query(default=[]),
     state: str = "",
     city: str = "",
     date_from: str = "",
@@ -299,7 +305,7 @@ async def export_csv(
     with get_db() as conn:
         records = export_records(
             conn, query=q, section_type=section_type,
-            application_type=application_type, endorsement=endorsement,
+            application_type=application_type, endorsements=endorsement,
             state=state, city=city, date_from=date_from, date_to=date_to,
             outcome_status=outcome_status,
         )
@@ -554,7 +560,7 @@ async def admin_audit_log(
     })
 
 
-_VALID_ENDORSEMENT_SECTIONS = frozenset({"endorsements", "suggestions", "codes"})
+_VALID_ENDORSEMENT_SECTIONS = frozenset({"substances", "endorsements", "suggestions", "codes"})
 
 
 @app.get("/admin/endorsements", response_class=HTMLResponse)
@@ -564,11 +570,10 @@ async def admin_endorsements(
     section: str = "",
     q: str = "",
 ):
-    """Revised endorsement admin — Section 1: endorsement list + suggestions.
-    Section 2: code mappings.
-    """
-    active_tab = section or "endorsements"
+    """Endorsement admin — tabs: substances, endorsement list, suggestions, codes."""
+    active_tab = section if section in _VALID_ENDORSEMENT_SECTIONS else "substances"
     with get_db() as conn:
+        substances = get_regulated_substances(conn)
         endorsements = get_endorsement_list(conn)
         # Suggestions are O(n²) across all endorsement pairs — only compute
         # when the suggestions tab is actually displayed.
@@ -578,15 +583,17 @@ async def admin_endorsements(
             else []
         )
         code_mappings = get_code_mappings(conn)
-        # All endorsements for the autocomplete dropdown
+        # All endorsements for the autocomplete dropdown and substance assignment
         all_endorsements_for_select = sorted(
-            [{"id": e["id"], "name": e["name"]} for e in endorsements],
+            [{"id": e["id"], "name": e["name"], "record_count": e.get("record_count", 0)}
+             for e in endorsements],
             key=lambda e: e["name"],
         )
     return await _tpl(request, "admin/endorsements.html", {
         "request": request,
         "admin": admin,
         "active_section": "endorsements",
+        "substances": substances,
         "endorsements": endorsements,
         "suggestions": suggestions,
         "code_mappings": code_mappings,
@@ -595,6 +602,57 @@ async def admin_endorsements(
         "q": q,
         "flash": request.query_params.get("flash", ""),
     })
+
+
+@app.post("/admin/endorsements/substances/add", response_class=HTMLResponse)
+async def admin_substance_add(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    name: str = Form(...),
+):
+    """Create a new regulated substance."""
+    name = name.strip()
+    if not name:
+        return RedirectResponse("/admin/endorsements?section=substances&flash=Name+is+required", status_code=303)
+    with get_db() as conn:
+        # Auto-assign display_order as max + 1.
+        row = conn.execute("SELECT COALESCE(MAX(display_order), 0) + 1 FROM regulated_substances").fetchone()
+        display_order = row[0] if row else 1
+        add_substance(conn, name, display_order=display_order, created_by=admin["email"])
+        conn.commit()
+    return RedirectResponse("/admin/endorsements?section=substances", status_code=303)
+
+
+@app.post("/admin/endorsements/substances/remove", response_class=HTMLResponse)
+async def admin_substance_remove(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    substance_id: int = Form(...),
+):
+    """Delete a regulated substance and its endorsement associations."""
+    with get_db() as conn:
+        remove_substance(conn, substance_id, removed_by=admin["email"])
+        conn.commit()
+    return RedirectResponse("/admin/endorsements?section=substances", status_code=303)
+
+
+@app.post("/admin/endorsements/substances/set-endorsements", response_class=HTMLResponse)
+async def admin_substance_set_endorsements(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    substance_id: int = Form(...),
+    endorsement_ids: list[int] = Form(default=[]),
+):
+    """Replace the endorsement associations for a regulated substance."""
+    with get_db() as conn:
+        set_substance_endorsements(
+            conn, substance_id, endorsement_ids, set_by=admin["email"]
+        )
+        conn.commit()
+    return RedirectResponse(
+        f"/admin/endorsements?section=substances&selected={substance_id}",
+        status_code=303,
+    )
 
 
 @app.post("/admin/endorsements/alias", response_class=HTMLResponse)

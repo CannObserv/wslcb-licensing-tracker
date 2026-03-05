@@ -241,6 +241,23 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (endorsement_id_a, endorsement_id_b),
             CHECK (endorsement_id_a < endorsement_id_b)
         );
+
+        CREATE TABLE IF NOT EXISTS regulated_substances (
+            id            INTEGER PRIMARY KEY,
+            name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            display_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS regulated_substance_endorsements (
+            substance_id   INTEGER NOT NULL
+                REFERENCES regulated_substances(id) ON DELETE CASCADE,
+            endorsement_id INTEGER NOT NULL
+                REFERENCES license_endorsements(id) ON DELETE CASCADE,
+            PRIMARY KEY (substance_id, endorsement_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rse_endorsement
+            ON regulated_substance_endorsements(endorsement_id);
     """)
 
     # Seed the fixed source_types rows
@@ -498,6 +515,90 @@ def _m008_endorsement_dismissed_suggestions(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _m009_regulated_substances(conn: sqlite3.Connection) -> None:
+    """Add regulated_substances and regulated_substance_endorsements tables.
+
+    Creates the two new tables (if absent) and seeds Cannabis and Alcohol
+    substances by classifying existing ``license_endorsements`` rows:
+
+    * **Cannabis** — name contains ``CANNABIS`` or ``RETAIL CERT``, or
+      equals ``TRIBAL COMPACT``.
+    * **Alcohol** — everything else except ``UNDEFINED``.
+    * **UNDEFINED** — left unassigned (no junction row).
+
+    The seed logic derives associations from live data so it stays
+    correct as new endorsements are discovered by future scrapes.
+    """
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    if "regulated_substances" not in tables:
+        conn.executescript("""
+            CREATE TABLE regulated_substances (
+                id            INTEGER PRIMARY KEY,
+                name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                display_order INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE regulated_substance_endorsements (
+                substance_id   INTEGER NOT NULL
+                    REFERENCES regulated_substances(id) ON DELETE CASCADE,
+                endorsement_id INTEGER NOT NULL
+                    REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                PRIMARY KEY (substance_id, endorsement_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rse_endorsement
+                ON regulated_substance_endorsements(endorsement_id);
+        """)
+
+    # Seed substances (idempotent).
+    conn.execute(
+        "INSERT OR IGNORE INTO regulated_substances (name, display_order) VALUES ('Cannabis', 1)"
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO regulated_substances (name, display_order) VALUES ('Alcohol', 2)"
+    )
+
+    cannabis_id = conn.execute(
+        "SELECT id FROM regulated_substances WHERE name = 'Cannabis'"
+    ).fetchone()
+    alcohol_id = conn.execute(
+        "SELECT id FROM regulated_substances WHERE name = 'Alcohol'"
+    ).fetchone()
+    if cannabis_id is None or alcohol_id is None:
+        return  # No substances to link (shouldn't happen after above inserts)
+    cannabis_id = cannabis_id[0]
+    alcohol_id = alcohol_id[0]
+
+    # Only seed endorsement associations when license_endorsements exists.
+    has_endorsements = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='license_endorsements'"
+    ).fetchone()
+    if not has_endorsements:
+        return
+
+    # Assign Cannabis endorsements.
+    conn.execute("""
+        INSERT OR IGNORE INTO regulated_substance_endorsements (substance_id, endorsement_id)
+        SELECT :sid, id FROM license_endorsements
+        WHERE name LIKE '%CANNABIS%'
+           OR name LIKE '%RETAIL CERT%'
+           OR name = 'TRIBAL COMPACT'
+    """, {"sid": cannabis_id})
+
+    # Assign Alcohol endorsements (everything except Cannabis and UNDEFINED).
+    conn.execute("""
+        INSERT OR IGNORE INTO regulated_substance_endorsements (substance_id, endorsement_id)
+        SELECT :sid, id FROM license_endorsements
+        WHERE name != 'UNDEFINED'
+          AND id NOT IN (
+              SELECT endorsement_id FROM regulated_substance_endorsements
+              WHERE substance_id = :cannabis_sid
+          )
+    """, {"sid": alcohol_id, "cannabis_sid": cannabis_id})
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -516,6 +617,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (6, "admin_audit_log", _m006_admin_audit_log),
     (7, "endorsement_aliases", _m007_endorsement_aliases),
     (8, "endorsement_dismissed_suggestions", _m008_endorsement_dismissed_suggestions),
+    (9, "regulated_substances", _m009_regulated_substances),
 ]
 
 

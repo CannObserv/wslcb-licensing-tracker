@@ -106,3 +106,76 @@ class TestInsertRecord:
             (record_id,),
         ).fetchone()
         assert row["location_id"] is None
+
+
+# ── Multi-value endorsement filter ───────────────────────────────────────────
+
+class TestMultiEndorsementFilter:
+    """_build_where_clause with endorsements as a list."""
+
+    def _insert_with_endorsement(self, db, record_dict, endorsement_name):
+        from queries import insert_record
+        from endorsements import _ensure_endorsement, _link_endorsement
+        rec_id, _ = insert_record(db, record_dict)
+        eid = _ensure_endorsement(db, endorsement_name)
+        _link_endorsement(db, rec_id, eid)
+        db.commit()
+        return rec_id
+
+    def test_empty_list_returns_all(self, db, standard_new_application, approved_numeric_code):
+        from queries import _build_where_clause
+        import copy
+        r1 = copy.deepcopy(standard_new_application)
+        r2 = copy.deepcopy(approved_numeric_code)
+        r2["license_number"] = "DIFF001"
+        from queries import insert_record
+        insert_record(db, r1)
+        insert_record(db, r2)
+        db.commit()
+        where, params, _ = _build_where_clause(db, endorsements=[])
+        assert where == ""
+
+    def test_single_endorsement_filters_correctly(self, db, standard_new_application):
+        from queries import _build_where_clause, search_records
+        import copy
+        r1 = copy.deepcopy(standard_new_application)
+        r2 = copy.deepcopy(standard_new_application)
+        r2["license_number"] = "DIFF002"
+        self._insert_with_endorsement(db, r1, "CANNABIS RETAILER")
+        from queries import insert_record
+        from endorsements import _ensure_endorsement, _link_endorsement
+        id2, _ = insert_record(db, r2)
+        eid2 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
+        _link_endorsement(db, id2, eid2)
+        db.commit()
+        records, total = search_records(db, endorsements=["CANNABIS RETAILER"])
+        assert total == 1
+        assert records[0]["license_number"] == standard_new_application["license_number"]
+
+    def test_two_endorsements_returns_union(self, db, standard_new_application):
+        from queries import search_records
+        import copy
+        r1 = copy.deepcopy(standard_new_application)
+        r2 = copy.deepcopy(standard_new_application)
+        r3 = copy.deepcopy(standard_new_application)
+        r1["license_number"] = "MULTI001"
+        r2["license_number"] = "MULTI002"
+        r3["license_number"] = "MULTI003"
+        self._insert_with_endorsement(db, r1, "CANNABIS RETAILER")
+        self._insert_with_endorsement(db, r2, "BEER DISTRIBUTOR")
+        self._insert_with_endorsement(db, r3, "WINE DISTRIBUTOR")
+        db.commit()
+        records, total = search_records(
+            db, endorsements=["CANNABIS RETAILER", "BEER DISTRIBUTOR"]
+        )
+        assert total == 2
+        nums = {r["license_number"] for r in records}
+        assert nums == {"MULTI001", "MULTI002"}
+
+    def test_unknown_endorsement_returns_zero(self, db, standard_new_application):
+        from queries import search_records
+        from queries import insert_record
+        insert_record(db, standard_new_application)
+        db.commit()
+        records, total = search_records(db, endorsements=["NONEXISTENT XYZ"])
+        assert total == 0
