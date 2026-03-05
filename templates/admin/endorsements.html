@@ -315,7 +315,8 @@
     <div class="space-y-3" id="code-list">
       {% for cm in code_mappings %}
       <div class="code-row bg-white border border-gray-200 rounded-lg overflow-hidden"
-           data-code="{{ cm.code }}">
+           data-code="{{ cm.code }}"
+           data-names="{{ cm.endorsements | map(attribute='name') | join(' ') | lower }}">
         <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-3">
           <span class="font-mono text-sm font-semibold text-gray-700">Code {{ cm.code }}</span>
           <span class="text-xs text-gray-400">{{ cm.record_count }} records</span>
@@ -483,7 +484,8 @@ function sugAccept(radio, canonicalId, variantId) {
 function filterCodes() {
   const q = document.getElementById('code-search').value.toLowerCase();
   document.querySelectorAll('.code-row').forEach(row => {
-    row.style.display = !q || row.dataset.code.includes(q) ? '' : 'none';
+    const match = !q || row.dataset.code.includes(q) || (row.dataset.names || '').includes(q);
+    row.style.display = match ? '' : 'none';
   });
 }
 </script>

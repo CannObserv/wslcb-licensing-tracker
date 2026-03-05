@@ -549,3 +549,83 @@ class TestEndorsementActionRedirects:
         assert resp.status_code == 200
         assert 'name="return_section"' in resp.text
         assert 'value="suggestions"' in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Code Mappings tab — filter search  (issue #38)
+# ---------------------------------------------------------------------------
+
+class TestCodeMappingsFilter:
+    """Regression tests for the Code Mappings tab filter search.
+
+    Issue #38: filterCodes() only checked data-code (numeric), so any
+    alphabetic/endorsement-name input hid all rows.
+    """
+
+    def _seed_code_mapping(self, db):
+        """Insert a code mapping with a named endorsement for filter tests."""
+        cur = db.execute(
+            "INSERT INTO license_endorsements (name) VALUES (?)",
+            ("CANNABIS RETAILER",),
+        )
+        endo_id = cur.lastrowid
+        db.execute(
+            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
+            ("394", endo_id),
+        )
+        db.commit()
+        return endo_id
+
+    def test_code_row_has_data_names_attribute(self, db):
+        """Each .code-row must expose a data-names attribute with endorsement names.
+
+        filterCodes() uses this attribute to match endorsement name text.
+        Without it, any alphabetic search query hides all rows.
+        See issue #38.
+        """
+        _seed_admin(db)
+        self._seed_code_mapping(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=codes")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        assert 'data-names=' in resp.text
+
+    def test_code_row_data_names_contains_endorsement_name(self, db):
+        """The data-names attribute must contain the endorsement name for that code.
+
+        Verifies the server renders the endorsement name text into the attribute
+        so the JS filter can match against it.
+        See issue #38.
+        """
+        _seed_admin(db)
+        self._seed_code_mapping(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=codes")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        assert "cannabis retailer" in resp.text.lower()
+        # The data-names attribute on the code-394 row must include the name
+        assert 'data-names="cannabis retailer"' in resp.text.lower()
+
+    def test_filter_js_checks_data_names(self, db):
+        """The filterCodes() JS function must reference data-names (not only data-code).
+
+        If filterCodes() only checks row.dataset.code, alphabetic queries
+        always return zero results.  It must also check dataset.names (or
+        equivalent) so endorsement-name searches work.
+        See issue #38.
+        """
+        _seed_admin(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=codes")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        # The filterCodes function body must reference dataset.names
+        assert "dataset.names" in resp.text
