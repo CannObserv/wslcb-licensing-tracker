@@ -1,7 +1,7 @@
 ---
 name: reviewing-code-claude
 description: Performs a structured code and documentation review using a severity-tiered findings format. Use when the user says "CR", "code review", or "perform a review". Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes.
-compatibility: Designed for Claude. Requires git and gh CLI. Python/SQLite/FastAPI project using venv, pytest, systemd.
+compatibility: Designed for Claude. Requires git and gh CLI. Python/SQLite web app (FastAPI + Jinja2/HTMX frontend, FTS5) using venv, pytest, systemd.
 metadata:
   author: gregoryfoster
   version: "1.0"

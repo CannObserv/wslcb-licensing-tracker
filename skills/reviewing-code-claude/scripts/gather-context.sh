@@ -11,6 +11,9 @@ if [[ "${1:-}" == "--help" ]]; then
   echo ""
   echo "Prints git status, diffs, recent commits, changed files, and pytest results."
   echo "Automatically resolves the git project root regardless of invocation directory."
+  echo ""
+  echo "Exit codes:"
+  echo "  0  Always exits 0 (test failures are captured as output, not errors)"
   exit 0
 fi
 

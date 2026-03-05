@@ -570,7 +570,12 @@ data/
   ```
   Multiple issues: `#19, #20 [type]: <description>`  
   Common types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`  
-  GitHub auto-links `#<number>` references to the issue. Include `(closes #<number>)` in the final commit body to auto-close the issue on push.
+  GitHub auto-links `#<number>` references to the issue. Put `(closes #<number>)` in the commit **body** (not the subject line) on the final commit of a series to auto-close on push:
+  ```
+  #39 feat: migrate PLAYBOOKS.md to Agent Skills
+
+  (closes #39)
+  ```
 
 ## Address Validation
 
