@@ -513,8 +513,19 @@ def _extract_tbody_lines(lines: list[str]) -> list[list[str]]:
 
     # Format 2: bare <tr> rows — split on date field labels.
     def _is_date_label(line: str) -> bool:
-        lower = line.lower()
-        return any(label.lower().rstrip(":") in lower for label in _DATE_LABELS)
+        """Return True only when *line* contains a date-field label as
+        the visible text of a ``<td>`` cell (possibly wrapped in ``<b>``).
+        Using a cell-context check prevents false matches on business
+        names or other content that might incidentally contain the label
+        text as a substring."""
+        for label in _DATE_LABELS:
+            if re.search(
+                r"<td[^>]*>\s*(?:<[^>]+>)*\s*" + re.escape(label) + r"\s*(?:</[^>]+>)*\s*</td>",
+                line,
+                re.IGNORECASE,
+            ):
+                return True
+        return False
 
     groups2: list[list[str]] = []
     current2: list[str] | None = None

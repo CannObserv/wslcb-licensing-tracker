@@ -8,6 +8,7 @@ return semantic data; this module adds the visual presentation.
 Keeping presentation separate from domain logic ensures that adding a
 JSON API or different frontend doesn't require touching the domain layer.
 """
+from db import SOURCE_ROLE_PRIORITY as _ROLE_PRIORITY
 
 # -- Outcome status display ------------------------------------------------
 
@@ -113,9 +114,6 @@ _DEFAULT_SOURCE_DISPLAY: dict[str, str] = {
     "css_border": "border-gray-200",
 }
 
-
-# Role priority used to select primary_source_id per group (lower = better)
-_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirmed": 2}
 
 
 def summarize_provenance(sources: list[dict]) -> dict:

@@ -1,6 +1,8 @@
 """FastAPI web application for WSLCB licensing tracker."""
 import csv
+import html
 import io
+import json
 import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlencode
@@ -21,12 +23,11 @@ from queries import (
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
     get_record_sources, get_record_link,
-    get_primary_source,
     hydrate_records,
     invalidate_filter_cache,
 )
 from parser import extract_tbody_from_snapshot, extract_tbody_from_diff
-from db import DATA_DIR
+from db import DATA_DIR, SOURCE_TYPE_CO_DIFF_ARCHIVE
 from integrity import (
     check_orphaned_locations,
     check_unenriched_records,
@@ -296,7 +297,6 @@ async def source_viewer(
     file (full HTML snapshot or unified diff) and renders it inside an iframe
     with the original WSLCB inline styles.  Public endpoint — no auth required.
     """
-    from db import SOURCE_TYPE_CO_DIFF_ARCHIVE
     with get_db() as conn:
         # Verify both IDs exist and are linked.
         source_row = conn.execute(
@@ -322,9 +322,8 @@ async def source_viewer(
             raise HTTPException(status_code=404, detail="Source not linked to record")
 
     source = dict(source_row)
-    import json as _json
     raw_meta = source.get("metadata")
-    source["metadata"] = _json.loads(raw_meta) if raw_meta else {}
+    source["metadata"] = json.loads(raw_meta) if raw_meta else {}
 
     tbody_html: str | None = None
     snapshot_path = source.get("snapshot_path")
@@ -347,12 +346,28 @@ async def source_viewer(
                 record["application_type"],
             )
 
+    # Build the srcdoc attribute value server-side using html.escape() so that
+    # all special characters (&, <, >, ", ') are correctly encoded for an HTML
+    # attribute context — avoids the fragile Jinja2 filter chain.
+    srcdoc_attr: str | None = None
+    if tbody_html is not None:
+        page_html = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+            "body{margin:0;padding:8px;background:#fff;"
+            "font-family:Arial,sans-serif;font-size:.80em;}"
+            "table{width:100%;border-collapse:collapse;}"
+            "</style></head><body><table>"
+            + tbody_html
+            + "</table></body></html>"
+        )
+        srcdoc_attr = html.escape(page_html, quote=True)
+
     return await _tpl(request, "partials/source_viewer.html", {
         "request": request,
         "source": source,
         "record": record,
-        "tbody_html": tbody_html,
         "found": tbody_html is not None,
+        "srcdoc_attr": srcdoc_attr,
     })
 
 

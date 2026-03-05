@@ -63,3 +63,9 @@ def _normalize_raw_address(raw: str) -> str:
     if not raw:
         return raw
     return re.sub(r'\xa0+', ' ', raw)
+
+
+# Source-role priority used when selecting the "best" source for display.
+# Lower value = higher priority.  Shared between queries.py and display.py
+# to avoid a circular import.
+SOURCE_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirmed": 2}

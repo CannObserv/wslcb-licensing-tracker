@@ -1,5 +1,6 @@
 {# Source viewer partial — rendered inline below the Data Sources badges.
-   Receives: source (dict), record (dict), tbody_html (str|None), found (bool)
+   Receives: source (dict), record (dict), found (bool),
+             srcdoc_attr (str|None) — pre-escaped value for the srcdoc attribute.
 #}
 <div id="source-viewer-content" class="mt-3 rounded-lg border border-gray-200 overflow-hidden">
   {# Header bar #}
@@ -31,7 +32,7 @@
       id="source-viewer-iframe"
       sandbox="allow-same-origin"
       style="width:100%; border:0; display:block; min-height:80px;"
-      srcdoc="<!DOCTYPE html><html><head><meta charset='utf-8'><style>body{margin:0;padding:8px;background:#fff;font-family:Arial,sans-serif;font-size:.80em;}table{width:100%;border-collapse:collapse;}</style></head><body><table>{{ tbody_html | replace('"', '&quot;') | replace("'", '&#39;') | safe }}</table></body></html>"
+      srcdoc="{{ srcdoc_attr | safe }}"
       onload="this.style.height=(this.contentWindow.document.body.scrollHeight+16)+'px'"
     ></iframe>
   </div>

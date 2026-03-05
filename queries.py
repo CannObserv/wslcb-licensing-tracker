@@ -17,6 +17,7 @@ from entities import (
     parse_and_link_entities, get_record_entities, clean_applicants_string,
     clean_entity_name,
 )
+from db import SOURCE_ROLE_PRIORITY
 from display import format_outcome
 from link_records import get_outcome_status
 
@@ -825,8 +826,8 @@ def get_record_links_bulk(
     return result
 
 
-# Role priority: first_seen=0 (best), repaired=1, confirmed=2
-_ROLE_PRIORITY = {"first_seen": 0, "repaired": 1, "confirmed": 2}
+# Alias for backward-compat and local use; canonical definition is in db.py.
+_ROLE_PRIORITY = SOURCE_ROLE_PRIORITY
 
 
 def get_primary_source(
