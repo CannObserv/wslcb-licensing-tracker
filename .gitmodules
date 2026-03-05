@@ -1,0 +1,3 @@
+[submodule "vendor/gregoryfoster-skills"]
+	path = vendor/gregoryfoster-skills
+	url = https://github.com/gregoryfoster/skills.git

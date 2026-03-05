@@ -57,7 +57,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `templates/admin/endorsements.html` | Endorsement management UI | Three-tab interface: (1) **Endorsement List** — searchable flat table of all endorsements with status badges, record counts, code associations, inline Rename, and checkbox-driven alias creation; (2) **Duplicate Suggestions** — algorithmically surfaced near-duplicate pairs with Accept/Dismiss actions; (3) **Code Mappings** — all WSLCB numeric codes with add/remove endorsement and create-new-code actions. |
 | `templates/admin/users.html` | Admin user management UI | Lists all admin users (email, role, added date, added-by). Inline add-user form (email input + button) and per-row remove buttons with JS confirm. Shows "you" label for the currently signed-in admin; remove button hidden for self. Error banner driven by `?error=` query param. |
 | `templates/admin/dashboard.html` | System dashboard | Record counts (total, by section type, last 24 h/7 d), last 5 scrape runs with status badges, data-quality checklist (orphaned locations, missing endorsements/entities, unresolved codes, placeholder endorsements), quick-link buttons to Endorsements / Audit Log / Users. |
-| `PLAYBOOKS.md` | Agent workflow definitions | Named procedures triggered by shorthand commands (e.g., `CR`). See **Playbooks** section. |
+| `skills/` | Agent Skills | Local override skills (`reviewing-code-claude`, `shipping-work-claude`) and symlinks to `vendor/gregoryfoster-skills/` global skills (`reviewing-architecture-claude`, `managing-skills-claude`). See **Agent Skills** section. |
 | `requirements.txt` | Python dependencies | Runtime + dev (pytest) dependencies. Install with `pip install -r requirements.txt`. |
 | `pytest.ini` | Pytest configuration | Test paths and Python path settings. |
 | `tests/conftest.py` | Shared test fixtures | In-memory DB, sample record dicts, `FIXTURES_DIR` path constant. |
@@ -306,15 +306,54 @@ WHERE step = 'endorsements' AND CAST(version AS INTEGER) < 2;
 - Migration 008 (`endorsement_dismissed_suggestions`): adds `endorsement_dismissed_suggestions` table with `CHECK (endorsement_id_a < endorsement_id_b)` constraint and `ON DELETE CASCADE` FKs
 - To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
 
-## Playbooks
+## Agent Skills
 
-When the user references a playbook by name or trigger phrase (e.g., `CR`, `ship it`), read `PLAYBOOKS.md` and execute the matching procedure. Playbooks define the expected steps, output format, and interaction protocol.
+This project follows the [agentskills.io](https://agentskills.io) spec. Skills live in the `skills/` directory and are auto-discovered by the agent framework. A skill is either a local override (committed directory) or a symlink to an external skills repo vendored as a git submodule.
 
-**Resolution order** (most specific wins):
-1. **Project-level** — `PLAYBOOKS.md` in the project root
-2. **Global** — `~/.config/shelley/PLAYBOOKS.md` (cross-project defaults)
+### External skill repos (git submodules)
 
-If a playbook name exists in both files, the project-level definition takes precedence. If a playbook exists only in the global file, use it.
+| Repo | Submodule path |
+|---|---|
+| `gregoryfoster/skills` | `vendor/gregoryfoster-skills/` |
+
+After cloning this project, initialize submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+At the start of every conversation, pull the latest upstream skills:
+
+```bash
+git submodule update --remote --merge vendor/gregoryfoster-skills
+```
+
+If the submodule ref changed, commit it:
+
+```bash
+git add vendor/gregoryfoster-skills
+git commit -m "chore: update gregoryfoster-skills submodule"
+```
+
+To add a new external skill repo, follow the `managing-skills-claude` skill (available at `vendor/gregoryfoster-skills/skills/managing-skills-claude/`).
+
+### Available skills
+
+| Skill | Source | Triggers |
+|---|---|---|
+| `reviewing-code-claude` | Local override | CR, code review, perform a review |
+| `reviewing-architecture-claude` | Symlink → `vendor/gregoryfoster-skills/` | AR, architecture review, architectural review |
+| `shipping-work-claude` | Local override | ship it, push GH, close GH, wrap up |
+| `managing-skills-claude` | Symlink → `vendor/gregoryfoster-skills/` | add skill repo, add external skills, manage skills, update skills submodule |
+
+### Local overrides
+
+A committed directory in `skills/` with the same name as a symlinked global skill completely supersedes the global version (no inheritance). The local version is fully self-contained.
+
+| Skill | Override reason |
+|---|---|
+| `reviewing-code-claude` | Python/SQLite/FastAPI-specific dimensions (migration safety, FTS sync, frozen/derived data contract, Tailwind/HTMX style guide); runs pytest during gather-context |
+| `shipping-work-claude` | Concrete `source venv/bin/activate && python -m pytest` pre-ship; encodes `#<n> [type]: desc` Conventional Commits convention; systemd restart reminder |
 
 ## Conventions
 
@@ -524,7 +563,14 @@ data/
 - Remote: `git@github.com:CannObserv/wslcb-licensing-tracker.git`
 - Single `main` branch for now
 - Write clear commit messages; group related changes
-- **When implementing a GitHub issue**, prefix every commit message with `#<number>: ` (e.g., `#1: Implement structured logging`). GitHub auto-links these to the issue. Include `(closes #<number>)` in the final commit of the series to auto-close the issue on push.
+- **Commit message convention** — Conventional Commits style:
+  ```
+  #<number> [type]: <description>       # with GH issue
+  [type]: <description>                 # without GH issue
+  ```
+  Multiple issues: `#19, #20 [type]: <description>`  
+  Common types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`  
+  GitHub auto-links `#<number>` references to the issue. Include `(closes #<number>)` in the final commit body to auto-close the issue on push.
 
 ## Address Validation
 
