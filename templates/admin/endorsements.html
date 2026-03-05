@@ -87,6 +87,7 @@
           Create alias (select endorsements below)
         </summary>
         <form method="post" action="/admin/endorsements/alias" class="mt-3 space-y-3 pl-5">
+          <input type="hidden" name="return_section" value="endorsements">
           <p class="text-xs text-gray-500">Check two or more endorsements in the list below, then choose which is canonical.</p>
           <div id="alias-selected-list" class="text-sm text-gray-700 italic">No endorsements selected yet.</div>
           <div class="flex flex-wrap gap-3 items-end">
@@ -227,6 +228,7 @@
                   <summary class="text-xs text-co-purple hover:underline cursor-pointer list-none">Accept&hellip;</summary>
                   <div class="absolute z-10 right-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
                     <form method="post" action="/admin/endorsements/alias" class="space-y-2">
+                      <input type="hidden" name="return_section" value="suggestions">
                       <p class="text-xs text-gray-600 font-medium">Which is canonical?</p>
                       {# Radio to pick canonical; the other becomes a variant #}
                       <label class="flex items-center gap-2 text-xs">
@@ -249,6 +251,7 @@
                 <form method="post" action="/admin/endorsements/dismiss-suggestion">
                   <input type="hidden" name="id_a" value="{{ s.id_a }}">
                   <input type="hidden" name="id_b" value="{{ s.id_b }}">
+                  <input type="hidden" name="return_section" value="suggestions">
                   <button type="submit"
                           onclick="return confirm('Dismiss this suggestion permanently?')"
                           class="text-xs text-gray-400 hover:text-red-600 hover:underline">Dismiss</button>

@@ -600,6 +600,7 @@ async def admin_alias_endorsement(
     admin: dict = Depends(require_admin),
     canonical_id: int = Form(...),
     variant_ids: list[int] = Form(default=[]),
+    return_section: str = Form(default="endorsements"),
 ):
     """Designate a canonical endorsement and alias the selected variants to it."""
     if not canonical_id:
@@ -646,7 +647,7 @@ async def admin_alias_endorsement(
         )
         conn.commit()
 
-    return RedirectResponse("/admin/endorsements?flash=aliased&section=endorsements", status_code=303)
+    return RedirectResponse(f"/admin/endorsements?flash=aliased&section={return_section}", status_code=303)
 
 
 # Keep the old /set-canonical URL working (used by existing tests)
@@ -710,6 +711,7 @@ async def admin_dismiss_suggestion(
     admin: dict = Depends(require_admin),
     id_a: int = Form(...),
     id_b: int = Form(...),
+    return_section: str = Form(default="endorsements"),
 ):
     """Permanently suppress a suggested duplicate pair."""
     with get_db() as conn:
@@ -722,7 +724,7 @@ async def admin_dismiss_suggestion(
             details={"id_a": id_a, "id_b": id_b},
         )
         conn.commit()
-    return RedirectResponse("/admin/endorsements?flash=dismissed&section=endorsements", status_code=303)
+    return RedirectResponse(f"/admin/endorsements?flash=dismissed&section={return_section}", status_code=303)
 
 
 @app.post("/admin/endorsements/code/add", response_class=HTMLResponse)

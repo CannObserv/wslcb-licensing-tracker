@@ -382,3 +382,170 @@ def _overflow_hidden_only_outside_suggestions(html: str) -> bool:
     # The suggestions block ends at the next {% endif %} after it
     block = html[start:start + 4000]
     return "overflow-hidden" not in block
+
+
+# ---------------------------------------------------------------------------
+# Post-action redirect section preservation  (issue #37)
+# ---------------------------------------------------------------------------
+
+class TestEndorsementActionRedirects:
+    """POST actions must redirect back to the tab they were submitted from.
+
+    Issue #37: alias and dismiss-suggestion hardcoded section=endorsements in
+    their redirects, dropping users back on the Endorsement List tab even when
+    they acted from the Duplicate Suggestions tab.
+    """
+
+    def _seed_pair(self, db):
+        """Insert two endorsements and return (id_a, id_b)."""
+        cur = db.execute(
+            "INSERT INTO license_endorsements (name) VALUES (?)", ("TAKEOUT/DELIVERY",)
+        )
+        id_a = cur.lastrowid
+        cur = db.execute(
+            "INSERT INTO license_endorsements (name) VALUES (?)", ("TAKE OUT/DELIVERY",)
+        )
+        id_b = cur.lastrowid
+        db.commit()
+        return id_a, id_b
+
+    # -- /alias ---------------------------------------------------------------
+
+    def test_alias_from_suggestions_tab_redirects_to_suggestions(self, db):
+        """POST /alias with return_section=suggestions must redirect to ?section=suggestions."""
+        _seed_admin(db)
+        id_a, id_b = self._seed_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/alias",
+                data={
+                    "canonical_id": str(id_a),
+                    "variant_ids": str(id_b),
+                    "return_section": "suggestions",
+                },
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        assert "section=suggestions" in resp.headers["location"]
+
+    def test_alias_from_endorsements_tab_redirects_to_endorsements(self, db):
+        """POST /alias with return_section=endorsements must redirect to ?section=endorsements."""
+        _seed_admin(db)
+        id_a, id_b = self._seed_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/alias",
+                data={
+                    "canonical_id": str(id_a),
+                    "variant_ids": str(id_b),
+                    "return_section": "endorsements",
+                },
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        assert "section=endorsements" in resp.headers["location"]
+
+    def test_alias_default_section_is_endorsements(self, db):
+        """POST /alias without return_section defaults to section=endorsements (backward compat)."""
+        _seed_admin(db)
+        id_a, id_b = self._seed_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/alias",
+                data={
+                    "canonical_id": str(id_a),
+                    "variant_ids": str(id_b),
+                    # no return_section
+                },
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        assert "section=endorsements" in resp.headers["location"]
+
+    # -- /dismiss-suggestion --------------------------------------------------
+
+    def test_dismiss_from_suggestions_tab_redirects_to_suggestions(self, db):
+        """POST /dismiss-suggestion with return_section=suggestions must redirect to suggestions."""
+        _seed_admin(db)
+        id_a, id_b = self._seed_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/dismiss-suggestion",
+                data={
+                    "id_a": str(id_a),
+                    "id_b": str(id_b),
+                    "return_section": "suggestions",
+                },
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        assert "section=suggestions" in resp.headers["location"]
+
+    def test_dismiss_default_section_is_endorsements(self, db):
+        """POST /dismiss-suggestion without return_section defaults to endorsements (backward compat)."""
+        _seed_admin(db)
+        id_a, id_b = self._seed_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/dismiss-suggestion",
+                data={
+                    "id_a": str(id_a),
+                    "id_b": str(id_b),
+                },
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        assert "section=endorsements" in resp.headers["location"]
+
+    # -- template: hidden return_section fields -------------------------------
+
+    def test_suggestions_alias_form_has_return_section_suggestions(self, db):
+        """The Accept form on the suggestions tab must include return_section=suggestions."""
+        _seed_admin(db)
+        # Seed near-duplicate pair so suggestions tab has rows
+        db.execute(
+            "INSERT INTO license_endorsements (name) VALUES (?), (?)",
+            ("TAKEOUT/DELIVERY", "TAKE OUT/DELIVERY"),
+        )
+        db.commit()
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=suggestions")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        # The alias form in the suggestions tab must carry return_section=suggestions
+        assert 'name="return_section"' in resp.text
+        assert 'value="suggestions"' in resp.text
+
+    def test_suggestions_dismiss_form_has_return_section_suggestions(self, db):
+        """The Dismiss form on the suggestions tab must include return_section=suggestions."""
+        _seed_admin(db)
+        db.execute(
+            "INSERT INTO license_endorsements (name) VALUES (?), (?)",
+            ("TAKEOUT/DELIVERY", "TAKE OUT/DELIVERY"),
+        )
+        db.commit()
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=suggestions")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        assert 'name="return_section"' in resp.text
+        assert 'value="suggestions"' in resp.text
