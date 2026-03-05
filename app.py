@@ -32,6 +32,10 @@ from endorsements import (
     seed_endorsements, backfill, repair_code_name_endorsements,
     merge_mixed_case_endorsements,
     get_endorsement_groups, set_canonical_endorsement, rename_endorsement,
+    get_endorsement_list, get_code_mappings,
+    suggest_duplicate_endorsements, dismiss_suggestion,
+    add_code_mapping, remove_code_mapping, create_code,
+    reprocess_endorsements,
 )
 from link_records import build_all_links, get_reverse_link_info, get_outcome_status
 from display import format_outcome, summarize_provenance
@@ -554,20 +558,37 @@ async def admin_audit_log(
 async def admin_endorsements(
     request: Request,
     admin: dict = Depends(require_admin),
+    section: str = "",
+    q: str = "",
 ):
-    """Endorsement management page — grouped by numeric code with alias controls."""
+    """Revised endorsement admin — Section 1: endorsement list + suggestions.
+    Section 2: code mappings.
+    """
     with get_db() as conn:
-        groups = get_endorsement_groups(conn)
+        endorsements = get_endorsement_list(conn)
+        suggestions = suggest_duplicate_endorsements(conn)
+        code_mappings = get_code_mappings(conn)
+        # All endorsements for the autocomplete dropdown (non-variant preferred)
+        all_endorsements_for_select = sorted(
+            [{"id": e["id"], "name": e["name"]} for e in endorsements],
+            key=lambda e: e["name"],
+        )
     return await _tpl(request, "admin/endorsements.html", {
         "request": request,
         "admin": admin,
         "active_section": "endorsements",
-        "groups": groups,
+        "endorsements": endorsements,
+        "suggestions": suggestions,
+        "code_mappings": code_mappings,
+        "all_endorsements_for_select": all_endorsements_for_select,
+        "active_tab": section or "endorsements",
+        "q": q,
+        "flash": request.query_params.get("flash", ""),
     })
 
 
-@app.post("/admin/endorsements/set-canonical", response_class=HTMLResponse)
-async def admin_set_canonical(
+@app.post("/admin/endorsements/alias", response_class=HTMLResponse)
+async def admin_alias_endorsement(
     request: Request,
     admin: dict = Depends(require_admin),
     canonical_id: int = Form(...),
@@ -575,14 +596,12 @@ async def admin_set_canonical(
 ):
     """Designate a canonical endorsement and alias the selected variants to it."""
     with get_db() as conn:
-        # Resolve canonical name for audit details
         canonical_name = conn.execute(
             "SELECT name FROM license_endorsements WHERE id = ?",
             (canonical_id,),
         ).fetchone()
         canonical_name = canonical_name[0] if canonical_name else str(canonical_id)
 
-        # Resolve variant names for audit details
         variant_names = []
         for vid in variant_ids:
             row = conn.execute(
@@ -613,7 +632,21 @@ async def admin_set_canonical(
         )
         conn.commit()
 
-    return RedirectResponse("/admin/endorsements", status_code=303)
+    return RedirectResponse("/admin/endorsements?flash=aliased&section=endorsements", status_code=303)
+
+
+# Keep the old /set-canonical URL working (used by existing tests)
+@app.post("/admin/endorsements/set-canonical", response_class=HTMLResponse)
+async def admin_set_canonical(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    canonical_id: int = Form(...),
+    variant_ids: list[int] = Form(default=[]),
+):
+    """Legacy alias for /admin/endorsements/alias (backward compat)."""
+    return await admin_alias_endorsement(
+        request, admin, canonical_id=canonical_id, variant_ids=variant_ids
+    )
 
 
 @app.post("/admin/endorsements/rename", response_class=HTMLResponse)
@@ -654,4 +687,103 @@ async def admin_rename_endorsement(
         )
         conn.commit()
 
-    return RedirectResponse("/admin/endorsements", status_code=303)
+    return RedirectResponse("/admin/endorsements?flash=renamed&section=endorsements", status_code=303)
+
+
+@app.post("/admin/endorsements/dismiss-suggestion", response_class=HTMLResponse)
+async def admin_dismiss_suggestion(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    id_a: int = Form(...),
+    id_b: int = Form(...),
+):
+    """Permanently suppress a suggested duplicate pair."""
+    with get_db() as conn:
+        dismiss_suggestion(conn, id_a, id_b, admin["email"])
+        log_action(
+            conn,
+            email=admin["email"],
+            action="endorsement.dismiss_suggestion",
+            target_type="endorsement",
+            details={"id_a": id_a, "id_b": id_b},
+        )
+        conn.commit()
+    return RedirectResponse("/admin/endorsements?flash=dismissed&section=endorsements", status_code=303)
+
+
+@app.post("/admin/endorsements/code/add", response_class=HTMLResponse)
+async def admin_code_add_endorsement(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    code: str = Form(...),
+    endorsement_id: int = Form(...),
+):
+    """Add an endorsement to a code's expansion and retroactively reprocess."""
+    code = code.strip()
+    if not code:
+        raise HTTPException(status_code=422, detail="code must not be empty")
+    with get_db() as conn:
+        added = add_code_mapping(conn, code, endorsement_id)
+        if added:
+            reprocessed = reprocess_endorsements(conn, code=code)
+            log_action(
+                conn,
+                email=admin["email"],
+                action="endorsement.code_add",
+                target_type="endorsement",
+                target_id=endorsement_id,
+                details={"code": code, "reprocessed_records": reprocessed},
+            )
+        conn.commit()
+    return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
+
+
+@app.post("/admin/endorsements/code/remove", response_class=HTMLResponse)
+async def admin_code_remove_endorsement(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    code: str = Form(...),
+    endorsement_id: int = Form(...),
+):
+    """Remove an endorsement from a code's expansion and retroactively reprocess."""
+    code = code.strip()
+    with get_db() as conn:
+        removed = remove_code_mapping(conn, code, endorsement_id)
+        if removed:
+            reprocessed = reprocess_endorsements(conn, code=code)
+            log_action(
+                conn,
+                email=admin["email"],
+                action="endorsement.code_remove",
+                target_type="endorsement",
+                target_id=endorsement_id,
+                details={"code": code, "reprocessed_records": reprocessed},
+            )
+        conn.commit()
+    return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
+
+
+@app.post("/admin/endorsements/code/create", response_class=HTMLResponse)
+async def admin_code_create(
+    request: Request,
+    admin: dict = Depends(require_admin),
+    code: str = Form(...),
+    endorsement_ids: list[int] = Form(default=[]),
+):
+    """Create a new code and assign endorsement(s) to it."""
+    code = code.strip()
+    if not code:
+        raise HTTPException(status_code=422, detail="code must not be empty")
+    with get_db() as conn:
+        inserted = create_code(conn, code, endorsement_ids)
+        if inserted:
+            reprocessed = reprocess_endorsements(conn, code=code)
+            log_action(
+                conn,
+                email=admin["email"],
+                action="endorsement.code_create",
+                target_type="endorsement",
+                details={"code": code, "endorsement_ids": endorsement_ids, "reprocessed_records": reprocessed},
+            )
+        conn.commit()
+    return RedirectResponse("/admin/endorsements?flash=code_created&section=codes", status_code=303)

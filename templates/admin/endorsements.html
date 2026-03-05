@@ -3,181 +3,445 @@
 
 {% block admin_content %}
 <div class="space-y-6">
-    <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold text-gray-900">Endorsements</h1>
-        <span class="text-sm text-gray-500">{{ groups | length }} code group(s)</span>
+
+  {# Page header #}
+  <div class="flex items-center justify-between flex-wrap gap-2">
+    <h1 class="text-2xl font-bold text-gray-900">Endorsements</h1>
+    <div class="flex gap-2 text-sm text-gray-500">
+      <span>{{ endorsements | length }} endorsements</span>
+      <span>·</span>
+      <span>{{ code_mappings | length }} codes</span>
+    </div>
+  </div>
+
+  {# Flash banner #}
+  {% if flash == 'aliased' %}
+  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Alias saved.</div>
+  {% elif flash == 'renamed' %}
+  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Endorsement renamed.</div>
+  {% elif flash == 'dismissed' %}
+  <div class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">Suggestion dismissed.</div>
+  {% elif flash == 'code_updated' %}
+  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Code mapping updated and records reprocessed.</div>
+  {% elif flash == 'code_created' %}
+  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">New code created and records reprocessed.</div>
+  {% endif %}
+
+  {# Tab bar #}
+  <div class="border-b border-gray-200" x-data="{}">
+    <nav class="-mb-px flex gap-6" aria-label="Sections">
+      <a href="?section=endorsements"
+         class="pb-3 text-sm font-medium border-b-2 {% if active_tab == 'endorsements' %}border-co-purple text-co-purple{% else %}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{% endif %}"
+         id="tab-endorsements">
+        Endorsement List
+        <span class="ml-1.5 rounded-full px-2 py-0.5 text-xs {% if active_tab == 'endorsements' %}bg-co-purple text-white{% else %}bg-gray-100 text-gray-600{% endif %}">{{ endorsements | length }}</span>
+      </a>
+      <a href="?section=suggestions"
+         class="pb-3 text-sm font-medium border-b-2 {% if active_tab == 'suggestions' %}border-co-purple text-co-purple{% else %}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{% endif %}"
+         id="tab-suggestions">
+        Duplicate Suggestions
+        {% if suggestions %}
+        <span class="ml-1.5 rounded-full px-2 py-0.5 text-xs {% if active_tab == 'suggestions' %}bg-co-purple text-white{% else %}bg-amber-100 text-amber-700{% endif %}">{{ suggestions | length }}</span>
+        {% endif %}
+      </a>
+      <a href="?section=codes"
+         class="pb-3 text-sm font-medium border-b-2 {% if active_tab == 'codes' %}border-co-purple text-co-purple{% else %}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{% endif %}"
+         id="tab-codes">
+        Code Mappings
+        <span class="ml-1.5 rounded-full px-2 py-0.5 text-xs {% if active_tab == 'codes' %}bg-co-purple text-white{% else %}bg-gray-100 text-gray-600{% endif %}">{{ code_mappings | length }}</span>
+      </a>
+    </nav>
+  </div>
+
+  {# ── Section 1: Endorsement List ──────────────────────────────────── #}
+  {% if active_tab == 'endorsements' %}
+  <div class="space-y-4">
+
+    {# Search + alias action bar #}
+    <div class="bg-white border border-gray-200 rounded-lg p-4 space-y-3" id="alias-panel">
+      <div class="flex flex-wrap gap-3 items-end">
+        <div class="flex-1 min-w-48">
+          <label class="block text-xs font-medium text-gray-700 mb-1">Filter endorsements</label>
+          <input type="text" id="endo-search" placeholder="Search by name…"
+                 oninput="filterEndorsements()"
+                 class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">Status filter</label>
+          <select id="endo-status-filter" onchange="filterEndorsements()"
+                  class="rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none">
+            <option value="">All</option>
+            <option value="standalone">Standalone</option>
+            <option value="canonical">Canonical</option>
+            <option value="variant">Alias/Variant</option>
+          </select>
+        </div>
+      </div>
+
+      {# Alias action form — populated by JS checkboxes #}
+      <details id="alias-form-details" class="group">
+        <summary class="text-sm text-co-purple cursor-pointer hover:underline select-none list-none flex items-center gap-1">
+          <svg class="w-4 h-4 group-open:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          Create alias (select endorsements below)
+        </summary>
+        <form method="post" action="/admin/endorsements/alias" class="mt-3 space-y-3 pl-5">
+          <p class="text-xs text-gray-500">Check two or more endorsements in the list below, then choose which is canonical.</p>
+          <div id="alias-selected-list" class="text-sm text-gray-700 italic">No endorsements selected yet.</div>
+          <div class="flex flex-wrap gap-3 items-end">
+            <div>
+              <label class="block text-xs font-medium text-gray-700 mb-1">Canonical (authoritative name)</label>
+              <select name="canonical_id" id="alias-canonical-select"
+                      class="rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none" required>
+                <option value="">— pick from checked —</option>
+              </select>
+            </div>
+            <div id="alias-variant-hiddens"></div>
+            <button type="submit"
+                    class="px-4 py-1.5 bg-co-purple text-white text-sm rounded hover:bg-co-purple-700 disabled:opacity-40"
+                    id="alias-submit-btn" disabled>Set canonical &amp; alias</button>
+          </div>
+        </form>
+      </details>
     </div>
 
+    {# Endorsement table #}
+    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <table class="min-w-full text-sm" id="endo-table">
+        <thead class="bg-gray-50 border-b border-gray-200">
+          <tr>
+            <th class="w-8 px-3 py-2"></th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700">Name</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700">Status</th>
+            <th class="px-4 py-2 text-right font-semibold text-gray-700">Records</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700">Codes</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100" id="endo-tbody">
+          {% for e in endorsements %}
+          <tr class="endo-row hover:bg-gray-50"
+              data-name="{{ e.name | lower }}"
+              data-status="{% if e.is_variant %}variant{% elif e.is_canonical %}canonical{% else %}standalone{% endif %}">
+            <td class="px-3 py-2">
+              <input type="checkbox" class="endo-check rounded border-gray-300 text-co-purple focus:ring-co-purple"
+                     data-id="{{ e.id }}" data-name="{{ e.name }}">
+            </td>
+            <td class="px-4 py-2">
+              {% if e.is_variant %}
+              <span class="line-through text-gray-400">{{ e.name }}</span>
+              <span class="ml-1 text-gray-400 text-xs">&rarr; {{ e.canonical_name }}</span>
+              {% else %}
+              <span class="font-medium text-gray-900">{{ e.name }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2">
+              {% if e.is_canonical %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Canonical</span>
+              {% elif e.is_variant %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">Alias</span>
+              {% else %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-600">Standalone</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2 text-right text-gray-700">{{ e.record_count | default(0) }}</td>
+            <td class="px-4 py-2">
+              {% for c in e.codes %}
+              <span class="inline-block font-mono text-xs bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 mr-1">{{ c }}</span>
+              {% else %}
+              <span class="text-gray-300 text-xs">—</span>
+              {% endfor %}
+            </td>
+            <td class="px-4 py-2">
+              {# Rename action — inline form in a popover-style details element #}
+              <details class="inline-block relative group/rename">
+                <summary class="text-xs text-co-purple hover:underline cursor-pointer list-none">Rename</summary>
+                <div class="absolute z-10 left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                  <form method="post" action="/admin/endorsements/rename" class="space-y-2">
+                    <input type="hidden" name="endorsement_id" value="{{ e.id }}">
+                    <label class="block text-xs font-medium text-gray-700">New name for <em>{{ e.name }}</em></label>
+                    <input type="text" name="new_name" value="{{ e.name }}"
+                           class="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none"
+                           required>
+                    <button type="submit"
+                            class="px-3 py-1 bg-co-purple text-white text-xs rounded hover:bg-co-purple-700">Save</button>
+                  </form>
+                </div>
+              </details>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Section 2: Duplicate Suggestions ─────────────────────────────── #}
+  {% if active_tab == 'suggestions' %}
+  <div class="space-y-4">
     <p class="text-sm text-gray-600">
-        Endorsement names sometimes vary due to WSLCB renaming over time.
-        Use <strong>Set Canonical</strong> to designate one name as authoritative for a code group;
-        the others become aliases that resolve to it in search filters and record display.
-        Use <strong>Rename</strong> to assign a text description to a bare numeric code.
+      These pairs are algorithmically flagged as possible duplicates (similarity &ge; 0.70).
+      <strong>Accept</strong> to create an alias (you choose which is canonical);
+      <strong>Dismiss</strong> to permanently suppress the suggestion.
     </p>
 
-    {% for group in groups %}
-    {% set endorsements = group.endorsements %}
-    {% set multi = endorsements | length > 1 %}
-    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        {# Group header #}
-        <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-3">
-            {% if group.code %}
-            <span class="font-mono text-sm font-semibold text-gray-700">Code {{ group.code }}</span>
-            {% else %}
-            <span class="text-sm font-semibold text-gray-500 italic">No code mapping</span>
-            {% endif %}
-            <span class="text-xs text-gray-400">{{ endorsements | length }} endorsement{{ 's' if endorsements | length != 1 }}</span>
-            {% set alias_count = endorsements | selectattr('is_variant') | list | length %}
-            {% if multi and alias_count > 0 %}
-            <span class="ml-auto inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
-                {{ alias_count }} aliased
-            </span>
-            {% endif %}
-        </div>
-
-        {# Endorsement rows #}
-        <div class="divide-y divide-gray-100">
-            {% for e in endorsements %}
-            <div class="px-4 py-3 flex items-center gap-3 {% if e.is_variant %}bg-gray-50{% endif %}">
-                {# Status badge #}
-                <div class="w-24 flex-shrink-0">
-                    {% if e.is_canonical %}
-                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">
-                        Canonical
-                    </span>
-                    {% elif e.is_variant %}
-                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">
-                        Alias
-                    </span>
-                    {% endif %}
-                </div>
-
-                {# Name + count #}
-                <div class="flex-1 min-w-0">
-                    <span class="text-sm {% if e.is_variant %}text-gray-400 line-through{% else %}text-gray-800 font-medium{% endif %}">{{ e.name }}</span>
-                    {% if e.is_variant %}
-                    <span class="ml-2 text-xs text-gray-400">
-                        &rarr; resolves to canonical
-                    </span>
-                    {% endif %}
-                </div>
-                <div class="flex-shrink-0 text-xs text-gray-400 w-24 text-right">
-                    {{ e.record_count }} record{{ 's' if e.record_count != 1 }}
-                </div>
-
-                {# Rename action (bare numeric codes only, if no alias yet) #}
-                {% if not e.is_variant and not e.is_canonical and e.name.isdigit() %}
-                <div class="flex-shrink-0">
-                    <button type="button"
-                            onclick="openRenameModal({{ e.id }}, '{{ e.name | e }}')"
-                            class="text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-co-purple hover:text-co-purple transition-colors">
-                        Rename&hellip;
-                    </button>
-                </div>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
-
-        {# Set canonical form — shown only for multi-name groups #}
-        {% if multi %}
-        {% set form_id = 'form-' ~ loop.index %}
-        <div class="px-4 py-3 bg-co-purple-50 border-t border-co-purple-100">
-            <form id="{{ form_id }}" method="post" action="/admin/endorsements/set-canonical"
-                  class="flex flex-wrap items-end gap-3">
-                <div class="flex-1 min-w-0">
-                    <label class="block text-xs font-medium text-co-purple mb-1">Set canonical</label>
-                    <select name="canonical_id"
-                            onchange="syncCanonicalCheckbox(this)"
-                            class="w-full border border-co-purple-100 rounded px-2 py-1.5 text-sm bg-white
-                                   focus:border-co-purple focus:ring-1 focus:ring-co-purple focus:outline-none">
-                        {% for e in endorsements %}
-                        <option value="{{ e.id }}" {% if e.is_canonical %}selected{% endif %}>
-                            {{ e.name }} ({{ e.record_count }} records)
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="flex-1 min-w-0">
-                    <label class="block text-xs font-medium text-co-purple mb-1">Alias these variants</label>
-                    <div class="space-y-1">
-                        {% for e in endorsements %}
-                        <label class="flex items-center gap-2 text-sm text-gray-700" id="label-{{ e.id }}">
-                            <input type="checkbox" name="variant_ids" value="{{ e.id }}"
-                                   id="chk-{{ e.id }}"
-                                   {% if e.is_variant %}checked{% endif %}
-                                   class="rounded border-gray-300 text-co-purple focus:ring-co-purple">
-                            {{ e.name }}
-                        </label>
-                        {% endfor %}
-                    </div>
-                </div>
-                <div class="flex-shrink-0">
-                    <button type="submit"
-                            class="px-3 py-2 rounded text-sm font-medium bg-co-purple text-white hover:bg-co-purple-700 transition-colors">
-                        Apply
-                    </button>
-                </div>
-            </form>
-        </div>
-        {% endif %}
+    {% if not suggestions %}
+    <div class="bg-white border border-gray-200 rounded-lg px-6 py-10 text-center text-gray-400">
+      <svg class="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      No duplicate suggestions — all pairs either already aliased or dismissed.
     </div>
-    {% endfor %}
+    {% else %}
+    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 border-b border-gray-200">
+          <tr>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700">Candidate A</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700">Candidate B</th>
+            <th class="px-4 py-2 text-right font-semibold text-gray-700">Score</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for s in suggestions %}
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3">
+              <span class="font-medium text-gray-900">{{ s.name_a }}</span>
+              <span class="ml-1.5 text-xs text-gray-400">({{ s.count_a }} records)</span>
+            </td>
+            <td class="px-4 py-3">
+              <span class="font-medium text-gray-900">{{ s.name_b }}</span>
+              <span class="ml-1.5 text-xs text-gray-400">({{ s.count_b }} records)</span>
+            </td>
+            <td class="px-4 py-3 text-right">
+              <span class="font-mono text-xs
+                {% if s.score >= 0.9 %}text-green-700{% elif s.score >= 0.75 %}text-amber-700{% else %}text-gray-500{% endif %}">
+                {{ "%.2f"|format(s.score) }}
+              </span>
+            </td>
+            <td class="px-4 py-3">
+              <div class="flex gap-3">
+                {# Accept: open a small form to choose canonical direction #}
+                <details class="relative">
+                  <summary class="text-xs text-co-purple hover:underline cursor-pointer list-none">Accept&hellip;</summary>
+                  <div class="absolute z-10 left-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                    <form method="post" action="/admin/endorsements/alias" class="space-y-2">
+                      <p class="text-xs text-gray-600 font-medium">Which is canonical?</p>
+                      {# Radio to pick canonical; the other becomes a variant #}
+                      <label class="flex items-center gap-2 text-xs">
+                        <input type="radio" name="canonical_choice" value="a"
+                               onchange="sugAccept(this, {{ s.id_a }}, {{ s.id_b }})"
+                               class="text-co-purple"> {{ s.name_a }}
+                      </label>
+                      <label class="flex items-center gap-2 text-xs">
+                        <input type="radio" name="canonical_choice" value="b"
+                               onchange="sugAccept(this, {{ s.id_b }}, {{ s.id_a }})"
+                               class="text-co-purple"> {{ s.name_b }}
+                      </label>
+                      <input type="hidden" name="canonical_id" class="sug-canonical-id">
+                      <input type="hidden" name="variant_ids" class="sug-variant-id">
+                      <button type="submit"
+                              class="px-3 py-1 bg-co-purple text-white text-xs rounded hover:bg-co-purple-700">Create alias</button>
+                    </form>
+                  </div>
+                </details>
+                <form method="post" action="/admin/endorsements/dismiss-suggestion">
+                  <input type="hidden" name="id_a" value="{{ s.id_a }}">
+                  <input type="hidden" name="id_b" value="{{ s.id_b }}">
+                  <button type="submit"
+                          onclick="return confirm('Dismiss this suggestion permanently?')"
+                          class="text-xs text-gray-400 hover:text-red-600 hover:underline">Dismiss</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ── Section 3: Code Mappings ──────────────────────────────────────── #}
+  {% if active_tab == 'codes' %}
+  <div class="space-y-4">
+    <p class="text-sm text-gray-600">
+      Each numeric code appears in the WSLCB source as a license type for approved/discontinued records.
+      Add or remove endorsements from a code to change how those records are classified.
+      Changes retroactively reprocess all affected records.
+    </p>
+
+    {# Create new code form #}
+    <details class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <summary class="px-4 py-3 bg-gray-50 border-b border-gray-200 text-sm font-medium text-co-purple cursor-pointer hover:bg-co-purple-50 list-none flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Create new code mapping
+      </summary>
+      <div class="px-4 py-4">
+        <form method="post" action="/admin/endorsements/code/create" class="flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Code number</label>
+            <input type="text" name="code" placeholder="e.g. 399"
+                   class="w-28 rounded border border-gray-300 px-3 py-1.5 text-sm font-mono focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none" required>
+          </div>
+          <div class="flex-1 min-w-48">
+            <label class="block text-xs font-medium text-gray-700 mb-1">Endorsements (select one or more)</label>
+            <select name="endorsement_ids" multiple size="4"
+                    class="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none">
+              {% for e in all_endorsements_for_select %}
+              <option value="{{ e.id }}">{{ e.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="self-end">
+            <button type="submit"
+                    class="px-4 py-1.5 bg-co-purple text-white text-sm rounded hover:bg-co-purple-700">Create</button>
+          </div>
+        </form>
+      </div>
+    </details>
+
+    {# Code search #}
+    <input type="text" id="code-search" placeholder="Filter codes…"
+           oninput="filterCodes()"
+           class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none">
+
+    {# Code list #}
+    <div class="space-y-3" id="code-list">
+      {% for cm in code_mappings %}
+      <div class="code-row bg-white border border-gray-200 rounded-lg overflow-hidden"
+           data-code="{{ cm.code }}">
+        <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-3">
+          <span class="font-mono text-sm font-semibold text-gray-700">Code {{ cm.code }}</span>
+          <span class="text-xs text-gray-400">{{ cm.record_count }} records</span>
+          <span class="text-xs text-gray-400">&middot; {{ cm.endorsements | length }} endorsement{{ 's' if cm.endorsements | length != 1 }}</span>
+          {# Add endorsement to this code #}
+          <details class="ml-auto relative">
+            <summary class="text-xs text-co-purple hover:underline cursor-pointer list-none">+ Add endorsement</summary>
+            <div class="absolute right-0 z-10 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+              <form method="post" action="/admin/endorsements/code/add" class="space-y-2">
+                <input type="hidden" name="code" value="{{ cm.code }}">
+                <label class="block text-xs font-medium text-gray-700">Endorsement to add</label>
+                <select name="endorsement_id"
+                        class="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none" required>
+                  <option value="">— select —</option>
+                  {% for e in all_endorsements_for_select %}
+                  <option value="{{ e.id }}">{{ e.name }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit"
+                        class="px-3 py-1 bg-co-purple text-white text-xs rounded hover:bg-co-purple-700">Add &amp; reprocess</button>
+              </form>
+            </div>
+          </details>
+        </div>
+        <ul class="divide-y divide-gray-100">
+          {% for e in cm.endorsements %}
+          <li class="px-4 py-2 flex items-center gap-3">
+            {% if e.is_variant %}
+            <span class="text-sm text-gray-400 line-through">{{ e.name }}</span>
+            <span class="text-xs text-gray-400">&rarr; {{ e.canonical_name }}</span>
+            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-gray-100 text-gray-400">alias</span>
+            {% else %}
+            <span class="text-sm text-gray-900">{{ e.name }}</span>
+            {% if e.is_canonical %}
+            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-co-purple-50 text-co-purple">canonical</span>
+            {% endif %}
+            {% endif %}
+            <span class="ml-auto text-xs text-gray-400">{{ e.record_count }} records</span>
+            <form method="post" action="/admin/endorsements/code/remove" class="inline">
+              <input type="hidden" name="code" value="{{ cm.code }}">
+              <input type="hidden" name="endorsement_id" value="{{ e.id }}">
+              <button type="submit"
+                      onclick="return confirm('Remove {{ e.name }} from code {{ cm.code }}? This will reprocess affected records.')"
+                      class="text-xs text-gray-300 hover:text-red-500" title="Remove from code">✕</button>
+            </form>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
 </div>
 
-{# Rename modal #}
-<dialog id="rename-modal"
-        class="rounded-lg border border-gray-200 shadow-xl p-0 w-full max-w-md backdrop:bg-black/30">
-    <form method="post" action="/admin/endorsements/rename" class="p-6 space-y-4">
-        <h2 class="text-lg font-semibold text-gray-900">Assign name to code</h2>
-        <p class="text-sm text-gray-600">
-            Assign a human-readable name to bare numeric code
-            <code id="rename-code-label" class="font-mono bg-gray-100 px-1 rounded"></code>.
-            The original code row is kept as an alias.
-        </p>
-        <input type="hidden" name="endorsement_id" id="rename-endorsement-id">
-        <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1" for="rename-new-name">New name</label>
-            <input id="rename-new-name" name="new_name" type="text" required
-                   placeholder="e.g. SPECIAL EVENT PERMIT"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm
-                          focus:border-co-purple focus:ring-1 focus:ring-co-purple focus:outline-none">
-        </div>
-        <div class="flex justify-end gap-2">
-            <button type="button" onclick="document.getElementById('rename-modal').close()"
-                    class="px-3 py-1.5 rounded text-sm text-gray-600 border border-gray-300 hover:bg-gray-50">
-                Cancel
-            </button>
-            <button type="submit"
-                    class="px-3 py-1.5 rounded text-sm font-medium bg-co-purple text-white hover:bg-co-purple-700">
-                Rename
-            </button>
-        </div>
-    </form>
-</dialog>
-
 <script>
-function openRenameModal(id, codeName) {
-    document.getElementById('rename-endorsement-id').value = id;
-    document.getElementById('rename-code-label').textContent = codeName;
-    document.getElementById('rename-modal').showModal();
+// ── Endorsement list filter ────────────────────────────────────────────────
+function filterEndorsements() {
+  const q = document.getElementById('endo-search').value.toLowerCase();
+  const statusVal = document.getElementById('endo-status-filter').value;
+  document.querySelectorAll('.endo-row').forEach(row => {
+    const nameMatch = !q || row.dataset.name.includes(q);
+    const statusMatch = !statusVal || row.dataset.status === statusVal;
+    row.style.display = (nameMatch && statusMatch) ? '' : 'none';
+  });
 }
 
-function syncCanonicalCheckbox(select) {
-    // Within the same form, disable the checkbox whose value matches the
-    // selected canonical so the admin can't accidentally alias it to itself.
-    const form = select.closest('form');
-    form.querySelectorAll('input[type=checkbox][name=variant_ids]').forEach(cb => {
-        const isCanonical = cb.value === select.value;
-        cb.disabled = isCanonical;
-        cb.closest('label').classList.toggle('opacity-40', isCanonical);
-        if (isCanonical) cb.checked = false;
+// ── Alias checkbox machinery ───────────────────────────────────────────────
+function updateAliasPanel() {
+  const checked = [...document.querySelectorAll('.endo-check:checked')];
+  const listEl = document.getElementById('alias-selected-list');
+  const canonSelect = document.getElementById('alias-canonical-select');
+  const hiddenContainer = document.getElementById('alias-variant-hiddens');
+  const submitBtn = document.getElementById('alias-submit-btn');
+
+  if (checked.length < 2) {
+    listEl.textContent = checked.length === 1
+      ? `1 selected — check at least one more.`
+      : 'No endorsements selected yet.';
+    canonSelect.innerHTML = '<option value="">— pick from checked —</option>';
+    hiddenContainer.innerHTML = '';
+    submitBtn.disabled = true;
+    return;
+  }
+
+  // Rebuild canonical dropdown with checked items
+  canonSelect.innerHTML = '<option value="">— choose canonical —</option>';
+  checked.forEach(cb => {
+    const opt = document.createElement('option');
+    opt.value = cb.dataset.id;
+    opt.textContent = cb.dataset.name;
+    canonSelect.appendChild(opt);
+  });
+
+  listEl.innerHTML = `<strong>${checked.length} selected:</strong> ` +
+    checked.map(cb => `<em>${cb.dataset.name}</em>`).join(', ');
+
+  submitBtn.disabled = false;
+
+  // Rebuild variant hidden inputs when canonical selection changes
+  canonSelect.onchange = function() {
+    const cid = this.value;
+    hiddenContainer.innerHTML = '';
+    checked.filter(cb => cb.dataset.id !== cid).forEach(cb => {
+      const inp = document.createElement('input');
+      inp.type = 'hidden';
+      inp.name = 'variant_ids';
+      inp.value = cb.dataset.id;
+      hiddenContainer.appendChild(inp);
     });
+  };
 }
 
-// On page load, disable the already-selected canonical in each form.
-document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('select[name=canonical_id]').forEach(syncCanonicalCheckbox);
-});
+document.querySelectorAll('.endo-check').forEach(cb =>
+  cb.addEventListener('change', updateAliasPanel)
+);
+
+// ── Suggestion accept helper ───────────────────────────────────────────────
+function sugAccept(radio, canonicalId, variantId) {
+  const form = radio.closest('form');
+  form.querySelector('.sug-canonical-id').value = canonicalId;
+  form.querySelector('.sug-variant-id').value = variantId;
+}
+
+// ── Code list filter ───────────────────────────────────────────────────────
+function filterCodes() {
+  const q = document.getElementById('code-search').value.toLowerCase();
+  document.querySelectorAll('.code-row').forEach(row => {
+    row.style.display = !q || row.dataset.code.includes(q) ? '' : 'none';
+  });
+}
 </script>
 {% endblock %}

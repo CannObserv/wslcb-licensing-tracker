@@ -16,6 +16,14 @@ from endorsements import (
     _merge_seeded_placeholders,
     get_endorsement_options,
     get_record_endorsements,
+    endorsement_similarity,
+    get_endorsement_list,
+    suggest_duplicate_endorsements,
+    dismiss_suggestion,
+    get_code_mappings,
+    add_code_mapping,
+    remove_code_mapping,
+    create_code,
 )
 from queries import insert_record
 
@@ -827,3 +835,299 @@ class TestReprocessEndorsements:
 
         assert result["records_processed"] >= 1
         assert before == after  # no changes written
+
+
+# ── endorsement_similarity ───────────────────────────────────────────────────
+
+
+class TestEndorsementSimilarity:
+    """Tests for the token-overlap similarity algorithm."""
+
+    def test_identical_names_score_1(self):
+        assert endorsement_similarity("CANNABIS RETAILER", "CANNABIS RETAILER") == 1.0
+
+    def test_take_out_normalisation(self):
+        """TAKE OUT → TAKEOUT normalisation yields score >= threshold."""
+        score = endorsement_similarity(
+            "TAKEOUT/DELIVERY", "TAKE OUT/DELIVERY ENDORSEMENT"
+        )
+        assert score >= 0.70
+
+    def test_growlers_variant(self):
+        score = endorsement_similarity(
+            "GROWLERS TAKEOUT/DELIVERY", "GROWLERS TAKE OUT/DELIVERY"
+        )
+        assert score >= 0.70
+
+    def test_containment_boost(self):
+        """COCKTAILS/WINE TO-GO is subset of PREMIXED COCKTAILS/WINE TO-GO."""
+        score = endorsement_similarity(
+            "PREMIXED COCKTAILS/WINE TO-GO", "COCKTAILS/WINE TO-GO"
+        )
+        assert score >= 0.70
+
+    def test_angle_bracket_artefact(self):
+        """HTML-stripped names (missing '>') still score 1.0."""
+        score = endorsement_similarity(
+            "DOMESTIC WINERY > 249,999 LITERS",
+            "DOMESTIC WINERY  249,999 LITERS",
+        )
+        assert score >= 0.90
+
+    def test_unrelated_names_score_low(self):
+        score = endorsement_similarity("CANNABIS RETAILER", "BEER/WINE RESTAURANT")
+        assert score < 0.70
+
+    def test_empty_name_returns_zero(self):
+        assert endorsement_similarity("", "CANNABIS RETAILER") == 0.0
+        assert endorsement_similarity("CANNABIS RETAILER", "") == 0.0
+
+
+# ── get_endorsement_list ─────────────────────────────────────────────────────
+
+
+class TestGetEndorsementList:
+    """Tests for the flat endorsement list returned by get_endorsement_list."""
+
+    def test_returns_all_endorsements(self, db):
+        seed_endorsements(db)
+        result = get_endorsement_list(db)
+        assert len(result) >= 1
+
+    def test_entry_structure(self, db):
+        eid = _ensure_endorsement(db, "TEST ENDORSEMENT")
+        db.commit()
+        result = get_endorsement_list(db)
+        entry = next(e for e in result if e["id"] == eid)
+        assert "name" in entry
+        assert "record_count" in entry
+        assert "is_canonical" in entry
+        assert "is_variant" in entry
+        assert "canonical_id" in entry
+        assert "canonical_name" in entry
+        assert "codes" in entry
+
+    def test_standalone_flags(self, db):
+        eid = _ensure_endorsement(db, "STANDALONE ENDO")
+        db.commit()
+        result = get_endorsement_list(db)
+        entry = next(e for e in result if e["id"] == eid)
+        assert entry["is_canonical"] is False
+        assert entry["is_variant"] is False
+        assert entry["canonical_id"] is None
+
+    def test_variant_flags(self, db):
+        from endorsements import set_canonical_endorsement
+        cid = _ensure_endorsement(db, "CANONICAL ENDO")
+        vid = _ensure_endorsement(db, "VARIANT ENDO")
+        set_canonical_endorsement(db, canonical_id=cid, variant_ids=[vid], created_by="test")
+        db.commit()
+        result = get_endorsement_list(db)
+        canon_entry = next(e for e in result if e["id"] == cid)
+        variant_entry = next(e for e in result if e["id"] == vid)
+        assert canon_entry["is_canonical"] is True
+        assert variant_entry["is_variant"] is True
+        assert variant_entry["canonical_id"] == cid
+        assert variant_entry["canonical_name"] == "CANONICAL ENDO"
+
+    def test_codes_populated(self, db):
+        eid = _ensure_endorsement(db, "CODED ENDO")
+        db.execute("INSERT INTO endorsement_codes (code, endorsement_id) VALUES ('999', ?)", (eid,))
+        db.commit()
+        result = get_endorsement_list(db)
+        entry = next(e for e in result if e["id"] == eid)
+        assert "999" in entry["codes"]
+
+
+# ── suggest_duplicate_endorsements ──────────────────────────────────────────
+
+
+class TestSuggestDuplicateEndorsements:
+    """Tests for the duplicate-suggestion algorithm."""
+
+    def test_surfaces_similar_pair(self, db):
+        _ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        db.commit()
+        suggestions = suggest_duplicate_endorsements(db)
+        names = {(s["name_a"], s["name_b"]) for s in suggestions}
+        pair = ("TAKE OUT/DELIVERY ENDORSEMENT", "TAKEOUT/DELIVERY")
+        # normalised order: smaller id first; just check both names appear
+        found = any(
+            {s["name_a"], s["name_b"]} == {"TAKEOUT/DELIVERY", "TAKE OUT/DELIVERY ENDORSEMENT"}
+            for s in suggestions
+        )
+        assert found
+
+    def test_excludes_aliased_pair(self, db):
+        from endorsements import set_canonical_endorsement
+        cid = _ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        vid = _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        set_canonical_endorsement(db, canonical_id=cid, variant_ids=[vid], created_by="test")
+        db.commit()
+        suggestions = suggest_duplicate_endorsements(db)
+        found = any(
+            {s["name_a"], s["name_b"]} == {"TAKEOUT/DELIVERY", "TAKE OUT/DELIVERY ENDORSEMENT"}
+            for s in suggestions
+        )
+        assert not found
+
+    def test_excludes_dismissed_pair(self, db):
+        id_a = _ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        id_b = _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        dismiss_suggestion(db, id_a, id_b, "admin@test.com")
+        db.commit()
+        suggestions = suggest_duplicate_endorsements(db)
+        found = any(
+            {s["name_a"], s["name_b"]} == {"TAKEOUT/DELIVERY", "TAKE OUT/DELIVERY ENDORSEMENT"}
+            for s in suggestions
+        )
+        assert not found
+
+    def test_ordered_by_score_descending(self, db):
+        # Identical pair should score 1.0; similar but not identical scores lower
+        _ensure_endorsement(db, "GROWLERS TAKEOUT/DELIVERY")
+        _ensure_endorsement(db, "GROWLERS TAKE OUT/DELIVERY")
+        _ensure_endorsement(db, "PREMIXED COCKTAILS/WINE TO-GO")
+        _ensure_endorsement(db, "COCKTAILS/WINE TO-GO")
+        db.commit()
+        suggestions = suggest_duplicate_endorsements(db)
+        scores = [s["score"] for s in suggestions]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_pair_id_ordering(self, db):
+        id_a = _ensure_endorsement(db, "AARDVARK LICENCE")
+        id_b = _ensure_endorsement(db, "AARDVARK LICENSE")
+        db.commit()
+        suggestions = suggest_duplicate_endorsements(db)
+        found = [s for s in suggestions if {s["name_a"], s["name_b"]} == {"AARDVARK LICENCE", "AARDVARK LICENSE"}]
+        if found:
+            assert found[0]["id_a"] < found[0]["id_b"]
+
+
+# ── dismiss_suggestion ───────────────────────────────────────────────────────
+
+
+class TestDismissSuggestion:
+    """Tests for dismiss_suggestion."""
+
+    def test_inserts_dismissed_row(self, db):
+        a = _ensure_endorsement(db, "ENDO A")
+        b = _ensure_endorsement(db, "ENDO B")
+        dismiss_suggestion(db, a, b, "admin@test.com")
+        db.commit()
+        row = db.execute(
+            "SELECT dismissed_by FROM endorsement_dismissed_suggestions "
+            "WHERE endorsement_id_a = ? AND endorsement_id_b = ?",
+            (min(a, b), max(a, b)),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "admin@test.com"
+
+    def test_normalises_id_order(self, db):
+        a = _ensure_endorsement(db, "ENDO X")
+        b = _ensure_endorsement(db, "ENDO Y")
+        # Pass larger id first — should still be stored as min(a,b), max(a,b)
+        dismiss_suggestion(db, max(a, b), min(a, b), "test")
+        db.commit()
+        row = db.execute(
+            "SELECT 1 FROM endorsement_dismissed_suggestions "
+            "WHERE endorsement_id_a = ? AND endorsement_id_b = ?",
+            (min(a, b), max(a, b)),
+        ).fetchone()
+        assert row is not None
+
+    def test_idempotent(self, db):
+        a = _ensure_endorsement(db, "ENDO P")
+        b = _ensure_endorsement(db, "ENDO Q")
+        dismiss_suggestion(db, a, b, "test")
+        dismiss_suggestion(db, a, b, "test")  # should not raise
+        db.commit()
+        count = db.execute(
+            "SELECT COUNT(*) FROM endorsement_dismissed_suggestions "
+            "WHERE endorsement_id_a = ? AND endorsement_id_b = ?",
+            (min(a, b), max(a, b)),
+        ).fetchone()[0]
+        assert count == 1
+
+
+# ── get_code_mappings ────────────────────────────────────────────────────────
+
+
+class TestGetCodeMappings:
+    """Tests for get_code_mappings."""
+
+    def test_returns_list(self, db):
+        seed_endorsements(db)
+        result = get_code_mappings(db)
+        assert isinstance(result, list)
+        assert len(result) >= 1
+
+    def test_entry_structure(self, db):
+        eid = _ensure_endorsement(db, "MAP TEST ENDO")
+        db.execute("INSERT INTO endorsement_codes (code, endorsement_id) VALUES ('777', ?)", (eid,))
+        db.commit()
+        result = get_code_mappings(db)
+        entry = next(cm for cm in result if cm["code"] == "777")
+        assert "endorsements" in entry
+        assert "record_count" in entry
+        assert any(e["id"] == eid for e in entry["endorsements"])
+
+    def test_numeric_sort_order(self, db):
+        eid = _ensure_endorsement(db, "SORT TEST A")
+        eid2 = _ensure_endorsement(db, "SORT TEST B")
+        db.execute("INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES ('20', ?)", (eid,))
+        db.execute("INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES ('100', ?)", (eid2,))
+        db.commit()
+        codes = [cm["code"] for cm in get_code_mappings(db)]
+        idx20 = next((i for i, c in enumerate(codes) if c == "20"), None)
+        idx100 = next((i for i, c in enumerate(codes) if c == "100"), None)
+        if idx20 is not None and idx100 is not None:
+            assert idx20 < idx100  # 20 < 100 numerically
+
+
+# ── add_code_mapping / remove_code_mapping / create_code ─────────────────────
+
+
+class TestCodeMappingMutations:
+    """Tests for add_code_mapping, remove_code_mapping, create_code."""
+
+    def test_add_returns_true_for_new_row(self, db):
+        eid = _ensure_endorsement(db, "ADD TEST")
+        result = add_code_mapping(db, "888", eid)
+        assert result is True
+
+    def test_add_returns_false_for_duplicate(self, db):
+        eid = _ensure_endorsement(db, "DUP TEST")
+        add_code_mapping(db, "889", eid)
+        result = add_code_mapping(db, "889", eid)
+        assert result is False
+
+    def test_remove_returns_true_for_existing(self, db):
+        eid = _ensure_endorsement(db, "REMOVE TEST")
+        add_code_mapping(db, "890", eid)
+        db.commit()
+        result = remove_code_mapping(db, "890", eid)
+        assert result is True
+
+    def test_remove_returns_false_when_absent(self, db):
+        eid = _ensure_endorsement(db, "ABSENT TEST")
+        result = remove_code_mapping(db, "891", eid)
+        assert result is False
+
+    def test_create_code_inserts_mappings(self, db):
+        eid1 = _ensure_endorsement(db, "CREATE A")
+        eid2 = _ensure_endorsement(db, "CREATE B")
+        inserted = create_code(db, "892", [eid1, eid2])
+        assert inserted == 2
+        rows = db.execute(
+            "SELECT endorsement_id FROM endorsement_codes WHERE code = '892'"
+        ).fetchall()
+        assert {r[0] for r in rows} == {eid1, eid2}
+
+    def test_create_code_skips_existing_mapping(self, db):
+        eid = _ensure_endorsement(db, "SKIP TEST")
+        add_code_mapping(db, "893", eid)
+        # Should not raise; inserted count = 0 for the duplicate
+        inserted = create_code(db, "893", [eid])
+        assert inserted == 0

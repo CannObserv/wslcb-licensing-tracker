@@ -443,3 +443,102 @@ class TestMigration004AddressValidatorV1:
         # Should not raise
         migrate(conn)
         conn.close()
+
+
+class TestMigration008EndorsementDismissedSuggestions:
+    """Tests for migration 008: endorsement_dismissed_suggestions table."""
+
+    def test_table_created_on_fresh_db(self):
+        from db import get_connection
+        from schema import init_db
+
+        conn = get_connection(":memory:")
+        init_db(conn)
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "endorsement_dismissed_suggestions" in tables
+        conn.close()
+
+    def test_migration_adds_table_to_existing_db(self):
+        """Migration 008 adds the table to a DB that only has migrations 1-7."""
+        from db import get_connection
+        from schema import migrate
+
+        conn = get_connection(":memory:")
+        # Bootstrap at version 7 (endorsement_aliases exists, dismissed doesn't)
+        conn.executescript("""
+            PRAGMA user_version = 7;
+            CREATE TABLE license_endorsements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE endorsement_aliases (
+                id INTEGER PRIMARY KEY,
+                endorsement_id INTEGER NOT NULL
+                    REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                canonical_endorsement_id INTEGER NOT NULL
+                    REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_by TEXT,
+                UNIQUE(endorsement_id)
+            );
+        """)
+        migrate(conn)
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "endorsement_dismissed_suggestions" in tables
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        conn.close()
+
+    def test_dismissed_suggestions_schema(self):
+        from db import get_connection
+        from schema import init_db
+
+        conn = get_connection(":memory:")
+        init_db(conn)
+        # Insert two endorsements and a dismissed pair
+        conn.execute("INSERT INTO license_endorsements (name) VALUES ('A'), ('B')")
+        ids = [r[0] for r in conn.execute("SELECT id FROM license_endorsements").fetchall()]
+        a, b = min(ids), max(ids)
+        conn.execute(
+            "INSERT INTO endorsement_dismissed_suggestions "
+            "(endorsement_id_a, endorsement_id_b, dismissed_by) VALUES (?, ?, 'test')",
+            (a, b),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT dismissed_by FROM endorsement_dismissed_suggestions "
+            "WHERE endorsement_id_a = ? AND endorsement_id_b = ?",
+            (a, b),
+        ).fetchone()
+        assert row[0] == "test"
+        conn.close()
+
+    def test_check_constraint_enforces_id_order(self):
+        """CHECK (endorsement_id_a < endorsement_id_b) is enforced."""
+        import sqlite3 as sqlite_mod
+        from db import get_connection
+        from schema import init_db
+
+        conn = get_connection(":memory:")
+        init_db(conn)
+        conn.execute("INSERT INTO license_endorsements (name) VALUES ('X'), ('Y')")
+        ids = [r[0] for r in conn.execute("SELECT id FROM license_endorsements").fetchall()]
+        a, b = min(ids), max(ids)
+        # Inserting with a > b should fail the CHECK constraint
+        with pytest.raises(sqlite_mod.IntegrityError):
+            conn.execute(
+                "INSERT INTO endorsement_dismissed_suggestions "
+                "(endorsement_id_a, endorsement_id_b, dismissed_by) VALUES (?, ?, 'bad')",
+                (b, a),
+            )
+        conn.close()

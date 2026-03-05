@@ -229,6 +229,18 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             created_by TEXT,
             UNIQUE(endorsement_id)
         );
+
+        CREATE TABLE IF NOT EXISTS endorsement_dismissed_suggestions (
+            endorsement_id_a INTEGER NOT NULL
+                REFERENCES license_endorsements(id) ON DELETE CASCADE,
+            endorsement_id_b INTEGER NOT NULL
+                REFERENCES license_endorsements(id) ON DELETE CASCADE,
+            dismissed_by TEXT NOT NULL,
+            dismissed_at TEXT NOT NULL
+                DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            PRIMARY KEY (endorsement_id_a, endorsement_id_b),
+            CHECK (endorsement_id_a < endorsement_id_b)
+        );
     """)
 
     # Seed the fixed source_types rows
@@ -457,6 +469,35 @@ def _m007_endorsement_aliases(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _m008_endorsement_dismissed_suggestions(conn: sqlite3.Connection) -> None:
+    """Add endorsement_dismissed_suggestions table for the revised endorsement UI.
+
+    Stores admin-dismissed duplicate-suggestion pairs so they are never
+    re-surfaced by the similarity algorithm.  Dismissal is permanent but does
+    not prevent explicit aliasing through the main alias action.
+    """
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "endorsement_dismissed_suggestions" not in tables:
+        conn.executescript("""
+            CREATE TABLE endorsement_dismissed_suggestions (
+                endorsement_id_a INTEGER NOT NULL
+                    REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                endorsement_id_b INTEGER NOT NULL
+                    REFERENCES license_endorsements(id) ON DELETE CASCADE,
+                dismissed_by TEXT NOT NULL,
+                dismissed_at TEXT NOT NULL
+                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                PRIMARY KEY (endorsement_id_a, endorsement_id_b),
+                CHECK (endorsement_id_a < endorsement_id_b)
+            );
+        """)
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -474,6 +515,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (5, "admin_users", _m005_admin_users),
     (6, "admin_audit_log", _m006_admin_audit_log),
     (7, "endorsement_aliases", _m007_endorsement_aliases),
+    (8, "endorsement_dismissed_suggestions", _m008_endorsement_dismissed_suggestions),
 ]
 
 
