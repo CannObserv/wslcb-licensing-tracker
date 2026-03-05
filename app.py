@@ -21,9 +21,12 @@ from queries import (
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
     get_record_sources, get_record_link,
+    get_primary_source,
     hydrate_records,
     invalidate_filter_cache,
 )
+from parser import extract_tbody_from_snapshot, extract_tbody_from_diff
+from db import DATA_DIR
 from integrity import (
     check_orphaned_locations,
     check_unenriched_records,
@@ -278,6 +281,78 @@ async def record_detail(request: Request, record_id: int):
         "related": related, "sources": sources,
         "provenance": provenance,
         "outcome": outcome, "reverse_link": reverse_link,
+    })
+
+
+@app.get("/source/{source_id}/record/{record_id}", response_class=HTMLResponse)
+async def source_viewer(
+    request: Request,
+    source_id: int,
+    record_id: int,
+):
+    """Return an HTMX partial showing the original archived source for a record.
+
+    Extracts the raw ``<tbody>`` HTML for the record from its archival source
+    file (full HTML snapshot or unified diff) and renders it inside an iframe
+    with the original WSLCB inline styles.  Public endpoint — no auth required.
+    """
+    from db import SOURCE_TYPE_CO_DIFF_ARCHIVE
+    with get_db() as conn:
+        # Verify both IDs exist and are linked.
+        source_row = conn.execute(
+            """SELECT s.id, st.slug AS source_type, st.label AS source_label,
+                      s.snapshot_path, s.url, s.captured_at, s.metadata
+               FROM sources s
+               JOIN source_types st ON st.id = s.source_type_id
+               WHERE s.id = ?""",
+            (source_id,),
+        ).fetchone()
+        if source_row is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+
+        record = get_record_by_id(conn, record_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Record not found")
+
+        link_row = conn.execute(
+            "SELECT 1 FROM record_sources WHERE record_id = ? AND source_id = ?",
+            (record_id, source_id),
+        ).fetchone()
+        if link_row is None:
+            raise HTTPException(status_code=404, detail="Source not linked to record")
+
+    source = dict(source_row)
+    import json as _json
+    raw_meta = source.get("metadata")
+    source["metadata"] = _json.loads(raw_meta) if raw_meta else {}
+
+    tbody_html: str | None = None
+    snapshot_path = source.get("snapshot_path")
+    if snapshot_path:
+        path = DATA_DIR / snapshot_path
+        if source["source_type"] == "co_diff_archive":
+            tbody_html = extract_tbody_from_diff(
+                path,
+                record["section_type"],
+                record["license_number"],
+                record["record_date"],
+                record["application_type"],
+            )
+        else:
+            tbody_html = extract_tbody_from_snapshot(
+                path,
+                record["section_type"],
+                record["license_number"],
+                record["record_date"],
+                record["application_type"],
+            )
+
+    return await _tpl(request, "partials/source_viewer.html", {
+        "request": request,
+        "source": source,
+        "record": record,
+        "tbody_html": tbody_html,
+        "found": tbody_html is not None,
     })
 
 

@@ -1,0 +1,74 @@
+--- @	Sun, 14 Jun 2025 00:05:06 -0700
++++ @	Mon, 15 Jun 2025 00:15:05 -0700
+@@ -100,5 +100,50 @@
+ <tr style="background: White"><td> </td><td> </td></tr>
++                   <tbody width="100%" style="Font-size: .80em; background: lightgrey; border: Thick groove Steelblue; font-family: Arial, sans-serif; color:black">
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F" width="25%"><b>Notification Date:</b></td>
++<td>6/15/2025</td>
++                      </tr>
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F"><b>Business Name:</b></td>
++<td>ACME CANNABIS CO</td>
++                      </tr>
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F"><b>Business Location:</b></td>
++<td>123 MAIN ST,  SEATTLE, WA 98101</td>
++                      </tr>
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F"><b>Applicant(s):</b></td>
++<td>ACME CANNABIS CO; JOHN DOE</td>
++                      </tr>
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F"><b>License Type:</b></td>
++<td>CANNABIS RETAILER</td>
++                      </tr>
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F"><b>Application Type:</b></td>
++<td>NEW APPLICATION</td>
++                      </tr>
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F"><b>License Number:</b></td>
++<td>078001</td>
++                      </tr>
++                      <tr>
++                         <td align="Right" style="background: #8FBC8F"><b>Contact Phone:</b></td>
++<td>2065550100</td>
++                      </tr>
++                      <tr style="background: White"><td> </td><td> </td></tr>
++                   </tbody>
+-                   <tbody width="100%" style="Font-size: .80em; background: lightgrey; border: Thick groove Steelblue; font-family: Arial, sans-serif; color:black">
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F" width="25%"><b>Notification Date:</b></td>
+-<td>6/14/2025</td>
+-                      </tr>
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F"><b>Business Name:</b></td>
+-<td>BOB'S BEER BARN</td>
+-                      </tr>
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F"><b>Business Location:</b></td>
+-<td>456 OAK AVE,  SPOKANE, WA 99201</td>
+-                      </tr>
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F"><b>Applicant(s):</b></td>
+-<td>BOB'S BEER BARN; BOB JONES</td>
+-                      </tr>
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F"><b>License Type:</b></td>
+-<td>GROCERY STORE - BEER/WINE</td>
+-                      </tr>
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F"><b>Application Type:</b></td>
+-<td>RENEWAL</td>
+-                      </tr>
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F"><b>License Number:</b></td>
+-<td>412345</td>
+-                      </tr>
+-                      <tr>
+-                         <td align="Right" style="background: #8FBC8F"><b>Contact Phone:</b></td>
+-<td>5095550200</td>
+-                      </tr>
+-                      <tr style="background: White"><td> </td><td> </td></tr>
+-                   </tbody>

@@ -1,0 +1,45 @@
+{# Source viewer partial — rendered inline below the Data Sources badges.
+   Receives: source (dict), record (dict), tbody_html (str|None), found (bool)
+#}
+<div id="source-viewer-content" class="mt-3 rounded-lg border border-gray-200 overflow-hidden">
+  {# Header bar #}
+  <div class="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600">
+    <div class="flex items-center gap-3 flex-wrap min-w-0">
+      <span class="font-medium">
+        {% if source.source_type == 'live_scrape' %}⚡{% elif source.source_type in ('co_archive', 'co_diff_archive') %}📁{% elif source.source_type == 'internet_archive' %}🏛️{% else %}•{% endif %}
+        {{ source.source_label }}
+      </span>
+      {% if source.captured_at %}
+      <span class="text-gray-400">captured {{ source.captured_at[:10] }}</span>
+      {% endif %}
+      {% if source.snapshot_path %}
+      <span class="text-gray-400 truncate max-w-xs" title="{{ source.snapshot_path }}">{{ source.snapshot_path }}</span>
+      {% endif %}
+    </div>
+    <button
+      type="button"
+      onclick="document.getElementById('source-viewer').innerHTML = ''"
+      class="flex-shrink-0 text-gray-400 hover:text-gray-700 font-medium leading-none"
+      aria-label="Close source viewer"
+    >✕</button>
+  </div>
+
+  {# Body #}
+  {% if found %}
+  <div class="bg-white p-0">
+    <iframe
+      id="source-viewer-iframe"
+      sandbox="allow-same-origin"
+      style="width:100%; border:0; display:block; min-height:80px;"
+      srcdoc="<!DOCTYPE html><html><head><meta charset='utf-8'><style>body{margin:0;padding:8px;background:#fff;font-family:Arial,sans-serif;font-size:.80em;}table{width:100%;border-collapse:collapse;}</style></head><body><table>{{ tbody_html | replace('"', '&quot;') | replace("'", '&#39;') | safe }}</table></body></html>"
+      onload="this.style.height=(this.contentWindow.document.body.scrollHeight+16)+'px'"
+    ></iframe>
+  </div>
+  {% else %}
+  <div class="px-4 py-5 text-sm text-gray-500 italic">
+    Original record block not found in this snapshot. The record may have scrolled off the
+    30-day window before this snapshot was taken, or the source file format did not contain
+    a recoverable <code>&lt;tbody&gt;</code> block.
+  </div>
+  {% endif %}
+</div>

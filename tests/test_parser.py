@@ -333,3 +333,81 @@ class TestEdgeCases:
         table = soup.find("table")
         records = parse_records_from_table(table, "new_application")
         assert records == []
+
+
+# ── extract_tbody_from_snapshot ──────────────────────────────────────
+
+class TestExtractTbodyFromSnapshot:
+    def test_found_first_record(self, tmp_path):
+        """Returns the <tbody> HTML for the first matching record."""
+        from parser import extract_tbody_from_snapshot
+        src = FIXTURES_DIR / "snapshot_two_records.html"
+        result = extract_tbody_from_snapshot(
+            src, "new_application", "078001", "2025-06-15", "NEW APPLICATION"
+        )
+        assert result is not None
+        assert "ACME CANNABIS CO" in result
+        assert "<tbody" in result.lower()
+
+    def test_found_second_record(self, tmp_path):
+        """Returns the <tbody> for the second record in the same table."""
+        from parser import extract_tbody_from_snapshot
+        src = FIXTURES_DIR / "snapshot_two_records.html"
+        result = extract_tbody_from_snapshot(
+            src, "new_application", "412345", "2025-06-14", "RENEWAL"
+        )
+        assert result is not None
+        assert "BOB'S BEER BARN" in result
+        assert "ACME CANNABIS CO" not in result
+
+    def test_not_found_wrong_license(self):
+        """Returns None when the license number doesn't match."""
+        from parser import extract_tbody_from_snapshot
+        src = FIXTURES_DIR / "snapshot_two_records.html"
+        result = extract_tbody_from_snapshot(
+            src, "new_application", "999999", "2025-06-15", "NEW APPLICATION"
+        )
+        assert result is None
+
+    def test_not_found_wrong_section(self):
+        """Returns None when section_type has no matching table."""
+        from parser import extract_tbody_from_snapshot
+        src = FIXTURES_DIR / "snapshot_two_records.html"
+        result = extract_tbody_from_snapshot(
+            src, "approved", "078001", "2025-06-15", "NEW APPLICATION"
+        )
+        assert result is None
+
+
+# ── extract_tbody_from_diff ──────────────────────────────────────────
+
+class TestExtractTbodyFromDiff:
+    def test_found_in_added_lines(self):
+        """Returns the reconstructed <tbody> for a record in the added lines."""
+        from parser import extract_tbody_from_diff
+        src = FIXTURES_DIR / "diff_two_records.txt"
+        result = extract_tbody_from_diff(
+            src, "new_application", "078001", "2025-06-15", "NEW APPLICATION"
+        )
+        assert result is not None
+        assert "ACME CANNABIS CO" in result
+        assert "<tbody" in result.lower()
+
+    def test_found_in_removed_lines(self):
+        """Returns the reconstructed <tbody> for a record only in removed lines."""
+        from parser import extract_tbody_from_diff
+        src = FIXTURES_DIR / "diff_two_records.txt"
+        result = extract_tbody_from_diff(
+            src, "new_application", "412345", "2025-06-14", "RENEWAL"
+        )
+        assert result is not None
+        assert "BOB'S BEER BARN" in result
+
+    def test_not_found(self):
+        """Returns None when the record key isn't in the diff."""
+        from parser import extract_tbody_from_diff
+        src = FIXTURES_DIR / "diff_two_records.txt"
+        result = extract_tbody_from_diff(
+            src, "new_application", "999999", "2025-06-15", "NEW APPLICATION"
+        )
+        assert result is None

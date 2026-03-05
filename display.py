@@ -114,17 +114,28 @@ _DEFAULT_SOURCE_DISPLAY: dict[str, str] = {
 }
 
 
+# Role priority used to select primary_source_id per group (lower = better)
+_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirmed": 2}
+
+
 def summarize_provenance(sources: list[dict]) -> dict:
     """Aggregate provenance sources into a display-ready summary.
 
     Returns a dict with:
-      - ``groups``: ``{source_type: {count, icon, label, css_bg, css_text, css_border}}``
+      - ``groups``: ``{source_type: {count, icon, label, css_bg, css_text,
+        css_border, primary_source_id}}`` — ``primary_source_id`` is the ``id``
+        of the best source for that type (role priority, then snapshot presence,
+        then newest ``captured_at``)
       - ``first_date``: earliest captured_at date (str, YYYY-MM-DD) or ``""``
       - ``last_date``: latest captured_at date (str) or ``""``
       - ``repaired``: ``True`` if any source has role ``'repaired'``
       - ``total``: total source count
     """
     groups: dict[str, dict] = {}
+    # Tracks the best (priority, captured_at) seen per source_type for
+    # primary_source_id selection.  Lower priority tuple = better.
+    _group_best: dict[str, tuple] = {}  # source_type -> (role_rank, no_snap, neg_captured_at)
+
     first_date = ""
     last_date = ""
     repaired = False
@@ -133,13 +144,33 @@ def summarize_provenance(sources: list[dict]) -> dict:
         st = s.get("source_type", "")
         if st not in groups:
             display = _SOURCE_TYPE_DISPLAY.get(st, _DEFAULT_SOURCE_DISPLAY)
-            groups[st] = {"count": 0, **display}
+            groups[st] = {"count": 0, "primary_source_id": None, **display}
+            _group_best[st] = (999, 999, "")
         groups[st]["count"] += 1
+
+        # Compute priority tuple for this source within the group.
+        role_rank = _ROLE_PRIORITY.get(s.get("role", ""), 2)
+        no_snap = 0 if s.get("snapshot_path") else 1
+        captured = s.get("captured_at") or ""
+        # Negate captured_at for descending sort (newer = smaller string with negation trick
+        # not needed since we invert: we want newest = lowest priority value,
+        # so use a negated comparison via reverse string sort: larger date = better)
+        # Store as (role_rank, no_snap, captured_at) — compare captured_at descending.
+        current_best = _group_best[st]
+        # Compare: lower role_rank and no_snap is better; higher captured_at is better.
+        new_better = (
+            role_rank < current_best[0]
+            or (role_rank == current_best[0] and no_snap < current_best[1])
+            or (role_rank == current_best[0] and no_snap == current_best[1]
+                and captured > current_best[2])
+        )
+        if groups[st]["primary_source_id"] is None or new_better:
+            groups[st]["primary_source_id"] = s.get("id")
+            _group_best[st] = (role_rank, no_snap, captured)
 
         if s.get("role") == "repaired":
             repaired = True
 
-        captured = s.get("captured_at")
         if captured:
             date_str = captured[:10]
             if not last_date or date_str > last_date:

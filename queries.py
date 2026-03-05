@@ -825,6 +825,51 @@ def get_record_links_bulk(
     return result
 
 
+# Role priority: first_seen=0 (best), repaired=1, confirmed=2
+_ROLE_PRIORITY = {"first_seen": 0, "repaired": 1, "confirmed": 2}
+
+
+def get_primary_source(
+    conn: sqlite3.Connection, record_id: int,
+) -> dict | None:
+    """Return the single most-relevant source for a record, or None.
+
+    Priority order:
+    1. Role: ``first_seen`` > ``repaired`` > ``confirmed``
+    2. Within a role: sources with a non-NULL ``snapshot_path`` first
+    3. Newest ``captured_at`` as tiebreaker
+    """
+    rows = conn.execute(
+        """SELECT s.id, st.slug AS source_type, st.label AS source_label,
+                  s.snapshot_path, s.url, s.captured_at, s.ingested_at,
+                  s.metadata, rs.role
+           FROM record_sources rs
+           JOIN sources s ON s.id = rs.source_id
+           JOIN source_types st ON st.id = s.source_type_id
+           WHERE rs.record_id = ?
+           ORDER BY s.captured_at DESC""",
+        (record_id,),
+    ).fetchall()
+    if not rows:
+        return None
+
+    best = None
+    best_priority = (999, 999)  # (role_rank, no_snapshot_penalty)
+    for r in rows:
+        d = dict(r)
+        role_rank = _ROLE_PRIORITY.get(d["role"], 2)
+        no_snap = 0 if d["snapshot_path"] else 1
+        priority = (role_rank, no_snap)
+        if best is None or priority < best_priority:
+            best = d
+            best_priority = priority
+
+    if best is not None:
+        raw = best.get("metadata")
+        best["metadata"] = json.loads(raw) if raw else {}
+    return best
+
+
 def get_record_sources(
     conn: sqlite3.Connection, record_id: int,
 ) -> list[dict]:

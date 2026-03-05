@@ -194,3 +194,73 @@ class TestMultiEndorsementFilter:
         )
         assert total == 1
         assert records[0]["license_number"] == "MIXED001"
+
+
+# ── get_primary_source ─────────────────────────────────────────────
+
+class TestGetPrimarySource:
+    def _make_source(self, conn, source_type_id: int, snapshot_path: str | None, captured_at: str) -> int:
+        from database import get_or_create_source
+        return get_or_create_source(
+            conn, source_type_id,
+            snapshot_path=snapshot_path,
+            url="https://example.com",
+            captured_at=captured_at,
+        )
+
+    def _link(self, conn, record_id: int, source_id: int, role: str):
+        from database import link_record_source
+        link_record_source(conn, record_id, source_id, role)
+
+    def test_returns_none_when_no_sources(self, db, standard_new_application):
+        from queries import insert_record, get_primary_source
+        record_id, _ = insert_record(db, standard_new_application)
+        assert get_primary_source(db, record_id) is None
+
+    def test_first_seen_preferred_over_confirmed(self, db, standard_new_application):
+        from database import SOURCE_TYPE_LIVE_SCRAPE
+        from queries import insert_record, get_primary_source
+        record_id, _ = insert_record(db, standard_new_application)
+
+        s_confirmed = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, "path/a.html", "2025-06-15T12:00:00")
+        s_first_seen = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, "path/b.html", "2025-06-14T12:00:00")
+        db.commit()
+        self._link(db, record_id, s_confirmed, "confirmed")
+        self._link(db, record_id, s_first_seen, "first_seen")
+        db.commit()
+
+        result = get_primary_source(db, record_id)
+        assert result is not None
+        assert result["id"] == s_first_seen
+
+    def test_snapshot_path_preferred_within_role(self, db, standard_new_application):
+        from database import SOURCE_TYPE_LIVE_SCRAPE
+        from queries import insert_record, get_primary_source
+        record_id, _ = insert_record(db, standard_new_application)
+
+        s_no_path = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, None, "2025-06-15T12:00:00")
+        s_with_path = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, "path/c.html", "2025-06-14T12:00:00")
+        db.commit()
+        self._link(db, record_id, s_no_path, "confirmed")
+        self._link(db, record_id, s_with_path, "confirmed")
+        db.commit()
+
+        result = get_primary_source(db, record_id)
+        assert result is not None
+        assert result["id"] == s_with_path
+
+    def test_returns_source_dict_fields(self, db, standard_new_application):
+        from database import SOURCE_TYPE_CO_ARCHIVE
+        from queries import insert_record, get_primary_source
+        record_id, _ = insert_record(db, standard_new_application)
+
+        s = self._make_source(db, SOURCE_TYPE_CO_ARCHIVE, "path/d.html", "2025-06-10T00:00:00")
+        db.commit()
+        self._link(db, record_id, s, "first_seen")
+        db.commit()
+
+        result = get_primary_source(db, record_id)
+        assert result is not None
+        assert "snapshot_path" in result
+        assert "source_type" in result
+        assert "captured_at" in result

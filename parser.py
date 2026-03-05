@@ -385,3 +385,176 @@ def discover_diff_files(
             result.append((fp, sec_type))
 
     return result
+
+
+# ── Source viewer: raw <tbody> extraction ──────────────────────────
+
+
+def _match_key(
+    tbody,
+    section_type: str,
+    license_number: str,
+    record_date: str,
+    application_type: str,
+) -> bool:
+    """Return True if a BeautifulSoup <tbody> element matches the natural key.
+
+    Scans the two-cell <tr> rows to extract the date, license number, and
+    application type fields, then compares against the provided key.
+    Normalises the date via ``normalize_date`` so M/D/Y and ISO formats
+    both match.
+    """
+    date_field = DATE_FIELD_MAP.get(section_type)
+    if date_field is None:
+        return False
+
+    found_date = ""
+    found_license = ""
+    found_app_type = ""
+
+    for row in tbody.find_all("tr"):
+        cells = row.find_all("td")
+        if len(cells) != 2:
+            continue
+        label = cells[0].get_text(strip=True)
+        value = cells[1].get_text(strip=True)
+        if label == date_field:
+            found_date = normalize_date(value)
+        elif label == "License Number:":
+            found_license = value.strip()
+        elif label in ("Application Type:", "\\Application Type:"):
+            found_app_type = value.strip()
+
+    return (
+        found_date == record_date
+        and found_license == license_number
+        and found_app_type == application_type
+    )
+
+
+def extract_tbody_from_snapshot(
+    path: Path,
+    section_type: str,
+    license_number: str,
+    record_date: str,
+    application_type: str,
+) -> str | None:
+    """Extract the raw outer HTML of the <tbody> for a single record.
+
+    Searches the full-page HTML snapshot at *path* for the section table
+    matching *section_type*, then locates the ``<tbody>`` whose natural key
+    ``(section_type, license_number, record_date, application_type)`` matches.
+
+    Returns the raw ``str(tbody)`` HTML string (inline styles intact) or
+    ``None`` if the record is not present in this snapshot.
+    """
+    try:
+        html = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        html = path.read_text(encoding="latin-1")
+
+    soup = BeautifulSoup(html, "lxml")
+
+    for table in soup.find_all("table"):
+        th = table.find("th")
+        if not th:
+            continue
+        header = th.get_text(strip=True).replace("\xa0", " ")
+        if SECTION_MAP.get(header) != section_type:
+            continue
+        # Found the right section table — scan its <tbody> elements.
+        for tbody in table.find_all("tbody"):
+            if _match_key(tbody, section_type, license_number, record_date, application_type):
+                return str(tbody)
+
+    return None
+
+
+# Date field labels used as record-start sentinels in the tbody-less diff fallback.
+_DATE_LABELS = tuple(DATE_FIELD_MAP.values())  # e.g. "Notification Date:"
+
+
+def _extract_tbody_lines(lines: list[str]) -> list[list[str]]:
+    """Split a flat list of HTML lines into per-record <tbody> line groups.
+
+    Two formats are handled:
+
+    1. **``<tbody>``-wrapped** (most diffs): a new group starts when a line
+       contains ``<tbody`` and ends when a line contains ``</tbody>``.
+    2. **Bare ``<tr>`` rows** (some older diffs lack ``<tbody>`` wrappers): a
+       new group starts when a label cell contains one of the date field
+       labels (e.g. ``Notification Date``) and ends when the next date-label
+       line is encountered (or the list is exhausted).  The resulting group
+       is wrapped in synthetic ``<tbody>\u2026</tbody>`` tags so downstream
+       BeautifulSoup parsing works uniformly.
+
+    Returns a list of line-lists, one per record ``<tbody>`` block.
+    """
+    # Detect format by checking for any <tbody> tag.
+    has_tbody = any("<tbody" in l.lower() for l in lines)
+
+    if has_tbody:
+        # Format 1: <tbody>-wrapped records.
+        groups: list[list[str]] = []
+        current: list[str] | None = None
+        for line in lines:
+            stripped = line.strip()
+            if "<tbody" in stripped.lower() and current is None:
+                current = [line]
+                if "</tbody>" in stripped.lower():
+                    groups.append(current)
+                    current = None
+            elif current is not None:
+                current.append(line)
+                if "</tbody>" in stripped.lower():
+                    groups.append(current)
+                    current = None
+        return groups
+
+    # Format 2: bare <tr> rows — split on date field labels.
+    def _is_date_label(line: str) -> bool:
+        lower = line.lower()
+        return any(label.lower().rstrip(":") in lower for label in _DATE_LABELS)
+
+    groups2: list[list[str]] = []
+    current2: list[str] | None = None
+    for line in lines:
+        if _is_date_label(line):
+            if current2:
+                groups2.append(["<tbody>"] + current2 + ["</tbody>"])
+            current2 = [line]
+        elif current2 is not None:
+            current2.append(line)
+    if current2:
+        groups2.append(["<tbody>"] + current2 + ["</tbody>"])
+    return groups2
+
+
+def extract_tbody_from_diff(
+    path: Path,
+    section_type: str,
+    license_number: str,
+    record_date: str,
+    application_type: str,
+) -> str | None:
+    """Extract the reconstructed <tbody> HTML for a single record from a diff.
+
+    Parses the unified diff at *path*, scanning the added lines first (the
+    "after" state) and the removed lines as a fallback.  For each contiguous
+    ``<tbody>…</tbody>`` block found in those lines, checks whether the
+    natural key matches.  Returns the raw HTML string or ``None``.
+    """
+    content = path.read_text(encoding="utf-8")
+    added, removed, _new_ctx, _old_ctx, _old_ts, _new_ts = split_diff_lines(content)
+
+    for lines in (added, removed):
+        for group in _extract_tbody_lines(lines):
+            html = "\n".join(group)
+            soup = BeautifulSoup(html, "lxml")
+            tbody = soup.find("tbody")
+            if tbody is None:
+                continue
+            if _match_key(tbody, section_type, license_number, record_date, application_type):
+                return str(tbody)
+
+    return None

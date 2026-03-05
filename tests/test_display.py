@@ -193,3 +193,49 @@ class TestSummarizeProvenance:
 
         assert result["first_date"] == "2025-06-15"
         assert result["last_date"] == "2025-06-15"
+
+    def test_group_has_primary_source_id(self):
+        """Each group in summarize_provenance should include primary_source_id."""
+        from display import summarize_provenance
+
+        sources = [
+            {"id": 10, "source_type": "live_scrape", "captured_at": "2025-06-14T12:00:00",
+             "role": "confirmed", "snapshot_path": "some/path.html"},
+            {"id": 11, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",
+             "role": "first_seen", "snapshot_path": "some/path2.html"},
+            {"id": 20, "source_type": "co_archive", "captured_at": "2025-05-01T00:00:00",
+             "role": "confirmed", "snapshot_path": "some/archive.html"},
+        ]
+        result = summarize_provenance(sources)
+
+        # first_seen beats confirmed within same type
+        assert result["groups"]["live_scrape"]["primary_source_id"] == 11
+        # only one co_archive source
+        assert result["groups"]["co_archive"]["primary_source_id"] == 20
+
+    def test_primary_source_id_prefers_snapshot_path(self):
+        """primary_source_id should prefer sources with a snapshot_path."""
+        from display import summarize_provenance
+
+        sources = [
+            {"id": 5, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",
+             "role": "confirmed", "snapshot_path": None},
+            {"id": 6, "source_type": "live_scrape", "captured_at": "2025-06-14T12:00:00",
+             "role": "confirmed", "snapshot_path": "some/path.html"},
+        ]
+        result = summarize_provenance(sources)
+        assert result["groups"]["live_scrape"]["primary_source_id"] == 6
+
+    def test_primary_source_id_first_seen_over_confirmed_no_snapshot(self):
+        """first_seen role wins even when it has no snapshot path."""
+        from display import summarize_provenance
+
+        sources = [
+            {"id": 1, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",
+             "role": "first_seen", "snapshot_path": None},
+            {"id": 2, "source_type": "live_scrape", "captured_at": "2025-06-14T12:00:00",
+             "role": "confirmed", "snapshot_path": "some/path.html"},
+        ]
+        result = summarize_provenance(sources)
+        # first_seen with snapshot=None still beats confirmed with snapshot
+        assert result["groups"]["live_scrape"]["primary_source_id"] == 1
