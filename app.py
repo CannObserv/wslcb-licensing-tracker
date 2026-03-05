@@ -31,7 +31,7 @@ from integrity import (
 from endorsements import (
     seed_endorsements, backfill, repair_code_name_endorsements,
     merge_mixed_case_endorsements,
-    get_endorsement_groups, set_canonical_endorsement, rename_endorsement,
+    set_canonical_endorsement, rename_endorsement,
     get_endorsement_list, get_code_mappings,
     suggest_duplicate_endorsements, dismiss_suggestion,
     add_code_mapping, remove_code_mapping, create_code,
@@ -564,11 +564,18 @@ async def admin_endorsements(
     """Revised endorsement admin — Section 1: endorsement list + suggestions.
     Section 2: code mappings.
     """
+    active_tab = section or "endorsements"
     with get_db() as conn:
         endorsements = get_endorsement_list(conn)
-        suggestions = suggest_duplicate_endorsements(conn)
+        # Suggestions are O(n²) across all endorsement pairs — only compute
+        # when the suggestions tab is actually displayed.
+        suggestions = (
+            suggest_duplicate_endorsements(conn)
+            if active_tab == "suggestions"
+            else []
+        )
         code_mappings = get_code_mappings(conn)
-        # All endorsements for the autocomplete dropdown (non-variant preferred)
+        # All endorsements for the autocomplete dropdown
         all_endorsements_for_select = sorted(
             [{"id": e["id"], "name": e["name"]} for e in endorsements],
             key=lambda e: e["name"],
@@ -581,7 +588,7 @@ async def admin_endorsements(
         "suggestions": suggestions,
         "code_mappings": code_mappings,
         "all_endorsements_for_select": all_endorsements_for_select,
-        "active_tab": section or "endorsements",
+        "active_tab": active_tab,
         "q": q,
         "flash": request.query_params.get("flash", ""),
     })
@@ -595,6 +602,13 @@ async def admin_alias_endorsement(
     variant_ids: list[int] = Form(default=[]),
 ):
     """Designate a canonical endorsement and alias the selected variants to it."""
+    if not canonical_id:
+        raise HTTPException(status_code=422, detail="canonical_id is required")
+    # Drop any variant that equals the canonical (belt-and-suspenders; the DB
+    # layer also guards this, but we want a clean error rather than a silent no-op).
+    variant_ids = [v for v in variant_ids if v != canonical_id]
+    if not variant_ids:
+        raise HTTPException(status_code=422, detail="At least one variant must differ from the canonical")
     with get_db() as conn:
         canonical_name = conn.execute(
             "SELECT name FROM license_endorsements WHERE id = ?",

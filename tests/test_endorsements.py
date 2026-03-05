@@ -878,6 +878,21 @@ class TestEndorsementSimilarity:
         score = endorsement_similarity("CANNABIS RETAILER", "BEER/WINE RESTAURANT")
         assert score < 0.70
 
+    def test_plus_minus_preserved_as_distinct_tokens(self):
+        """+ and - are semantically significant and must not be stripped.
+
+        SPIRITS/BR/WN REST LOUNGE + and SPIRITS/BR/WN REST LOUNGE - are
+        distinct licence categories; stripping the trailing symbol would make
+        them score 1.00 and be falsely suggested as duplicates.
+        """
+        score = endorsement_similarity(
+            "SPIRITS/BR/WN REST LOUNGE +",
+            "SPIRITS/BR/WN REST LOUNGE -",
+        )
+        # With + and - preserved as PLUS/MINUS tokens the feature sets differ,
+        # so the score must be strictly below the 0.70 threshold.
+        assert score < 0.70
+
     def test_empty_name_returns_zero(self):
         assert endorsement_similarity("", "CANNABIS RETAILER") == 0.0
         assert endorsement_similarity("CANNABIS RETAILER", "") == 0.0

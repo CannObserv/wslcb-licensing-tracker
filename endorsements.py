@@ -1099,7 +1099,6 @@ _SIM_STOP_WORDS: frozenset[str] = frozenset({
 # Spelling normalizations applied *before* tokenization (phrase → phrase).
 _SIM_SPELLING: list[tuple[str, str]] = [
     ("TAKE OUT", "TAKEOUT"),
-    ("CURBSIDE", "CURBSIDE"),  # placeholder — exact match, no-op
 ]
 
 _SIM_THRESHOLD: float = 0.70
@@ -1116,12 +1115,23 @@ def _sim_normalize(name: str) -> str:
 def _sim_tokenize(name: str) -> list[str]:
     """Split *name* into uppercase tokens, strip punctuation & stop-words.
 
-    Also strips ``<`` and ``>`` characters which are HTML-parsing artefacts
-    that produced mangled names like ``DOMESTIC WINERY  249,999 LITERS``.
+    ``+`` and ``-`` are *preserved* as standalone tokens because they carry
+    semantic meaning in WSLCB endorsement names (e.g. ``SPIRITS/BR/WN REST
+    LOUNGE +`` vs ``SPIRITS/BR/WN REST LOUNGE -`` are distinct licence
+    categories, not spelling variants).
+
+    ``<`` and ``>`` are stripped because they are HTML-parsing artefacts
+    that produce mangled names like ``DOMESTIC WINERY  249,999 LITERS``
+    (the ``>`` was lost, leaving an extra space).
     """
     normalized = _sim_normalize(name)
-    # Remove < > and replace punctuation/whitespace with space
-    cleaned = re.sub(r"[<>,.;:!?\-/\\()\[\]{}\"'`@#$%^&*+=|~]", " ", normalized)
+    # Normalise + and - to sentinel tokens before splitting on other punctuation
+    # so they survive as discrete tokens rather than being swallowed by the
+    # general punctuation regex.
+    sentinel = re.sub(r"\+", " PLUS ", normalized)
+    sentinel = re.sub(r"(?<![a-zA-Z0-9])\-(?![a-zA-Z0-9])", " MINUS ", sentinel)
+    # Remove < > and remaining punctuation/whitespace
+    cleaned = re.sub(r"[<>,.;:!?/\\()\[\]{}\"'`@#$%^&*=|~]", " ", sentinel)
     tokens = [
         t for t in cleaned.split()
         if t and t not in _SIM_STOP_WORDS
@@ -1138,6 +1148,9 @@ def _sim_features(tokens: list[str]) -> frozenset[str]:
     return frozenset(unigrams + bigrams)
 
 
+_SIM_POLAR_TOKENS: frozenset[str] = frozenset({"PLUS", "MINUS"})
+
+
 def endorsement_similarity(name_a: str, name_b: str) -> float:
     """Blended similarity between two endorsement name strings.
 
@@ -1146,11 +1159,23 @@ def endorsement_similarity(name_a: str, name_b: str) -> float:
     Containment = max(|A∩B|/|A|, |A∩B|/|B|) on unigram sets, which catches
     cases where one name is a proper subset of the other.
 
+    Hard rule: if the symmetric difference of the unigram sets is exactly
+    ``{PLUS, MINUS}`` (i.e. the two names are identical except that one has
+    ``+`` and the other has ``-``), return 0.0.  These are semantically
+    distinct licence categories, not spelling variants.
+
     Returns a float in [0.0, 1.0].
     """
     tok_a = _sim_tokenize(name_a)
     tok_b = _sim_tokenize(name_b)
     if not tok_a or not tok_b:
+        return 0.0
+
+    uni_a = frozenset(tok_a)
+    uni_b = frozenset(tok_b)
+
+    # Hard exclusion: sole difference is + vs − polarity token.
+    if (uni_a | uni_b) - (uni_a & uni_b) == _SIM_POLAR_TOKENS:
         return 0.0
 
     feat_a = _sim_features(tok_a)
@@ -1162,8 +1187,6 @@ def endorsement_similarity(name_a: str, name_b: str) -> float:
     jaccard = len(intersection) / len(union) if union else 0.0
 
     # Containment on plain unigrams
-    uni_a = frozenset(tok_a)
-    uni_b = frozenset(tok_b)
     uni_inter = uni_a & uni_b
     containment = max(
         len(uni_inter) / len(uni_a) if uni_a else 0.0,
