@@ -23,6 +23,8 @@ import re
 import sqlite3
 from itertools import combinations
 
+from admin_audit import log_action
+
 logger = logging.getLogger(__name__)
 
 # Matches the historical "CODE, NAME" format used in approved/discontinued
@@ -1525,12 +1527,8 @@ def set_substance_endorsements(
             " VALUES (?, ?)",
             (substance_id, eid),
         )
-    import json as _json
-    conn.execute(
-        "INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, details)"
-        " VALUES (?, 'substance.set_endorsements', 'regulated_substance', ?, ?)",
-        (set_by, substance_id, _json.dumps({"endorsement_count": len(endorsement_ids)})),
-    )
+    log_action(conn, set_by, "substance.set_endorsements", "regulated_substance",
+               target_id=substance_id, details={"endorsement_count": len(endorsement_ids)})
 
 
 def add_substance(
@@ -1540,17 +1538,13 @@ def add_substance(
     created_by: str,
 ) -> int:
     """Insert a new regulated substance and return its id. Audit-logged."""
-    import json as _json
     cursor = conn.execute(
         "INSERT INTO regulated_substances (name, display_order) VALUES (?, ?)",
         (name, display_order),
     )
     sid = cursor.lastrowid
-    conn.execute(
-        "INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, details)"
-        " VALUES (?, 'substance.add', 'regulated_substance', ?, ?)",
-        (created_by, sid, _json.dumps({"name": name})),
-    )
+    log_action(conn, created_by, "substance.add", "regulated_substance",
+               target_id=sid, details={"name": name})
     return sid
 
 
@@ -1560,7 +1554,6 @@ def remove_substance(
     removed_by: str,
 ) -> None:
     """Delete a regulated substance (cascades to junction rows). Audit-logged."""
-    import json as _json
     row = conn.execute(
         "SELECT name FROM regulated_substances WHERE id = ?", (substance_id,)
     ).fetchone()
@@ -1568,8 +1561,5 @@ def remove_substance(
     conn.execute(
         "DELETE FROM regulated_substances WHERE id = ?", (substance_id,)
     )
-    conn.execute(
-        "INSERT INTO admin_audit_log (admin_email, action, target_type, target_id, details)"
-        " VALUES (?, 'substance.remove', 'regulated_substance', ?, ?)",
-        (removed_by, substance_id, _json.dumps({"name": name})),
-    )
+    log_action(conn, removed_by, "substance.remove", "regulated_substance",
+               target_id=substance_id, details={"name": name})

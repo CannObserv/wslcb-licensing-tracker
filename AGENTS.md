@@ -33,8 +33,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `schema.py` | DDL, migrations, FTS | All table creation, `PRAGMA user_version` migration framework, FTS5 setup, data seeding. `init_db()`, `migrate()`, `MIGRATIONS` list. Migration 002 (`enrichment_tracking`) adds `record_enrichments` table and `raw_*` shadow columns. |
 | `database.py` | Backward-compat shim + helpers | Re-exports all symbols from `db.py` and `schema.py`. Contains `get_or_create_location()`, `get_or_create_source()`, `link_record_source()`. Existing `from database import ...` statements continue to work. |
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`, `reprocess_entities()`. |
-| `queries.py` | Record queries and CRUD | `search_records()`, `export_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. |
-| `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, `_merge_endorsement()` (shared merge helper), query helpers. Revised admin UI helpers: `endorsement_similarity()` (token+bigram Jaccard + containment, +/− polar-token hard rule), `get_endorsement_list()`, `suggest_duplicate_endorsements()`, `dismiss_suggestion()`, `get_code_mappings()`, `add_code_mapping()`, `remove_code_mapping()`, `create_code()`. |
+| `queries.py` | Record queries and CRUD | `search_records()`, `export_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `insert_record()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. `invalidate_filter_cache()` — clears the 5-minute in-process filter option cache; call after any admin mutation that changes endorsements or substances. `_build_where_clause()` accepts `endorsements: list[str]` for multi-select OR-semantics filtering (also handles mixed known/unknown names gracefully). |
+| `endorsements.py` | License type normalization | Seed code map (98 codes), `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, `_merge_endorsement()` (shared merge helper), query helpers. Revised admin UI helpers: `endorsement_similarity()` (token+bigram Jaccard + containment, +/− polar-token hard rule), `get_endorsement_list()`, `suggest_duplicate_endorsements()`, `dismiss_suggestion()`, `get_code_mappings()`, `add_code_mapping()`, `remove_code_mapping()`, `create_code()`. Regulated substance CRUD: `get_regulated_substances()`, `get_substance_endorsement_ids()`, `set_substance_endorsements()`, `add_substance()`, `remove_substance()`. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
 | `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `database.DATA_DIR`. |
 | `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()`, `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`. Logs to `scrape_log` table. Archives source HTML. Uses `pipeline.ingest_batch()` for record insertion. Skips parse/ingest when content hash matches last successful scrape (`status='unchanged'`). Use `cli.py scrape` to run. |
@@ -69,7 +69,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/test_display.py` | Display tests | `format_outcome()` and `summarize_provenance()`: all outcome statuses, provenance grouping, date ranges. |
 | `tests/test_queries.py` | Query tests | `insert_record()` with all record types, dedup, entity creation. |
 | `tests/test_link_records.py` | Link records tests | `_link_section()`, `_link_incremental()`, `build_all_links()`, `get_outcome_status()`, `get_reverse_link_info()` — bulk and incremental linking. |
-| `tests/test_endorsements.py` | Endorsement tests | `_merge_endorsement()`, `process_record()`, `merge_mixed_case_endorsements()`, `repair_code_name_endorsements()`, query helpers. Revised UI helpers: `endorsement_similarity` (similarity algorithm including +/− polar-token hard rule), `get_endorsement_list`, `suggest_duplicate_endorsements`, `dismiss_suggestion`, `get_code_mappings`, `add_code_mapping`, `remove_code_mapping`, `create_code`. |
+| `tests/test_endorsements.py` | Endorsement tests | `_merge_endorsement()`, `process_record()`, `merge_mixed_case_endorsements()`, `repair_code_name_endorsements()`, query helpers. Revised UI helpers: `endorsement_similarity` (similarity algorithm including +/− polar-token hard rule), `get_endorsement_list`, `suggest_duplicate_endorsements`, `dismiss_suggestion`, `get_code_mappings`, `add_code_mapping`, `remove_code_mapping`, `create_code`. Regulated substance CRUD: `get_regulated_substances`, `get_substance_endorsement_ids`, `set_substance_endorsements`, `add_substance`, `remove_substance`. |
+| `tests/test_admin_endorsements.py` | Admin substance route tests | Uses TestClient with cross-thread in-memory DB fixture. Covers: `GET /admin/endorsements` (default tab, all section params), `POST /admin/endorsements/substances/add` (inserts row, audit-logged, blank-name error, non-admin rejected), `POST /admin/endorsements/substances/remove` (deletes row, cascades junction, audit-logged, non-admin rejected), `POST /admin/endorsements/substances/set-endorsements` (replaces associations, clears all, audit-logged, non-admin rejected). |
 | `tests/test_integrity.py` | Integrity check tests | All check functions, fix functions, aggregate runner. |
 | `tests/test_rebuild.py` | Rebuild tests | `rebuild_from_sources()`: empty data, DB creation, overwrite protection, force mode, snapshot ingestion, timing. `compare_databases()`: identical DBs, missing records, extra records, per-section breakdown. |
 | `tests/test_scraper.py` | Scraper tests | `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`: hash computation, last-hash retrieval, redundant data cleanup. |
@@ -185,6 +186,21 @@ WHERE step = 'endorsements' AND CAST(version AS INTEGER) < 2;
 - Dismissal is permanent but does not prevent explicit aliasing through the main alias action
 - `dismiss_suggestion(conn, id_a, id_b, dismissed_by)` in `endorsements.py` handles normalisation and idempotent insert
 - Added by migration 008 (`endorsement_dismissed_suggestions`)
+
+### `regulated_substances` (regulated substance taxonomy)
+- One row per regulated substance category (e.g., "Cannabis", "Alcohol")
+- `name` (UNIQUE, COLLATE NOCASE) — display name shown in the search filter dropdown
+- `display_order` — controls order in the dropdown (lower = first)
+- Seeded by migration 009 with "Cannabis" (display_order=1) and "Alcohol" (display_order=2)
+- Managed via `/admin/endorsements?section=substances`; CRUD functions in `endorsements.py`
+
+### `regulated_substance_endorsements` (substance↔endorsement junction)
+- M:M junction linking `regulated_substances` ↔ `license_endorsements`
+- Composite PK `(substance_id, endorsement_id)` with `ON DELETE CASCADE` on both FKs
+- `idx_rse_endorsement` index on `endorsement_id` for reverse lookups
+- **Cannabis** seed rule: endorsement name `LIKE '%CANNABIS%'` OR `LIKE '%RETAIL CERT%'` OR `= 'TRIBAL COMPACT'`
+- **Alcohol** seed rule: all other endorsements except `UNDEFINED` (which remains unassigned)
+- Consumed by `get_filter_options()` via `get_regulated_substances()` to populate the `regulated_substance` filter key used client-side in `search.html` to pre-select License Type checkboxes
 
 ### `record_endorsements`
 - Junction table linking `license_records` ↔ `license_endorsements`
@@ -304,6 +320,7 @@ WHERE step = 'endorsements' AND CAST(version AS INTEGER) < 2;
 - Migration 006 (`admin_audit_log`): adds `admin_audit_log` table
 - Migration 007 (`endorsement_aliases`): adds `endorsement_aliases` table with `UNIQUE(endorsement_id)` constraint
 - Migration 008 (`endorsement_dismissed_suggestions`): adds `endorsement_dismissed_suggestions` table with `CHECK (endorsement_id_a < endorsement_id_b)` constraint and `ON DELETE CASCADE` FKs
+- Migration 009 (`regulated_substances`): adds `regulated_substances` and `regulated_substance_endorsements` tables with `idx_rse_endorsement` index; seeds Cannabis and Alcohol substance rows and their endorsement associations from existing `license_endorsements` data
 - To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
 
 ## Agent Skills
@@ -423,7 +440,7 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 ### Templates
 - Tailwind CSS via CDN (`<script src="https://cdn.tailwindcss.com">`) with custom `tailwind.config` in `base.html`
 - HTMX for partial page updates on search — the `/search` endpoint detects `HX-Request` header
-- Custom Jinja2 filters registered in `app.py`: `section_label`, `phone_format`
+- Custom Jinja2 filters registered in `app.py`: `section_label`, `phone_format`, `build_qs` (builds a URL query string from a dict, handling list values for multi-value params like `endorsement[]`)
 - See **Style Guide** below for colors, branding, and component conventions
 
 ### Style Guide

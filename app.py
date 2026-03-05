@@ -22,6 +22,7 @@ from queries import (
     get_record_by_id, get_related_records, get_entity_records,
     get_record_sources, get_record_link,
     hydrate_records,
+    invalidate_filter_cache,
 )
 from integrity import (
     check_orphaned_locations,
@@ -36,7 +37,7 @@ from endorsements import (
     suggest_duplicate_endorsements, dismiss_suggestion,
     add_code_mapping, remove_code_mapping, create_code,
     reprocess_endorsements,
-    get_regulated_substances, get_substance_endorsement_ids,
+    get_regulated_substances,
     set_substance_endorsements, add_substance, remove_substance,
 )
 from link_records import build_all_links, get_reverse_link_info, get_outcome_status
@@ -104,6 +105,29 @@ def phone_format(value: str) -> str:
 
 templates.env.filters["section_label"] = section_label
 templates.env.filters["phone_format"] = phone_format
+
+
+def _filter_build_qs(params: dict) -> str:
+    """Jinja2 filter: build a URL query string from a dict, handling list values.
+
+    List values produce multiple ``key=val`` pairs (one per element).  Keys
+    with empty-string or None values are omitted.
+
+    Usage in templates::
+
+        {% set pq = {"q": q, "endorsement": endorsement, ...} | build_qs %}
+    """
+    from urllib.parse import urlencode as _urlencode
+    items: list[tuple[str, str]] = []
+    for k, v in params.items():
+        if isinstance(v, list):
+            items.extend((k, vi) for vi in v if vi)
+        elif v:
+            items.append((k, str(v)))
+    return _urlencode(items)
+
+
+templates.env.filters["build_qs"] = _filter_build_qs
 
 
 async def _tpl(request: Request, template: str, ctx: dict, status_code: int = 200):
@@ -613,14 +637,18 @@ async def admin_substance_add(
     """Create a new regulated substance."""
     name = name.strip()
     if not name:
-        return RedirectResponse("/admin/endorsements?section=substances&flash=Name+is+required", status_code=303)
+        return RedirectResponse(
+            "/admin/endorsements?section=substances&flash=substance_name_required",
+            status_code=303,
+        )
     with get_db() as conn:
         # Auto-assign display_order as max + 1.
         row = conn.execute("SELECT COALESCE(MAX(display_order), 0) + 1 FROM regulated_substances").fetchone()
         display_order = row[0] if row else 1
         add_substance(conn, name, display_order=display_order, created_by=admin["email"])
         conn.commit()
-    return RedirectResponse("/admin/endorsements?section=substances", status_code=303)
+    invalidate_filter_cache()
+    return RedirectResponse("/admin/endorsements?section=substances&flash=substance_added", status_code=303)
 
 
 @app.post("/admin/endorsements/substances/remove", response_class=HTMLResponse)
@@ -633,7 +661,8 @@ async def admin_substance_remove(
     with get_db() as conn:
         remove_substance(conn, substance_id, removed_by=admin["email"])
         conn.commit()
-    return RedirectResponse("/admin/endorsements?section=substances", status_code=303)
+    invalidate_filter_cache()
+    return RedirectResponse("/admin/endorsements?section=substances&flash=substance_removed", status_code=303)
 
 
 @app.post("/admin/endorsements/substances/set-endorsements", response_class=HTMLResponse)
@@ -649,8 +678,9 @@ async def admin_substance_set_endorsements(
             conn, substance_id, endorsement_ids, set_by=admin["email"]
         )
         conn.commit()
+    invalidate_filter_cache()
     return RedirectResponse(
-        f"/admin/endorsements?section=substances&selected={substance_id}",
+        f"/admin/endorsements?section=substances&selected={substance_id}&flash=substance_updated",
         status_code=303,
     )
 
@@ -709,6 +739,7 @@ async def admin_alias_endorsement(
         conn.commit()
 
     safe_section = return_section if return_section in _VALID_ENDORSEMENT_SECTIONS else "endorsements"
+    invalidate_filter_cache()
     return RedirectResponse(f"/admin/endorsements?flash=aliased&section={safe_section}", status_code=303)
 
 
@@ -764,6 +795,7 @@ async def admin_rename_endorsement(
         )
         conn.commit()
 
+    invalidate_filter_cache()
     return RedirectResponse("/admin/endorsements?flash=renamed&section=endorsements", status_code=303)
 
 
@@ -787,6 +819,7 @@ async def admin_dismiss_suggestion(
         )
         conn.commit()
     safe_section = return_section if return_section in _VALID_ENDORSEMENT_SECTIONS else "endorsements"
+    invalidate_filter_cache()
     return RedirectResponse(f"/admin/endorsements?flash=dismissed&section={safe_section}", status_code=303)
 
 
@@ -814,6 +847,7 @@ async def admin_code_add_endorsement(
                 details={"code": code, "reprocessed_records": reprocessed},
             )
         conn.commit()
+    invalidate_filter_cache()
     return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
 
 
@@ -839,6 +873,7 @@ async def admin_code_remove_endorsement(
                 details={"code": code, "reprocessed_records": reprocessed},
             )
         conn.commit()
+    invalidate_filter_cache()
     return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
 
 
@@ -865,4 +900,5 @@ async def admin_code_create(
                 details={"code": code, "endorsement_ids": endorsement_ids, "reprocessed_records": reprocessed},
             )
         conn.commit()
+    invalidate_filter_cache()
     return RedirectResponse("/admin/endorsements?flash=code_created&section=codes", status_code=303)

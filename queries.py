@@ -286,6 +286,12 @@ def _build_where_clause(
     records linked to any of their variants.  OR semantics apply across
     multiple endorsement names — records matching *any* of the requested
     endorsements are returned.
+
+    **Mixed known/unknown names:** if the list contains both recognised and
+    unrecognised endorsement names, the filter matches records linked to
+    the recognised names and silently ignores the unknown ones.  Only
+    when *every* name in the list is unknown does the filter force zero
+    results (``1 = 0``).
     """
     conditions: list[str] = []
     params: list = []
@@ -558,6 +564,16 @@ def export_records(
 # running the ~10 ms city-list query on every search page load.
 _filter_cache: dict = {}  # {"data": ..., "ts": float}
 _FILTER_CACHE_TTL = 300  # seconds (5 minutes)
+
+
+def invalidate_filter_cache() -> None:
+    """Clear the in-process filter option cache.
+
+    Call after any admin mutation that changes endorsements or regulated
+    substances so the next search page load reflects the current state
+    rather than a stale snapshot.
+    """
+    _filter_cache.clear()
 
 
 US_STATES = {

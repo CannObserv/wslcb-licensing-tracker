@@ -179,3 +179,18 @@ class TestMultiEndorsementFilter:
         db.commit()
         records, total = search_records(db, endorsements=["NONEXISTENT XYZ"])
         assert total == 0
+
+    def test_mixed_known_and_unknown_returns_known_matches(self, db, standard_new_application):
+        """When some endorsement names are known and some are not, the known
+        ones still filter correctly (OR semantics; unknown names are ignored)."""
+        from queries import search_records
+        import copy
+        r1 = copy.deepcopy(standard_new_application)
+        r1["license_number"] = "MIXED001"
+        self._insert_with_endorsement(db, r1, "CANNABIS RETAILER")
+        db.commit()
+        records, total = search_records(
+            db, endorsements=["CANNABIS RETAILER", "NONEXISTENT XYZ"]
+        )
+        assert total == 1
+        assert records[0]["license_number"] == "MIXED001"

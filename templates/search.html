@@ -14,10 +14,6 @@
                    aria-label="Search records"
                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple px-4 py-2 border">
         </div>
-        <!-- Substance→endorsement map for client-side pre-selection -->
-        <script>
-        const SUBSTANCE_ENDORSEMENTS = {{ filters.regulated_substance | tojson }};
-        </script>
         <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3">
             <div>
                 <label for="section_type" class="block text-xs font-medium text-gray-500 mb-1">Record Type</label>
@@ -127,6 +123,11 @@
             </button>
         </div>
     </div>
+    <!-- Substance→endorsement map for client-side pre-selection (injected here so it
+         is parsed after the checkbox DOM is available to the IIFE below) -->
+    <script>
+    const SUBSTANCE_ENDORSEMENTS = {{ filters.regulated_substance | tojson }};
+    </script>
 </form>
 
 <div id="results">
