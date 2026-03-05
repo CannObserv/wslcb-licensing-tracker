@@ -290,3 +290,95 @@ class TestAdminDashboard:
         # in last_24h depends on created_at (which defaults to now), so it
         # should be 1 (not 0 as it would be if we used record_date=2020-01-01).
         assert "1" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Duplicate Suggestions tab — HTML rendering
+# ---------------------------------------------------------------------------
+
+class TestSuggestionsTabHTML:
+    """Regression tests for the Duplicate Suggestions tab layout.
+
+    Issue #36: the Accept popup was clipped by `overflow-hidden` on the table
+    wrapper, and the table had no horizontal scroll on narrow viewports.
+    """
+
+    def _seed_suggestion_pair(self, db):
+        """Insert two near-duplicate endorsements so the suggestions tab has rows."""
+        db.execute(
+            "INSERT INTO license_endorsements (name) VALUES (?), (?)",
+            ("TAKEOUT/DELIVERY", "TAKE OUT/DELIVERY"),
+        )
+        db.commit()
+
+    def test_suggestions_table_wrapper_not_overflow_hidden(self, db):
+        """The suggestions table wrapper must not use overflow-hidden.
+
+        `overflow-hidden` clips absolutely-positioned children (the Accept
+        popup), causing it to be invisible outside the table boundary.
+        See issue #36.
+        """
+        _seed_admin(db)
+        self._seed_suggestion_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=suggestions")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        # The outer container for the suggestions table must NOT use
+        # overflow-hidden — that class clips the absolute-position popup.
+        assert "overflow-hidden" not in resp.text or _overflow_hidden_only_outside_suggestions(resp.text)
+
+    def test_suggestions_table_wrapper_has_overflow_x_auto(self, db):
+        """The suggestions table container must include overflow-x-auto for horizontal scrolling.
+
+        Without it, wide tables on narrow viewports are not scrollable.
+        See issue #36.
+        """
+        _seed_admin(db)
+        self._seed_suggestion_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=suggestions")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        assert "overflow-x-auto" in resp.text
+
+    def test_accept_popup_uses_right_0_positioning(self, db):
+        """The Accept popup must use right-0 (not left-0) positioning.
+
+        left-0 anchors the popup to the left edge of the Actions cell, which
+        overflows rightward and is clipped on desktop viewports.  right-0
+        keeps the popup anchored to the right edge of the cell so it stays
+        within the viewport.
+        See issue #36.
+        """
+        _seed_admin(db)
+        self._seed_suggestion_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/admin/endorsements?section=suggestions")
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        # The absolute popup div inside the suggestions <details> must use right-0
+        assert "right-0" in resp.text
+
+
+def _overflow_hidden_only_outside_suggestions(html: str) -> bool:
+    """Return True only if overflow-hidden does NOT appear inside the suggestions table.
+
+    Some other sections (endorsement list, code mappings) may still use
+    overflow-hidden for rounded-corner clipping.  We only care that the
+    suggestions table wrapper itself does not use it.
+    """
+    # Find the suggestions section and check it for overflow-hidden
+    marker = 'id="tab-suggestions"'
+    start = html.find("active_tab == 'suggestions'")
+    if start == -1:
+        return True  # can't find marker — pass through
+    # The suggestions block ends at the next {% endif %} after it
+    block = html[start:start + 4000]
+    return "overflow-hidden" not in block

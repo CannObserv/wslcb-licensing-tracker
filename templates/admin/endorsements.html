@@ -193,14 +193,14 @@
       No duplicate suggestions — all pairs either already aliased or dismissed.
     </div>
     {% else %}
-    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+    <div class="bg-white border border-gray-200 rounded-lg overflow-x-auto">
       <table class="min-w-full text-sm">
         <thead class="bg-gray-50 border-b border-gray-200">
           <tr>
-            <th class="px-4 py-2 text-left font-semibold text-gray-700">Candidate A</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700 rounded-tl-lg">Candidate A</th>
             <th class="px-4 py-2 text-left font-semibold text-gray-700">Candidate B</th>
             <th class="px-4 py-2 text-right font-semibold text-gray-700">Score</th>
-            <th class="px-4 py-2 text-left font-semibold text-gray-700">Actions</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700 rounded-tr-lg">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
@@ -225,7 +225,7 @@
                 {# Accept: open a small form to choose canonical direction #}
                 <details class="relative">
                   <summary class="text-xs text-co-purple hover:underline cursor-pointer list-none">Accept&hellip;</summary>
-                  <div class="absolute z-10 left-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                  <div class="absolute z-10 right-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
                     <form method="post" action="/admin/endorsements/alias" class="space-y-2">
                       <p class="text-xs text-gray-600 font-medium">Which is canonical?</p>
                       {# Radio to pick canonical; the other becomes a variant #}
