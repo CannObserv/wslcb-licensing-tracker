@@ -194,6 +194,7 @@
                             hx-get="/source/{{ group.primary_source_id }}/record/{{ record.id }}"
                             hx-target="#source-viewer"
                             hx-swap="innerHTML"
+                            hx-indicator="#source-viewer-spinner"
                             class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }} cursor-pointer hover:ring-2 hover:ring-current focus:outline-none focus:ring-2 focus:ring-current transition-shadow"
                             title="View original source — {{ group.count }} {{ group.label | lower }}{{ 's' if group.count != 1 }}"
                         >{{ group.icon }} {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></button>
@@ -221,6 +222,7 @@
                                 hx-get="/source/{{ s.id }}/record/{{ record.id }}"
                                 hx-target="#source-viewer"
                                 hx-swap="innerHTML"
+                                hx-indicator="#source-viewer-spinner"
                                 class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }} cursor-pointer hover:ring-1 hover:ring-current focus:outline-none"
                                 title="{{ s.role }} — view source"
                             >{{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} 🔧{% endif %}</button>
@@ -235,7 +237,16 @@
                     </details>
                     {% endif %}
                     {# Source viewer mount point — HTMX swaps content here on badge click #}
-                    <div id="source-viewer" class="mt-3"></div>
+                    <div id="source-viewer" class="mt-3">
+                        {# Spinner: hidden until an hx-indicator request targets #source-viewer-spinner #}
+                        <div id="source-viewer-spinner" class="htmx-indicator flex items-center gap-2 px-3 py-2 text-sm text-gray-500">
+                            <svg class="animate-spin h-4 w-4 text-co-purple" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                            </svg>
+                            Loading source…
+                        </div>
+                    </div>
                 </dd>
             </div>
             {% endif %}
