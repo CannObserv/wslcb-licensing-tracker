@@ -326,9 +326,14 @@ class TestSuggestionsTabHTML:
         finally:
             _stop(patches)
         assert resp.status_code == 200
-        # The outer container for the suggestions table must NOT use
-        # overflow-hidden — that class clips the absolute-position popup.
-        assert "overflow-hidden" not in resp.text or _overflow_hidden_only_outside_suggestions(resp.text)
+        # Locate the rendered suggestions table by the stable "Candidate A" header
+        # cell text, then slice to the closing </table> tag.  Assert that the
+        # wrapper div for the table does not carry overflow-hidden within that block.
+        start = resp.text.find("Candidate A")
+        end = resp.text.find("</table>", start)
+        assert start != -1 and end != -1, "Could not locate suggestions table in rendered HTML"
+        suggestions_block = resp.text[start:end]
+        assert "overflow-hidden" not in suggestions_block
 
     def test_suggestions_table_wrapper_has_overflow_x_auto(self, db):
         """The suggestions table container must include overflow-x-auto for horizontal scrolling.
@@ -365,23 +370,6 @@ class TestSuggestionsTabHTML:
         assert resp.status_code == 200
         # The absolute popup div inside the suggestions <details> must use right-0
         assert "right-0" in resp.text
-
-
-def _overflow_hidden_only_outside_suggestions(html: str) -> bool:
-    """Return True only if overflow-hidden does NOT appear inside the suggestions table.
-
-    Some other sections (endorsement list, code mappings) may still use
-    overflow-hidden for rounded-corner clipping.  We only care that the
-    suggestions table wrapper itself does not use it.
-    """
-    # Find the suggestions section and check it for overflow-hidden
-    marker = 'id="tab-suggestions"'
-    start = html.find("active_tab == 'suggestions'")
-    if start == -1:
-        return True  # can't find marker — pass through
-    # The suggestions block ends at the next {% endif %} after it
-    block = html[start:start + 4000]
-    return "overflow-hidden" not in block
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +480,58 @@ class TestEndorsementActionRedirects:
             _stop(patches)
         assert resp.status_code == 303
         assert "section=suggestions" in resp.headers["location"]
+
+    def test_alias_invalid_return_section_falls_back_to_endorsements(self, db):
+        """POST /alias with an unrecognised return_section must fall back to endorsements.
+
+        Prevents open-redirect / header-injection via a crafted return_section value.
+        See CR item 1.
+        """
+        _seed_admin(db)
+        id_a, id_b = self._seed_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/alias",
+                data={
+                    "canonical_id": str(id_a),
+                    "variant_ids": str(id_b),
+                    "return_section": "evil&injected=value",
+                },
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert "section=endorsements" in location
+        assert "evil" not in location
+
+    def test_dismiss_invalid_return_section_falls_back_to_endorsements(self, db):
+        """POST /dismiss-suggestion with an unrecognised return_section falls back to endorsements.
+
+        Prevents open-redirect / header-injection via a crafted return_section value.
+        See CR item 1.
+        """
+        _seed_admin(db)
+        id_a, id_b = self._seed_pair(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/dismiss-suggestion",
+                data={
+                    "id_a": str(id_a),
+                    "id_b": str(id_b),
+                    "return_section": "../../../../etc/passwd",
+                },
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert "section=endorsements" in location
+        assert "passwd" not in location
 
     def test_dismiss_default_section_is_endorsements(self, db):
         """POST /dismiss-suggestion without return_section defaults to endorsements (backward compat)."""

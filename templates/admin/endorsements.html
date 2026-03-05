@@ -316,7 +316,10 @@
       {% for cm in code_mappings %}
       <div class="code-row bg-white border border-gray-200 rounded-lg overflow-hidden"
            data-code="{{ cm.code }}"
-           data-names="{{ cm.endorsements | map(attribute='name') | join(' ') | lower }}">
+           data-names="{{ cm.endorsements | map(attribute='name') | join(' ') | lower }}"
+           {#- data-names is lowercased for case-insensitive JS matching; the browser
+               auto-unescapes HTML attribute entities before exposing dataset values to JS,
+               so includes() operates on the plain unescaped string. -#}>
         <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-3">
           <span class="font-mono text-sm font-semibold text-gray-700">Code {{ cm.code }}</span>
           <span class="text-xs text-gray-400">{{ cm.record_count }} records</span>
