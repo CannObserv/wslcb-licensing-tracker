@@ -235,3 +235,123 @@ class TestQuickSearchButtonWrapping:
             )
         finally:
             _stop(patches)
+
+
+# ---------------------------------------------------------------------------
+# Stats Cards mobile 2-per-row layout (#48)
+# ---------------------------------------------------------------------------
+
+class TestStatCardsMobileLayout:
+    """Stat card grids must use grid-cols-2 at mobile so cards appear 2-per-row (#48).
+
+    Before this fix both grids used grid-cols-1 at mobile, making every card
+    full-width.  The Date Range card is the sole exception: it must span both
+    columns at mobile (col-span-2) to accommodate its wider text, then revert
+    to a single column at md+ (md:col-span-1).
+    """
+
+    # ---- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _section(html: str, comment: str, end_comment: str | None = None) -> str:
+        """Return the HTML slice starting at ``comment`` up to the next HTML comment."""
+        start = html.index(comment)
+        if end_comment:
+            end = html.index(end_comment, start)
+        else:
+            # Find the next HTML comment after our section start
+            next_comment = html.find("<!--", start + len(comment))
+            end = next_comment if next_comment != -1 else len(html)
+        return html[start:end]
+
+    # ---- Stats Cards --------------------------------------------------------
+
+    def test_stats_cards_grid_has_grid_cols_2(self, db):
+        """The Stats Cards outer grid must carry grid-cols-2 for mobile 2-per-row."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = self._section(resp.text, "<!-- Stats Cards -->",
+                                    "<!-- Additional Stats -->")
+            # The wrapping grid div must include grid-cols-2
+            first_div_end = section.index(">", section.index("<div"))
+            grid_div = section[section.index("<div"):first_div_end + 1]
+            assert "grid-cols-2" in grid_div, (
+                f"Stats Cards grid is missing 'grid-cols-2'; "
+                f"cards will be full-width on mobile.\nGrid div: {grid_div!r}"
+            )
+        finally:
+            _stop(patches)
+
+    # ---- Additional Stats ---------------------------------------------------
+
+    def test_additional_stats_grid_has_grid_cols_2(self, db):
+        """The Additional Stats outer grid must carry grid-cols-2 for mobile 2-per-row."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = self._section(resp.text, "<!-- Additional Stats -->",
+                                    "<!-- Application Pipeline -->")
+            first_div_end = section.index(">", section.index("<div"))
+            grid_div = section[section.index("<div"):first_div_end + 1]
+            assert "grid-cols-2" in grid_div, (
+                f"Additional Stats grid is missing 'grid-cols-2'; "
+                f"cards will be full-width on mobile.\nGrid div: {grid_div!r}"
+            )
+        finally:
+            _stop(patches)
+
+    # ---- Date Range card ----------------------------------------------------
+
+    @staticmethod
+    def _date_range_card_div(section: str) -> str:
+        """Return the opening tag of the card that contains the 'Date Range' label.
+
+        We look for 'Date Range' as a text node, then walk backwards past its
+        inner label <div> to the outer card wrapper that holds the border/padding
+        classes.  The outer card wrapper is identified as the <div> that immediately
+        precedes the inner label div — i.e. the second-to-last <div> opening tag
+        before the 'Date Range' text.
+        """
+        label_pos = section.index("Date Range")
+        # Find all <div openings before the label text
+        inner_label_start = section.rindex("<div", 0, label_pos)   # the label div itself
+        card_start = section.rindex("<div", 0, inner_label_start)  # the outer card wrapper
+        card_end = section.index(">", card_start)
+        return section[card_start:card_end + 1]
+
+    def test_date_range_card_col_span_2(self, db):
+        """The Date Range card must have col-span-2 so it is full-width on mobile."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = self._section(resp.text, "<!-- Additional Stats -->",
+                                    "<!-- Application Pipeline -->")
+            card_div = self._date_range_card_div(section)
+            assert "col-span-2" in card_div, (
+                f"Date Range card is missing 'col-span-2'; "
+                f"it will be half-width on mobile instead of full-width.\n"
+                f"Card div: {card_div!r}"
+            )
+        finally:
+            _stop(patches)
+
+    def test_date_range_card_md_col_span_1(self, db):
+        """The Date Range card must reset to md:col-span-1 at tablet/desktop."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = self._section(resp.text, "<!-- Additional Stats -->",
+                                    "<!-- Application Pipeline -->")
+            card_div = self._date_range_card_div(section)
+            assert "md:col-span-1" in card_div, (
+                f"Date Range card is missing 'md:col-span-1'; "
+                f"it will span 2 columns on tablet/desktop as well.\n"
+                f"Card div: {card_div!r}"
+            )
+        finally:
+            _stop(patches)
