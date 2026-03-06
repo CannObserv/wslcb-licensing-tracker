@@ -491,11 +491,41 @@ _EXPORT_SELECT = """
                 ORDER BY display_name
             )
         ) AS endorsements,
-        best_link.days_gap   AS days_to_outcome,
-        best_link.outcome_date,
+        -- Correlated subqueries for best outcome link (one index seek per row via
+        -- idx_record_links_new; avoids materialising the full record_links table
+        -- before the outer WHERE is applied).
+        (
+            SELECT rl.days_gap
+            FROM record_links rl
+            WHERE rl.new_app_id = lr.id
+            ORDER BY rl.confidence = 'high' DESC, rl.rowid
+            LIMIT 1
+        ) AS days_to_outcome,
+        (
+            SELECT olr.record_date
+            FROM record_links rl
+            JOIN license_records olr ON olr.id = rl.outcome_id
+            WHERE rl.new_app_id = lr.id
+            ORDER BY rl.confidence = 'high' DESC, rl.rowid
+            LIMIT 1
+        ) AS outcome_date,
         CASE
-            WHEN best_link.outcome_section = 'approved'     THEN 'approved'
-            WHEN best_link.outcome_section = 'discontinued'  THEN 'discontinued'
+            WHEN (
+                SELECT olr.section_type
+                FROM record_links rl
+                JOIN license_records olr ON olr.id = rl.outcome_id
+                WHERE rl.new_app_id = lr.id
+                ORDER BY rl.confidence = 'high' DESC, rl.rowid
+                LIMIT 1
+            ) = 'approved'     THEN 'approved'
+            WHEN (
+                SELECT olr.section_type
+                FROM record_links rl
+                JOIN license_records olr ON olr.id = rl.outcome_id
+                WHERE rl.new_app_id = lr.id
+                ORDER BY rl.confidence = 'high' DESC, rl.rowid
+                LIMIT 1
+            ) = 'discontinued' THEN 'discontinued'
             WHEN lr.section_type != 'new_application' THEN NULL
             WHEN lr.application_type NOT IN ({linkable_types})
                  THEN NULL
@@ -508,17 +538,6 @@ _EXPORT_SELECT = """
     FROM license_records lr
     LEFT JOIN locations loc  ON loc.id  = lr.location_id
     LEFT JOIN locations ploc ON ploc.id = lr.previous_location_id
-    LEFT JOIN (
-        SELECT rl.new_app_id, rl.days_gap,
-               olr.record_date AS outcome_date,
-               olr.section_type AS outcome_section,
-               ROW_NUMBER() OVER (
-                   PARTITION BY rl.new_app_id
-                   ORDER BY rl.confidence = 'high' DESC, rl.rowid
-               ) AS rn
-        FROM record_links rl
-        JOIN license_records olr ON olr.id = rl.outcome_id
-    ) best_link ON best_link.new_app_id = lr.id AND best_link.rn = 1
 """
 
 

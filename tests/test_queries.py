@@ -338,3 +338,108 @@ class TestGetPrimarySource:
         assert "snapshot_path" in result
         assert "source_type" in result
         assert "captured_at" in result
+
+
+# ── export_records ────────────────────────────────────────────────
+
+
+class TestExportRecords:
+    """Tests for export_records() — correlated subquery link columns."""
+
+    def _insert_linked_pair(self, db, new_app, approved):
+        """Insert a new_application + approved pair, link them, return (new_id, out_id)."""
+        from queries import insert_record
+        from link_records import build_all_links
+
+        new_id, _ = insert_record(db, new_app)
+        out_id, _ = insert_record(db, approved)
+        db.commit()
+        build_all_links(db)
+        db.commit()
+        return new_id, out_id
+
+    def test_unlinked_record_has_null_link_columns(self, db, standard_new_application):
+        """A new_application with no outcome has NULL days_to_outcome and outcome_date."""
+        from queries import insert_record, export_records
+
+        insert_record(db, standard_new_application)
+        db.commit()
+
+        rows = export_records(db)
+        assert len(rows) == 1
+        assert rows[0]["days_to_outcome"] is None
+        assert rows[0]["outcome_date"] is None
+
+    def test_linked_record_has_correct_link_columns(self, db, standard_new_application):
+        """A linked new_application has days_to_outcome and outcome_date populated."""
+        from queries import export_records
+
+        approved = {
+            **standard_new_application,
+            "section_type": "approved",
+            "record_date": "2025-07-01",
+            "applicants": "",
+        }
+        self._insert_linked_pair(db, standard_new_application, approved)
+
+        rows = export_records(db, section_type="new_application")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["days_to_outcome"] == 16  # 2025-07-01 - 2025-06-15
+        assert row["outcome_date"] == "2025-07-01"
+
+    def test_high_confidence_link_preferred(self, db, standard_new_application):
+        """When multiple links exist, high-confidence is returned."""
+        from queries import insert_record, export_records
+
+        approved_early = {
+            **standard_new_application,
+            "section_type": "approved",
+            "record_date": "2025-06-20",
+            "applicants": "",
+        }
+        approved_late = {
+            **standard_new_application,
+            "section_type": "approved",
+            "record_date": "2025-06-30",
+            "applicants": "",
+            "license_number": "078002",
+        }
+        new_id, _ = insert_record(db, standard_new_application)
+        early_id, _ = insert_record(db, approved_early)
+        late_id, _ = insert_record(db, approved_late)
+        db.commit()
+        # Insert links manually: late=high, early=medium
+        db.execute(
+            "INSERT INTO record_links (new_app_id, outcome_id, confidence, days_gap, linked_at)"
+            " VALUES (?, ?, 'medium', 5, datetime('now'))",
+            (new_id, early_id),
+        )
+        db.execute(
+            "INSERT INTO record_links (new_app_id, outcome_id, confidence, days_gap, linked_at)"
+            " VALUES (?, ?, 'high', 15, datetime('now'))",
+            (new_id, late_id),
+        )
+        db.commit()
+
+        rows = export_records(db, section_type="new_application")
+        assert len(rows) == 1
+        assert rows[0]["days_to_outcome"] == 15  # high-confidence link
+
+    def test_non_new_application_has_null_link_columns(self, db, standard_new_application):
+        """Approved and discontinued records always have NULL link columns."""
+        from queries import insert_record, export_records
+
+        approved = {
+            **standard_new_application,
+            "section_type": "approved",
+            "record_date": "2025-07-01",
+            "applicants": "",
+        }
+        insert_record(db, approved)
+        db.commit()
+
+        rows = export_records(db, section_type="approved")
+        assert len(rows) == 1
+        assert rows[0]["days_to_outcome"] is None
+        assert rows[0]["outcome_date"] is None
