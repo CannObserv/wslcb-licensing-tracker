@@ -6,6 +6,20 @@
     <p class="mt-1 text-sm text-gray-500">Washington State Liquor &amp; Cannabis Board — Licensing Activity Tracker</p>
 </div>
 
+<!-- Quick Search -->
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-8">
+    <h2 class="text-lg font-semibold text-gray-900 mb-3">Quick Search</h2>
+    <form action="/search" method="get" class="flex gap-3">
+        <input type="text" name="q" placeholder="Search business name, license #, location, applicant..."
+               aria-label="Search records"
+               class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple px-4 py-2 border">
+        <button type="submit"
+                class="bg-co-purple text-white px-6 py-2 rounded-md hover:bg-co-purple-700 font-medium">
+            Search
+        </button>
+    </form>
+</div>
+
 <!-- Stats Cards -->
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
@@ -50,37 +64,6 @@
     </div>
 </div>
 
-<!-- Last Scrape Info -->
-{% if stats.last_scrape %}
-<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-8">
-    <h2 class="text-lg font-semibold text-gray-900 mb-2">Last Scrape</h2>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <div>
-            <span class="text-gray-500">Status:</span>
-            {% if stats.last_scrape['status'] == 'success' %}
-            <span class="ml-1 text-green-600 font-medium">✓ Success</span>
-            {% elif stats.last_scrape['status'] == 'error' %}
-            <span class="ml-1 text-red-600 font-medium">✗ Error</span>
-            {% else %}
-            <span class="ml-1 text-yellow-600 font-medium">⟳ Running</span>
-            {% endif %}
-        </div>
-        <div>
-            <span class="text-gray-500">Started:</span>
-            <span class="ml-1">{{ stats.last_scrape['started_at'][:19] }}</span>
-        </div>
-        <div>
-            <span class="text-gray-500">New records:</span>
-            <span class="ml-1 font-medium">{{ (stats.last_scrape['records_new'] or 0) + (stats.last_scrape['records_approved'] or 0) + (stats.last_scrape['records_discontinued'] or 0) }}</span>
-        </div>
-        <div>
-            <span class="text-gray-500">Skipped (dupes):</span>
-            <span class="ml-1">{{ stats.last_scrape['records_skipped'] or 0 }}</span>
-        </div>
-    </div>
-</div>
-{% endif %}
-
 <!-- Application Pipeline -->
 {% if stats.pipeline and stats.pipeline.total > 0 %}
 {% set p = stats.pipeline %}
@@ -122,17 +105,34 @@
 </div>
 {% endif %}
 
-<!-- Quick Search -->
-<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-    <h2 class="text-lg font-semibold text-gray-900 mb-3">Quick Search</h2>
-    <form action="/search" method="get" class="flex gap-3">
-        <input type="text" name="q" placeholder="Search business name, license #, location, applicant..."
-               aria-label="Search records"
-               class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple px-4 py-2 border">
-        <button type="submit"
-                class="bg-co-purple text-white px-6 py-2 rounded-md hover:bg-co-purple-700 font-medium">
-            Search
-        </button>
-    </form>
+<!-- Last Scrape Info -->
+{% if stats.last_scrape %}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-8">
+    <h2 class="text-lg font-semibold text-gray-900 mb-2">Last Scrape</h2>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+        <div>
+            <span class="text-gray-500">Status:</span>
+            {% if stats.last_scrape['status'] == 'success' %}
+            <span class="ml-1 text-green-600 font-medium">✓ Success</span>
+            {% elif stats.last_scrape['status'] == 'error' %}
+            <span class="ml-1 text-red-600 font-medium">✗ Error</span>
+            {% else %}
+            <span class="ml-1 text-yellow-600 font-medium">⟳ Running</span>
+            {% endif %}
+        </div>
+        <div>
+            <span class="text-gray-500">Started:</span>
+            <span class="ml-1">{{ stats.last_scrape['started_at'][:19] }}</span>
+        </div>
+        <div>
+            <span class="text-gray-500">New records:</span>
+            <span class="ml-1 font-medium">{{ (stats.last_scrape['records_new'] or 0) + (stats.last_scrape['records_approved'] or 0) + (stats.last_scrape['records_discontinued'] or 0) }}</span>
+        </div>
+        <div>
+            <span class="text-gray-500">Skipped (dupes):</span>
+            <span class="ml-1">{{ stats.last_scrape['records_skipped'] or 0 }}</span>
+        </div>
+    </div>
 </div>
+{% endif %}
 {% endblock %}

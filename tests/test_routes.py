@@ -70,6 +70,52 @@ def _stop(patches):
 
 
 # ---------------------------------------------------------------------------
+# Dashboard section-order test (#46)
+# ---------------------------------------------------------------------------
+
+class TestDashboardSectionOrder:
+    """Dashboard sections must appear in the prescribed order (#46).
+
+    Order: Search bar → Stats Cards → Application Pipeline → Last Scrape.
+    We detect each section by its HTML comment anchor and assert that each
+    anchor's position in the response body is strictly less than the next.
+    """
+
+    # Canonical HTML comment anchors present in templates/index.html
+    SEARCH = "<!-- Quick Search -->"
+    STATS = "<!-- Stats Cards -->"
+    PIPELINE = "<!-- Application Pipeline -->"
+    LAST_SCRAPE = "<!-- Last Scrape Info -->"
+
+    def _positions(self, html: str) -> dict:
+        return {
+            "search": html.index(self.SEARCH),
+            "stats": html.index(self.STATS),
+            "pipeline": html.index(self.PIPELINE),
+            "last_scrape": html.index(self.LAST_SCRAPE),
+        }
+
+    def test_section_order(self, db):
+        """Search → Stats → Application Pipeline → Last Scrape."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            pos = self._positions(resp.text)
+            assert pos["search"] < pos["stats"], (
+                "Search bar must appear before Stats Cards"
+            )
+            assert pos["stats"] < pos["pipeline"], (
+                "Stats Cards must appear before Application Pipeline"
+            )
+            assert pos["pipeline"] < pos["last_scrape"], (
+                "Application Pipeline must appear before Last Scrape"
+            )
+        finally:
+            _stop(patches)
+
+
+# ---------------------------------------------------------------------------
 # Placeholder consistency tests (#45)
 # ---------------------------------------------------------------------------
 
