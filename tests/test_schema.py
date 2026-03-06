@@ -625,3 +625,90 @@ class TestMigration009RegulatedSubstances:
             (undef_id,),
         ).fetchone()
         assert row is None
+
+
+class TestMigration010AdditionalNamesFlag:
+    def test_column_exists_after_init(self, db):
+        cols = [r[1] for r in db.execute("PRAGMA table_info(license_records)").fetchall()]
+        assert "has_additional_names" in cols
+
+    def test_column_default_zero(self, db):
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
+            "'999001', 'NEW APPLICATION', '2025-01-01T00:00:00+00:00')"
+        )
+        db.commit()
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE license_number = '999001'"
+        ).fetchone()
+        assert row[0] == 0
+
+    def test_backfill_sets_flag_for_exact_marker(self, db):
+        """Migration backfill: existing record with marker gets flag=1."""
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, applicants, scraped_at) "
+            "VALUES ('new_application', '2025-01-01', '999002', 'RENEWAL', "
+            "'ACME; ADDITIONAL NAMES ON FILE; JANE DOE', '2025-01-01T00:00:00+00:00')"
+        )
+        db.commit()
+        # Simulate a pre-migration state: set flag back to 0
+        db.execute("UPDATE license_records SET has_additional_names = 0 WHERE license_number = '999002'")
+        db.commit()
+        # Run migration directly
+        from schema import _m010_additional_names_flag
+        _m010_additional_names_flag(db)
+        db.commit()
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE license_number = '999002'"
+        ).fetchone()
+        assert row[0] == 1
+
+    def test_backfill_sets_flag_for_typo_marker(self, db):
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, applicants, scraped_at) "
+            "VALUES ('new_application', '2025-01-01', '999003', 'RENEWAL', "
+            "'ACME; ADDTIONAL NAMES ON FILE; BOB', '2025-01-01T00:00:00+00:00')"
+        )
+        db.commit()
+        db.execute("UPDATE license_records SET has_additional_names = 0 WHERE license_number = '999003'")
+        db.commit()
+        from schema import _m010_additional_names_flag
+        _m010_additional_names_flag(db)
+        db.commit()
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE license_number = '999003'"
+        ).fetchone()
+        assert row[0] == 1
+
+    def test_backfill_leaves_normal_record_zero(self, db):
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, applicants, scraped_at) "
+            "VALUES ('new_application', '2025-01-01', '999004', 'RENEWAL', "
+            "'ACME; JANE DOE; BOB SMITH', '2025-01-01T00:00:00+00:00')"
+        )
+        db.commit()
+        from schema import _m010_additional_names_flag
+        _m010_additional_names_flag(db)
+        db.commit()
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE license_number = '999004'"
+        ).fetchone()
+        assert row[0] == 0
+
+    def test_migration_deletes_spurious_marker_entities(self, db):
+        """Migration cleans up any pre-existing marker entity rows."""
+        db.execute("INSERT OR IGNORE INTO entities (name, entity_type) VALUES ('ADDITIONAL NAMES ON FILE', 'person')")
+        db.execute("INSERT OR IGNORE INTO entities (name, entity_type) VALUES ('ADDTIONAL NAMES ON FILE', 'person')")
+        db.commit()
+        from schema import _m010_additional_names_flag
+        _m010_additional_names_flag(db)
+        db.commit()
+        rows = db.execute(
+            "SELECT name FROM entities WHERE name IN "
+            "('ADDITIONAL NAMES ON FILE', 'ADDTIONAL NAMES ON FILE')"
+        ).fetchall()
+        assert rows == []

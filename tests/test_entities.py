@@ -245,3 +245,70 @@ class TestReprocessEntities:
         before_v = before["version"] if before else None
         after_v = after["version"] if after else None
         assert before_v == after_v
+
+
+class TestAdditionalNamesMarker:
+    """Tests for ADDITIONAL_NAMES_MARKERS skip logic in parse_and_link_entities."""
+
+    def test_marker_constant_exported(self):
+        from entities import ADDITIONAL_NAMES_MARKERS
+        assert "ADDITIONAL NAMES ON FILE" in ADDITIONAL_NAMES_MARKERS
+        assert "ADDTIONAL NAMES ON FILE" in ADDITIONAL_NAMES_MARKERS
+
+    def test_exact_marker_not_created_as_entity(self, db):
+        from entities import parse_and_link_entities
+        record_id = db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
+            "'111111', 'NEW APPLICATION', '2025-01-01T00:00:00+00:00') RETURNING id"
+        ).fetchone()[0]
+        applicants = "ACME LLC; ADDITIONAL NAMES ON FILE; JANE DOE"
+        parse_and_link_entities(db, record_id, applicants)
+        db.commit()
+        names = [r[0] for r in db.execute(
+            "SELECT e.name FROM record_entities re "
+            "JOIN entities e ON e.id = re.entity_id "
+            "WHERE re.record_id = ?", (record_id,)
+        ).fetchall()]
+        assert "ADDITIONAL NAMES ON FILE" not in names
+        assert "JANE DOE" in names
+
+    def test_typo_marker_not_created_as_entity(self, db):
+        from entities import parse_and_link_entities
+        record_id = db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
+            "'111112', 'NEW APPLICATION', '2025-01-01T00:00:00+00:00') RETURNING id"
+        ).fetchone()[0]
+        applicants = "ACME LLC; ADDTIONAL NAMES ON FILE; JANE DOE"
+        parse_and_link_entities(db, record_id, applicants)
+        db.commit()
+        names = [r[0] for r in db.execute(
+            "SELECT e.name FROM record_entities re "
+            "JOIN entities e ON e.id = re.entity_id "
+            "WHERE re.record_id = ?", (record_id,)
+        ).fetchall()]
+        assert "ADDTIONAL NAMES ON FILE" not in names
+        assert "JANE DOE" in names
+
+    def test_positions_are_contiguous_across_marker(self, db):
+        """Positions for real entities must be 0,1,2,… with no gap for the skipped marker."""
+        from entities import parse_and_link_entities
+        record_id = db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
+            "'111113', 'NEW APPLICATION', '2025-01-01T00:00:00+00:00') RETURNING id"
+        ).fetchone()[0]
+        # BIZ; ALICE; [marker]; BOB; CAROL — should give positions 0, 1, 2
+        applicants = "ACME LLC; ALICE SMITH; ADDITIONAL NAMES ON FILE; BOB JONES; CAROL WHITE"
+        parse_and_link_entities(db, record_id, applicants)
+        db.commit()
+        rows = db.execute(
+            "SELECT e.name, re.position FROM record_entities re "
+            "JOIN entities e ON e.id = re.entity_id "
+            "WHERE re.record_id = ? ORDER BY re.position", (record_id,)
+        ).fetchall()
+        positions = [r[1] for r in rows]
+        names = [r[0] for r in rows]
+        assert positions == list(range(len(positions))), "positions must be contiguous"
+        assert names == ["ALICE SMITH", "BOB JONES", "CAROL WHITE"]

@@ -108,6 +108,80 @@ class TestInsertRecord:
         assert row["location_id"] is None
 
 
+class TestHasAdditionalNamesFlag:
+    """insert_record() correctly sets has_additional_names."""
+
+    def _base_record(self, **kwargs):
+        base = {
+            "section_type": "new_application",
+            "record_date": "2025-06-01",
+            "business_name": "ACME LLC",
+            "business_location": "",
+            "applicants": "ACME LLC; JANE DOE",
+            "license_type": "CANNABIS RETAILER",
+            "application_type": "NEW APPLICATION",
+            "license_number": "HAF001",
+            "contact_phone": "",
+            "previous_business_name": "",
+            "previous_applicants": "",
+            "previous_business_location": "",
+            "city": "", "state": "WA", "zip_code": "",
+            "previous_city": "", "previous_state": "", "previous_zip_code": "",
+            "scraped_at": "2025-06-01T00:00:00+00:00",
+        }
+        base.update(kwargs)
+        return base
+
+    def test_flag_false_for_normal_record(self, db):
+        from queries import insert_record
+        rec = self._base_record()
+        record_id, _ = insert_record(db, rec)
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE id = ?",
+            (record_id,)
+        ).fetchone()
+        assert row["has_additional_names"] == 0
+
+    def test_flag_true_for_exact_marker_in_applicants(self, db):
+        from queries import insert_record
+        rec = self._base_record(
+            license_number="HAF002",
+            applicants="ACME LLC; ADDITIONAL NAMES ON FILE; JANE DOE",
+        )
+        record_id, _ = insert_record(db, rec)
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE id = ?",
+            (record_id,)
+        ).fetchone()
+        assert row["has_additional_names"] == 1
+
+    def test_flag_true_for_typo_marker(self, db):
+        from queries import insert_record
+        rec = self._base_record(
+            license_number="HAF003",
+            applicants="ACME LLC; ADDTIONAL NAMES ON FILE; BOB SMITH",
+        )
+        record_id, _ = insert_record(db, rec)
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE id = ?",
+            (record_id,)
+        ).fetchone()
+        assert row["has_additional_names"] == 1
+
+    def test_flag_in_record_columns(self, db):
+        """has_additional_names is included in RECORD_COLUMNS and hydrated."""
+        from queries import insert_record, get_record_by_id
+        rec = self._base_record(
+            license_number="HAF004",
+            applicants="ACME LLC; ADDITIONAL NAMES ON FILE; JANE DOE",
+        )
+        record_id, _ = insert_record(db, rec)
+        db.commit()
+        hydrated = get_record_by_id(db, record_id)
+        assert hydrated is not None
+        assert hydrated["has_additional_names"] == 1
+
+
 # ── Multi-value endorsement filter ───────────────────────────────────────────
 
 class TestMultiEndorsementFilter:

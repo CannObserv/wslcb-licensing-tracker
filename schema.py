@@ -130,6 +130,7 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             raw_previous_business_name TEXT,
             raw_applicants TEXT,
             raw_previous_applicants TEXT,
+            has_additional_names INTEGER NOT NULL DEFAULT 0,
             scraped_at TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(section_type, record_date, license_number, application_type)
@@ -599,6 +600,57 @@ def _m009_regulated_substances(conn: sqlite3.Connection) -> None:
     """, {"sid": alcohol_id, "cannabis_sid": cannabis_id})
 
 
+def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
+    """Add has_additional_names column; backfill from applicants strings;
+    delete spurious ADDITIONAL NAMES ON FILE entity rows."""
+    # Skip entirely if license_records doesn't exist yet
+    # (partial-schema DBs used in some migration tests).
+    has_lr = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='license_records'"
+    ).fetchone()
+    if not has_lr:
+        return
+    # Add column if not already present (idempotent via PRAGMA table_info)
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(license_records)")}
+    if "has_additional_names" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE license_records "
+            "ADD COLUMN has_additional_names INTEGER NOT NULL DEFAULT 0"
+        )
+    # Backfill: set flag=1 for any record whose applicants or
+    # previous_applicants string contains either marker variant.
+    # Guard: only run if the applicants column exists (partial-schema DBs
+    # used in some migration tests may not have it yet).
+    lr_cols = {row[1] for row in conn.execute("PRAGMA table_info(license_records)")}
+    if "applicants" in lr_cols:
+        _markers = ("ADDITIONAL NAMES ON FILE", "ADDTIONAL NAMES ON FILE")
+        conditions = " OR ".join(
+            [
+                f"applicants LIKE '%' || ? || '%'"
+                for _ in _markers
+            ] + [
+                f"previous_applicants LIKE '%' || ? || '%'"
+                for _ in _markers
+            ]
+        )
+        conn.execute(
+            f"UPDATE license_records SET has_additional_names = 1 WHERE {conditions}",
+            _markers + _markers,
+        )
+    # Remove spurious entity rows created before this fix was in place.
+    # record_entities links cascade automatically.
+    # Guard against DBs that don't have the entities table yet
+    # (e.g. partial/test DBs that pre-date the baseline migration).
+    has_entities = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'"
+    ).fetchone()
+    if has_entities:
+        conn.execute(
+            "DELETE FROM entities WHERE name IN (?, ?)",
+            ("ADDITIONAL NAMES ON FILE", "ADDTIONAL NAMES ON FILE"),
+        )
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -618,6 +670,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (7, "endorsement_aliases", _m007_endorsement_aliases),
     (8, "endorsement_dismissed_suggestions", _m008_endorsement_dismissed_suggestions),
     (9, "regulated_substances", _m009_regulated_substances),
+    (10, "additional_names_flag", _m010_additional_names_flag),
 ]
 
 

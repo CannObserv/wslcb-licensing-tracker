@@ -15,7 +15,7 @@ from endorsements import (
 )
 from entities import (
     parse_and_link_entities, get_record_entities, clean_applicants_string,
-    clean_entity_name,
+    clean_entity_name, ADDITIONAL_NAMES_MARKERS,
 )
 from db import SOURCE_ROLE_PRIORITY
 from display import format_outcome
@@ -34,6 +34,7 @@ RECORD_COLUMNS = """
     lr.license_number, lr.contact_phone,
     lr.previous_business_name, lr.previous_applicants,
     lr.location_id, lr.previous_location_id,
+    lr.has_additional_names,
     lr.scraped_at, lr.created_at,
     COALESCE(loc.raw_address, '') AS business_location,
     COALESCE(loc.city, '') AS city,
@@ -122,6 +123,17 @@ def hydrate_records(
 # Record CRUD
 # ------------------------------------------------------------------
 
+def _applicants_have_additional_names(*applicant_strings: str | None) -> bool:
+    """Return True if any of the applicant strings contains an
+    ADDITIONAL NAMES ON FILE marker token (exact or typo variant)."""
+    for s in applicant_strings:
+        if not s:
+            continue
+        if any(part.strip() in ADDITIONAL_NAMES_MARKERS for part in s.split(";")):
+            return True
+    return False
+
+
 def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | None:
     """Insert a record, returning ``(id, is_new)`` or *None* on error.
 
@@ -180,6 +192,9 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
     raw_prev_biz = record.get("previous_business_name", "")
     raw_applicants = record.get("applicants", "")
     raw_prev_applicants = record.get("previous_applicants", "")
+    has_additional_names = int(_applicants_have_additional_names(
+        cleaned_applicants, cleaned_prev_applicants
+    ))
     try:
         cursor = conn.execute(
             """INSERT INTO license_records
@@ -189,6 +204,7 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
                 previous_location_id,
                 raw_business_name, raw_previous_business_name,
                 raw_applicants, raw_previous_applicants,
+                has_additional_names,
                 scraped_at)
                VALUES (:section_type, :record_date, :business_name, :location_id,
                        :applicants, :license_type, :application_type, :license_number,
@@ -196,6 +212,7 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
                        :previous_location_id,
                        :raw_business_name, :raw_previous_business_name,
                        :raw_applicants, :raw_previous_applicants,
+                       :has_additional_names,
                        :scraped_at)""",
             {
                 **record,
@@ -209,6 +226,7 @@ def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | 
                 "raw_previous_business_name": raw_prev_biz,
                 "raw_applicants": raw_applicants,
                 "raw_previous_applicants": raw_prev_applicants,
+                "has_additional_names": has_additional_names,
             },
         )
         record_id = cursor.lastrowid

@@ -57,6 +57,15 @@ def clean_entity_name(name: str) -> str:
     return cleaned
 
 
+# Meta-labels that WSLCB embeds in applicant lists as truncation notices.
+# These are not real people or organizations and must be excluded from entity
+# creation.  Both the canonical spelling and the typo variant are included.
+ADDITIONAL_NAMES_MARKERS: frozenset[str] = frozenset({
+    "ADDITIONAL NAMES ON FILE",
+    "ADDTIONAL NAMES ON FILE",   # typo variant present in WSLCB source
+})
+
+
 def clean_applicants_string(applicants: str | None) -> str | None:
     """Clean each semicolon-separated part of an applicants string.
 
@@ -133,6 +142,10 @@ def parse_and_link_entities(
     entity_names = [p for p in parts[1:] if p]
     linked = 0
     for name in entity_names:
+        if name in ADDITIONAL_NAMES_MARKERS:
+            logger.debug("Skipping meta-label %r in record %d (role %s)",
+                         name, record_id, role)
+            continue  # not a real entity — no position consumed
         try:
             entity_id = get_or_create_entity(conn, name)
         except ValueError:

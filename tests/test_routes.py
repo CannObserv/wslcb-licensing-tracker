@@ -448,3 +448,63 @@ class TestStatCardLinks:
             )
         finally:
             _stop(patches)
+
+
+class TestAdditionalNamesNotice:
+    """Detail page shows the additional-names notice when has_additional_names=1."""
+
+    def _insert_record(self, db, license_number, applicants, has_flag):
+        from queries import insert_record
+        rec = {
+            "section_type": "new_application",
+            "record_date": "2025-06-01",
+            "business_name": "NOTICE TEST LLC",
+            "business_location": "",
+            "applicants": applicants,
+            "license_type": "CANNABIS RETAILER",
+            "application_type": "RENEWAL",
+            "license_number": license_number,
+            "contact_phone": "",
+            "previous_business_name": "",
+            "previous_applicants": "",
+            "previous_business_location": "",
+            "city": "", "state": "WA", "zip_code": "",
+            "previous_city": "", "previous_state": "", "previous_zip_code": "",
+            "scraped_at": "2025-06-01T00:00:00+00:00",
+        }
+        record_id, _ = insert_record(db, rec)
+        # Override the flag directly so we can test both states independently
+        db.execute(
+            "UPDATE license_records SET has_additional_names = ? WHERE id = ?",
+            (1 if has_flag else 0, record_id),
+        )
+        db.commit()
+        return record_id
+
+    def test_notice_shown_when_flag_is_set(self, db):
+        client, patches = _make_client(db)
+        try:
+            record_id = self._insert_record(
+                db, "NTF001",
+                "NOTICE TEST LLC; JANE DOE; ADDITIONAL NAMES ON FILE; BOB SMITH",
+                has_flag=True,
+            )
+            resp = client.get(f"/record/{record_id}")
+            assert resp.status_code == 200
+            assert "additional entities may be on file" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_notice_absent_when_flag_not_set(self, db):
+        client, patches = _make_client(db)
+        try:
+            record_id = self._insert_record(
+                db, "NTF002",
+                "NOTICE TEST LLC; JANE DOE; BOB SMITH",
+                has_flag=False,
+            )
+            resp = client.get(f"/record/{record_id}")
+            assert resp.status_code == 200
+            assert "additional entities may be on file" not in resp.text
+        finally:
+            _stop(patches)
