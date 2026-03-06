@@ -181,3 +181,57 @@ class TestSearchPlaceholder:
             )
         finally:
             _stop(patches)
+
+
+# ---------------------------------------------------------------------------
+# Quick Search button wrapping (#47)
+# ---------------------------------------------------------------------------
+
+class TestQuickSearchButtonWrapping:
+    """Quick Search form must allow the button to wrap on narrow viewports (#47).
+
+    On mobile portrait the button was overflowing the card's right border
+    because the form used ``flex`` without ``flex-wrap``.  The fix is to add
+    ``flex-wrap`` to the form and ``ml-auto`` to the button so it drops to
+    the next line and stays right-aligned on small screens.
+    """
+
+    def test_form_has_flex_wrap(self, db):
+        """The Quick Search form element must carry the flex-wrap class."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            # The form tag must include flex-wrap so rows can break.
+            assert 'flex-wrap' in resp.text, (
+                "Quick Search form is missing 'flex-wrap'; "
+                "the Search button will overflow on narrow mobile viewports."
+            )
+        finally:
+            _stop(patches)
+
+    def test_button_has_ml_auto(self, db):
+        """The Search button must carry ml-auto so it sits at the right on a new line."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            # Locate the Quick Search section then check for ml-auto on its button.
+            search_section_start = resp.text.index("<!-- Quick Search -->")
+            # Find the submit button within the section (appears before the closing </form>)
+            form_end = resp.text.index("</form>", search_section_start)
+            form_html = resp.text[search_section_start:form_end]
+            assert 'type="submit"' in form_html, "Submit button not found in Quick Search form"
+            # The submit button line must contain ml-auto.
+            button_line_start = form_html.index('type="submit"')
+            # Walk back to find the opening <button tag
+            tag_start = form_html.rindex('<button', 0, button_line_start)
+            tag_end = form_html.index('>', button_line_start) + 1
+            button_tag = form_html[tag_start:tag_end]
+            assert 'ml-auto' in button_tag, (
+                f"Search button tag is missing 'ml-auto'; "
+                f"button will not right-align when it wraps to a new line.\n"
+                f"Button tag: {button_tag!r}"
+            )
+        finally:
+            _stop(patches)
