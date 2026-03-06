@@ -189,6 +189,13 @@
                     {% endif %}
                 </dd>
             </div>
+            {% elif record.has_additional_names %}
+            <div class="md:col-span-2">
+                <dt class="text-sm font-medium text-gray-500">Applicant(s)</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                    <p class="text-xs text-gray-400 italic">+ WSLCB source signaled additional entities may be on file</p>
+                </dd>
+            </div>
             {% endif %}
             <div>
                 <dt class="text-sm font-medium text-gray-500">First Scraped</dt>

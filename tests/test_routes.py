@@ -508,3 +508,25 @@ class TestAdditionalNamesNotice:
             assert "additional entities may be on file" not in resp.text
         finally:
             _stop(patches)
+
+    def test_notice_shown_when_flag_set_and_no_entities(self, db):
+        """Notice still appears via fallback branch when entities list is empty."""
+        client, patches = _make_client(db)
+        try:
+            # Insert with only the business name — no real entity tokens
+            record_id = self._insert_record(
+                db, "NTF003",
+                "NOTICE TEST LLC",
+                has_flag=False,
+            )
+            # Force the flag on; no entities are linked (applicants has no ';')
+            db.execute(
+                "UPDATE license_records SET has_additional_names = 1 WHERE id = ?",
+                (record_id,),
+            )
+            db.commit()
+            resp = client.get(f"/record/{record_id}")
+            assert resp.status_code == 200
+            assert "additional entities may be on file" in resp.text
+        finally:
+            _stop(patches)

@@ -699,6 +699,23 @@ class TestMigration010AdditionalNamesFlag:
         ).fetchone()
         assert row[0] == 0
 
+    def test_backfill_no_false_positive_for_substring(self, db):
+        """A name that merely contains the marker as a substring must not be flagged."""
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, applicants, scraped_at) "
+            "VALUES ('new_application', '2025-01-01', '999005', 'RENEWAL', "
+            "'ACME; ADDITIONAL NAMES ON FILE WITH MORE; BOB', '2025-01-01T00:00:00+00:00')"
+        )
+        db.commit()
+        from schema import _m010_additional_names_flag
+        _m010_additional_names_flag(db)
+        db.commit()
+        row = db.execute(
+            "SELECT has_additional_names FROM license_records WHERE license_number = '999005'"
+        ).fetchone()
+        assert row[0] == 0
+
     def test_migration_deletes_spurious_marker_entities(self, db):
         """Migration cleans up any pre-existing marker entity rows."""
         db.execute("INSERT OR IGNORE INTO entities (name, entity_type) VALUES ('ADDITIONAL NAMES ON FILE', 'person')")

@@ -618,24 +618,29 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
             "ADD COLUMN has_additional_names INTEGER NOT NULL DEFAULT 0"
         )
     # Backfill: set flag=1 for any record whose applicants or
-    # previous_applicants string contains either marker variant.
-    # Guard: only run if the applicants column exists (partial-schema DBs
-    # used in some migration tests may not have it yet).
-    lr_cols = {row[1] for row in conn.execute("PRAGMA table_info(license_records)")}
-    if "applicants" in lr_cols:
+    # previous_applicants string contains either marker variant as a whole
+    # semicolon-delimited token.  Match all positions: middle, end, start,
+    # and sole value.  Using token-bounded patterns (rather than bare
+    # '%marker%') prevents false positives if the marker ever appears as a
+    # substring of a longer token.
+    # Note: `applicants` has been in license_records since the initial
+    # schema; the guard on existing_cols handles the rare partial-schema
+    # test DBs that create license_records without it.
+    if "applicants" in existing_cols:
         _markers = ("ADDITIONAL NAMES ON FILE", "ADDTIONAL NAMES ON FILE")
-        conditions = " OR ".join(
-            [
-                f"applicants LIKE '%' || ? || '%'"
-                for _ in _markers
-            ] + [
-                f"previous_applicants LIKE '%' || ? || '%'"
-                for _ in _markers
-            ]
-        )
+        clauses: list[str] = []
+        params: list[str] = []
+        for col in ("applicants", "previous_applicants"):
+            for m in _markers:
+                clauses.append(f"{col} LIKE '%; ' || ? || ';%'")
+                clauses.append(f"{col} LIKE '%; ' || ?")
+                clauses.append(f"{col} LIKE ? || ';%'")
+                clauses.append(f"{col} = ?")
+                params.extend([m, m, m, m])
         conn.execute(
-            f"UPDATE license_records SET has_additional_names = 1 WHERE {conditions}",
-            _markers + _markers,
+            f"UPDATE license_records SET has_additional_names = 1"
+            f" WHERE {' OR '.join(clauses)}",
+            params,
         )
     # Remove spurious entity rows created before this fix was in place.
     # record_entities links cascade automatically.
