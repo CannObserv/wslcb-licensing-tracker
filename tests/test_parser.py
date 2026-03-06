@@ -411,3 +411,51 @@ class TestExtractTbodyFromDiff:
             src, "new_application", "999999", "2025-06-15", "NEW APPLICATION"
         )
         assert result is None
+
+
+class TestStripAnchorTags:
+    """Tests for strip_anchor_tags() — removes <a> wrappers, preserves text."""
+
+    def test_simple_anchor_removed(self):
+        from parser import strip_anchor_tags
+        html = '<td><a href="tel:2065551234">206-555-1234</a></td>'
+        result = strip_anchor_tags(html)
+        assert "<a" not in result
+        assert "206-555-1234" in result
+
+    def test_nested_anchor_removed(self):
+        from parser import strip_anchor_tags
+        html = '<td><a href="http://example.com"><b>ACME CO</b></a></td>'
+        result = strip_anchor_tags(html)
+        assert "<a" not in result
+        # Inner content preserved
+        assert "ACME CO" in result
+
+    def test_multiple_anchors_removed(self):
+        from parser import strip_anchor_tags
+        html = (
+            '<tr><td><a href="/a">First</a></td>'
+            '<td><a href="/b">Second</a></td></tr>'
+        )
+        result = strip_anchor_tags(html)
+        assert "<a" not in result
+        assert "First" in result
+        assert "Second" in result
+
+    def test_no_anchors_unchanged(self):
+        from parser import strip_anchor_tags
+        html = '<td>Plain text <b>bold</b></td>'
+        result = strip_anchor_tags(html)
+        assert "Plain text" in result
+        assert "<b>" in result
+
+    def test_empty_string(self):
+        from parser import strip_anchor_tags
+        assert strip_anchor_tags("") == ""
+
+    def test_anchor_with_no_href(self):
+        from parser import strip_anchor_tags
+        html = '<td><a name="top">Anchor text</a></td>'
+        result = strip_anchor_tags(html)
+        assert "<a" not in result
+        assert "Anchor text" in result

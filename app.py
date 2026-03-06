@@ -26,7 +26,7 @@ from queries import (
     hydrate_records,
     invalidate_filter_cache,
 )
-from parser import extract_tbody_from_snapshot, extract_tbody_from_diff
+from parser import extract_tbody_from_snapshot, extract_tbody_from_diff, strip_anchor_tags
 from db import DATA_DIR, SOURCE_TYPE_CO_DIFF_ARCHIVE
 from integrity import (
     check_orphaned_locations,
@@ -345,6 +345,12 @@ async def source_viewer(
                 record["record_date"],
                 record["application_type"],
             )
+
+    # Strip anchor tags from the tbody HTML before embedding — WSLCB pages can
+    # contain <a href="..."> wrappers around cell values that are broken or
+    # irrelevant inside the sandboxed iframe.  Text content is preserved.
+    if tbody_html is not None:
+        tbody_html = strip_anchor_tags(tbody_html)
 
     # Build the srcdoc attribute value server-side using html.escape() so that
     # all special characters (&, <, >, ", ') are correctly encoded for an HTML

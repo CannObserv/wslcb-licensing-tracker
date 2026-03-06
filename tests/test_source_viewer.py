@@ -151,3 +151,26 @@ class TestSourceViewerRoute:
         assert resp.status_code == 200
         mock_diff.assert_called_once()
         assert "srcdoc" in resp.text
+
+    def test_anchor_tags_stripped_from_srcdoc(self, client, db):
+        """Anchor tags in tbody HTML are stripped before embedding in srcdoc."""
+        from database import SOURCE_TYPE_LIVE_SCRAPE
+        record_id = _insert_record(db)
+        source_id = _insert_source(db, SOURCE_TYPE_LIVE_SCRAPE, snapshot_path="path/live.html")
+        _link(db, record_id, source_id)
+
+        anchored_tbody = (
+            '<tbody><tr>'
+            '<td>Business Name:</td>'
+            '<td><a href="http://example.com">ACME CANNABIS CO</a></td>'
+            '</tr></tbody>'
+        )
+        with patch("app.extract_tbody_from_snapshot", return_value=anchored_tbody):
+            resp = client.get(f"/source/{source_id}/record/{record_id}")
+
+        assert resp.status_code == 200
+        # Business name text must survive
+        assert "ACME CANNABIS CO" in resp.text
+        # The <a tag must not appear in the srcdoc content
+        # (srcdoc value is HTML-escaped, so '<a' becomes '&lt;a')
+        assert "&lt;a " not in resp.text and "&lt;a\n" not in resp.text

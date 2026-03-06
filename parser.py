@@ -432,6 +432,30 @@ def _match_key(
     )
 
 
+def strip_anchor_tags(html: str) -> str:
+    """Remove all <a> elements from *html* while preserving their text content.
+
+    WSLCB snapshot pages sometimes wrap cell values in anchor tags (e.g.
+    ``<a href="tel:...">206-555-1234</a>``).  These links are meaningless and
+    potentially broken inside the sandboxed source-viewer iframe, so we unwrap
+    them before embedding the ``<tbody>`` HTML in ``srcdoc``.
+
+    Uses BeautifulSoup ``unwrap()`` so that any child elements inside the
+    ``<a>`` tag (e.g. ``<b>``) are also preserved.
+    """
+    if not html:
+        return html
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup.find_all("a"):
+        tag.unwrap()
+    # lxml wraps the fragment in <html><body>; strip that wrapper by
+    # returning only the inner content of <body>.
+    body = soup.find("body")
+    if body is not None:
+        return "".join(str(c) for c in body.contents)
+    return str(soup)
+
+
 def extract_tbody_from_snapshot(
     path: Path,
     section_type: str,
