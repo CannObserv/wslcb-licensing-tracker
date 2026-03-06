@@ -2,10 +2,13 @@
 
 This module contains the admin-facing endorsement helpers:
 - Similarity algorithm for duplicate detection
-- ``get_endorsement_list()`` and ``get_endorsement_groups()``
+- ``get_endorsement_list()``
 - ``suggest_duplicate_endorsements()`` / ``dismiss_suggestion()``
 - Code-mapping CRUD: ``get_code_mappings()``, ``add_code_mapping()``,
   ``remove_code_mapping()``, ``create_code()``
+
+Note: ``get_endorsement_groups()`` is the legacy grouped view and lives in
+``endorsements.py``, not here.
 
 All functions that perform mutations accept a caller-supplied ``conn``;
 the caller is responsible for committing.  Audit logging is performed

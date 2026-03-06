@@ -25,13 +25,33 @@ similarity algorithm, ``dismiss_suggestion``, code-mapping CRUD) live in
 Regulated substance CRUD (``get_regulated_substances``, ``add_substance``,
 ``remove_substance``, ``set_substance_endorsements``) lives in ``substances``.
 
-Backward-compatible re-exports from both sub-modules are provided at the
-bottom of this file so existing ``from endorsements import ...`` call-sites
-continue to work without modification.
+Backward-compatible re-exports from both sub-modules are provided below so
+existing ``from endorsements import ...`` call-sites continue to work without
+modification.
 """
 import logging
 import re
 import sqlite3
+
+# Re-exports: admin UI helpers
+from endorsements_admin import (
+    endorsement_similarity,
+    get_endorsement_list,
+    suggest_duplicate_endorsements,
+    dismiss_suggestion,
+    get_code_mappings,
+    add_code_mapping,
+    remove_code_mapping,
+    create_code,
+)
+# Re-exports: regulated substance CRUD
+from substances import (
+    get_regulated_substances,
+    get_substance_endorsement_ids,
+    set_substance_endorsements,
+    add_substance,
+    remove_substance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1097,27 +1117,4 @@ def get_endorsement_groups(
     return groups
 
 
-# ---------------------------------------------------------------------------
-# Backward-compatible re-exports from split sub-modules
-# ---------------------------------------------------------------------------
-# endorsements_admin: admin UI helpers
-from endorsements_admin import (  # noqa: E402
-    endorsement_similarity,
-    get_endorsement_list,
-    suggest_duplicate_endorsements,
-    dismiss_suggestion,
-    get_code_mappings,
-    add_code_mapping,
-    remove_code_mapping,
-    create_code,
-)
-# substances: regulated substance CRUD
-from substances import (  # noqa: E402
-    get_regulated_substances,
-    get_substance_endorsement_ids,
-    set_substance_endorsements,
-    add_substance,
-    remove_substance,
-)
 
-_SIM_THRESHOLD: float = 0.70

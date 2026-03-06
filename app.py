@@ -37,10 +37,12 @@ from endorsements import (
     seed_endorsements, backfill, repair_code_name_endorsements,
     merge_mixed_case_endorsements,
     set_canonical_endorsement, rename_endorsement,
+    reprocess_endorsements,
+)
+from endorsements_admin import (
     get_endorsement_list, get_code_mappings,
     suggest_duplicate_endorsements, dismiss_suggestion,
     add_code_mapping, remove_code_mapping, create_code,
-    reprocess_endorsements,
 )
 from substances import (
     get_regulated_substances,
