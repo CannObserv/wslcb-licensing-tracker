@@ -355,3 +355,120 @@ class TestStatCardsMobileLayout:
             )
         finally:
             _stop(patches)
+
+
+# ---------------------------------------------------------------------------
+# Stat cards as linked anchors (#49)
+# ---------------------------------------------------------------------------
+
+class TestStatCardLinks:
+    """Primary stat cards must be <a> anchors linking to search results (#49).
+
+    Each card in Stats Cards and Additional Stats (except Date Range) should
+    be rendered as a block <a> element, matching the Application Outcomes
+    pattern.  The Date Range card carries only static text and must NOT be
+    wrapped in a link.
+    """
+
+    # Expected (label_text, href) pairs for every linked card.
+    STATS_CARD_LINKS = [
+        ("Total Records",      "/search"),
+        ("New Applications",   "/search?section_type=new_application"),
+        ("Approved",           "/search?section_type=approved"),
+        ("Discontinued",       "/search?section_type=discontinued"),
+    ]
+
+    ADDITIONAL_CARD_LINKS = [
+        ("Unique Businesses",  "/search"),
+        ("Unique Licenses",    "/search"),
+        ("Unique Entities",    "/search"),
+    ]
+
+    # ---- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _section(html: str, start_comment: str, end_comment: str) -> str:
+        start = html.index(start_comment)
+        end   = html.index(end_comment, start)
+        return html[start:end]
+
+    @staticmethod
+    def _card_tag(section: str, label: str) -> str:
+        """Return the opening tag of the element that wraps *label*.
+
+        Walks backwards from the label text past its inner label <div> to
+        the outermost card wrapper (the element immediately before the label
+        div), then returns its full opening tag up to and including '>'.
+        """
+        label_pos          = section.index(label)
+        inner_label_start  = section.rindex("<", 0, label_pos)   # label <div or <span
+        card_start         = section.rindex("<", 0, inner_label_start)  # outer card
+        card_end           = section.index(">", card_start)
+        return section[card_start:card_end + 1]
+
+    # ---- Stats Cards --------------------------------------------------------
+
+    def test_stats_cards_are_links(self, db):
+        """Every Stats Card (Total Records / New Apps / Approved / Discontinued) must be an <a>."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = self._section(resp.text,
+                                    "<!-- Stats Cards -->",
+                                    "<!-- Additional Stats -->")
+            for label, href in self.STATS_CARD_LINKS:
+                tag = self._card_tag(section, label)
+                assert tag.startswith("<a "), (
+                    f"Stats Card '{label}' outer wrapper is not an <a> tag.\n"
+                    f"Tag: {tag!r}"
+                )
+                assert f'href="{href}"' in tag, (
+                    f"Stats Card '{label}' has wrong or missing href.\n"
+                    f"Expected href=\"{href}\"\nTag: {tag!r}"
+                )
+        finally:
+            _stop(patches)
+
+    # ---- Additional Stats ---------------------------------------------------
+
+    def test_additional_stats_cards_are_links(self, db):
+        """Unique Businesses / Licenses / Entities cards must be <a> links."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = self._section(resp.text,
+                                    "<!-- Additional Stats -->",
+                                    "<!-- Application Pipeline -->")
+            for label, href in self.ADDITIONAL_CARD_LINKS:
+                tag = self._card_tag(section, label)
+                assert tag.startswith("<a "), (
+                    f"Additional Stats card '{label}' outer wrapper is not an <a> tag.\n"
+                    f"Tag: {tag!r}"
+                )
+                assert f'href="{href}"' in tag, (
+                    f"Additional Stats card '{label}' has wrong or missing href.\n"
+                    f"Expected href=\"{href}\"\nTag: {tag!r}"
+                )
+        finally:
+            _stop(patches)
+
+    # ---- Date Range must NOT be a link --------------------------------------
+
+    def test_date_range_card_is_not_a_link(self, db):
+        """The Date Range card carries static text and must not be wrapped in an <a>."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = self._section(resp.text,
+                                    "<!-- Additional Stats -->",
+                                    "<!-- Application Pipeline -->")
+            tag = self._card_tag(section, "Date Range")
+            assert not tag.startswith("<a "), (
+                f"Date Range card should NOT be a link but its outer wrapper is an <a>.\n"
+                f"Tag: {tag!r}"
+            )
+        finally:
+            _stop(patches)
