@@ -1,8 +1,10 @@
 """Tests for main public routes (/, /search).
 
-Covers UI consistency requirements such as shared placeholder text.
+Covers UI consistency requirements such as shared placeholder text
+and dashboard section ordering.
 Uses FastAPI TestClient with the ``db`` fixture patched in; no disk DB.
 """
+import copy
 import sqlite3
 from unittest.mock import MagicMock, patch
 
@@ -21,7 +23,13 @@ SEARCH_PLACEHOLDER = "Search business name, license #, location, applicant..."
 
 @pytest.fixture
 def db():
-    """In-memory SQLite DB with cross-thread access (needed for TestClient)."""
+    """In-memory SQLite DB with cross-thread access enabled.
+
+    The conftest ``db`` fixture uses ``get_connection(":memory:")`` which
+    does not set ``check_same_thread=False``.  FastAPI's TestClient runs
+    the app in a background thread, so we need that flag here — hence
+    this local override rather than reusing the shared fixture.
+    """
     from database import init_db
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -31,7 +39,14 @@ def db():
     conn.close()
 
 
-_EMPTY_STATS = {
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+# Template for an empty stats dict matching the exact shape of get_stats().
+# _make_client copies this per call so tests can safely mutate their copy
+# without bleeding state into other tests.
+_EMPTY_STATS_TEMPLATE = {
     "total_records": 0,
     "new_application_count": 0,
     "approved_count": 0,
@@ -45,8 +60,15 @@ _EMPTY_STATS = {
 }
 
 
-def _make_client(db):
-    """Return a (client, patches) pair with the DB patched in."""
+def _make_client(db, stats: dict | None = None):
+    """Return a (client, patches) pair with the DB and stats patched in.
+
+    ``stats`` defaults to a fresh copy of ``_EMPTY_STATS_TEMPLATE``;
+    callers may pass a modified copy without affecting other tests.
+    """
+    if stats is None:
+        stats = copy.copy(_EMPTY_STATS_TEMPLATE)
+
     ctx = MagicMock()
     ctx.__enter__ = lambda s: db
     ctx.__exit__ = MagicMock(return_value=False)
@@ -55,7 +77,7 @@ def _make_client(db):
         patch("admin_auth.get_db", return_value=ctx),
         patch("admin_auth._lookup_admin", return_value=None),
         patch("app.get_db", return_value=ctx),
-        patch("app.get_stats", return_value=_EMPTY_STATS),
+        patch("app.get_stats", return_value=stats),
     )
     for p in patches:
         p.start()
@@ -65,6 +87,7 @@ def _make_client(db):
 
 
 def _stop(patches):
+    """Stop all patches returned by ``_make_client``."""
     for p in patches:
         p.stop()
 
@@ -79,6 +102,8 @@ class TestDashboardSectionOrder:
     Order: Search bar → Stats Cards → Application Pipeline → Last Scrape.
     We detect each section by its HTML comment anchor and assert that each
     anchor's position in the response body is strictly less than the next.
+    The comment anchors are unconditional in the template so they are always
+    present regardless of whether the pipeline / last-scrape data is populated.
     """
 
     # Canonical HTML comment anchors present in templates/index.html
@@ -88,12 +113,19 @@ class TestDashboardSectionOrder:
     LAST_SCRAPE = "<!-- Last Scrape Info -->"
 
     def _positions(self, html: str) -> dict:
-        return {
-            "search": html.index(self.SEARCH),
-            "stats": html.index(self.STATS),
-            "pipeline": html.index(self.PIPELINE),
-            "last_scrape": html.index(self.LAST_SCRAPE),
-        }
+        """Return byte positions of each section anchor, with clear failures."""
+        result = {}
+        for key, anchor in [
+            ("search",     self.SEARCH),
+            ("stats",      self.STATS),
+            ("pipeline",   self.PIPELINE),
+            ("last_scrape", self.LAST_SCRAPE),
+        ]:
+            assert anchor in html, (
+                f"Section anchor missing from dashboard HTML: {anchor!r}"
+            )
+            result[key] = html.index(anchor)
+        return result
 
     def test_section_order(self, db):
         """Search → Stats → Application Pipeline → Last Scrape."""
