@@ -21,7 +21,7 @@
 </div>
 
 <!-- Stats Cards -->
-<div class="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
     <a href="/search" class="block bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:border-co-purple-100 hover:bg-co-purple-50/30 transition">
         <div class="text-sm font-medium text-gray-500">Total Records</div>
         <div class="mt-1 text-3xl font-bold text-gray-900">{{ "{:,}".format(stats.total_records) }}</div>
@@ -50,10 +50,11 @@
         <div class="text-sm font-medium text-gray-500">Unique Licenses</div>
         <div class="mt-1 text-2xl font-bold text-gray-900">{{ "{:,}".format(stats.unique_licenses) }}</div>
     </a>
-    <a href="/search" class="block bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:border-co-purple-100 hover:bg-co-purple-50/30 transition">
+    <!-- #50: link to /entities once the Entities landing page exists -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
         <div class="text-sm font-medium text-gray-500">Unique Entities</div>
         <div class="mt-1 text-2xl font-bold text-gray-900">{{ "{:,}".format(stats.unique_entities) }}</div>
-    </a>
+    </div>
     <div class="col-span-2 md:col-span-1 bg-white rounded-lg shadow-sm border border-gray-200 p-5">
         <div class="text-sm font-medium text-gray-500">Date Range</div>
         {% if stats.date_range and stats.date_range[0] %}

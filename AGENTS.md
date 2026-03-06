@@ -425,6 +425,10 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - `tests/fixtures/` — static HTML files for parser tests
 - `requirements.txt` includes `pytest` in the dev section
 
+**Test helper utilities (module-level, `tests/test_routes.py`):**
+- `_html_section(html, start_comment, end_comment)` — slices the rendered HTML between two HTML comment anchors; used by all dashboard layout and link tests to isolate a section.
+- `_card_tag(section, label)` — given a section slice and a visible label string, walks backwards to find the outer card wrapper element (`<a>` or `<div>`) and returns its full opening tag. Resolves card wrapper type unambiguously by comparing the last `<a ` and `<div` positions before the inner label element.
+
 **When to add tests:**
 - Fixing a bug → write a test that fails with the bug, then fix it
 - Adding a feature → write tests for the expected behavior first

@@ -92,6 +92,36 @@ def _stop(patches):
         p.stop()
 
 
+def _html_section(html: str, start_comment: str, end_comment: str) -> str:
+    """Return the HTML slice from *start_comment* up to (not including) *end_comment*.
+
+    Both arguments must be present in *html*; raises ``ValueError`` otherwise.
+    Used by layout tests to isolate a dashboard section by its HTML comment anchors.
+    """
+    start = html.index(start_comment)
+    end   = html.index(end_comment, start)
+    return html[start:end]
+
+
+def _card_tag(section: str, label: str) -> str:
+    """Return the opening tag of the card element that directly wraps *label*.
+
+    Walks backwards from the label text:
+    1. Skips the inner label element (``<div`` or ``<span``) that contains the text.
+    2. Finds the outer card wrapper (the ``<a`` or ``<div`` immediately before it).
+    Returns the full opening tag string up to and including ``>``.
+    """
+    label_pos         = section.index(label)
+    # Step 1: find the inner label element opening tag
+    inner_start       = section.rindex("<div", 0, label_pos)
+    # Step 2: find the outer card wrapper — could be <a or <div
+    a_pos   = section.rfind("<a ",   0, inner_start)
+    div_pos = section.rfind("<div",  0, inner_start)
+    card_start = max(a_pos, div_pos)
+    card_end   = section.index(">", card_start)
+    return section[card_start:card_end + 1]
+
+
 # ---------------------------------------------------------------------------
 # Dashboard section-order test (#46)
 # ---------------------------------------------------------------------------
@@ -202,7 +232,6 @@ class TestQuickSearchButtonWrapping:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            # The form tag must include flex-wrap so rows can break.
             assert 'flex-wrap' in resp.text, (
                 "Quick Search form is missing 'flex-wrap'; "
                 "the Search button will overflow on narrow mobile viewports."
@@ -216,17 +245,12 @@ class TestQuickSearchButtonWrapping:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            # Locate the Quick Search section then check for ml-auto on its button.
-            search_section_start = resp.text.index("<!-- Quick Search -->")
-            # Find the submit button within the section (appears before the closing </form>)
-            form_end = resp.text.index("</form>", search_section_start)
-            form_html = resp.text[search_section_start:form_end]
+            form_html = _html_section(resp.text, "<!-- Quick Search -->",
+                                      "<!-- Stats Cards -->")
             assert 'type="submit"' in form_html, "Submit button not found in Quick Search form"
-            # The submit button line must contain ml-auto.
             button_line_start = form_html.index('type="submit"')
-            # Walk back to find the opening <button tag
             tag_start = form_html.rindex('<button', 0, button_line_start)
-            tag_end = form_html.index('>', button_line_start) + 1
+            tag_end   = form_html.index('>', button_line_start) + 1
             button_tag = form_html[tag_start:tag_end]
             assert 'ml-auto' in button_tag, (
                 f"Search button tag is missing 'ml-auto'; "
@@ -250,31 +274,14 @@ class TestStatCardsMobileLayout:
     to a single column at md+ (md:col-span-1).
     """
 
-    # ---- helpers ------------------------------------------------------------
-
-    @staticmethod
-    def _section(html: str, comment: str, end_comment: str | None = None) -> str:
-        """Return the HTML slice starting at ``comment`` up to the next HTML comment."""
-        start = html.index(comment)
-        if end_comment:
-            end = html.index(end_comment, start)
-        else:
-            # Find the next HTML comment after our section start
-            next_comment = html.find("<!--", start + len(comment))
-            end = next_comment if next_comment != -1 else len(html)
-        return html[start:end]
-
-    # ---- Stats Cards --------------------------------------------------------
-
     def test_stats_cards_grid_has_grid_cols_2(self, db):
         """The Stats Cards outer grid must carry grid-cols-2 for mobile 2-per-row."""
         client, patches = _make_client(db)
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = self._section(resp.text, "<!-- Stats Cards -->",
+            section = _html_section(resp.text, "<!-- Stats Cards -->",
                                     "<!-- Additional Stats -->")
-            # The wrapping grid div must include grid-cols-2
             first_div_end = section.index(">", section.index("<div"))
             grid_div = section[section.index("<div"):first_div_end + 1]
             assert "grid-cols-2" in grid_div, (
@@ -284,15 +291,13 @@ class TestStatCardsMobileLayout:
         finally:
             _stop(patches)
 
-    # ---- Additional Stats ---------------------------------------------------
-
     def test_additional_stats_grid_has_grid_cols_2(self, db):
         """The Additional Stats outer grid must carry grid-cols-2 for mobile 2-per-row."""
         client, patches = _make_client(db)
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = self._section(resp.text, "<!-- Additional Stats -->",
+            section = _html_section(resp.text, "<!-- Additional Stats -->",
                                     "<!-- Application Pipeline -->")
             first_div_end = section.index(">", section.index("<div"))
             grid_div = section[section.index("<div"):first_div_end + 1]
@@ -303,34 +308,15 @@ class TestStatCardsMobileLayout:
         finally:
             _stop(patches)
 
-    # ---- Date Range card ----------------------------------------------------
-
-    @staticmethod
-    def _date_range_card_div(section: str) -> str:
-        """Return the opening tag of the card that contains the 'Date Range' label.
-
-        We look for 'Date Range' as a text node, then walk backwards past its
-        inner label <div> to the outer card wrapper that holds the border/padding
-        classes.  The outer card wrapper is identified as the <div> that immediately
-        precedes the inner label div — i.e. the second-to-last <div> opening tag
-        before the 'Date Range' text.
-        """
-        label_pos = section.index("Date Range")
-        # Find all <div openings before the label text
-        inner_label_start = section.rindex("<div", 0, label_pos)   # the label div itself
-        card_start = section.rindex("<div", 0, inner_label_start)  # the outer card wrapper
-        card_end = section.index(">", card_start)
-        return section[card_start:card_end + 1]
-
     def test_date_range_card_col_span_2(self, db):
         """The Date Range card must have col-span-2 so it is full-width on mobile."""
         client, patches = _make_client(db)
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = self._section(resp.text, "<!-- Additional Stats -->",
+            section = _html_section(resp.text, "<!-- Additional Stats -->",
                                     "<!-- Application Pipeline -->")
-            card_div = self._date_range_card_div(section)
+            card_div = _card_tag(section, "Date Range")
             assert "col-span-2" in card_div, (
                 f"Date Range card is missing 'col-span-2'; "
                 f"it will be half-width on mobile instead of full-width.\n"
@@ -345,9 +331,9 @@ class TestStatCardsMobileLayout:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = self._section(resp.text, "<!-- Additional Stats -->",
+            section = _html_section(resp.text, "<!-- Additional Stats -->",
                                     "<!-- Application Pipeline -->")
-            card_div = self._date_range_card_div(section)
+            card_div = _card_tag(section, "Date Range")
             assert "md:col-span-1" in card_div, (
                 f"Date Range card is missing 'md:col-span-1'; "
                 f"it will span 2 columns on tablet/desktop as well.\n"
@@ -364,13 +350,14 @@ class TestStatCardsMobileLayout:
 class TestStatCardLinks:
     """Primary stat cards must be <a> anchors linking to search results (#49).
 
-    Each card in Stats Cards and Additional Stats (except Date Range) should
-    be rendered as a block <a> element, matching the Application Outcomes
-    pattern.  The Date Range card carries only static text and must NOT be
-    wrapped in a link.
+    Each card in Stats Cards and most Additional Stats cards should be rendered
+    as a block <a> element, matching the Application Outcomes pattern.
+    Exceptions that must NOT be links:
+    - Date Range — static informational text.
+    - Unique Entities — pending /entities landing page (#50).
     """
 
-    # Expected (label_text, href) pairs for every linked card.
+    # (label_text, expected_href) for every linked Stats Card.
     STATS_CARD_LINKS = [
         ("Total Records",      "/search"),
         ("New Applications",   "/search?section_type=new_application"),
@@ -378,35 +365,11 @@ class TestStatCardLinks:
         ("Discontinued",       "/search?section_type=discontinued"),
     ]
 
+    # (label_text, expected_href) for linked Additional Stats cards.
     ADDITIONAL_CARD_LINKS = [
         ("Unique Businesses",  "/search"),
         ("Unique Licenses",    "/search"),
-        ("Unique Entities",    "/search"),
     ]
-
-    # ---- helpers ------------------------------------------------------------
-
-    @staticmethod
-    def _section(html: str, start_comment: str, end_comment: str) -> str:
-        start = html.index(start_comment)
-        end   = html.index(end_comment, start)
-        return html[start:end]
-
-    @staticmethod
-    def _card_tag(section: str, label: str) -> str:
-        """Return the opening tag of the element that wraps *label*.
-
-        Walks backwards from the label text past its inner label <div> to
-        the outermost card wrapper (the element immediately before the label
-        div), then returns its full opening tag up to and including '>'.
-        """
-        label_pos          = section.index(label)
-        inner_label_start  = section.rindex("<", 0, label_pos)   # label <div or <span
-        card_start         = section.rindex("<", 0, inner_label_start)  # outer card
-        card_end           = section.index(">", card_start)
-        return section[card_start:card_end + 1]
-
-    # ---- Stats Cards --------------------------------------------------------
 
     def test_stats_cards_are_links(self, db):
         """Every Stats Card (Total Records / New Apps / Approved / Discontinued) must be an <a>."""
@@ -414,11 +377,11 @@ class TestStatCardLinks:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = self._section(resp.text,
+            section = _html_section(resp.text,
                                     "<!-- Stats Cards -->",
                                     "<!-- Additional Stats -->")
             for label, href in self.STATS_CARD_LINKS:
-                tag = self._card_tag(section, label)
+                tag = _card_tag(section, label)
                 assert tag.startswith("<a "), (
                     f"Stats Card '{label}' outer wrapper is not an <a> tag.\n"
                     f"Tag: {tag!r}"
@@ -430,19 +393,17 @@ class TestStatCardLinks:
         finally:
             _stop(patches)
 
-    # ---- Additional Stats ---------------------------------------------------
-
     def test_additional_stats_cards_are_links(self, db):
-        """Unique Businesses / Licenses / Entities cards must be <a> links."""
+        """Unique Businesses and Unique Licenses cards must be <a> links."""
         client, patches = _make_client(db)
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = self._section(resp.text,
+            section = _html_section(resp.text,
                                     "<!-- Additional Stats -->",
                                     "<!-- Application Pipeline -->")
             for label, href in self.ADDITIONAL_CARD_LINKS:
-                tag = self._card_tag(section, label)
+                tag = _card_tag(section, label)
                 assert tag.startswith("<a "), (
                     f"Additional Stats card '{label}' outer wrapper is not an <a> tag.\n"
                     f"Tag: {tag!r}"
@@ -454,20 +415,35 @@ class TestStatCardLinks:
         finally:
             _stop(patches)
 
-    # ---- Date Range must NOT be a link --------------------------------------
-
     def test_date_range_card_is_not_a_link(self, db):
         """The Date Range card carries static text and must not be wrapped in an <a>."""
         client, patches = _make_client(db)
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = self._section(resp.text,
+            section = _html_section(resp.text,
                                     "<!-- Additional Stats -->",
                                     "<!-- Application Pipeline -->")
-            tag = self._card_tag(section, "Date Range")
+            tag = _card_tag(section, "Date Range")
             assert not tag.startswith("<a "), (
                 f"Date Range card should NOT be a link but its outer wrapper is an <a>.\n"
+                f"Tag: {tag!r}"
+            )
+        finally:
+            _stop(patches)
+
+    def test_unique_entities_card_is_not_a_link(self, db):
+        """Unique Entities card must not be a link until /entities landing page exists (#50)."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = _html_section(resp.text,
+                                    "<!-- Additional Stats -->",
+                                    "<!-- Application Pipeline -->")
+            tag = _card_tag(section, "Unique Entities")
+            assert not tag.startswith("<a "), (
+                f"Unique Entities card should NOT be a link until #50 (/entities) is built.\n"
                 f"Tag: {tag!r}"
             )
         finally:
