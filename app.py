@@ -41,6 +41,8 @@ from endorsements import (
     suggest_duplicate_endorsements, dismiss_suggestion,
     add_code_mapping, remove_code_mapping, create_code,
     reprocess_endorsements,
+)
+from substances import (
     get_regulated_substances,
     set_substance_endorsements, add_substance, remove_substance,
 )
@@ -741,7 +743,9 @@ async def admin_substance_add(
         # Auto-assign display_order as max + 1.
         row = conn.execute("SELECT COALESCE(MAX(display_order), 0) + 1 FROM regulated_substances").fetchone()
         display_order = row[0] if row else 1
-        add_substance(conn, name, display_order=display_order, created_by=admin["email"])
+        sid = add_substance(conn, name, display_order)
+        log_action(conn, admin["email"], "substance.add", "regulated_substance",
+                   target_id=sid, details={"name": name})
         conn.commit()
     invalidate_filter_cache()
     return RedirectResponse("/admin/endorsements?section=substances&flash=substance_added", status_code=303)
@@ -755,7 +759,9 @@ async def admin_substance_remove(
 ):
     """Delete a regulated substance and its endorsement associations."""
     with get_db() as conn:
-        remove_substance(conn, substance_id, removed_by=admin["email"])
+        substance_name = remove_substance(conn, substance_id) or str(substance_id)
+        log_action(conn, admin["email"], "substance.remove", "regulated_substance",
+                   target_id=substance_id, details={"name": substance_name})
         conn.commit()
     invalidate_filter_cache()
     return RedirectResponse("/admin/endorsements?section=substances&flash=substance_removed", status_code=303)
@@ -770,9 +776,9 @@ async def admin_substance_set_endorsements(
 ):
     """Replace the endorsement associations for a regulated substance."""
     with get_db() as conn:
-        set_substance_endorsements(
-            conn, substance_id, endorsement_ids, set_by=admin["email"]
-        )
+        set_substance_endorsements(conn, substance_id, endorsement_ids)
+        log_action(conn, admin["email"], "substance.set_endorsements", "regulated_substance",
+                   target_id=substance_id, details={"endorsement_count": len(endorsement_ids)})
         conn.commit()
     invalidate_filter_cache()
     return RedirectResponse(

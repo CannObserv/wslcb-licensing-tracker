@@ -1215,13 +1215,13 @@ class TestGetSubstanceEndorsementIds:
 
 class TestSetSubstanceEndorsements:
     def test_replaces_associations(self, db):
-        from endorsements import set_substance_endorsements
+        from substances import set_substance_endorsements
         eid1 = _ensure_endorsement(db, "OLD ENDORSEMENT")
         eid2 = _ensure_endorsement(db, "NEW ENDORSEMENT")
         sid = _ensure_substance(db, "Test Substance")
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid1))
         db.commit()
-        set_substance_endorsements(db, sid, [eid2], set_by="test@example.com")
+        set_substance_endorsements(db, sid, [eid2])
         db.commit()
         ids = db.execute(
             "SELECT endorsement_id FROM regulated_substance_endorsements WHERE substance_id = ?",
@@ -1229,10 +1229,14 @@ class TestSetSubstanceEndorsements:
         ).fetchall()
         assert {r[0] for r in ids} == {eid2}
 
-    def test_writes_audit_log(self, db):
-        from endorsements import set_substance_endorsements
+    def test_audit_log_written_by_caller(self, db):
+        """Audit logging is the caller's responsibility; verify pattern works."""
+        from substances import set_substance_endorsements
+        from admin_audit import log_action
         sid = _ensure_substance(db, "Audit Test")
-        set_substance_endorsements(db, sid, [], set_by="admin@example.com")
+        set_substance_endorsements(db, sid, [])
+        log_action(db, "admin@example.com", "substance.set_endorsements",
+                   "regulated_substance", target_id=sid, details={"endorsement_count": 0})
         db.commit()
         row = db.execute(
             "SELECT admin_email, action FROM admin_audit_log WHERE action = 'substance.set_endorsements'"
@@ -1241,12 +1245,12 @@ class TestSetSubstanceEndorsements:
         assert row[0] == "admin@example.com"
 
     def test_clearing_all_endorsements(self, db):
-        from endorsements import set_substance_endorsements
+        from substances import set_substance_endorsements
         eid = _ensure_endorsement(db, "CLEAR ME")
         sid = _ensure_substance(db, "Clear Test")
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
         db.commit()
-        set_substance_endorsements(db, sid, [], set_by="admin@example.com")
+        set_substance_endorsements(db, sid, [])
         db.commit()
         count = db.execute(
             "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?", (sid,)
@@ -1256,8 +1260,8 @@ class TestSetSubstanceEndorsements:
 
 class TestAddSubstance:
     def test_inserts_and_returns_id(self, db):
-        from endorsements import add_substance
-        sid = add_substance(db, "Test Sub", display_order=5, created_by="admin@example.com")
+        from substances import add_substance
+        sid = add_substance(db, "Test Sub", display_order=5)
         db.commit()
         row = db.execute(
             "SELECT name, display_order FROM regulated_substances WHERE id = ?", (sid,)
@@ -1266,9 +1270,13 @@ class TestAddSubstance:
         assert row[0] == "Test Sub"
         assert row[1] == 5
 
-    def test_writes_audit_log(self, db):
-        from endorsements import add_substance
-        add_substance(db, "Audit Sub", display_order=1, created_by="admin@x.com")
+    def test_audit_log_written_by_caller(self, db):
+        """Audit logging is the caller's responsibility; verify pattern works."""
+        from substances import add_substance
+        from admin_audit import log_action
+        sid = add_substance(db, "Audit Sub", display_order=1)
+        log_action(db, "admin@x.com", "substance.add", "regulated_substance",
+                   target_id=sid, details={"name": "Audit Sub"})
         db.commit()
         row = db.execute(
             "SELECT action FROM admin_audit_log WHERE action = 'substance.add'"
@@ -1278,10 +1286,10 @@ class TestAddSubstance:
 
 class TestRemoveSubstance:
     def test_deletes_substance(self, db):
-        from endorsements import add_substance, remove_substance
-        sid = add_substance(db, "Delete Me", display_order=1, created_by="a@b.com")
+        from substances import add_substance, remove_substance
+        sid = add_substance(db, "Delete Me", display_order=1)
         db.commit()
-        remove_substance(db, sid, removed_by="a@b.com")
+        remove_substance(db, sid)
         db.commit()
         row = db.execute(
             "SELECT id FROM regulated_substances WHERE id = ?", (sid,)
@@ -1289,23 +1297,27 @@ class TestRemoveSubstance:
         assert row is None
 
     def test_cascades_to_junction(self, db):
-        from endorsements import add_substance, remove_substance
+        from substances import add_substance, remove_substance
         eid = _ensure_endorsement(db, "CASCADE TEST")
-        sid = add_substance(db, "Cascade Sub", display_order=1, created_by="a@b.com")
+        sid = add_substance(db, "Cascade Sub", display_order=1)
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
         db.commit()
-        remove_substance(db, sid, removed_by="a@b.com")
+        remove_substance(db, sid)
         db.commit()
         count = db.execute(
             "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?", (sid,)
         ).fetchone()[0]
         assert count == 0
 
-    def test_writes_audit_log(self, db):
-        from endorsements import add_substance, remove_substance
-        sid = add_substance(db, "Audit Remove", display_order=1, created_by="a@b.com")
+    def test_audit_log_written_by_caller(self, db):
+        """Audit logging is the caller's responsibility; verify pattern works."""
+        from substances import add_substance, remove_substance
+        from admin_audit import log_action
+        sid = add_substance(db, "Audit Remove", display_order=1)
         db.commit()
-        remove_substance(db, sid, removed_by="a@b.com")
+        name = remove_substance(db, sid)
+        log_action(db, "a@b.com", "substance.remove", "regulated_substance",
+                   target_id=sid, details={"name": name})
         db.commit()
         row = db.execute(
             "SELECT action FROM admin_audit_log WHERE action = 'substance.remove'"
