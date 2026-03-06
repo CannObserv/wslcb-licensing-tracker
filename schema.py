@@ -656,6 +656,68 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
         )
 
 
+def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
+    """Strip WSLCB DUPLICATE annotation tokens from applicants strings.
+
+    WSLCB embeds tokens like ``(DUPLICATE)``, ``DUPLICATE``, ``*DUPLICATE*``
+    in applicant name fields as CMS annotations when the same person
+    appears more than once on an application.  These are not part of the
+    legal name and must be removed from the derived ``applicants`` and
+    ``previous_applicants`` columns.  The frozen ``raw_applicants`` and
+    ``raw_previous_applicants`` shadow columns are left untouched.
+
+    After this migration, run ``cli.py reprocess-entities`` to rebuild
+    ``record_entities`` links from the cleaned strings.
+    """
+    # Guard: skip if the table doesn't exist yet (partial-schema test DBs).
+    has_lr = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='license_records'"
+    ).fetchone()
+    if not has_lr:
+        return
+
+    # Import at call-time to avoid circular-import issues at module load.
+    from entities import clean_applicants_string
+
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(license_records)")}
+    if "applicants" not in existing_cols:
+        return
+
+    rows = conn.execute(
+        "SELECT id, applicants, previous_applicants FROM license_records "
+        "WHERE applicants LIKE '%DUPLICATE%' "
+        "   OR previous_applicants LIKE '%DUPLICATE%'"
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        new_app = clean_applicants_string(row["applicants"])
+        new_prev = clean_applicants_string(row["previous_applicants"])
+        if new_app != row["applicants"] or new_prev != row["previous_applicants"]:
+            conn.execute(
+                "UPDATE license_records "
+                "SET applicants = ?, previous_applicants = ? WHERE id = ?",
+                (new_app, new_prev, row["id"]),
+            )
+            updated += 1
+    logger.info(
+        "Migration 011: cleaned DUPLICATE markers from %d license_records rows",
+        updated,
+    )
+
+    # Remove DUPLICATE-bearing entity rows created before this fix.
+    # record_entities links cascade automatically.
+    has_entities = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'"
+    ).fetchone()
+    if has_entities:
+        deleted = conn.execute(
+            "DELETE FROM entities WHERE name LIKE '%DUPLICATE%'"
+        ).rowcount
+        logger.info(
+            "Migration 011: removed %d DUPLICATE-bearing entity rows", deleted
+        )
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -676,6 +738,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (8, "endorsement_dismissed_suggestions", _m008_endorsement_dismissed_suggestions),
     (9, "regulated_substances", _m009_regulated_substances),
     (10, "additional_names_flag", _m010_additional_names_flag),
+    (11, "clean_duplicate_markers", _m011_clean_duplicate_markers),
 ]
 
 

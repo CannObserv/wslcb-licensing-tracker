@@ -57,6 +57,48 @@ def clean_entity_name(name: str) -> str:
     return cleaned
 
 
+# Regex matching WSLCB "DUPLICATE" annotation tokens embedded in applicant names.
+# WSLCB uses several formats to flag that a person appears more than once on
+# an application — e.g. "ADAM (DUPLICATE) BENTON", "NEALY DUPLICATE EVANS",
+# "KATIE (DUPLICATE 2) DAVIS", "PAUL *DUPLICATE* SONG".  These tokens are
+# editorial CMS annotations, not part of the legal name.
+#
+# Capture groups:
+#   - optional leading space before the marker
+#   - optional wrapping punctuation ( (...) or *...* )
+#   - the word DUPLICATE with optional trailing number
+_DUPLICATE_MARKER_RE = re.compile(
+    r'\s*'
+    r'(?:'
+    r'\(\s*DUPLICATE(?:\s+\d+)?\s*\)'  # (DUPLICATE), (DUPLICATE 2), ...
+    r'|\*DUPLICATE\*'                   # *DUPLICATE*
+    r'|DUPLICATE'                        # bare word
+    r')',
+    re.IGNORECASE,
+)
+
+
+def strip_duplicate_marker(name: str) -> str:
+    """Remove WSLCB DUPLICATE annotation token(s) from an applicant name.
+
+    Handles all observed formats::
+
+        ADAM (DUPLICATE) BENTON        -> ADAM BENTON
+        NEALY DUPLICATE EVANS          -> NEALY EVANS
+        KATIE (DUPLICATE 2) DAVIS      -> KATIE DAVIS
+        PAUL *DUPLICATE* SONG          -> PAUL SONG
+        DUPLICATE ITALIAN SUPPLY, LLC  -> ITALIAN SUPPLY, LLC
+        JAY WON (DUPLICATE)            -> JAY WON
+
+    Collapses any resulting runs of whitespace and strips leading/trailing
+    spaces.  The caller is responsible for full normalization (e.g. uppercase)
+    via ``clean_entity_name()``.
+    """
+    stripped = _DUPLICATE_MARKER_RE.sub('', name)
+    # Collapse runs of whitespace left behind after removal
+    return re.sub(r'  +', ' ', stripped).strip()
+
+
 # Meta-labels that WSLCB embeds in applicant lists as truncation notices.
 # These are not real people or organizations and must be excluded from entity
 # creation.  Both the canonical spelling and the typo variant are included.
@@ -69,15 +111,23 @@ ADDITIONAL_NAMES_MARKERS: frozenset[str] = frozenset({
 def clean_applicants_string(applicants: str | None) -> str | None:
     """Clean each semicolon-separated part of an applicants string.
 
-    Applies ``clean_entity_name()`` to every element (including the
-    leading business-name element) so the stored string is consistent
-    with entity names in the ``entities`` table.  Empty parts after
-    cleaning are dropped.  Returns ``None`` unchanged.
+    Applies ``strip_duplicate_marker()`` then ``clean_entity_name()`` to
+    every element (including the leading business-name element) so the
+    stored string is consistent with entity names in the ``entities``
+    table.  After stripping, duplicate tokens are removed (first
+    occurrence wins — preserving order).  Empty parts after cleaning
+    are dropped.  Returns ``None`` unchanged.
     """
     if not applicants:
         return applicants
-    parts = [clean_entity_name(p) for p in applicants.split(";")]
-    return "; ".join(p for p in parts if p)
+    parts = [clean_entity_name(strip_duplicate_marker(p)) for p in applicants.split(";")]
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    return "; ".join(deduped)
 
 
 def _classify_entity_type(name: str) -> str:
@@ -138,8 +188,19 @@ def parse_and_link_entities(
     if not applicants_str or ";" not in applicants_str:
         return 0
     parts = [p.strip() for p in applicants_str.split(";")]
-    # First element is always the business name — skip it
-    entity_names = [p for p in parts[1:] if p]
+    # First element is always the business name — skip it.
+    # Strip DUPLICATE markers and deduplicate so annotated forms (e.g.
+    # "ADAM (DUPLICATE) BENTON") resolve to the same entity as the clean
+    # form ("ADAM BENTON") that typically appears in the same string.
+    seen_names: set[str] = set()
+    entity_names: list[str] = []
+    for raw in parts[1:]:
+        if not raw:
+            continue
+        clean = clean_entity_name(strip_duplicate_marker(raw))
+        if clean and clean not in seen_names:
+            seen_names.add(clean)
+            entity_names.append(clean)
     linked = 0
     for name in entity_names:
         if name in ADDITIONAL_NAMES_MARKERS:

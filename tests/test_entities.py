@@ -312,3 +312,167 @@ class TestAdditionalNamesMarker:
         names = [r[0] for r in rows]
         assert positions == list(range(len(positions))), "positions must be contiguous"
         assert names == ["ALICE SMITH", "BOB JONES", "CAROL WHITE"]
+
+
+# ── strip_duplicate_marker ──────────────────────────────────────────
+
+class TestStripDuplicateMarker:
+    """Tests for the pure strip_duplicate_marker() helper."""
+
+    def _strip(self, name):
+        from entities import strip_duplicate_marker
+        return strip_duplicate_marker(name)
+
+    def test_parenthesized(self):
+        assert self._strip("ADAM (DUPLICATE) BENTON") == "ADAM BENTON"
+
+    def test_parenthesized_numbered_2(self):
+        assert self._strip("KATIE (DUPLICATE 2) DAVIS") == "KATIE DAVIS"
+
+    def test_parenthesized_numbered_3(self):
+        assert self._strip("KATIE (DUPLICATE 3) DAVIS") == "KATIE DAVIS"
+
+    def test_inline_mid(self):
+        assert self._strip("ANNA MARIE DUPLICATE ADAMS") == "ANNA MARIE ADAMS"
+
+    def test_inline_prefix(self):
+        assert self._strip("DUPLICATE ITALIAN SUPPLY, LLC") == "ITALIAN SUPPLY, LLC"
+
+    def test_asterisk_variant(self):
+        assert self._strip("PAUL *DUPLICATE* SONG") == "PAUL SONG"
+
+    def test_trailing_with_paren(self):
+        # "JAY WON (DUPLICATE)" -> "JAY WON"
+        assert self._strip("JAY WON (DUPLICATE)") == "JAY WON"
+
+    def test_no_marker_unchanged(self):
+        assert self._strip("ALICE SMITH") == "ALICE SMITH"
+
+    def test_collapse_extra_spaces(self):
+        """After stripping, multiple spaces must be collapsed."""
+        result = self._strip("FIRST  LAST")  # double-space not from DUPLICATE
+        # clean_entity_name() normalises these; strip_duplicate_marker just strips tokens
+        # The critical thing: no leading/trailing space
+        assert result == result.strip()
+
+    def test_result_has_no_double_space(self):
+        assert "  " not in self._strip("NEALY DUPLICATE EVANS")
+
+
+# ── DUPLICATE marker filtering in clean_applicants_string ────────────
+
+class TestCleanApplicantsStringDuplicate:
+    """DUPLICATE markers must be stripped by clean_applicants_string()."""
+
+    def _clean(self, s):
+        from entities import clean_applicants_string
+        return clean_applicants_string(s)
+
+    def test_parenthesized_marker_stripped(self):
+        result = self._clean("BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON")
+        # Both tokens clean to "ADAM BENTON"; duplicates are collapsed
+        assert "(DUPLICATE)" not in result
+        assert "DUPLICATE" not in result
+
+    def test_inline_marker_stripped(self):
+        result = self._clean("BIZ; NEALY DUPLICATE EVANS; NEALY EVANS")
+        assert "DUPLICATE" not in result
+
+    def test_deduplication_after_stripping(self):
+        """When stripping leaves two identical tokens, only one is kept."""
+        result = self._clean("BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON")
+        parts = [p.strip() for p in result.split(";")] if result else []
+        assert parts.count("ADAM BENTON") == 1
+
+    def test_only_duplicate_token_synthesizes_clean_name(self):
+        """A lone DUPLICATE-annotated token should yield the stripped clean name."""
+        result = self._clean("BIZ; LORIE DUPLICATE FAZIO")
+        assert "LORIE FAZIO" in result
+        assert "DUPLICATE" not in result
+
+
+# ── DUPLICATE marker filtering in parse_and_link_entities ────────────
+
+class TestParseAndLinkEntitiesDuplicate:
+    """Entities created from DUPLICATE-annotated names must use the clean name."""
+
+    def _make_record(self, db, license_number):
+        return db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
+            "?, 'NEW APPLICATION', '2025-01-01T00:00:00+00:00') RETURNING id",
+            (license_number,),
+        ).fetchone()[0]
+
+    def test_duplicate_annotated_name_links_clean_entity(self, db):
+        from entities import parse_and_link_entities
+        rid = self._make_record(db, "DUP001")
+        # "ADAM (DUPLICATE) BENTON" must resolve to / create "ADAM BENTON"
+        parse_and_link_entities(db, rid, "BIZ; ADAM (DUPLICATE) BENTON")
+        db.commit()
+        names = [
+            r[0] for r in db.execute(
+                "SELECT e.name FROM record_entities re "
+                "JOIN entities e ON e.id = re.entity_id WHERE re.record_id = ?",
+                (rid,),
+            ).fetchall()
+        ]
+        assert names == ["ADAM BENTON"]
+        assert not any("DUPLICATE" in n for n in names)
+
+    def test_duplicate_and_clean_in_same_string_links_once(self, db):
+        """When the source lists both forms, only one entity link is created."""
+        from entities import parse_and_link_entities
+        rid = self._make_record(db, "DUP002")
+        parse_and_link_entities(
+            db, rid, "BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON"
+        )
+        db.commit()
+        rows = db.execute(
+            "SELECT e.name, re.position FROM record_entities re "
+            "JOIN entities e ON e.id = re.entity_id WHERE re.record_id = ? "
+            "ORDER BY re.position",
+            (rid,),
+        ).fetchall()
+        # exactly one link, at position 0
+        assert len(rows) == 1
+        assert rows[0]["name"] == "ADAM BENTON"
+        assert rows[0]["position"] == 0
+
+    def test_lone_duplicate_token_creates_synthesized_entity(self, db):
+        """When no clean counterpart exists, synthesize and create the clean entity."""
+        from entities import parse_and_link_entities
+        rid = self._make_record(db, "DUP003")
+        parse_and_link_entities(db, rid, "BIZ; LORIE DUPLICATE FAZIO")
+        db.commit()
+        names = [
+            r[0] for r in db.execute(
+                "SELECT e.name FROM record_entities re "
+                "JOIN entities e ON e.id = re.entity_id WHERE re.record_id = ?",
+                (rid,),
+            ).fetchall()
+        ]
+        assert names == ["LORIE FAZIO"]
+        # Ensure no DUPLICATE-bearing entity was stored
+        dup_row = db.execute(
+            "SELECT id FROM entities WHERE name LIKE '%DUPLICATE%'"
+        ).fetchone()
+        assert dup_row is None
+
+    def test_numbered_parenthesized_all_resolve_to_same_entity(self, db):
+        """(DUPLICATE), (DUPLICATE 2), (DUPLICATE 3) all collapse to the same entity."""
+        from entities import parse_and_link_entities
+        rid = self._make_record(db, "DUP004")
+        applicants = (
+            "BIZ; KATIE (DUPLICATE) DAVIS; KATIE (DUPLICATE 2) DAVIS; "
+            "KATIE (DUPLICATE 3) DAVIS; KATIE DAVIS"
+        )
+        parse_and_link_entities(db, rid, applicants)
+        db.commit()
+        rows = db.execute(
+            "SELECT e.name FROM record_entities re "
+            "JOIN entities e ON e.id = re.entity_id WHERE re.record_id = ?",
+            (rid,),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["name"] == "KATIE DAVIS"

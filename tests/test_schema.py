@@ -729,3 +729,95 @@ class TestMigration010AdditionalNamesFlag:
             "('ADDITIONAL NAMES ON FILE', 'ADDTIONAL NAMES ON FILE')"
         ).fetchall()
         assert rows == []
+
+
+# ── Migration 011: clean_duplicate_markers ──────────────────────────
+
+class TestM011CleanDuplicateMarkers:
+    """schema._m011_clean_duplicate_markers() tests."""
+
+    def _run(self, db):
+        from schema import _m011_clean_duplicate_markers
+        _m011_clean_duplicate_markers(db)
+        db.commit()
+
+    def _insert(self, db, license_number, applicants, previous_applicants=""):
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, applicants, previous_applicants, scraped_at) "
+            "VALUES ('new_application', '2025-01-01', ?, 'NEW APPLICATION', ?, ?, "
+            "'2025-01-01T00:00:00+00:00')",
+            (license_number, applicants, previous_applicants),
+        )
+        db.commit()
+        return db.execute(
+            "SELECT id FROM license_records WHERE license_number = ?", (license_number,)
+        ).fetchone()[0]
+
+    def test_parenthesized_marker_cleaned(self, db):
+        rid = self._insert(db, "M011A", "BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON")
+        self._run(db)
+        row = db.execute(
+            "SELECT applicants FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert "DUPLICATE" not in row[0]
+        assert "ADAM BENTON" in row[0]
+
+    def test_inline_marker_cleaned_and_deduplicated(self, db):
+        rid = self._insert(db, "M011B", "BIZ; NEALY DUPLICATE EVANS; NEALY EVANS")
+        self._run(db)
+        row = db.execute(
+            "SELECT applicants FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert "DUPLICATE" not in row[0]
+        # Deduplication: only one NEALY EVANS token
+        parts = [p.strip() for p in row[0].split(";")]
+        assert parts.count("NEALY EVANS") == 1
+
+    def test_raw_applicants_not_touched(self, db):
+        rid = self._insert(db, "M011C", "BIZ; NEALY DUPLICATE EVANS")
+        # Manually set raw_applicants to the dirty value
+        db.execute(
+            "UPDATE license_records SET raw_applicants = 'BIZ; NEALY DUPLICATE EVANS' WHERE id = ?",
+            (rid,),
+        )
+        db.commit()
+        self._run(db)
+        row = db.execute(
+            "SELECT raw_applicants FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        # raw_* column is frozen — must still contain the original marker
+        assert "DUPLICATE" in row[0]
+
+    def test_no_duplicate_records_unchanged(self, db):
+        rid = self._insert(db, "M011D", "BIZ; ALICE SMITH")
+        self._run(db)
+        row = db.execute(
+            "SELECT applicants FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert row[0] == "BIZ; ALICE SMITH"
+
+    def test_duplicate_entities_deleted(self, db):
+        db.execute(
+            "INSERT OR IGNORE INTO entities (name, entity_type) "
+            "VALUES ('ADAM (DUPLICATE) BENTON', 'person')"
+        )
+        db.commit()
+        self._run(db)
+        row = db.execute(
+            "SELECT id FROM entities WHERE name LIKE '%DUPLICATE%'"
+        ).fetchone()
+        assert row is None
+
+    def test_idempotent(self, db):
+        """Running the migration twice produces the same result."""
+        rid = self._insert(db, "M011E", "BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON")
+        self._run(db)
+        first = db.execute(
+            "SELECT applicants FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()[0]
+        self._run(db)
+        second = db.execute(
+            "SELECT applicants FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()[0]
+        assert first == second
