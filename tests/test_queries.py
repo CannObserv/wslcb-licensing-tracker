@@ -347,16 +347,15 @@ class TestExportRecords:
     """Tests for export_records() — correlated subquery link columns."""
 
     def _insert_linked_pair(self, db, new_app, approved):
-        """Insert a new_application + approved pair, link them, return (new_id, out_id)."""
+        """Insert a new_application + approved pair and link them."""
         from queries import insert_record
         from link_records import build_all_links
 
-        new_id, _ = insert_record(db, new_app)
-        out_id, _ = insert_record(db, approved)
+        insert_record(db, new_app)
+        insert_record(db, approved)
         db.commit()
         build_all_links(db)
         db.commit()
-        return new_id, out_id
 
     def test_unlinked_record_has_null_link_columns(self, db, standard_new_application):
         """A new_application with no outcome has NULL days_to_outcome and outcome_date."""
@@ -387,6 +386,7 @@ class TestExportRecords:
         row = rows[0]
         assert row["days_to_outcome"] == 16  # 2025-07-01 - 2025-06-15
         assert row["outcome_date"] == "2025-07-01"
+        assert row["outcome_status"] == "approved"
 
     def test_high_confidence_link_preferred(self, db, standard_new_application):
         """When multiple links exist, high-confidence is returned."""

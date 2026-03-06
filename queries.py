@@ -509,31 +509,29 @@ _EXPORT_SELECT = """
             ORDER BY rl.confidence = 'high' DESC, rl.rowid
             LIMIT 1
         ) AS outcome_date,
-        CASE
-            WHEN (
-                SELECT olr.section_type
-                FROM record_links rl
-                JOIN license_records olr ON olr.id = rl.outcome_id
-                WHERE rl.new_app_id = lr.id
-                ORDER BY rl.confidence = 'high' DESC, rl.rowid
-                LIMIT 1
-            ) = 'approved'     THEN 'approved'
-            WHEN (
-                SELECT olr.section_type
-                FROM record_links rl
-                JOIN license_records olr ON olr.id = rl.outcome_id
-                WHERE rl.new_app_id = lr.id
-                ORDER BY rl.confidence = 'high' DESC, rl.rowid
-                LIMIT 1
-            ) = 'discontinued' THEN 'discontinued'
-            WHEN lr.section_type != 'new_application' THEN NULL
-            WHEN lr.application_type NOT IN ({linkable_types})
-                 THEN NULL
-            WHEN lr.application_type = 'NEW APPLICATION'
-                 AND lr.record_date > '{data_gap}' THEN 'data_gap'
-            WHEN lr.record_date >= date('now', '-{pending_days} days')
-                 THEN 'pending'
-            ELSE 'unknown'
+        -- CASE expr form evaluates the subquery once; WHEN/THEN branches only
+        -- need the already-computed value, so SQLite runs one index seek here
+        -- instead of two.
+        CASE (
+            SELECT olr.section_type
+            FROM record_links rl
+            JOIN license_records olr ON olr.id = rl.outcome_id
+            WHERE rl.new_app_id = lr.id
+            ORDER BY rl.confidence = 'high' DESC, rl.rowid
+            LIMIT 1
+        )
+            WHEN 'approved'     THEN 'approved'
+            WHEN 'discontinued' THEN 'discontinued'
+            ELSE CASE
+                WHEN lr.section_type != 'new_application' THEN NULL
+                WHEN lr.application_type NOT IN ({linkable_types})
+                     THEN NULL
+                WHEN lr.application_type = 'NEW APPLICATION'
+                     AND lr.record_date > '{data_gap}' THEN 'data_gap'
+                WHEN lr.record_date >= date('now', '-{pending_days} days')
+                     THEN 'pending'
+                ELSE 'unknown'
+            END
         END AS outcome_status
     FROM license_records lr
     LEFT JOIN locations loc  ON loc.id  = lr.location_id
