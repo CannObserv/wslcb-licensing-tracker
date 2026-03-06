@@ -63,15 +63,19 @@ def clean_entity_name(name: str) -> str:
 # "KATIE (DUPLICATE 2) DAVIS", "PAUL *DUPLICATE* SONG".  These tokens are
 # editorial CMS annotations, not part of the legal name.
 #
-# Capture groups:
-#   - optional leading space before the marker
-#   - optional wrapping punctuation ( (...) or *...* )
-#   - the word DUPLICATE with optional trailing number
+# Four alternatives, matched with a leading \s* to consume preceding whitespace:
+#   1. Closed-paren form: (DUPLICATE), (DUPLICATE 2), ...  — must match first so
+#      '(DUPLICATE)' is consumed as a unit before the unclosed-paren alternative.
+#   2. Asterisk form: *DUPLICATE*
+#   3. Unclosed-paren form: (DUPLICATE  — handles the one malformed WSLCB case
+#      'ELIZABETH (DUPLICATE A MATTHEWS' where the closing ')' is absent.
+#   4. Bare word: DUPLICATE  — catches inline placements with no punctuation.
 _DUPLICATE_MARKER_RE = re.compile(
     r'\s*'
     r'(?:'
-    r'\(\s*DUPLICATE(?:\s+\d+)?\s*\)'  # (DUPLICATE), (DUPLICATE 2), ...
+    r'\(\s*DUPLICATE(?:\s+\d+)?\s*\)'  # (DUPLICATE), (DUPLICATE 2), ... — closed
     r'|\*DUPLICATE\*'                   # *DUPLICATE*
+    r'|\(\s*DUPLICATE(?:\s+\d+)?'      # (DUPLICATE ... — unclosed paren
     r'|DUPLICATE'                        # bare word
     r')',
     re.IGNORECASE,
@@ -83,12 +87,13 @@ def strip_duplicate_marker(name: str) -> str:
 
     Handles all observed formats::
 
-        ADAM (DUPLICATE) BENTON        -> ADAM BENTON
-        NEALY DUPLICATE EVANS          -> NEALY EVANS
-        KATIE (DUPLICATE 2) DAVIS      -> KATIE DAVIS
-        PAUL *DUPLICATE* SONG          -> PAUL SONG
-        DUPLICATE ITALIAN SUPPLY, LLC  -> ITALIAN SUPPLY, LLC
-        JAY WON (DUPLICATE)            -> JAY WON
+        ADAM (DUPLICATE) BENTON           -> ADAM BENTON
+        NEALY DUPLICATE EVANS             -> NEALY EVANS
+        KATIE (DUPLICATE 2) DAVIS         -> KATIE DAVIS
+        PAUL *DUPLICATE* SONG             -> PAUL SONG
+        DUPLICATE ITALIAN SUPPLY, LLC     -> ITALIAN SUPPLY, LLC
+        JAY WON (DUPLICATE)               -> JAY WON
+        ELIZABETH (DUPLICATE A MATTHEWS   -> ELIZABETH A MATTHEWS  (unclosed paren)
 
     Collapses any resulting runs of whitespace and strips leading/trailing
     spaces.  The caller is responsible for full normalization (e.g. uppercase)
@@ -96,7 +101,7 @@ def strip_duplicate_marker(name: str) -> str:
     """
     stripped = _DUPLICATE_MARKER_RE.sub('', name)
     # Collapse runs of whitespace left behind after removal
-    return re.sub(r'  +', ' ', stripped).strip()
+    return re.sub(r' {2,}', ' ', stripped).strip()
 
 
 # Meta-labels that WSLCB embeds in applicant lists as truncation notices.
@@ -135,16 +140,14 @@ def _classify_entity_type(name: str) -> str:
     return "organization" if _ORG_PATTERNS.search(name) else "person"
 
 
-def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
-    """Return the entity id for *name*, creating if needed.
+def _entity_id_for_normalized(conn: sqlite3.Connection, normalized: str) -> int:
+    """Look up or create an entity by already-normalized name (internal).
 
-    Names are uppercased and cleaned of stray trailing punctuation.
-    The WSLCB source is predominantly uppercase but occasionally uses
-    mixed case or appends errant periods/commas.
+    Callers are responsible for passing a name that has already been run
+    through ``clean_entity_name()`` so that no second normalization pass
+    is needed.  Use :func:`get_or_create_entity` for external callers that
+    supply raw names.
     """
-    normalized = clean_entity_name(name)
-    if not normalized:
-        raise ValueError("Entity name must not be empty")
     row = conn.execute(
         "SELECT id FROM entities WHERE name = ?", (normalized,)
     ).fetchone()
@@ -156,6 +159,19 @@ def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
         (normalized, entity_type),
     )
     return cur.lastrowid
+
+
+def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
+    """Return the entity id for *name*, creating if needed.
+
+    Names are uppercased and cleaned of stray trailing punctuation.
+    The WSLCB source is predominantly uppercase but occasionally uses
+    mixed case or appends errant periods/commas.
+    """
+    normalized = clean_entity_name(name)
+    if not normalized:
+        raise ValueError("Entity name must not be empty")
+    return _entity_id_for_normalized(conn, normalized)
 
 
 def parse_and_link_entities(
@@ -207,13 +223,9 @@ def parse_and_link_entities(
             logger.debug("Skipping meta-label %r in record %d (role %s)",
                          name, record_id, role)
             continue  # not a real entity — no position consumed
-        try:
-            entity_id = get_or_create_entity(conn, name)
-        except ValueError:
-            logger.warning("Skipping empty entity name in record %d "
-                           "(position %d, role %s, raw: %r)",
-                           record_id, linked, role, name)
-            continue
+        # `name` is already the output of clean_entity_name(strip_duplicate_marker(...))
+        # so skip the redundant normalization pass inside get_or_create_entity.
+        entity_id = _entity_id_for_normalized(conn, name)
         cursor = conn.execute(
             """INSERT OR IGNORE INTO record_entities
                (record_id, entity_id, role, position)

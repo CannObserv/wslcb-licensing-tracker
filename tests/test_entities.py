@@ -345,15 +345,19 @@ class TestStripDuplicateMarker:
         # "JAY WON (DUPLICATE)" -> "JAY WON"
         assert self._strip("JAY WON (DUPLICATE)") == "JAY WON"
 
+    def test_unclosed_paren(self):
+        # WSLCB source has one case with an unclosed open paren:
+        # 'ELIZABETH (DUPLICATE A MATTHEWS'
+        assert self._strip("ELIZABETH (DUPLICATE A MATTHEWS") == "ELIZABETH A MATTHEWS"
+
     def test_no_marker_unchanged(self):
         assert self._strip("ALICE SMITH") == "ALICE SMITH"
 
     def test_collapse_extra_spaces(self):
-        """After stripping, multiple spaces must be collapsed."""
-        result = self._strip("FIRST  LAST")  # double-space not from DUPLICATE
-        # clean_entity_name() normalises these; strip_duplicate_marker just strips tokens
-        # The critical thing: no leading/trailing space
-        assert result == result.strip()
+        """Double spaces left after DUPLICATE removal are collapsed to one."""
+        # Double space before AND after the marker: after removal 'ANNA  MARIE'
+        # must be collapsed to 'ANNA MARIE'.
+        assert self._strip("ANNA  DUPLICATE  MARIE") == "ANNA MARIE"
 
     def test_result_has_no_double_space(self):
         assert "  " not in self._strip("NEALY DUPLICATE EVANS")
