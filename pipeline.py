@@ -1,18 +1,24 @@
 """Unified ingestion pipeline for WSLCB licensing tracker.
 
-Provides a single ``ingest_record()`` function that all ingestion paths
-(live scrape, snapshot backfill, diff backfill) call.  Each enrichment
-step is idempotent and individually toggleable via ``IngestOptions``.
+Exports ``insert_record()`` (the canonical record-insertion function)
+and ``ingest_record()`` / ``ingest_batch()`` (the full enrichment
+pipeline called by all ingestion paths: live scrape, snapshot backfill,
+diff backfill).
+
+``insert_record()`` handles dedup, location resolution, name cleaning,
+and entity linking.  ``ingest_record()`` wraps it with the enrichment
+steps below, each idempotent and individually toggleable via
+``IngestOptions``.
 
 Steps (in order):
-  1. Insert raw record (dedup, create locations, clean names, link entities)
+  1. Insert raw record via ``insert_record()`` (dedup, locations,
+     name cleaning, entity linking)
   2. Process endorsements (resolve codes → names)
   3. Link provenance (if source_id provided)
   4. Validate addresses (if enabled and API available)
   5. Link outcomes (if enabled)
 
-Entity linking is always performed by ``insert_record()`` as part of
-step 1.  Failures in steps 3–5 are logged but do not abort the pipeline.
+Failures in steps 3–5 are logged but do not abort the pipeline.
 """
 import logging
 import sqlite3

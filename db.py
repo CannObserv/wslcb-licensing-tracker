@@ -1,7 +1,8 @@
 """Connection management and constants for the WSLCB licensing tracker.
 
 This is the thin, stable base layer.  Schema creation and migrations
-live in ``schema.py``; query helpers in ``queries.py``.
+live in ``schema.py``; query helpers in ``queries.py``; record-insertion
+logic in ``pipeline.py``; source-provenance helpers in ``database.py``.
 """
 import logging
 import os
@@ -66,7 +67,7 @@ def _normalize_raw_address(raw: str) -> str:
 
 
 # Source-role priority used when selecting the "best" source for display.
-# Lower value = higher priority.  Shared between queries.py and display.py
+# Lower value = higher priority.  Shared between database.py and display.py
 # to avoid a circular import.
 SOURCE_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirmed": 2}
 

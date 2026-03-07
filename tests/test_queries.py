@@ -1,10 +1,13 @@
-"""Tests for queries.py — insert_record and search helpers.
+"""Tests for queries.py — search, filter, stats, and export helpers.
 
-All tests use in-memory SQLite via the ``db`` fixture.
+Record insertion tests use ``insert_record`` from ``pipeline`` (its
+canonical home); provenance tests use ``get_primary_source`` from
+``database``.  All tests use in-memory SQLite via the ``db`` fixture.
 """
 import pytest
 
-from queries import insert_record
+from pipeline import insert_record
+from database import get_primary_source
 
 
 # ── insert_record ──────────────────────────────────────────────────
@@ -133,7 +136,7 @@ class TestHasAdditionalNamesFlag:
         return base
 
     def test_flag_false_for_normal_record(self, db):
-        from queries import insert_record
+        from pipeline import insert_record
         rec = self._base_record()
         record_id, _ = insert_record(db, rec)
         row = db.execute(
@@ -143,7 +146,7 @@ class TestHasAdditionalNamesFlag:
         assert row["has_additional_names"] == 0
 
     def test_flag_true_for_exact_marker_in_applicants(self, db):
-        from queries import insert_record
+        from pipeline import insert_record
         rec = self._base_record(
             license_number="HAF002",
             applicants="ACME LLC; ADDITIONAL NAMES ON FILE; JANE DOE",
@@ -156,7 +159,7 @@ class TestHasAdditionalNamesFlag:
         assert row["has_additional_names"] == 1
 
     def test_flag_true_for_typo_marker(self, db):
-        from queries import insert_record
+        from pipeline import insert_record
         rec = self._base_record(
             license_number="HAF003",
             applicants="ACME LLC; ADDTIONAL NAMES ON FILE; BOB SMITH",
@@ -170,7 +173,7 @@ class TestHasAdditionalNamesFlag:
 
     def test_flag_in_record_columns(self, db):
         """has_additional_names is included in RECORD_COLUMNS and hydrated."""
-        from queries import insert_record, get_record_by_id
+        from pipeline import insert_record; from queries import get_record_by_id
         rec = self._base_record(
             license_number="HAF004",
             applicants="ACME LLC; ADDITIONAL NAMES ON FILE; JANE DOE",
@@ -188,7 +191,7 @@ class TestMultiEndorsementFilter:
     """_build_where_clause with endorsements as a list."""
 
     def _insert_with_endorsement(self, db, record_dict, endorsement_name):
-        from queries import insert_record
+        from pipeline import insert_record
         from endorsements import _ensure_endorsement, _link_endorsement
         rec_id, _ = insert_record(db, record_dict)
         eid = _ensure_endorsement(db, endorsement_name)
@@ -202,7 +205,7 @@ class TestMultiEndorsementFilter:
         r1 = copy.deepcopy(standard_new_application)
         r2 = copy.deepcopy(approved_numeric_code)
         r2["license_number"] = "DIFF001"
-        from queries import insert_record
+        from pipeline import insert_record
         insert_record(db, r1)
         insert_record(db, r2)
         db.commit()
@@ -216,7 +219,7 @@ class TestMultiEndorsementFilter:
         r2 = copy.deepcopy(standard_new_application)
         r2["license_number"] = "DIFF002"
         self._insert_with_endorsement(db, r1, "CANNABIS RETAILER")
-        from queries import insert_record
+        from pipeline import insert_record
         from endorsements import _ensure_endorsement, _link_endorsement
         id2, _ = insert_record(db, r2)
         eid2 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
@@ -248,7 +251,7 @@ class TestMultiEndorsementFilter:
 
     def test_unknown_endorsement_returns_zero(self, db, standard_new_application):
         from queries import search_records
-        from queries import insert_record
+        from pipeline import insert_record
         insert_record(db, standard_new_application)
         db.commit()
         records, total = search_records(db, endorsements=["NONEXISTENT XYZ"])
@@ -287,13 +290,13 @@ class TestGetPrimarySource:
         link_record_source(conn, record_id, source_id, role)
 
     def test_returns_none_when_no_sources(self, db, standard_new_application):
-        from queries import insert_record, get_primary_source
+        from pipeline import insert_record; from database import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
         assert get_primary_source(db, record_id) is None
 
     def test_first_seen_preferred_over_confirmed(self, db, standard_new_application):
         from database import SOURCE_TYPE_LIVE_SCRAPE
-        from queries import insert_record, get_primary_source
+        from pipeline import insert_record; from database import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s_confirmed = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, "path/a.html", "2025-06-15T12:00:00")
@@ -309,7 +312,7 @@ class TestGetPrimarySource:
 
     def test_snapshot_path_preferred_within_role(self, db, standard_new_application):
         from database import SOURCE_TYPE_LIVE_SCRAPE
-        from queries import insert_record, get_primary_source
+        from pipeline import insert_record; from database import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s_no_path = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, None, "2025-06-15T12:00:00")
@@ -325,7 +328,7 @@ class TestGetPrimarySource:
 
     def test_returns_source_dict_fields(self, db, standard_new_application):
         from database import SOURCE_TYPE_CO_ARCHIVE
-        from queries import insert_record, get_primary_source
+        from pipeline import insert_record; from database import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s = self._make_source(db, SOURCE_TYPE_CO_ARCHIVE, "path/d.html", "2025-06-10T00:00:00")
@@ -348,7 +351,7 @@ class TestExportRecords:
 
     def _insert_linked_pair(self, db, new_app, approved):
         """Insert a new_application + approved pair and link them."""
-        from queries import insert_record
+        from pipeline import insert_record
         from link_records import build_all_links
 
         insert_record(db, new_app)
@@ -359,7 +362,7 @@ class TestExportRecords:
 
     def test_unlinked_record_has_null_link_columns(self, db, standard_new_application):
         """A new_application with no outcome has NULL days_to_outcome and outcome_date."""
-        from queries import insert_record, export_records
+        from pipeline import insert_record; from queries import export_records
 
         insert_record(db, standard_new_application)
         db.commit()
@@ -390,7 +393,7 @@ class TestExportRecords:
 
     def test_high_confidence_link_preferred(self, db, standard_new_application):
         """When multiple links exist, high-confidence is returned."""
-        from queries import insert_record, export_records
+        from pipeline import insert_record; from queries import export_records
 
         approved_early = {
             **standard_new_application,
@@ -428,7 +431,7 @@ class TestExportRecords:
 
     def test_non_new_application_has_null_link_columns(self, db, standard_new_application):
         """Approved and discontinued records always have NULL link columns."""
-        from queries import insert_record, export_records
+        from pipeline import insert_record; from queries import export_records
 
         approved = {
             **standard_new_application,

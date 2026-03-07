@@ -1,11 +1,11 @@
-"""Backward-compatibility shim for the old database module.
+"""Database helper module for the WSLCB licensing tracker.
 
-Connection management now lives in ``db.py``; schema creation and
-migrations in ``schema.py``.  Helper functions (locations, sources,
-provenance) remain here for now and are re-exported alongside the
-symbols from the new modules.
-
-All existing ``from database import ...`` statements continue to work.
+Connection management lives in ``db.py``; schema creation and migrations
+in ``schema.py``.  This module owns helper functions for locations,
+sources, provenance linking, and source-provenance queries
+(``get_primary_source``, ``get_record_sources``).  It also re-exports
+all ``db.py`` and ``schema.py`` public symbols so that existing
+``from database import ...`` statements continue to work.
 """
 import json
 import logging
