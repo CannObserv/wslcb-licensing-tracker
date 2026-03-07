@@ -446,3 +446,74 @@ class TestExportRecords:
         assert len(rows) == 1
         assert rows[0]["days_to_outcome"] is None
         assert rows[0]["outcome_date"] is None
+
+    def test_outcome_status_pending(self, db, standard_new_application):
+        """Unlinked linkable new_application with recent date → 'pending'.
+
+        Uses RENEWAL (not NEW APPLICATION) to avoid the data_gap branch,
+        which fires for any NEW APPLICATION after DATA_GAP_CUTOFF.
+        """
+        from datetime import date, timedelta
+        from pipeline import insert_record
+        from queries import export_records
+
+        recent = (date.today() - timedelta(days=10)).isoformat()
+        rec = {**standard_new_application, "record_date": recent,
+               "application_type": "RENEWAL"}
+        insert_record(db, rec)
+        db.commit()
+
+        rows = export_records(db, section_type="new_application")
+        assert len(rows) == 1
+        assert rows[0]["outcome_status"] == "pending"
+
+    def test_outcome_status_unknown(self, db, standard_new_application):
+        """Unlinked linkable new_application older than PENDING_CUTOFF_DAYS → 'unknown'.
+
+        Uses RENEWAL (not NEW APPLICATION) to avoid the data_gap branch.
+        """
+        from datetime import date, timedelta
+        from link_records import PENDING_CUTOFF_DAYS
+        from pipeline import insert_record
+        from queries import export_records
+
+        old = (date.today() - timedelta(days=PENDING_CUTOFF_DAYS + 10)).isoformat()
+        rec = {**standard_new_application, "record_date": old,
+               "application_type": "RENEWAL"}
+        insert_record(db, rec)
+        db.commit()
+
+        rows = export_records(db, section_type="new_application")
+        assert len(rows) == 1
+        assert rows[0]["outcome_status"] == "unknown"
+
+    def test_outcome_status_data_gap(self, db, standard_new_application):
+        """Unlinked NEW APPLICATION after DATA_GAP_CUTOFF → 'data_gap'."""
+        from link_records import DATA_GAP_CUTOFF
+        from pipeline import insert_record
+        from queries import export_records
+        from datetime import date
+
+        # Use a date just after the cutoff that is also old enough to not be 'pending'
+        gap_date = "2025-05-15"  # after DATA_GAP_CUTOFF (2025-05-12)
+        assert gap_date > DATA_GAP_CUTOFF
+        rec = {**standard_new_application, "record_date": gap_date}
+        insert_record(db, rec)
+        db.commit()
+
+        rows = export_records(db, section_type="new_application")
+        assert len(rows) == 1
+        assert rows[0]["outcome_status"] == "data_gap"
+
+    def test_outcome_status_null_for_non_linkable_type(self, db, standard_new_application):
+        """new_application with non-linkable application_type → NULL outcome_status."""
+        from pipeline import insert_record
+        from queries import export_records
+
+        rec = {**standard_new_application, "application_type": "SOME UNLINKABLE TYPE"}
+        insert_record(db, rec)
+        db.commit()
+
+        rows = export_records(db, section_type="new_application")
+        assert len(rows) == 1
+        assert rows[0]["outcome_status"] is None

@@ -279,7 +279,6 @@ def _build_where_clause(
         params.append(date_to)
 
     if outcome_status:
-        from link_records import outcome_filter_sql
         conditions.extend(outcome_filter_sql(outcome_status))
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -349,14 +348,14 @@ def search_records(
 # _EXPORT_SELECT can be built as a true constant without .format() calls.
 _LINKABLE_TYPES_CSV = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
 
-# SQL for the export query: inlines endorsements via GROUP_CONCAT and
-# outcome links via LEFT JOIN, computes display_city/display_zip in SQL,
-# and derives outcome_status with a CASE expression — all in a single
-# query.  Skips entity hydration entirely (unused in CSV output).
+# SQL constant for the export query: bakes in DATA_GAP_CUTOFF,
+# PENDING_CUTOFF_DAYS, and LINKABLE_TYPES at import time (no runtime
+# .format()).  Inlines endorsements via GROUP_CONCAT, outcome links via
+# correlated subqueries, and display-city fallbacks — all in one query.
+# Skips entity hydration entirely (unused in CSV output).
 #
-# The outcome_status CASE expression bakes in the module-level constants
-# (DATA_GAP_CUTOFF, PENDING_CUTOFF_DAYS, LINKABLE_TYPES) at definition
-# time — no .format() needed at call time.
+# outcome_status uses CASE (subquery) WHEN form to evaluate the
+# section_type lookup once rather than twice.
 _EXPORT_SELECT = f"""
     SELECT
         lr.id, lr.section_type, lr.record_date, lr.business_name,
