@@ -4,11 +4,10 @@ description: "Finalizes work by ensuring everything is committed, pushed to the 
 compatibility: Designed for Claude. Requires git and gh CLI. Python project using venv, pytest, systemd.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: ship it, push GH, close GH, wrap up
   overrides: shipping-work-claude
   override-reason: "Concrete test commands (source venv/bin/activate && python -m pytest); encodes #<n> [type]: desc Conventional Commits convention; systemd restart reminder after web app changes"
-  version: "1.1"
 ---
 
 # Shipping Work — wslcb-licensing-tracker

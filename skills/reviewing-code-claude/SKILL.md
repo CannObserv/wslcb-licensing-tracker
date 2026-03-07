@@ -4,24 +4,15 @@ description: Performs a structured code and documentation review using a severit
 compatibility: Designed for Claude. Requires git and gh CLI. Python/SQLite web app (FastAPI + Jinja2/HTMX frontend, FTS5) using venv, pytest, systemd.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: CR, code review, perform a review
   overrides: reviewing-code-claude
   override-reason: Python/SQLite/FastAPI-specific review dimensions (migration safety, FTS sync, frozen/derived data contract, Tailwind/HTMX style guide); runs pytest in venv during gather-context; systemd deployment awareness
-  version: "1.1"
 ---
 
 # Code & Documentation Review — wslcb-licensing-tracker
 
 A systematic review workflow for this Python/SQLite/FastAPI/HTMX project. Produces a numbered findings report, waits for directives, then implements approved changes.
-
-## Scope detection
-
-Determine what to review (priority order):
-1. **Explicit scope** — files, branch, commit range, or issue number specified by the user
-2. **Conversation context** — changes implemented in this conversation
-3. **Uncommitted work** — `git diff` and `git diff --staged`
-4. **Ask** — if scope is ambiguous, ask before proceeding
 
 ## The Iron Law
 
@@ -43,6 +34,14 @@ If the user hasn't responded with directives, you cannot implement anything.
 | "The user seems in a hurry" | A fast broken change is slower than a thorough correct one. |
 | "I'll fix things as I find them" | Phase 4 exists. Present first, implement after directives. |
 | "This file wasn't in the diff" | Related files need review too. Check call sites, tests, AGENTS.md. |
+
+## Scope detection
+
+Determine what to review (priority order):
+1. **Explicit scope** — files, branch, commit range, or issue number specified by the user
+2. **Conversation context** — changes implemented in this conversation
+3. **Uncommitted work** — `git diff` and `git diff --staged`
+4. **Ask** — if scope is ambiguous, ask before proceeding
 
 ## Procedure
 

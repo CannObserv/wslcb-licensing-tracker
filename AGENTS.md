@@ -169,14 +169,14 @@ git submodule update --init --recursive
 At the start of every conversation, pull the latest upstream skills:
 
 ```bash
-git submodule update --remote --merge vendor/gregoryfoster-skills
+git submodule update --remote --merge vendor/gregoryfoster-skills vendor/obra-superpowers
 ```
 
-If the submodule ref changed, commit it:
+If any submodule ref changed, commit it:
 
 ```bash
-git add vendor/gregoryfoster-skills
-git commit -m "chore: update gregoryfoster-skills submodule"
+git add vendor/gregoryfoster-skills vendor/obra-superpowers
+git commit -m "chore: update skills submodules"
 ```
 
 To add a new external skill repo, follow the `managing-skills-claude` skill (available at `vendor/gregoryfoster-skills/skills/managing-skills-claude/`).
@@ -190,13 +190,16 @@ To add a new external skill repo, follow the `managing-skills-claude` skill (ava
 | `shipping-work-claude` | Local override | ship it, push GH, close GH, wrap up |
 | `managing-skills-claude` | Symlink → `vendor/gregoryfoster-skills/` | add skill repo, add external skills, manage skills, update skills submodule |
 | `brainstorming` | Local override | brainstorm, design this, let's design |
-| `systematic-debugging` | Symlink → `vendor/obra-superpowers/` | debug, systematic debug |
-| `verification-before-completion` | Symlink → `vendor/obra-superpowers/` | verify, check completion |
-| `test-driven-development` | Symlink → `vendor/obra-superpowers/` | TDD, write tests first |
+| `using-git-worktrees` | Symlink → `vendor/obra-superpowers/` | set up worktree, create worktree |
+| `systematic-debugging` | Symlink → `vendor/obra-superpowers/` | (description-driven¹) |
+| `verification-before-completion` | Symlink → `vendor/obra-superpowers/` | (description-driven¹) |
+| `test-driven-development` | Symlink → `vendor/obra-superpowers/` | (description-driven¹) |
 | `writing-plans` | Symlink → `vendor/obra-superpowers/` | write plan, implementation plan |
 | `writing-skills` | Symlink → `vendor/obra-superpowers/` | write skill, new skill, author skill |
 | `subagent-driven-development` | Symlink → `vendor/obra-superpowers/` | subagent dev, dispatch agents |
 | `dispatching-parallel-agents` | Symlink → `vendor/obra-superpowers/` | parallel agents |
+
+¹ These obra/superpowers skills have no explicit trigger phrases — their SKILL.md descriptions instruct the agent when to apply them. The agent must use `systematic-debugging` whenever encountering any bug, test failure, or unexpected behavior; `verification-before-completion` before any completion claim or commit; and `test-driven-development` before writing any implementation code.
 
 ### Local overrides
 
@@ -206,7 +209,7 @@ A committed directory in `skills/` with the same name as a symlinked global skil
 |---|---|
 | `reviewing-code-claude` | Python/SQLite/FastAPI-specific review dimensions; pytest in venv; Iron Law + rationalization-prevention table; verification gate before commit |
 | `shipping-work-claude` | Concrete pytest command; Conventional Commits convention; systemd restart reminder; Iron Law + HARD-GATE on partial issue closure |
-| `brainstorming` | Project conventions (docs/plans/ path, Conventional Commits for design doc); writing-plans optional not mandatory; proactive-suggestion mode instead of universal hard gate |
+| `brainstorming` | Project conventions (docs/plans/ path, Conventional Commits for design doc); invokes using-git-worktrees after design approval; writing-plans optional not mandatory; proactive-suggestion mode instead of universal hard gate |
 
 ### Authoring new skills
 
