@@ -29,6 +29,24 @@ _FTS_COLUMNS = [
 
 
 # ------------------------------------------------------------------
+# Schema introspection helpers
+# ------------------------------------------------------------------
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    """Return True if *name* is a table in the current database."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """Return True if *column* exists in *table*.  Returns False when *table* is absent."""
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
+    return any(row[1] == column for row in rows)
+
+
+# ------------------------------------------------------------------
 # Migration definitions
 # ------------------------------------------------------------------
 
@@ -315,17 +333,13 @@ def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
 
     # Add raw_* shadow columns if they don't already exist (fresh DBs
     # created with baseline already have them inline).
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(license_records)").fetchall()
-    }
     for col in (
         "raw_business_name",
         "raw_previous_business_name",
         "raw_applicants",
         "raw_previous_applicants",
     ):
-        if col not in existing:
+        if not _column_exists(conn, "license_records", col):
             conn.execute(
                 f"ALTER TABLE license_records ADD COLUMN {col} TEXT"
             )
@@ -349,20 +363,10 @@ def _m003_content_hash(conn: sqlite3.Connection) -> None:
     """
     # Guard: scrape_log may not exist in minimal test databases that
     # only create license_records before running migrate().
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "scrape_log" not in tables:
+    if not _table_exists(conn, "scrape_log"):
         return
 
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(scrape_log)").fetchall()
-    }
-    if "content_hash" not in existing:
+    if not _column_exists(conn, "scrape_log", "content_hash"):
         conn.execute(
             "ALTER TABLE scrape_log ADD COLUMN content_hash TEXT"
         )
@@ -376,30 +380,19 @@ def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
     (ISO 3166-1 alpha-2) and backfills 'US' for all already-validated rows.
     Also drops the old std_zip index and creates std_postal_code in its place.
     """
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "locations" not in tables:
+    if not _table_exists(conn, "locations"):
         return
 
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(locations)").fetchall()
-    }
-
     # Rename std_state -> std_region (SQLite RENAME COLUMN requires 3.25+)
-    if "std_state" in existing and "std_region" not in existing:
+    if _column_exists(conn, "locations", "std_state") and not _column_exists(conn, "locations", "std_region"):
         conn.execute("ALTER TABLE locations RENAME COLUMN std_state TO std_region")
 
     # Rename std_zip -> std_postal_code
-    if "std_zip" in existing and "std_postal_code" not in existing:
+    if _column_exists(conn, "locations", "std_zip") and not _column_exists(conn, "locations", "std_postal_code"):
         conn.execute("ALTER TABLE locations RENAME COLUMN std_zip TO std_postal_code")
 
     # Add std_country
-    if "std_country" not in existing:
+    if not _column_exists(conn, "locations", "std_country"):
         conn.execute("ALTER TABLE locations ADD COLUMN std_country TEXT DEFAULT ''")
 
     # Backfill country for all already-validated rows (all US addresses)
@@ -418,13 +411,7 @@ def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
 
 def _m005_admin_users(conn: sqlite3.Connection) -> None:
     """Add admin_users table for admin authentication."""
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "admin_users" not in tables:
+    if not _table_exists(conn, "admin_users"):
         conn.executescript("""
             CREATE TABLE admin_users (
                 id INTEGER PRIMARY KEY,
@@ -438,13 +425,7 @@ def _m005_admin_users(conn: sqlite3.Connection) -> None:
 
 def _m006_admin_audit_log(conn: sqlite3.Connection) -> None:
     """Add admin_audit_log table for tracking admin mutations."""
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "admin_audit_log" not in tables:
+    if not _table_exists(conn, "admin_audit_log"):
         conn.executescript("""
             CREATE TABLE admin_audit_log (
                 id INTEGER PRIMARY KEY,
@@ -466,13 +447,7 @@ def _m007_endorsement_aliases(conn: sqlite3.Connection) -> None:
     in filter dropdowns, record display, and CSV export.  Original rows in
     ``license_endorsements`` and ``record_endorsements`` are untouched.
     """
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "endorsement_aliases" not in tables:
+    if not _table_exists(conn, "endorsement_aliases"):
         conn.executescript("""
             CREATE TABLE endorsement_aliases (
                 id INTEGER PRIMARY KEY,
@@ -494,13 +469,7 @@ def _m008_endorsement_dismissed_suggestions(conn: sqlite3.Connection) -> None:
     re-surfaced by the similarity algorithm.  Dismissal is permanent but does
     not prevent explicit aliasing through the main alias action.
     """
-    tables = {
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "endorsement_dismissed_suggestions" not in tables:
+    if not _table_exists(conn, "endorsement_dismissed_suggestions"):
         conn.executescript("""
             CREATE TABLE endorsement_dismissed_suggestions (
                 endorsement_id_a INTEGER NOT NULL
@@ -530,10 +499,7 @@ def _m009_regulated_substances(conn: sqlite3.Connection) -> None:
     The seed logic derives associations from live data so it stays
     correct as new endorsements are discovered by future scrapes.
     """
-    tables = {row[0] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
-    if "regulated_substances" not in tables:
+    if not _table_exists(conn, "regulated_substances"):
         conn.executescript("""
             CREATE TABLE regulated_substances (
                 id            INTEGER PRIMARY KEY,
@@ -573,10 +539,7 @@ def _m009_regulated_substances(conn: sqlite3.Connection) -> None:
     alcohol_id = alcohol_id[0]
 
     # Only seed endorsement associations when license_endorsements exists.
-    has_endorsements = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='license_endorsements'"
-    ).fetchone()
-    if not has_endorsements:
+    if not _table_exists(conn, "license_endorsements"):
         return
 
     # Assign Cannabis endorsements.
@@ -605,14 +568,10 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
     delete spurious ADDITIONAL NAMES ON FILE entity rows."""
     # Skip entirely if license_records doesn't exist yet
     # (partial-schema DBs used in some migration tests).
-    has_lr = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='license_records'"
-    ).fetchone()
-    if not has_lr:
+    if not _table_exists(conn, "license_records"):
         return
     # Add column if not already present (idempotent via PRAGMA table_info)
-    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(license_records)")}
-    if "has_additional_names" not in existing_cols:
+    if not _column_exists(conn, "license_records", "has_additional_names"):
         conn.execute(
             "ALTER TABLE license_records "
             "ADD COLUMN has_additional_names INTEGER NOT NULL DEFAULT 0"
@@ -624,9 +583,9 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
     # '%marker%') prevents false positives if the marker ever appears as a
     # substring of a longer token.
     # Note: `applicants` has been in license_records since the initial
-    # schema; the guard on existing_cols handles the rare partial-schema
-    # test DBs that create license_records without it.
-    if "applicants" in existing_cols:
+    # schema; the guard handles the rare partial-schema test DBs that
+    # create license_records without it.
+    if _column_exists(conn, "license_records", "applicants"):
         _markers = ("ADDITIONAL NAMES ON FILE", "ADDTIONAL NAMES ON FILE")
         clauses: list[str] = []
         params: list[str] = []
@@ -646,10 +605,7 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
     # record_entities links cascade automatically.
     # Guard against DBs that don't have the entities table yet
     # (e.g. partial/test DBs that pre-date the baseline migration).
-    has_entities = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'"
-    ).fetchone()
-    if has_entities:
+    if _table_exists(conn, "entities"):
         conn.execute(
             "DELETE FROM entities WHERE name IN (?, ?)",
             ("ADDITIONAL NAMES ON FILE", "ADDTIONAL NAMES ON FILE"),
@@ -670,17 +626,13 @@ def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
     ``record_entities`` links from the cleaned strings.
     """
     # Guard: skip if the table doesn't exist yet (partial-schema test DBs).
-    has_lr = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='license_records'"
-    ).fetchone()
-    if not has_lr:
+    if not _table_exists(conn, "license_records"):
         return
 
     # Import at call-time to avoid circular-import issues at module load.
     from entities import clean_applicants_string
 
-    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(license_records)")}
-    if "applicants" not in existing_cols:
+    if not _column_exists(conn, "license_records", "applicants"):
         return
 
     rows = conn.execute(

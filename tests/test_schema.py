@@ -14,6 +14,8 @@ from schema import (
     _get_user_version,
     _set_user_version,
     _database_has_tables,
+    _table_exists,
+    _column_exists,
     init_db,
     migrate,
 )
@@ -32,6 +34,50 @@ class TestUserVersion:
         _set_user_version(conn, 42)
         assert _get_user_version(conn) == 42
         conn.close()
+
+
+class TestTableExists:
+    """_table_exists() helper."""
+
+    def test_missing_table(self):
+        conn = get_connection(":memory:")
+        assert _table_exists(conn, "no_such_table") is False
+        conn.close()
+
+    def test_existing_table(self):
+        conn = get_connection(":memory:")
+        conn.execute("CREATE TABLE foo (id INTEGER)")
+        assert _table_exists(conn, "foo") is True
+        conn.close()
+
+    def test_after_init(self, db):
+        assert _table_exists(db, "license_records") is True
+        assert _table_exists(db, "nonexistent") is False
+
+
+class TestColumnExists:
+    """_column_exists() helper."""
+
+    def test_missing_column(self):
+        conn = get_connection(":memory:")
+        conn.execute("CREATE TABLE bar (id INTEGER)")
+        assert _column_exists(conn, "bar", "no_such_col") is False
+        conn.close()
+
+    def test_existing_column(self):
+        conn = get_connection(":memory:")
+        conn.execute("CREATE TABLE bar (id INTEGER, name TEXT)")
+        assert _column_exists(conn, "bar", "name") is True
+        conn.close()
+
+    def test_missing_table_returns_false(self):
+        conn = get_connection(":memory:")
+        assert _column_exists(conn, "no_table", "col") is False
+        conn.close()
+
+    def test_after_init(self, db):
+        assert _column_exists(db, "license_records", "license_number") is True
+        assert _column_exists(db, "license_records", "nonexistent") is False
 
 
 class TestDatabaseHasTables:
