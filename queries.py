@@ -28,7 +28,13 @@ from database import (  # noqa: F401 — re-exports
 )
 from pipeline import insert_record  # noqa: F401 — re-export
 from display import format_outcome
-from link_records import get_outcome_status
+from link_records import (
+    get_outcome_status,
+    PENDING_CUTOFF_DAYS,
+    DATA_GAP_CUTOFF,
+    LINKABLE_TYPES,
+    outcome_filter_sql,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -339,11 +345,19 @@ def search_records(
 # Lightweight export query
 # ------------------------------------------------------------------
 
+# Module-level constants derived from link_records — computed once so
+# _EXPORT_SELECT can be built as a true constant without .format() calls.
+_LINKABLE_TYPES_CSV = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
+
 # SQL for the export query: inlines endorsements via GROUP_CONCAT and
 # outcome links via LEFT JOIN, computes display_city/display_zip in SQL,
 # and derives outcome_status with a CASE expression — all in a single
 # query.  Skips entity hydration entirely (unused in CSV output).
-_EXPORT_SELECT = """
+#
+# The outcome_status CASE expression bakes in the module-level constants
+# (DATA_GAP_CUTOFF, PENDING_CUTOFF_DAYS, LINKABLE_TYPES) at definition
+# time — no .format() needed at call time.
+_EXPORT_SELECT = f"""
     SELECT
         lr.id, lr.section_type, lr.record_date, lr.business_name,
         lr.applicants, lr.license_type, lr.application_type,
@@ -410,11 +424,11 @@ _EXPORT_SELECT = """
             WHEN 'discontinued' THEN 'discontinued'
             ELSE CASE
                 WHEN lr.section_type != 'new_application' THEN NULL
-                WHEN lr.application_type NOT IN ({linkable_types})
+                WHEN lr.application_type NOT IN ({_LINKABLE_TYPES_CSV})
                      THEN NULL
                 WHEN lr.application_type = 'NEW APPLICATION'
-                     AND lr.record_date > '{data_gap}' THEN 'data_gap'
-                WHEN lr.record_date >= date('now', '-{pending_days} days')
+                     AND lr.record_date > '{DATA_GAP_CUTOFF}' THEN 'data_gap'
+                WHEN lr.record_date >= date('now', '-{PENDING_CUTOFF_DAYS} days')
                      THEN 'pending'
                 ELSE 'unknown'
             END
@@ -446,8 +460,6 @@ def export_records(
     directly in SQL and skips entity hydration entirely.  Returns a
     plain list of dicts (no total count).
     """
-    from link_records import PENDING_CUTOFF_DAYS, DATA_GAP_CUTOFF, LINKABLE_TYPES
-
     t0 = time.perf_counter()
     where, params, _ = _build_where_clause(
         conn,
@@ -458,15 +470,8 @@ def export_records(
         outcome_status=outcome_status,
     )
 
-    linkable_csv = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
-    sql = _EXPORT_SELECT.format(
-        data_gap=DATA_GAP_CUTOFF,
-        pending_days=PENDING_CUTOFF_DAYS,
-        linkable_types=linkable_csv,
-    )
-
     rows = conn.execute(
-        f"""{sql}
+        f"""{_EXPORT_SELECT}
             {where}
             ORDER BY lr.record_date DESC, lr.id DESC
             LIMIT ?""",
@@ -618,14 +623,10 @@ def get_stats(conn: sqlite3.Connection) -> dict:
 
 def _get_pipeline_stats(conn: sqlite3.Connection) -> dict:
     """Compute application pipeline outcome breakdown."""
-    from link_records import outcome_filter_sql, LINKABLE_TYPES
-
-    linkable = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
-
     total = conn.execute(f"""
         SELECT COUNT(*) FROM license_records
         WHERE section_type = 'new_application'
-          AND application_type IN ({linkable})
+          AND application_type IN ({_LINKABLE_TYPES_CSV})
     """).fetchone()[0]
 
     counts = {}
