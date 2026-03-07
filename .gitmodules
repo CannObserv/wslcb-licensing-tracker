@@ -1,3 +1,6 @@
 [submodule "vendor/gregoryfoster-skills"]
 	path = vendor/gregoryfoster-skills
 	url = https://github.com/gregoryfoster/skills.git
+[submodule "vendor/obra-superpowers"]
+	path = vendor/obra-superpowers
+	url = https://github.com/obra/superpowers.git

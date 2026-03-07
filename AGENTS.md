@@ -158,6 +158,7 @@ This project follows the [agentskills.io](https://agentskills.io) spec. Skills l
 | Repo | Submodule path |
 |---|---|
 | `gregoryfoster/skills` | `vendor/gregoryfoster-skills/` |
+| `obra/superpowers` | `vendor/obra-superpowers/` |
 
 After cloning this project, initialize submodules:
 
@@ -188,6 +189,14 @@ To add a new external skill repo, follow the `managing-skills-claude` skill (ava
 | `reviewing-architecture-claude` | Symlink → `vendor/gregoryfoster-skills/` | AR, architecture review, architectural review |
 | `shipping-work-claude` | Local override | ship it, push GH, close GH, wrap up |
 | `managing-skills-claude` | Symlink → `vendor/gregoryfoster-skills/` | add skill repo, add external skills, manage skills, update skills submodule |
+| `brainstorming` | Local override | brainstorm, design this, let's design |
+| `systematic-debugging` | Symlink → `vendor/obra-superpowers/` | debug, systematic debug |
+| `verification-before-completion` | Symlink → `vendor/obra-superpowers/` | verify, check completion |
+| `test-driven-development` | Symlink → `vendor/obra-superpowers/` | TDD, write tests first |
+| `writing-plans` | Symlink → `vendor/obra-superpowers/` | write plan, implementation plan |
+| `writing-skills` | Symlink → `vendor/obra-superpowers/` | write skill, new skill, author skill |
+| `subagent-driven-development` | Symlink → `vendor/obra-superpowers/` | subagent dev, dispatch agents |
+| `dispatching-parallel-agents` | Symlink → `vendor/obra-superpowers/` | parallel agents |
 
 ### Local overrides
 
@@ -195,8 +204,18 @@ A committed directory in `skills/` with the same name as a symlinked global skil
 
 | Skill | Override reason |
 |---|---|
-| `reviewing-code-claude` | Python/SQLite/FastAPI-specific dimensions (migration safety, FTS sync, frozen/derived data contract, Tailwind/HTMX style guide); runs pytest during gather-context |
-| `shipping-work-claude` | Concrete `source venv/bin/activate && python -m pytest` pre-ship; encodes `#<n> [type]: desc` Conventional Commits convention; systemd restart reminder |
+| `reviewing-code-claude` | Python/SQLite/FastAPI-specific review dimensions; pytest in venv; Iron Law + rationalization-prevention table; verification gate before commit |
+| `shipping-work-claude` | Concrete pytest command; Conventional Commits convention; systemd restart reminder; Iron Law + HARD-GATE on partial issue closure |
+| `brainstorming` | Project conventions (docs/plans/ path, Conventional Commits for design doc); writing-plans optional not mandatory; proactive-suggestion mode instead of universal hard gate |
+
+### Authoring new skills
+
+Follow the `writing-skills` TDD cycle:
+1. **RED** — run pressure scenarios (or mental model) without the skill; document where the agent fails
+2. **GREEN** — write a minimal SKILL.md that addresses those specific failures
+3. **REFACTOR** — find new rationalizations, close loopholes, re-test
+
+Skill frontmatter must include `triggers` in `metadata` for AGENTS.md discovery. New project-specific skills go in `skills/<name>/` as committed directories. Cross-project skills belong in `gregoryfoster/skills` (add via `managing-skills-claude`).
 
 ## Conventions
 
