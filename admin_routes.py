@@ -1,4 +1,11 @@
-"""FastAPI APIRouter for all /admin/* routes."""
+"""FastAPI APIRouter for all /admin/* routes.
+
+All /admin/* handlers live here and are included into the main app via
+``app.include_router(admin_routes.router)`` in app.py.  The shared
+``_tpl()`` coroutine is injected at startup via ``init_router()``.
+"""
+import logging
+from collections.abc import Callable
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -34,6 +41,8 @@ from substances import (
     set_substance_endorsements,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _VALID_ENDORSEMENT_SECTIONS = frozenset({"substances", "endorsements", "suggestions", "codes"})
@@ -43,13 +52,27 @@ _VALID_ENDORSEMENT_SECTIONS = frozenset({"substances", "endorsements", "suggesti
 # Shared helpers (injected by app.py at include time)
 # ---------------------------------------------------------------------------
 
-_tpl = None  # set by init_router()
+_tpl: Callable | None = None  # set by init_router()
 
 
-def init_router(tpl_fn) -> None:
-    """Bind the shared _tpl() helper from app.py into this router."""
+def init_router(tpl_fn: Callable) -> None:
+    """Bind the shared _tpl() coroutine from app.py into this router.
+
+    Must be called before the first request is served.  Raises
+    ``RuntimeError`` on any route invocation if skipped.
+    """
     global _tpl
     _tpl = tpl_fn
+
+
+async def _render(request, template: str, ctx: dict, status_code: int = 200):
+    """Thin wrapper around the injected _tpl helper; raises if uninitialised."""
+    if _tpl is None:
+        raise RuntimeError(
+            "admin_routes.init_router() was never called — "
+            "cannot render templates"
+        )
+    return await _tpl(request, template, ctx, status_code)
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +112,7 @@ async def admin_dashboard(request: Request, admin: dict = Depends(require_admin)
         endorsement_issues = check_endorsement_anomalies(conn)
         user_count = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
 
-    return await _tpl(request, "admin/dashboard.html", {
+    return await _render(request, "admin/dashboard.html", {
         "request": request,
         "admin": admin,
         "active_section": "dashboard",
@@ -124,7 +147,7 @@ async def admin_users(request: Request, admin: dict = Depends(require_admin)):
         users = conn.execute(
             "SELECT id, email, role, created_at, created_by FROM admin_users ORDER BY created_at"
         ).fetchall()
-    return await _tpl(request, "admin/users.html", {
+    return await _render(request, "admin/users.html", {
         "request": request,
         "admin": admin,
         "active_section": "users",
@@ -242,7 +265,7 @@ async def admin_audit_log(
         qs = urlencode(params)
         return f"/admin/audit-log{'?' + qs if qs else ''}"
 
-    return await _tpl(request, "admin/audit_log.html", {
+    return await _render(request, "admin/audit_log.html", {
         "request": request,
         "admin": admin,
         "active_section": "audit-log",
@@ -287,7 +310,7 @@ async def admin_endorsements(
              for e in endorsements],
             key=lambda e: e["name"],
         )
-    return await _tpl(request, "admin/endorsements.html", {
+    return await _render(request, "admin/endorsements.html", {
         "request": request,
         "admin": admin,
         "active_section": "endorsements",

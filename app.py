@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.include_router(admin_routes.router)
 templates = Jinja2Templates(directory="templates")
 
 PER_PAGE = 50
@@ -131,9 +132,8 @@ async def _tpl(request: Request, template: str, ctx: dict, status_code: int = 20
     return templates.TemplateResponse(template, ctx, status_code=status_code)
 
 
-# Wire the shared _tpl helper into the admin router now that it is defined.
+# Inject shared template renderer into admin router (must precede first request).
 admin_routes.init_router(_tpl)
-app.include_router(admin_routes.router)
 
 
 async def _admin_redirect_handler(request: Request, exc: AdminRedirectException):
