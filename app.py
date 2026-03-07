@@ -3,9 +3,7 @@
 Public routes live here.  Admin routes (/admin/*) are in admin_routes.py,
 registered as an APIRouter and included at startup.
 """
-import csv
 import html
-import io
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -22,7 +20,7 @@ from schema import init_db
 from admin_auth import get_current_user, AdminRedirectException
 from entities import backfill_entities, get_entity_by_id
 from queries import (
-    search_records, export_records_cursor,
+    search_records,
     get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
@@ -39,6 +37,7 @@ from link_records import build_all_links, get_reverse_link_info, get_outcome_sta
 from display import format_outcome, summarize_provenance
 from log_config import setup_logging
 import admin_routes
+import api_routes
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +78,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(admin_routes.router)
+app.include_router(api_routes.router)
 templates = Jinja2Templates(directory="templates")
 
 PER_PAGE = 50
@@ -240,7 +240,7 @@ async def search(
         "date_from": date_from,
         "date_to": date_to,
         "outcome_status": outcome_status,
-        "export_url": f"/export?{export_params}",
+        "export_url": f"/api/v1/export?{export_params}",
     }
 
     if request.headers.get("HX-Request"):
@@ -394,76 +394,4 @@ async def entity_detail(request: Request, entity_id: int):
     })
 
 
-@app.get("/api/cities")
-async def api_cities(state: str = ""):
-    """Return cities for a given state (for dynamic filter population)."""
-    if not state or state not in US_STATES:
-        return JSONResponse([], headers={"Cache-Control": "public, max-age=300"})
-    with get_db() as conn:
-        cities = get_cities_for_state(conn, state)
-    return JSONResponse(cities, headers={"Cache-Control": "public, max-age=300"})
 
-
-@app.get("/export")
-async def export_csv(
-    q: str = "",
-    section_type: str = "",
-    application_type: str = "",
-    endorsement: list[str] = Query(default=[]),
-    state: str = "",
-    city: str = "",
-    date_from: str = "",
-    date_to: str = "",
-    outcome_status: str = "",
-):
-    """Export search results as CSV, streaming rows directly from the cursor."""
-    if not state:
-        city = ""
-
-    fieldnames = [
-        "section_type", "record_date", "business_name", "business_location",
-        "address_line_1", "address_line_2", "applicants", "license_type",
-        "endorsements", "application_type", "license_number", "contact_phone",
-        "city", "state", "zip_code", "std_city", "std_region", "std_postal_code", "std_country",
-        "previous_business_name", "previous_applicants",
-        "previous_business_location",
-        "prev_address_line_1", "prev_address_line_2",
-        "prev_std_city", "prev_std_region", "prev_std_postal_code",
-        "outcome_status", "outcome_date", "days_to_outcome",
-    ]
-
-    def _csv_generator():
-        """Yield CSV rows incrementally from the database cursor."""
-        buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        yield buf.getvalue()
-
-        with get_db() as conn:
-            for record in export_records_cursor(
-                conn, query=q, section_type=section_type,
-                application_type=application_type, endorsements=endorsement,
-                state=state, city=city, date_from=date_from, date_to=date_to,
-                outcome_status=outcome_status,
-            ):
-                buf.seek(0)
-                buf.truncate(0)
-                writer.writerow({k: record.get(k, "") or "" for k in fieldnames})
-                yield buf.getvalue()
-
-    return StreamingResponse(
-        _csv_generator(),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=wslcb_records.csv"},
-    )
-
-
-@app.get("/api/stats")
-async def api_stats():
-    with get_db() as conn:
-        stats = get_stats(conn)
-    if stats.get("date_range"):
-        stats["date_range"] = list(stats["date_range"])
-    if stats.get("last_scrape"):
-        stats["last_scrape"] = dict(stats["last_scrape"])
-    return stats

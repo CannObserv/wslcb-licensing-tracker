@@ -78,6 +78,7 @@ def _make_client(db, stats: dict | None = None):
         patch("admin_auth._lookup_admin", return_value=None),
         patch("app.get_db", return_value=ctx),
         patch("app.get_stats", return_value=stats),
+        patch("api_routes.get_db", return_value=ctx),
     )
     for p in patches:
         p.start()
@@ -533,13 +534,13 @@ class TestAdditionalNamesNotice:
 
 
 class TestExportCsvRoute:
-    """Tests for GET /export — streaming CSV export."""
+    """Tests for GET /api/v1/export — streaming CSV export."""
 
     def test_empty_export_returns_csv_with_header_only(self, db):
         """An export with no matching records returns a valid CSV with only the header row."""
         client, patches = _make_client(db)
         try:
-            resp = client.get("/export?section_type=approved")
+            resp = client.get("/api/v1/export?section_type=approved")
             assert resp.status_code == 200
             assert resp.headers["content-type"].startswith("text/csv")
             lines = [l for l in resp.text.splitlines() if l.strip()]
@@ -556,7 +557,7 @@ class TestExportCsvRoute:
         try:
             insert_record(db, standard_new_application)
             db.commit()
-            resp = client.get("/export?section_type=new_application")
+            resp = client.get("/api/v1/export?section_type=new_application")
             assert resp.status_code == 200
             assert resp.headers["content-type"].startswith("text/csv")
             lines = [l for l in resp.text.splitlines() if l.strip()]
@@ -569,7 +570,7 @@ class TestExportCsvRoute:
         """The Content-Disposition header indicates a CSV attachment."""
         client, patches = _make_client(db)
         try:
-            resp = client.get("/export")
+            resp = client.get("/api/v1/export")
             assert "attachment" in resp.headers["content-disposition"]
             assert "wslcb_records.csv" in resp.headers["content-disposition"]
         finally:
