@@ -1,0 +1,9 @@
+[Unit]
+Description=WSLCB web app periodic health check
+After=wslcb-web.service
+
+[Service]
+Type=oneshot
+User=exedev
+# Curl the health endpoint; restart the web service if it returns non-200.
+ExecStart=/bin/bash -c '/usr/bin/curl -sf http://localhost:8000/api/v1/health || systemctl restart wslcb-web.service'

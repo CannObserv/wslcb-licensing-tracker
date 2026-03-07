@@ -392,7 +392,7 @@ data/
 ## Deployment
 
 - Runs on an exe.dev VM as systemd services
-- `wslcb-web.service` — uvicorn on port 8000, auto-restart
+- `wslcb-web.service` — uvicorn on port 8000, auto-restart; `ExecStartPost` polls `/api/v1/health` up to 5×(3 s) before marking start as failed
 - `wslcb-scraper.timer` — fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter
 - `wslcb-task@.service` — systemd template for oneshot tasks; instance name becomes the `cli.py` subcommand
   - `wslcb-task@scrape.service` — scrape (triggered by the timer)
@@ -401,7 +401,15 @@ data/
   - `wslcb-task@backfill-snapshots.service` — recover ASSUMPTION/CHANGE OF LOCATION data from archived HTML
   - `wslcb-task@backfill-provenance.service` — populate source provenance links
   - `wslcb-task@rebuild-links.service` — rebuild application→outcome links
-- After changing service files: `sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer /etc/systemd/system/ && sudo systemctl daemon-reload`
+- `wslcb-healthcheck.service` + `wslcb-healthcheck.timer` — curl `/api/v1/health` every 5 min; restart `wslcb-web` on failure
+- After changing service files:
+  ```bash
+  sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer \
+       wslcb-healthcheck.service wslcb-healthcheck.timer /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now wslcb-healthcheck.timer
+  sudo systemctl restart wslcb-web.service
+  ```
 - Under systemd (non-TTY), all log output is JSON lines — structured fields (`timestamp`, `level`, `name`, `message`) are captured by the journal. Uvicorn access/error logs are routed through the same formatter.
 - All persistent data lives in `./data/`
 - Venv shebangs are absolute paths — if the project directory moves, recreate the venv
