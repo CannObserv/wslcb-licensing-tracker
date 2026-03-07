@@ -22,7 +22,7 @@ from schema import init_db
 from admin_auth import get_current_user, AdminRedirectException
 from entities import backfill_entities, get_entity_by_id
 from queries import (
-    search_records, export_records, export_records_cursor,
+    search_records, export_records_cursor,
     get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
@@ -446,8 +446,8 @@ async def export_csv(
                 state=state, city=city, date_from=date_from, date_to=date_to,
                 outcome_status=outcome_status,
             ):
-                buf = io.StringIO()
-                writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+                buf.seek(0)
+                buf.truncate(0)
                 writer.writerow({k: record.get(k, "") or "" for k in fieldnames})
                 yield buf.getvalue()
 

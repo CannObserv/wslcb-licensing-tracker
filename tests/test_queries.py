@@ -534,17 +534,12 @@ class TestExportRecordsCursor:
         streamed = list(export_records_cursor(db))
         assert streamed == expected
 
-    def test_returns_generator(self, db, standard_new_application):
+    def test_returns_generator(self, db):
         """export_records_cursor returns a generator (not a list)."""
         import types
-        from pipeline import insert_record
         from queries import export_records_cursor
 
-        insert_record(db, standard_new_application)
-        db.commit()
-
-        result = export_records_cursor(db)
-        assert isinstance(result, types.GeneratorType)
+        assert isinstance(export_records_cursor(db), types.GeneratorType)
 
     def test_empty_db_yields_nothing(self, db):
         """export_records_cursor on an empty DB yields no rows."""

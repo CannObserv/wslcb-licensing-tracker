@@ -14,6 +14,7 @@ All three are re-exported here for backward compatibility.
 import logging
 import sqlite3
 import time
+from collections.abc import Iterator
 
 from endorsements import (
     get_endorsement_options, get_record_endorsements, get_regulated_substances,
@@ -498,7 +499,7 @@ def export_records_cursor(
     date_to: str = "",
     outcome_status: str = "",
     limit: int = 100_000,
-):
+) -> Iterator[dict]:
     """Streaming variant of :func:`export_records`.
 
     Yields one ``dict`` per row directly from the SQLite cursor without
