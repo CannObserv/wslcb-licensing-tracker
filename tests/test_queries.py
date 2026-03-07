@@ -566,3 +566,165 @@ class TestExportRecordsCursor:
         rows = list(export_records_cursor(db, section_type="approved"))
         assert len(rows) == 1
         assert rows[0]["section_type"] == "approved"
+
+
+# ── get_entities ──────────────────────────────────────────────────
+
+
+class TestGetEntities:
+    """Tests for get_entities() — paginated, searchable entity list."""
+
+    def _insert_entities(self, db):
+        """Insert a mix of persons and an organization with record links."""
+        from pipeline import insert_record
+
+        # applicants format: "BUSINESS NAME; PERSON1; PERSON2"
+        # parse_and_link_entities skips the first element (business name).
+        records = [
+            {"section_type": "new_application", "record_date": "2025-06-01",
+             "business_name": "ACME CO", "business_location": "1 MAIN ST, SEATTLE, WA",
+             "applicants": "ACME CO; ALICE JONES", "license_type": "CANNABIS RETAILER",
+             "application_type": "NEW APPLICATION", "license_number": "111001",
+             "contact_phone": "", "city": "SEATTLE", "state": "WA", "zip_code": "98101",
+             "previous_business_name": "", "previous_applicants": "",
+             "previous_business_location": "", "previous_city": "",
+             "previous_state": "", "previous_zip_code": "",
+             "scraped_at": "2025-06-01T12:00:00+00:00"},
+            {"section_type": "new_application", "record_date": "2025-06-02",
+             "business_name": "BOB SHOP", "business_location": "2 ELM ST, TACOMA, WA",
+             "applicants": "BOB SHOP; BOB SMITH", "license_type": "CANNABIS RETAILER",
+             "application_type": "NEW APPLICATION", "license_number": "111002",
+             "contact_phone": "", "city": "TACOMA", "state": "WA", "zip_code": "98402",
+             "previous_business_name": "", "previous_applicants": "",
+             "previous_business_location": "", "previous_city": "",
+             "previous_state": "", "previous_zip_code": "",
+             "scraped_at": "2025-06-02T12:00:00+00:00"},
+            {"section_type": "new_application", "record_date": "2025-06-03",
+             "business_name": "ACME CO", "business_location": "1 MAIN ST, SEATTLE, WA",
+             "applicants": "ACME CO; ALICE JONES; ACME HOLDINGS LLC",
+             "license_type": "CANNABIS RETAILER",
+             "application_type": "NEW APPLICATION", "license_number": "111003",
+             "contact_phone": "", "city": "SEATTLE", "state": "WA", "zip_code": "98101",
+             "previous_business_name": "", "previous_applicants": "",
+             "previous_business_location": "", "previous_city": "",
+             "previous_state": "", "previous_zip_code": "",
+             "scraped_at": "2025-06-03T12:00:00+00:00"},
+        ]
+        for r in records:
+            insert_record(db, r)
+        db.commit()
+
+    def test_returns_all_entities(self, db):
+        """No filters returns all entities with record counts."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db)
+        assert result["total"] == 3  # ALICE JONES, BOB SMITH, ACME HOLDINGS LLC
+        assert len(result["entities"]) == 3
+
+    def test_result_fields(self, db):
+        """Each row has id, name, entity_type, record_count."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db)
+        row = result["entities"][0]
+        assert "id" in row
+        assert "name" in row
+        assert "entity_type" in row
+        assert "record_count" in row
+
+    def test_default_sort_by_count_desc(self, db):
+        """Default sort is record_count descending (most active first)."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db)
+        counts = [r["record_count"] for r in result["entities"]]
+        assert counts == sorted(counts, reverse=True)
+
+    def test_sort_by_name_asc(self, db):
+        """sort='name' returns entities alphabetically."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db, sort="name")
+        names = [r["name"] for r in result["entities"]]
+        assert names == sorted(names)
+
+    def test_search_by_name(self, db):
+        """q filter narrows results to matching entity names."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db, q="alice")
+        assert result["total"] == 1
+        assert result["entities"][0]["name"] == "ALICE JONES"
+
+    def test_search_case_insensitive(self, db):
+        """Name search is case-insensitive."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db, q="ALICE")
+        assert result["total"] == 1
+
+    def test_search_partial_match(self, db):
+        """Partial name matches are returned."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db, q="jones")
+        assert result["total"] == 1
+
+    def test_filter_by_type_person(self, db):
+        """entity_type='person' returns only person entities."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db, entity_type="person")
+        assert all(r["entity_type"] == "person" for r in result["entities"])
+        assert result["total"] == 2
+
+    def test_filter_by_type_organization(self, db):
+        """entity_type='organization' returns only org entities."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db, entity_type="organization")
+        assert result["total"] == 1
+        assert result["entities"][0]["name"] == "ACME HOLDINGS LLC"
+
+    def test_pagination(self, db):
+        """page and per_page control which rows are returned."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        page1 = get_entities(db, per_page=2, page=1)
+        page2 = get_entities(db, per_page=2, page=2)
+        assert len(page1["entities"]) == 2
+        assert len(page2["entities"]) == 1
+        assert page1["total"] == 3
+        assert page2["total"] == 3
+        # No overlap between pages
+        ids1 = {r["id"] for r in page1["entities"]}
+        ids2 = {r["id"] for r in page2["entities"]}
+        assert ids1.isdisjoint(ids2)
+
+    def test_empty_db(self, db):
+        """Empty entities table returns empty list and zero total."""
+        from queries import get_entities
+
+        result = get_entities(db)
+        assert result["total"] == 0
+        assert result["entities"] == []
+
+    def test_search_no_match(self, db):
+        """Search that matches nothing returns empty list, total=0."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result = get_entities(db, q="zzznomatch")
+        assert result["total"] == 0
+        assert result["entities"] == []

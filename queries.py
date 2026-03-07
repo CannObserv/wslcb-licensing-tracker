@@ -708,6 +708,76 @@ def get_related_records(
     return [dict(r) for r in rows]
 
 
+def get_entities(
+    conn: sqlite3.Connection,
+    *,
+    q: str | None = None,
+    entity_type: str | None = None,
+    sort: str = "count",
+    page: int = 1,
+    per_page: int = 50,
+) -> dict:
+    """Return a paginated, searchable list of all entities.
+
+    Parameters
+    ----------
+    q:
+        Optional name substring (case-insensitive LIKE search).
+    entity_type:
+        Optional filter: ``'person'``, ``'organization'``, or ``None`` for all.
+    sort:
+        ``'count'`` (default) — most active first (record_count DESC, name ASC);
+        ``'name'`` — alphabetical (name ASC).
+    page:
+        1-based page number.
+    per_page:
+        Rows per page (default 50).
+
+    Returns
+    -------
+    dict with keys ``entities`` (list of row dicts) and ``total`` (int).
+    """
+    like_param = f"%{q}%" if q else None
+
+    where_parts = []
+    params: list = []
+    if like_param is not None:
+        where_parts.append("e.name LIKE ? COLLATE NOCASE")
+        params.append(like_param)
+    if entity_type is not None:
+        where_parts.append("e.entity_type = ?")
+        params.append(entity_type)
+
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    order_clause = (
+        "ORDER BY record_count DESC, e.name ASC"
+        if sort != "name"
+        else "ORDER BY e.name ASC"
+    )
+
+    base_sql = f"""
+        SELECT e.id, e.name, e.entity_type,
+               COUNT(re.record_id) AS record_count
+        FROM entities e
+        LEFT JOIN record_entities re ON re.entity_id = e.id
+        {where_clause}
+        GROUP BY e.id
+    """
+
+    total_sql = f"SELECT COUNT(*) FROM ({base_sql})"
+    total: int = conn.execute(total_sql, params).fetchone()[0]
+
+    offset = (page - 1) * per_page
+    rows_sql = f"{base_sql} {order_clause} LIMIT ? OFFSET ?"
+    rows = conn.execute(rows_sql, params + [per_page, offset]).fetchall()
+
+    return {
+        "entities": [dict(r) for r in rows],
+        "total": total,
+    }
+
+
 def get_entity_records(
     conn: sqlite3.Connection, entity_id: int
 ) -> list[dict]:
