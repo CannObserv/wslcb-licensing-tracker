@@ -1,11 +1,16 @@
-"""Query and record-manipulation functions for WSLCB licensing tracker.
+"""Query functions for WSLCB licensing tracker.
 
-Contains search, filter, stats, and record CRUD operations that
-combine data from multiple tables (records, locations, endorsements,
-entities).  Thin read/write layer on top of the core schema in
-``database.py``.
+Contains search, filter, stats, and read queries that combine data from
+multiple tables (records, locations, endorsements, entities).  Thin
+read layer on top of the core schema in ``database.py``.
+
+Record insertion lives in ``pipeline.py`` (``insert_record``); source
+provenance queries live in ``database.py`` (``get_primary_source``,
+``get_record_sources``); the US state constant lives in ``db.py``
+(``US_STATES``).
+
+All three are re-exported here for backward compatibility.
 """
-import json
 import logging
 import sqlite3
 import time
@@ -14,10 +19,14 @@ from endorsements import (
     get_endorsement_options, get_record_endorsements, get_regulated_substances,
 )
 from entities import (
-    parse_and_link_entities, get_record_entities, clean_applicants_string,
-    clean_entity_name, ADDITIONAL_NAMES_MARKERS,
+    get_record_entities,
 )
-from db import SOURCE_ROLE_PRIORITY
+from db import US_STATES  # noqa: F401 — re-export
+from database import (  # noqa: F401 — re-exports
+    get_primary_source,
+    get_record_sources,
+)
+from pipeline import insert_record  # noqa: F401 — re-export
 from display import format_outcome
 from link_records import get_outcome_status
 
@@ -117,129 +126,6 @@ def hydrate_records(
         ))
         results.append(d)
     return results
-
-
-# ------------------------------------------------------------------
-# Record CRUD
-# ------------------------------------------------------------------
-
-def _applicants_have_additional_names(*applicant_strings: str | None) -> bool:
-    """Return True if any of the applicant strings contains an
-    ADDITIONAL NAMES ON FILE marker token (exact or typo variant)."""
-    for s in applicant_strings:
-        if not s:
-            continue
-        if any(part.strip() in ADDITIONAL_NAMES_MARKERS for part in s.split(";")):
-            return True
-    return False
-
-
-def insert_record(conn: sqlite3.Connection, record: dict) -> tuple[int, bool] | None:
-    """Insert a record, returning ``(id, is_new)`` or *None* on error.
-
-    Returns ``(new_id, True)`` for freshly inserted records and
-    ``(existing_id, False)`` when a duplicate is detected.  *None* is
-    only returned on an unexpected ``IntegrityError`` (safety net).
-
-    Normalizes ``business_name``, ``previous_business_name``,
-    ``applicants``, and ``previous_applicants`` (uppercase, strip
-    trailing punctuation) before storage.  Automatically resolves (or
-    creates) location rows and links entity records.  Checks for
-    duplicates *before* creating locations to avoid orphaned rows.
-    """
-    from database import get_or_create_location
-
-    existing = conn.execute(
-        """SELECT id FROM license_records
-           WHERE section_type = :section_type
-             AND record_date = :record_date
-             AND license_number = :license_number
-             AND application_type = :application_type
-           LIMIT 1""",
-        record,
-    ).fetchone()
-    if existing:
-        return (existing["id"], False)
-
-    location_id = get_or_create_location(
-        conn,
-        record.get("business_location", ""),
-        city=record.get("city", ""),
-        state=record.get("state", "WA"),
-        zip_code=record.get("zip_code", ""),
-    )
-    previous_location_id = get_or_create_location(
-        conn,
-        record.get("previous_business_location", ""),
-        city=record.get("previous_city", ""),
-        state=record.get("previous_state", ""),
-        zip_code=record.get("previous_zip_code", ""),
-    )
-    # Normalize business names and applicant strings (uppercase, strip
-    # trailing punctuation) so stored values are consistent throughout.
-    cleaned_biz = clean_entity_name(record.get("business_name", ""))
-    cleaned_prev_biz = clean_entity_name(
-        record.get("previous_business_name", "")
-    )
-    cleaned_applicants = clean_applicants_string(
-        record.get("applicants", "")
-    )
-    cleaned_prev_applicants = clean_applicants_string(
-        record.get("previous_applicants", "")
-    )
-    # Preserve raw (as-parsed) values before cleaning
-    raw_biz = record.get("business_name", "")
-    raw_prev_biz = record.get("previous_business_name", "")
-    raw_applicants = record.get("applicants", "")
-    raw_prev_applicants = record.get("previous_applicants", "")
-    has_additional_names = int(_applicants_have_additional_names(
-        cleaned_applicants, cleaned_prev_applicants
-    ))
-    try:
-        cursor = conn.execute(
-            """INSERT INTO license_records
-               (section_type, record_date, business_name, location_id,
-                applicants, license_type, application_type, license_number,
-                contact_phone, previous_business_name, previous_applicants,
-                previous_location_id,
-                raw_business_name, raw_previous_business_name,
-                raw_applicants, raw_previous_applicants,
-                has_additional_names,
-                scraped_at)
-               VALUES (:section_type, :record_date, :business_name, :location_id,
-                       :applicants, :license_type, :application_type, :license_number,
-                       :contact_phone, :previous_business_name, :previous_applicants,
-                       :previous_location_id,
-                       :raw_business_name, :raw_previous_business_name,
-                       :raw_applicants, :raw_previous_applicants,
-                       :has_additional_names,
-                       :scraped_at)""",
-            {
-                **record,
-                "location_id": location_id,
-                "previous_location_id": previous_location_id,
-                "business_name": cleaned_biz,
-                "previous_business_name": cleaned_prev_biz,
-                "applicants": cleaned_applicants,
-                "previous_applicants": cleaned_prev_applicants,
-                "raw_business_name": raw_biz,
-                "raw_previous_business_name": raw_prev_biz,
-                "raw_applicants": raw_applicants,
-                "raw_previous_applicants": raw_prev_applicants,
-                "has_additional_names": has_additional_names,
-            },
-        )
-        record_id = cursor.lastrowid
-        parse_and_link_entities(
-            conn, record_id, cleaned_applicants, "applicant"
-        )
-        if cleaned_prev_applicants:
-            parse_and_link_entities(
-                conn, record_id, cleaned_prev_applicants, "previous_applicant"
-            )
-        return (record_id, True)
-    except sqlite3.IntegrityError:
-        return None
 
 
 # ------------------------------------------------------------------
@@ -612,25 +498,6 @@ def invalidate_filter_cache() -> None:
     _filter_cache.clear()
 
 
-US_STATES = {
-    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
-    "CA": "California", "CO": "Colorado", "CT": "Connecticut",
-    "DC": "District of Columbia", "DE": "Delaware", "FL": "Florida",
-    "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois",
-    "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky",
-    "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
-    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
-    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana",
-    "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
-    "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
-    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
-    "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
-    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
-    "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
-    "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
-    "WI": "Wisconsin", "WY": "Wyoming",
-}
-
 _LOCATION_IDS_SUBQUERY = (
     "SELECT location_id FROM license_records WHERE location_id IS NOT NULL"
     " UNION "
@@ -861,70 +728,4 @@ def get_record_links_bulk(
     return result
 
 
-# Alias for backward-compat and local use; canonical definition is in db.py.
-_ROLE_PRIORITY = SOURCE_ROLE_PRIORITY
 
-
-def get_primary_source(
-    conn: sqlite3.Connection, record_id: int,
-) -> dict | None:
-    """Return the single most-relevant source for a record, or None.
-
-    Priority order:
-    1. Role: ``first_seen`` > ``repaired`` > ``confirmed``
-    2. Within a role: sources with a non-NULL ``snapshot_path`` first
-    3. Newest ``captured_at`` as tiebreaker
-    """
-    rows = conn.execute(
-        """SELECT s.id, st.slug AS source_type, st.label AS source_label,
-                  s.snapshot_path, s.url, s.captured_at, s.ingested_at,
-                  s.metadata, rs.role
-           FROM record_sources rs
-           JOIN sources s ON s.id = rs.source_id
-           JOIN source_types st ON st.id = s.source_type_id
-           WHERE rs.record_id = ?
-           ORDER BY s.captured_at DESC""",
-        (record_id,),
-    ).fetchall()
-    if not rows:
-        return None
-
-    best = None
-    best_priority = (999, 999)  # (role_rank, no_snapshot_penalty)
-    for r in rows:
-        d = dict(r)
-        role_rank = _ROLE_PRIORITY.get(d["role"], 2)
-        no_snap = 0 if d["snapshot_path"] else 1
-        priority = (role_rank, no_snap)
-        if best is None or priority < best_priority:
-            best = d
-            best_priority = priority
-
-    if best is not None:
-        raw = best.get("metadata")
-        best["metadata"] = json.loads(raw) if raw else {}
-    return best
-
-
-def get_record_sources(
-    conn: sqlite3.Connection, record_id: int,
-) -> list[dict]:
-    """Return provenance sources for a record, newest first."""
-    rows = conn.execute(
-        """SELECT s.id, st.slug AS source_type, st.label AS source_label,
-                  s.snapshot_path, s.url, s.captured_at, s.ingested_at,
-                  s.metadata, rs.role
-           FROM record_sources rs
-           JOIN sources s ON s.id = rs.source_id
-           JOIN source_types st ON st.id = s.source_type_id
-           WHERE rs.record_id = ?
-           ORDER BY s.captured_at DESC""",
-        (record_id,),
-    ).fetchall()
-    results = []
-    for r in rows:
-        d = dict(r)
-        raw = d.get("metadata")
-        d["metadata"] = json.loads(raw) if raw else {}
-        results.append(d)
-    return results

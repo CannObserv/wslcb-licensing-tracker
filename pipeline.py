@@ -19,6 +19,13 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from entities import (
+    parse_and_link_entities,
+    clean_applicants_string,
+    clean_entity_name,
+    ADDITIONAL_NAMES_MARKERS,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +83,121 @@ def _record_enrichment(
     )
 
 
+def _applicants_have_additional_names(*applicant_strings: str | None) -> bool:
+    """Return True if any of the applicant strings contains an
+    ADDITIONAL NAMES ON FILE marker token (exact or typo variant)."""
+    for s in applicant_strings:
+        if not s:
+            continue
+        if any(part.strip() in ADDITIONAL_NAMES_MARKERS for part in s.split(";")):
+            return True
+    return False
+
+
+def insert_record(
+    conn: sqlite3.Connection, record: dict,
+) -> tuple[int, bool] | None:
+    """Insert a record, returning ``(id, is_new)`` or *None* on error.
+
+    Returns ``(new_id, True)`` for freshly inserted records and
+    ``(existing_id, False)`` when a duplicate is detected.  *None* is
+    only returned on an unexpected ``IntegrityError`` (safety net).
+
+    Normalizes ``business_name``, ``previous_business_name``,
+    ``applicants``, and ``previous_applicants`` (uppercase, strip
+    trailing punctuation) before storage.  Automatically resolves (or
+    creates) location rows and links entity records.  Checks for
+    duplicates *before* creating locations to avoid orphaned rows.
+    """
+    from database import get_or_create_location
+
+    existing = conn.execute(
+        """SELECT id FROM license_records
+           WHERE section_type = :section_type
+             AND record_date = :record_date
+             AND license_number = :license_number
+             AND application_type = :application_type
+           LIMIT 1""",
+        record,
+    ).fetchone()
+    if existing:
+        return (existing["id"], False)
+
+    location_id = get_or_create_location(
+        conn,
+        record.get("business_location", ""),
+        city=record.get("city", ""),
+        state=record.get("state", "WA"),
+        zip_code=record.get("zip_code", ""),
+    )
+    previous_location_id = get_or_create_location(
+        conn,
+        record.get("previous_business_location", ""),
+        city=record.get("previous_city", ""),
+        state=record.get("previous_state", ""),
+        zip_code=record.get("previous_zip_code", ""),
+    )
+    # Normalize business names and applicant strings (uppercase, strip
+    # trailing punctuation) so stored values are consistent throughout.
+    cleaned_biz = clean_entity_name(record.get("business_name", ""))
+    cleaned_prev_biz = clean_entity_name(record.get("previous_business_name", ""))
+    cleaned_applicants = clean_applicants_string(record.get("applicants", ""))
+    cleaned_prev_applicants = clean_applicants_string(
+        record.get("previous_applicants", "")
+    )
+    # Preserve raw (as-parsed) values before cleaning
+    raw_biz = record.get("business_name", "")
+    raw_prev_biz = record.get("previous_business_name", "")
+    raw_applicants = record.get("applicants", "")
+    raw_prev_applicants = record.get("previous_applicants", "")
+    has_additional_names = int(_applicants_have_additional_names(
+        cleaned_applicants, cleaned_prev_applicants
+    ))
+    try:
+        cursor = conn.execute(
+            """INSERT INTO license_records
+               (section_type, record_date, business_name, location_id,
+                applicants, license_type, application_type, license_number,
+                contact_phone, previous_business_name, previous_applicants,
+                previous_location_id,
+                raw_business_name, raw_previous_business_name,
+                raw_applicants, raw_previous_applicants,
+                has_additional_names,
+                scraped_at)
+               VALUES (:section_type, :record_date, :business_name, :location_id,
+                       :applicants, :license_type, :application_type, :license_number,
+                       :contact_phone, :previous_business_name, :previous_applicants,
+                       :previous_location_id,
+                       :raw_business_name, :raw_previous_business_name,
+                       :raw_applicants, :raw_previous_applicants,
+                       :has_additional_names,
+                       :scraped_at)""",
+            {
+                **record,
+                "location_id": location_id,
+                "previous_location_id": previous_location_id,
+                "business_name": cleaned_biz,
+                "previous_business_name": cleaned_prev_biz,
+                "applicants": cleaned_applicants,
+                "previous_applicants": cleaned_prev_applicants,
+                "raw_business_name": raw_biz,
+                "raw_previous_business_name": raw_prev_biz,
+                "raw_applicants": raw_applicants,
+                "raw_previous_applicants": raw_prev_applicants,
+                "has_additional_names": has_additional_names,
+            },
+        )
+        record_id = cursor.lastrowid
+        parse_and_link_entities(conn, record_id, cleaned_applicants, "applicant")
+        if cleaned_prev_applicants:
+            parse_and_link_entities(
+                conn, record_id, cleaned_prev_applicants, "previous_applicant"
+            )
+        return (record_id, True)
+    except sqlite3.IntegrityError:
+        return None
+
+
 def ingest_record(
     conn: sqlite3.Connection,
     record: dict,
@@ -89,7 +211,6 @@ def ingest_record(
     Steps 2–5 only run for newly inserted records; duplicates get
     provenance linked with role ``'confirmed'`` and skip other steps.
     """
-    from queries import insert_record
     from endorsements import process_record
     from database import link_record_source
 

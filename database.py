@@ -15,6 +15,7 @@ import sqlite3
 from db import (  # noqa: F401 — re-exports
     DATA_DIR,
     DB_PATH,
+    SOURCE_ROLE_PRIORITY,
     SOURCE_TYPE_CO_ARCHIVE,
     SOURCE_TYPE_CO_DIFF_ARCHIVE,
     SOURCE_TYPE_INTERNET_ARCHIVE,
@@ -150,6 +151,75 @@ def link_record_source(
            VALUES (?, ?, ?)""",
         (record_id, source_id, role),
     )
+
+
+# Alias for backward-compat and local use; canonical definition is in db.py.
+_ROLE_PRIORITY = SOURCE_ROLE_PRIORITY
+
+
+def get_primary_source(
+    conn: sqlite3.Connection, record_id: int,
+) -> dict | None:
+    """Return the single most-relevant source for a record, or None.
+
+    Priority order:
+    1. Role: ``first_seen`` > ``repaired`` > ``confirmed``
+    2. Within a role: sources with a non-NULL ``snapshot_path`` first
+    3. Newest ``captured_at`` as tiebreaker
+    """
+    rows = conn.execute(
+        """SELECT s.id, st.slug AS source_type, st.label AS source_label,
+                  s.snapshot_path, s.url, s.captured_at, s.ingested_at,
+                  s.metadata, rs.role
+           FROM record_sources rs
+           JOIN sources s ON s.id = rs.source_id
+           JOIN source_types st ON st.id = s.source_type_id
+           WHERE rs.record_id = ?
+           ORDER BY s.captured_at DESC""",
+        (record_id,),
+    ).fetchall()
+    if not rows:
+        return None
+
+    best = None
+    best_priority = (999, 999)  # (role_rank, no_snapshot_penalty)
+    for r in rows:
+        d = dict(r)
+        role_rank = _ROLE_PRIORITY.get(d["role"], 2)
+        no_snap = 0 if d["snapshot_path"] else 1
+        priority = (role_rank, no_snap)
+        if best is None or priority < best_priority:
+            best = d
+            best_priority = priority
+
+    if best is not None:
+        raw = best.get("metadata")
+        best["metadata"] = json.loads(raw) if raw else {}
+    return best
+
+
+def get_record_sources(
+    conn: sqlite3.Connection, record_id: int,
+) -> list[dict]:
+    """Return provenance sources for a record, newest first."""
+    rows = conn.execute(
+        """SELECT s.id, st.slug AS source_type, st.label AS source_label,
+                  s.snapshot_path, s.url, s.captured_at, s.ingested_at,
+                  s.metadata, rs.role
+           FROM record_sources rs
+           JOIN sources s ON s.id = rs.source_id
+           JOIN source_types st ON st.id = s.source_type_id
+           WHERE rs.record_id = ?
+           ORDER BY s.captured_at DESC""",
+        (record_id,),
+    ).fetchall()
+    results = []
+    for r in rows:
+        d = dict(r)
+        raw = d.get("metadata")
+        d["metadata"] = json.loads(raw) if raw else {}
+        results.append(d)
+    return results
 
 
 if __name__ == "__main__":
