@@ -133,6 +133,61 @@ class TestExportEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/v1/health
+# ---------------------------------------------------------------------------
+
+class TestHealthEndpoint:
+    def test_healthy_returns_200(self, client):
+        resp = client.get("/api/v1/health")
+        assert resp.status_code == 200
+
+    def test_healthy_envelope(self, client):
+        resp = client.get("/api/v1/health")
+        body = resp.json()
+        _assert_envelope(body, ok=True)
+
+    def test_healthy_data_contains_db_ok(self, client):
+        resp = client.get("/api/v1/health")
+        assert resp.json()["data"]["db"] == "ok"
+
+    def test_db_error_returns_503(self, client):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _broken_db():
+            raise Exception("disk I/O error")
+            yield  # noqa: unreachable
+
+        with patch("api_routes.get_db", _broken_db):
+            resp = client.get("/api/v1/health")
+        assert resp.status_code == 503
+
+    def test_db_error_envelope(self, client):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _broken_db():
+            raise Exception("disk I/O error")
+            yield  # noqa: unreachable
+
+        with patch("api_routes.get_db", _broken_db):
+            resp = client.get("/api/v1/health")
+        body = resp.json()
+        _assert_envelope(body, ok=False)
+        assert body["data"]["db"] == "error"
+        assert "detail" in body["data"]
+
+    def test_no_auth_required(self):
+        """Health endpoint must respond without any auth headers."""
+        # Use a bare client with no DB patch — the real DB will respond
+        # (or fail gracefully) without needing credentials.
+        plain_client = TestClient(app)
+        resp = plain_client.get("/api/v1/health")
+        # Either 200 (real DB reachable) or 503 (not reachable) — never 401/403
+        assert resp.status_code in (200, 503)
+
+
+# ---------------------------------------------------------------------------
 # Old paths removed
 # ---------------------------------------------------------------------------
 

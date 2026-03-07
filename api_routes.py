@@ -78,6 +78,41 @@ async def api_stats():
 # GET /api/v1/export
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# GET /api/v1/health
+# ---------------------------------------------------------------------------
+
+@router.get("/health")
+async def api_health():
+    """Lightweight health check: verifies the process is alive and the DB is reachable.
+
+    Returns HTTP 200 when healthy, HTTP 503 when the database cannot be
+    reached.  No authentication required — this endpoint must be reachable
+    by systemd and external uptime monitors.
+    """
+    try:
+        with get_db() as conn:
+            conn.execute("SELECT 1")
+        return JSONResponse(
+            {"ok": True, "message": "Healthy", "data": {"db": "ok"}},
+            status_code=200,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Health check failed: %s", exc)
+        return JSONResponse(
+            {
+                "ok": False,
+                "message": "Database unreachable",
+                "data": {"db": "error", "detail": str(exc)},
+            },
+            status_code=503,
+        )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/export
+# ---------------------------------------------------------------------------
+
 _EXPORT_FIELDNAMES = [
     "section_type", "record_date", "business_name", "business_location",
     "address_line_1", "address_line_2", "applicants", "license_type",
