@@ -22,7 +22,7 @@ from schema import init_db
 from admin_auth import get_current_user, AdminRedirectException
 from entities import backfill_entities, get_entity_by_id
 from queries import (
-    search_records, export_records,
+    search_records, export_records, export_records_cursor,
     get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
     get_record_by_id, get_related_records, get_entity_records,
@@ -416,26 +416,9 @@ async def export_csv(
     date_to: str = "",
     outcome_status: str = "",
 ):
-    """Export search results as CSV."""
+    """Export search results as CSV, streaming rows directly from the cursor."""
     if not state:
         city = ""
-    with get_db() as conn:
-        records = export_records(
-            conn, query=q, section_type=section_type,
-            application_type=application_type, endorsements=endorsement,
-            state=state, city=city, date_from=date_from, date_to=date_to,
-            outcome_status=outcome_status,
-        )
-
-    if not records:
-        return HTMLResponse(
-            "<html><body style='font-family:sans-serif;padding:2rem'>"
-            "<h2>No records to export</h2>"
-            "<p>Your search returned no results. "
-            "<a href='/search'>Go back to search</a> and adjust your filters.</p>"
-            "</body></html>",
-            status_code=200,
-        )
 
     fieldnames = [
         "section_type", "record_date", "business_name", "business_location",
@@ -448,16 +431,28 @@ async def export_csv(
         "prev_std_city", "prev_std_region", "prev_std_postal_code",
         "outcome_status", "outcome_date", "days_to_outcome",
     ]
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    for r in records:
-        row = {k: r.get(k, "") or "" for k in fieldnames}
-        writer.writerow(row)
 
-    output.seek(0)
+    def _csv_generator():
+        """Yield CSV rows incrementally from the database cursor."""
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        yield buf.getvalue()
+
+        with get_db() as conn:
+            for record in export_records_cursor(
+                conn, query=q, section_type=section_type,
+                application_type=application_type, endorsements=endorsement,
+                state=state, city=city, date_from=date_from, date_to=date_to,
+                outcome_status=outcome_status,
+            ):
+                buf = io.StringIO()
+                writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writerow({k: record.get(k, "") or "" for k in fieldnames})
+                yield buf.getvalue()
+
     return StreamingResponse(
-        iter([output.getvalue()]),
+        _csv_generator(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=wslcb_records.csv"},
     )

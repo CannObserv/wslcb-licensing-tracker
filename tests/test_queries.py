@@ -517,3 +517,57 @@ class TestExportRecords:
         rows = export_records(db, section_type="new_application")
         assert len(rows) == 1
         assert rows[0]["outcome_status"] is None
+
+
+class TestExportRecordsCursor:
+    """Tests for export_records_cursor() — streaming generator variant."""
+
+    def test_yields_dicts_matching_export_records(self, db, standard_new_application):
+        """export_records_cursor yields the same rows as export_records."""
+        from pipeline import insert_record
+        from queries import export_records, export_records_cursor
+
+        insert_record(db, standard_new_application)
+        db.commit()
+
+        expected = export_records(db)
+        streamed = list(export_records_cursor(db))
+        assert streamed == expected
+
+    def test_returns_generator(self, db, standard_new_application):
+        """export_records_cursor returns a generator (not a list)."""
+        import types
+        from pipeline import insert_record
+        from queries import export_records_cursor
+
+        insert_record(db, standard_new_application)
+        db.commit()
+
+        result = export_records_cursor(db)
+        assert isinstance(result, types.GeneratorType)
+
+    def test_empty_db_yields_nothing(self, db):
+        """export_records_cursor on an empty DB yields no rows."""
+        from queries import export_records_cursor
+
+        rows = list(export_records_cursor(db))
+        assert rows == []
+
+    def test_filters_applied(self, db, standard_new_application):
+        """export_records_cursor respects filter arguments (section_type)."""
+        from pipeline import insert_record
+        from queries import export_records_cursor
+
+        insert_record(db, standard_new_application)
+        approved = {
+            **standard_new_application,
+            "section_type": "approved",
+            "record_date": "2025-07-01",
+            "applicants": "",
+        }
+        insert_record(db, approved)
+        db.commit()
+
+        rows = list(export_records_cursor(db, section_type="approved"))
+        assert len(rows) == 1
+        assert rows[0]["section_type"] == "approved"

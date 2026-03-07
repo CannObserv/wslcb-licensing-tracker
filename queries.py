@@ -485,6 +485,48 @@ def export_records(
     return results
 
 
+def export_records_cursor(
+    conn: sqlite3.Connection,
+    query: str = "",
+    section_type: str = "",
+    application_type: str = "",
+    endorsement: str = "",           # legacy scalar
+    endorsements: list[str] | None = None,
+    state: str = "",
+    city: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    outcome_status: str = "",
+    limit: int = 100_000,
+):
+    """Streaming variant of :func:`export_records`.
+
+    Yields one ``dict`` per row directly from the SQLite cursor without
+    materialising all rows into a list.  Accepts the same filter
+    arguments as :func:`export_records`.
+
+    Use this in HTTP handlers that return a ``StreamingResponse`` to
+    avoid holding the full result set in memory.
+    """
+    where, params, _ = _build_where_clause(
+        conn,
+        query=query, section_type=section_type,
+        application_type=application_type, endorsement=endorsement,
+        endorsements=endorsements,
+        state=state, city=city, date_from=date_from, date_to=date_to,
+        outcome_status=outcome_status,
+    )
+    cursor = conn.execute(
+        f"""{_EXPORT_SELECT}
+            {where}
+            ORDER BY lr.record_date DESC, lr.id DESC
+            LIMIT ?""",
+        params + [limit],
+    )
+    for row in cursor:
+        yield dict(row)
+
+
 # In-process cache for filter dropdown options.  The underlying data
 # changes at most twice daily (scraper runs), so a short TTL avoids
 # running the ~10 ms city-list query on every search page load.

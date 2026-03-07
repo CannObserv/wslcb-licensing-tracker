@@ -530,3 +530,47 @@ class TestAdditionalNamesNotice:
             assert "additional entities may be on file" in resp.text
         finally:
             _stop(patches)
+
+
+class TestExportCsvRoute:
+    """Tests for GET /export — streaming CSV export."""
+
+    def test_empty_export_returns_csv_with_header_only(self, db):
+        """An export with no matching records returns a valid CSV with only the header row."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/export?section_type=approved")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"].startswith("text/csv")
+            lines = [l for l in resp.text.splitlines() if l.strip()]
+            assert len(lines) == 1  # header only
+            assert "section_type" in lines[0]
+            assert "record_date" in lines[0]
+        finally:
+            _stop(patches)
+
+    def test_export_returns_data_rows(self, db, standard_new_application):
+        """An export with matching records returns header + data rows."""
+        from pipeline import insert_record
+        client, patches = _make_client(db)
+        try:
+            insert_record(db, standard_new_application)
+            db.commit()
+            resp = client.get("/export?section_type=new_application")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"].startswith("text/csv")
+            lines = [l for l in resp.text.splitlines() if l.strip()]
+            assert len(lines) == 2  # header + 1 data row
+            assert "ACME CANNABIS CO" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_export_content_disposition(self, db):
+        """The Content-Disposition header indicates a CSV attachment."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/export")
+            assert "attachment" in resp.headers["content-disposition"]
+            assert "wslcb_records.csv" in resp.headers["content-disposition"]
+        finally:
+            _stop(patches)
