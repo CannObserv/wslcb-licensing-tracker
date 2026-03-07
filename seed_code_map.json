@@ -1,0 +1,314 @@
+{
+  "0": [
+    "UNDEFINED"
+  ],
+  "1": [
+    "SPECIAL OCCASION-PER DAY-PER LOC."
+  ],
+  "2": [
+    "NON-PROFIT ARTS ORGANIZATION"
+  ],
+  "3": [
+    "BED & BREAKFAST"
+  ],
+  "4": [
+    "SERVE EMPLOYEES & GUESTS"
+  ],
+  "13": [
+    "FARMERS MARKET FOR WINE"
+  ],
+  "99": [
+    "TRIBAL MOA"
+  ],
+  "14": [
+    "FARMERS MARKET FOR BEER"
+  ],
+  "15": [
+    "FARMERS MARKET FOR BEER/WINE"
+  ],
+  "18": [
+    "RETAIL CERTIFICATE HOLDER"
+  ],
+  "56": [
+    "GROCERY STORE - BEER/WINE"
+  ],
+  "63": [
+    "GROCERY STORE - BEER/WINE"
+  ],
+  "98": [
+    "TRIBAL COMPACT"
+  ],
+  "136": [
+    "GROCERY STORE - BEER/WINE"
+  ],
+  "320": [
+    "BEER DISTRIBUTOR",
+    "WINE DISTRIBUTOR"
+  ],
+  "321": [
+    "BEER IMPORTER"
+  ],
+  "322": [
+    "BONDED WINE WAREHOUSE"
+  ],
+  "323": [
+    "INTERSTATE COMMON CARRIER"
+  ],
+  "325": [
+    "DISTILL / RECTIFY"
+  ],
+  "326": [
+    "DOMESTIC BREWERY"
+  ],
+  "327": [
+    "DOMESTIC WINERY < 250,000 LITERS"
+  ],
+  "328": [
+    "DOMESTIC WINERY > 249,999 LITERS"
+  ],
+  "329": [
+    "FRUIT AND/OR WINE DISTILLERY"
+  ],
+  "330": [
+    "SPIRITS IMPORTER"
+  ],
+  "331": [
+    "MANUFACTURER - LIQUOR"
+  ],
+  "332": [
+    "MICROBREWERY"
+  ],
+  "333": [
+    "SHIPS CHANDLER"
+  ],
+  "334": [
+    "WINE DISTRIBUTOR"
+  ],
+  "335": [
+    "GROWER"
+  ],
+  "336": [
+    "WINE IMPORTER"
+  ],
+  "337": [
+    "DOMESTIC WINERY < 250,000 ADDL LOC"
+  ],
+  "338": [
+    "DOMESTIC WINERY > 249,999 ADDL LOC"
+  ],
+  "340": [
+    "BEER CERTIFICATE OF APPROVAL"
+  ],
+  "341": [
+    "WINE CERTIFICATE OF APPROVAL"
+  ],
+  "342": [
+    "AUTH REP COA US BEER"
+  ],
+  "343": [
+    "AUTH REP COA US WINE"
+  ],
+  "344": [
+    "AUTH REP COA FOREIGN BEER"
+  ],
+  "345": [
+    "AUTH REP COA FOREIGN WINE"
+  ],
+  "346": [
+    "COA SHIPPER TO CONSUMER"
+  ],
+  "347": [
+    "WINE SHIPPER TO CONSUMER"
+  ],
+  "348": [
+    "SHIP TO RETAILER",
+    "SPIRITS COA"
+  ],
+  "349": [
+    "DIRECT SHIPMENT RECEIVER-IN/OUT WA"
+  ],
+  "350": [
+    "DIRECT SHIPMENT RECEIVER-IN WA ONLY"
+  ],
+  "351": [
+    "CRAFT DISTILLERY"
+  ],
+  "352": [
+    "MICROBREWERY WAREHOUSE"
+  ],
+  "353": [
+    "WINERY WAREHOUSE"
+  ],
+  "354": [
+    "SPIRITS DISTRIBUTOR"
+  ],
+  "355": [
+    "SPIRITS COA"
+  ],
+  "356": [
+    "AUTH REP US SPIRITS COA"
+  ],
+  "357": [
+    "AUTH REP FOREIGN SPIRITS COA"
+  ],
+  "358": [
+    "B/W ON PREMISES ENDORSEMENT"
+  ],
+  "359": [
+    "OFF-SITE SPIRITS TASTING ROOM"
+  ],
+  "371": [
+    "BEER/CIDER GROCERY GROWLERS"
+  ],
+  "372": [
+    "COMBO GROCERY OFF PREM S/B/W"
+  ],
+  "373": [
+    "SPIRITS WAREHOUSE"
+  ],
+  "376": [
+    "COMBO SPECIALTY OFF PREM S/B/W"
+  ],
+  "379": [
+    "TAKEOUT/DELIVERY"
+  ],
+  "380": [
+    "PREMIXED COCKTAILS/WINE TO-GO"
+  ],
+  "381": [
+    "GROWLERS TAKEOUT/DELIVERY"
+  ],
+  "386": [
+    "SE CANNABIS RETAILER"
+  ],
+  "387": [
+    "CANNABIS TRANSPORTATION"
+  ],
+  "388": [
+    "CANNABIS RESEARCH"
+  ],
+  "390": [
+    "CANNABIS PRODUCER TIER 1"
+  ],
+  "391": [
+    "CANNABIS PRODUCER TIER 2"
+  ],
+  "392": [
+    "CANNABIS PRODUCER TIER 3"
+  ],
+  "393": [
+    "CANNABIS PROCESSOR"
+  ],
+  "394": [
+    "CANNABIS RETAILER"
+  ],
+  "398": [
+    "CATERING BEER AND WINE ONLY"
+  ],
+  "399": [
+    "CATERING SPIRITS BEER WINE"
+  ],
+  "400": [
+    "SPIRITS RETAILER",
+    "SPIRITS SAMPLING"
+  ],
+  "402": [
+    "BEER/WINE THEATER"
+  ],
+  "403": [
+    "SPIRITS/BEER/WINE THEATER"
+  ],
+  "412": [
+    "SOJU SERVICE"
+  ],
+  "413": [
+    "SENIOR CENTER"
+  ],
+  "420": [
+    "BEER/WINE GIFT DELIVERY"
+  ],
+  "422": [
+    "BEER/WINE SPECIALTY SHOP"
+  ],
+  "424": [
+    "SPIRITS/BR/WN REST LOUNGE +"
+  ],
+  "425": [
+    "SPIRITS/BR/WN REST LOUNGE + SEAS"
+  ],
+  "426": [
+    "SPIRITS/BR/WN REST LOUNGE -"
+  ],
+  "427": [
+    "SPIRITS/BR/WN REST LOUNGE - SEAS"
+  ],
+  "430": [
+    "SPIRITS/BR/WN REST CONVENTION CTR +"
+  ],
+  "431": [
+    "SPIRITS/BR/WN REST CONVENTION CTR -"
+  ],
+  "433": [
+    "SPIRITS/BR/WN REST AIRPORT BAR +"
+  ],
+  "435": [
+    "VIP AIRPORT LOUNGE"
+  ],
+  "438": [
+    "HOTEL"
+  ],
+  "439": [
+    "SPIRITS/BR/WN REST NONPUBLIC +"
+  ],
+  "440": [
+    "SPIRITS/BR/WN REST NONPUBLIC -"
+  ],
+  "442": [
+    "SPIRITS/BR/WN REST SERVICE BAR"
+  ],
+  "450": [
+    "GROCERY STORE - BEER/WINE"
+  ],
+  "451": [
+    "GROCERY STORE-RESTRICT FORT WINE"
+  ],
+  "452": [
+    "BEER/WINE REST - BEER"
+  ],
+  "456": [
+    "BEER/WINE REST - BEER W/TAPROOM"
+  ],
+  "457": [
+    "BEER/WINE REST - WINE"
+  ],
+  "462": [
+    "BEER/WINE REST - BEER/WINE"
+  ],
+  "466": [
+    "BEER/WINE REST-BEER/WINE W/TAPROOM"
+  ],
+  "467": [
+    "MOTEL"
+  ],
+  "468": [
+    "PRIVATE CLUB - BEER/WINE"
+  ],
+  "469": [
+    "PRIVATE CLUB - SPIRITS/BEER/WINE"
+  ],
+  "473": [
+    "SNACK BAR"
+  ],
+  "477": [
+    "SPORTS ENTERTAINMENT FACILITY"
+  ],
+  "479": [
+    "TAVERN - WINE"
+  ],
+  "480": [
+    "TAVERN - BEER/WINE"
+  ],
+  "481": [
+    "NIGHTCLUB"
+  ]
+}
