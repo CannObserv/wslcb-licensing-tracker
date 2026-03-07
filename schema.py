@@ -41,7 +41,12 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    """Return True if *column* exists in *table*.  Returns False when *table* is absent."""
+    """Return True if *column* exists in *table*.  Returns False when *table* is absent.
+
+    Both *table* and *column* must be trusted schema-name literals; they are
+    interpolated directly into the PRAGMA statement (SQLite does not support
+    parameterized PRAGMA syntax).
+    """
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
     return any(row[1] == column for row in rows)
 
