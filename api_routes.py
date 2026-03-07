@@ -75,10 +75,6 @@ async def api_stats():
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/export
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # GET /api/v1/health
 # ---------------------------------------------------------------------------
 
@@ -149,6 +145,7 @@ async def export_csv(
         city = ""
 
     def _csv_generator():
+        """Yield CSV rows incrementally from the database cursor."""
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=_EXPORT_FIELDNAMES, extrasaction="ignore")
         writer.writeheader()

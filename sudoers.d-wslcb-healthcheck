@@ -1,0 +1,4 @@
+# Allows the wslcb-healthcheck.service (running as exedev) to restart the
+# web service when the health check fails.  Scoped to the single command
+# that the healthcheck unit calls — no other sudo access is granted.
+exedev ALL=(root) NOPASSWD: /usr/bin/systemctl restart wslcb-web.service

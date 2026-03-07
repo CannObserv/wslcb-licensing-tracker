@@ -6,4 +6,6 @@ After=wslcb-web.service
 Type=oneshot
 User=exedev
 # Curl the health endpoint; restart the web service if it returns non-200.
-ExecStart=/bin/bash -c '/usr/bin/curl -sf http://localhost:8000/api/v1/health || systemctl restart wslcb-web.service'
+# Requires /etc/sudoers.d/wslcb-healthcheck granting exedev passwordless
+# sudo for this exact command (see AGENTS.md deployment section).
+ExecStart=/bin/bash -c '/usr/bin/curl -sf http://localhost:8000/api/v1/health || /usr/bin/sudo /usr/bin/systemctl restart wslcb-web.service'

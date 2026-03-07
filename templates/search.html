@@ -163,8 +163,8 @@ document.getElementById('state').addEventListener('change', async function() {
     // Fetch cities for the selected state
     try {
         const resp = await fetch('/api/v1/cities?state=' + encodeURIComponent(state));
-        const cities = await resp.json();
-        for (const c of cities) {
+        const json = await resp.json();
+        for (const c of json.data) {
             const opt = document.createElement('option');
             opt.value = c;
             opt.textContent = c;

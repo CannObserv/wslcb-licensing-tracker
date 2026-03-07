@@ -5,12 +5,21 @@ Uses FastAPI TestClient with an in-memory DB patched in; no disk DB,
 no network calls.
 """
 import sqlite3
+from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import app
+
+
+@contextmanager
+def _broken_db():
+    """Context manager that always raises, simulating a DB failure."""
+    if False:  # pragma: no cover — satisfies contextmanager's yield requirement
+        yield
+    raise Exception("disk I/O error")
 
 
 # ---------------------------------------------------------------------------
@@ -151,25 +160,11 @@ class TestHealthEndpoint:
         assert resp.json()["data"]["db"] == "ok"
 
     def test_db_error_returns_503(self, client):
-        from contextlib import contextmanager
-
-        @contextmanager
-        def _broken_db():
-            raise Exception("disk I/O error")
-            yield  # noqa: unreachable
-
         with patch("api_routes.get_db", _broken_db):
             resp = client.get("/api/v1/health")
         assert resp.status_code == 503
 
     def test_db_error_envelope(self, client):
-        from contextlib import contextmanager
-
-        @contextmanager
-        def _broken_db():
-            raise Exception("disk I/O error")
-            yield  # noqa: unreachable
-
         with patch("api_routes.get_db", _broken_db):
             resp = client.get("/api/v1/health")
         body = resp.json()
@@ -179,11 +174,14 @@ class TestHealthEndpoint:
 
     def test_no_auth_required(self):
         """Health endpoint must respond without any auth headers."""
-        # Use a bare client with no DB patch — the real DB will respond
-        # (or fail gracefully) without needing credentials.
+        # Intentionally uses a bare TestClient with no DB patch so we prove
+        # the endpoint returns a response with no credentials at all — not
+        # that the DB call succeeds.  The real on-disk DB is used here: on
+        # this VM it returns 200; on a fresh CI environment without
+        # data/wslcb.db it returns 503.  Either is acceptable — the assertion
+        # only rules out 401/403, which is the actual invariant under test.
         plain_client = TestClient(app)
         resp = plain_client.get("/api/v1/health")
-        # Either 200 (real DB reachable) or 503 (not reachable) — never 401/403
         assert resp.status_code in (200, 503)
 
 
