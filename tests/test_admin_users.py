@@ -71,7 +71,7 @@ def _make_client(db, admin_email="admin@example.com"):
     patches = (
         patch("admin_auth.get_db", return_value=ctx),
         patch("admin_auth._lookup_admin", return_value=admin_data),
-        patch("app.get_db", return_value=ctx),
+        patch("admin_routes.get_db", return_value=ctx),
     )
     for p in patches:
         p.start()
