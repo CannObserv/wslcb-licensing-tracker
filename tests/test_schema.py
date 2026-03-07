@@ -165,6 +165,50 @@ class TestMigrate:
 class TestInitDb:
     """init_db() from schema.py."""
 
+    def test_creates_core_tables(self, db):
+        tables = {
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        for expected in [
+            "license_records",
+            "locations",
+            "entities",
+            "record_entities",
+            "license_endorsements",
+            "record_endorsements",
+            "endorsement_codes",
+            "record_links",
+            "scrape_log",
+            "source_types",
+            "sources",
+            "record_sources",
+        ]:
+            assert expected in tables, f"Missing table: {expected}"
+
+    def test_source_types_seeded(self, db):
+        rows = db.execute(
+            "SELECT slug FROM source_types ORDER BY id"
+        ).fetchall()
+        slugs = [r[0] for r in rows]
+        assert slugs == [
+            "live_scrape",
+            "co_archive",
+            "internet_archive",
+            "co_diff_archive",
+            "manual",
+        ]
+
+    def test_idempotent(self, db):
+        """Calling init_db twice on the same connection doesn't fail."""
+        init_db(db)  # second call
+        tables = db.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table'"
+        ).fetchone()[0]
+        assert tables > 0
+
     def test_sets_user_version(self):
         conn = get_connection(":memory:")
         init_db(conn)

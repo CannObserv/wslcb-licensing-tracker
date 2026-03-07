@@ -1,4 +1,8 @@
-"""Tests for db.py — connection management, constants, and core database helpers.
+"""Tests for db.py location/source/provenance helpers.
+
+Covers get_or_create_location, get_or_create_source, link_record_source,
+get_primary_source, and get_record_sources.  Connection and constant tests
+live in test_db.py; schema/migration tests live in test_schema.py.
 
 All tests use in-memory SQLite via the ``db`` fixture.
 """
@@ -17,100 +21,7 @@ from db import (
 from schema import init_db
 
 
-# ── Schema initialization ──────────────────────────────────────────
-
-
-class TestInitDb:
-    def test_creates_core_tables(self, db):
-        tables = {
-            row[0]
-            for row in db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        for expected in [
-            "license_records",
-            "locations",
-            "entities",
-            "record_entities",
-            "license_endorsements",
-            "record_endorsements",
-            "endorsement_codes",
-            "record_links",
-            "scrape_log",
-            "source_types",
-            "sources",
-            "record_sources",
-        ]:
-            assert expected in tables, f"Missing table: {expected}"
-
-    def test_source_types_seeded(self, db):
-        rows = db.execute(
-            "SELECT slug FROM source_types ORDER BY id"
-        ).fetchall()
-        slugs = [r[0] for r in rows]
-        assert slugs == [
-            "live_scrape",
-            "co_archive",
-            "internet_archive",
-            "co_diff_archive",
-            "manual",
-        ]
-
-    def test_idempotent(self, db):
-        """Calling init_db twice on the same connection doesn't fail."""
-        init_db(db)  # second call
-        tables = db.execute(
-            "SELECT count(*) FROM sqlite_master WHERE type='table'"
-        ).fetchone()[0]
-        assert tables > 0
-
-    def test_fts_table_created(self, db):
-        """FTS5 virtual table exists and has the expected columns."""
-        cur = db.execute("SELECT * FROM license_records_fts LIMIT 0")
-        cols = [desc[0] for desc in cur.description]
-        assert "business_name" in cols
-        assert "license_number" in cols
-
-    def test_returns_conn_when_passed(self):
-        """init_db returns the connection when one is provided."""
-        conn = get_connection(":memory:")
-        result = init_db(conn)
-        assert result is conn
-        conn.close()
-
-    def test_returns_none_when_no_conn(self, tmp_path, monkeypatch):
-        """init_db returns None when using default path."""
-        import db as db_mod
-        monkeypatch.setattr(db_mod, "DATA_DIR", tmp_path)
-        monkeypatch.setattr(db_mod, "DB_PATH", tmp_path / "test.db")
-        result = init_db()
-        assert result is None
-
-
-# ── get_connection ─────────────────────────────────────────────────
-
-
-class TestGetConnection:
-    def test_memory_connection(self):
-        conn = get_connection(":memory:")
-        assert conn is not None
-        conn.execute("SELECT 1")
-        conn.close()
-
-    def test_row_factory_set(self):
-        conn = get_connection(":memory:")
-        assert conn.row_factory == sqlite3.Row
-        conn.close()
-
-    def test_foreign_keys_enabled(self):
-        conn = get_connection(":memory:")
-        fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-        assert fk == 1
-        conn.close()
-
-
-# ── get_or_create_location ────────────────────────────────────────
+# ── get_or_create_location ────────────────────────────────────────────────
 
 
 class TestGetOrCreateLocation:
@@ -155,7 +66,7 @@ class TestGetOrCreateLocation:
         assert row["zip_code"] == "99201"
 
 
-# ── get_or_create_source ─────────────────────────────────────────
+# ── get_or_create_source ──────────────────────────────────────────────────
 
 
 class TestGetOrCreateSource:
@@ -174,7 +85,6 @@ class TestGetOrCreateSource:
 
     def test_null_path_with_scrape_log_id(self, db):
         """Distinct scrape_log_ids with NULL path get separate source rows."""
-        # Create two scrape log entries
         db.execute(
             "INSERT INTO scrape_log (started_at, status) VALUES ('2025-01-01', 'ok')"
         )
@@ -193,13 +103,12 @@ class TestGetOrCreateSource:
         assert id1 != id2
 
 
-# ── link_record_source ───────────────────────────────────────────
+# ── link_record_source ─────────────────────────────────────────────────────
 
 
 class TestLinkRecordSource:
     def test_link_and_idempotent(self, db):
         """Linking the same record+source twice doesn't raise."""
-        # Insert a minimal record
         db.execute(
             """INSERT INTO license_records
                (section_type, record_date, business_name, applicants,

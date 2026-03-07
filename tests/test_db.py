@@ -1,7 +1,8 @@
 """Tests for db.py — connection management and constants.
 
-These test the thin base layer: connections, pragmas, raw address
-normalization, and the constants that other modules depend on.
+Covers connections, pragmas, raw address normalization, and the
+constants that other modules depend on.  Location/source/provenance
+helper functions are tested in test_database.py.
 """
 import sqlite3
 

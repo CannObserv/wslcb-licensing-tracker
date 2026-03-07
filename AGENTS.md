@@ -441,9 +441,9 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Adding a feature → write tests for the expected behavior first
 - Refactoring → ensure existing tests cover the behavior, add more if needed
 - Modifying `parser.py` → add/update `test_parser.py` with fixture HTML
-- Modifying `db.py` → add/update `test_db.py`
+- Modifying `db.py` (connections/constants) → add/update `test_db.py`
+- Modifying `db.py` (location/source/provenance helpers) → add/update `test_database.py`
 - Modifying `schema.py` → add/update `test_schema.py`
-- Modifying `db.py` (helpers/provenance) → add/update `test_database.py`
 - Modifying `queries.py` → add/update `test_queries.py`
 - Modifying `pipeline.py` → add/update `test_pipeline.py`
 - Modifying `display.py` → add/update `test_display.py`

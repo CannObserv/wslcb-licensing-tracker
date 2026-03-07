@@ -74,8 +74,7 @@ def _normalize_raw_address(raw: str) -> str:
 
 
 # Source-role priority used when selecting the "best" source for display.
-# Lower value = higher priority.  Shared between db.py and display.py
-# to avoid a circular import.
+# Lower value = higher priority.  Imported by display.py to avoid circular imports.
 SOURCE_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirmed": 2}
 
 # US state code → full name mapping.  Used by the state filter dropdown and
@@ -231,10 +230,6 @@ def link_record_source(
 # Provenance query helpers
 # ------------------------------------------------------------------
 
-# Module-level alias used by provenance helpers below.
-_ROLE_PRIORITY = SOURCE_ROLE_PRIORITY
-
-
 def get_primary_source(
     conn: sqlite3.Connection, record_id: int,
 ) -> dict | None:
@@ -263,7 +258,7 @@ def get_primary_source(
     best_priority = (999, 999)  # (role_rank, no_snapshot_penalty)
     for r in rows:
         d = dict(r)
-        role_rank = _ROLE_PRIORITY.get(d["role"], 2)
+        role_rank = SOURCE_ROLE_PRIORITY.get(d["role"], 2)
         no_snap = 0 if d["snapshot_path"] else 1
         priority = (role_rank, no_snap)
         if best is None or priority < best_priority:
