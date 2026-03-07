@@ -115,7 +115,7 @@ def insert_record(
     creates) location rows and links entity records.  Checks for
     duplicates *before* creating locations to avoid orphaned rows.
     """
-    from database import get_or_create_location
+    from db import get_or_create_location
 
     existing = conn.execute(
         """SELECT id FROM license_records
@@ -218,7 +218,7 @@ def ingest_record(
     provenance linked with role ``'confirmed'`` and skip other steps.
     """
     from endorsements import process_record
-    from database import link_record_source
+    from db import link_record_source
 
     # Step 1: Insert record (dedup, locations, name cleaning)
     try:

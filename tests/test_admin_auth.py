@@ -158,11 +158,11 @@ async def test_require_admin_not_in_table_raises_403(db):
 # ---- CLI admin commands -------------------------------------------
 
 def _patch_db(db):
-    """Context manager that patches database.get_db to use the in-memory db."""
+    """Context manager that patches db.get_db (via cli) to use the in-memory db."""
     mock = MagicMock()
     mock.__enter__ = lambda s: db
     mock.__exit__ = MagicMock(return_value=False)
-    return patch("database.get_db", return_value=mock)
+    return patch("db.get_db", return_value=mock)
 
 
 def test_cli_add_and_list_and_remove_users(db):

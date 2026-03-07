@@ -17,7 +17,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from database import get_db, init_db
+from db import get_db
+from schema import init_db
 from admin_auth import get_current_user, AdminRedirectException
 from entities import backfill_entities, get_entity_by_id
 from queries import (

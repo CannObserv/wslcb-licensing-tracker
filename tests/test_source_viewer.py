@@ -19,7 +19,7 @@ from app import app
 @pytest.fixture
 def db():
     """In-memory SQLite DB with cross-thread access."""
-    from database import init_db
+    from schema import init_db
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -69,7 +69,7 @@ def _insert_record(db, license_number="078001", section_type="new_application",
 
 def _insert_source(db, source_type_id, snapshot_path="path/snap.html",
                    captured_at="2025-06-15T12:00:00+00:00"):
-    from database import get_or_create_source
+    from db import get_or_create_source
     source_id = get_or_create_source(
         db, source_type_id,
         snapshot_path=snapshot_path,
@@ -81,7 +81,7 @@ def _insert_source(db, source_type_id, snapshot_path="path/snap.html",
 
 
 def _link(db, record_id, source_id, role="confirmed"):
-    from database import link_record_source
+    from db import link_record_source
     link_record_source(db, record_id, source_id, role)
     db.commit()
 
@@ -102,7 +102,7 @@ class TestSourceViewerRoute:
 
     def test_404_no_record_source_link(self, client, db):
         """Valid IDs but no record_sources row -> 404."""
-        from database import SOURCE_TYPE_LIVE_SCRAPE
+        from db import SOURCE_TYPE_LIVE_SCRAPE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_LIVE_SCRAPE)
         # Intentionally do NOT link them
@@ -111,7 +111,7 @@ class TestSourceViewerRoute:
 
     def test_renders_iframe_when_tbody_found(self, client, db):
         """Returns 200 with iframe srcdoc when extractor returns HTML."""
-        from database import SOURCE_TYPE_LIVE_SCRAPE
+        from db import SOURCE_TYPE_LIVE_SCRAPE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_LIVE_SCRAPE, snapshot_path="path/live.html")
         _link(db, record_id, source_id)
@@ -126,7 +126,7 @@ class TestSourceViewerRoute:
 
     def test_renders_not_found_message_when_extractor_returns_none(self, client, db):
         """Returns 200 with not-found notice when extractor returns None."""
-        from database import SOURCE_TYPE_CO_ARCHIVE
+        from db import SOURCE_TYPE_CO_ARCHIVE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_CO_ARCHIVE, snapshot_path="path/archive.html")
         _link(db, record_id, source_id)
@@ -139,7 +139,7 @@ class TestSourceViewerRoute:
 
     def test_diff_source_uses_diff_extractor(self, client, db):
         """co_diff_archive sources dispatch to extract_tbody_from_diff."""
-        from database import SOURCE_TYPE_CO_DIFF_ARCHIVE
+        from db import SOURCE_TYPE_CO_DIFF_ARCHIVE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_CO_DIFF_ARCHIVE, snapshot_path="path/diff.txt")
         _link(db, record_id, source_id)
@@ -154,7 +154,7 @@ class TestSourceViewerRoute:
 
     def test_anchor_tags_stripped_from_srcdoc(self, client, db):
         """Anchor tags in tbody HTML are stripped before embedding in srcdoc."""
-        from database import SOURCE_TYPE_LIVE_SCRAPE
+        from db import SOURCE_TYPE_LIVE_SCRAPE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_LIVE_SCRAPE, snapshot_path="path/live.html")
         _link(db, record_id, source_id)

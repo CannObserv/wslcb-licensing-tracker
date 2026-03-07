@@ -11,11 +11,12 @@ separate ``cli.py backfill-addresses`` pass.
 """
 import logging
 
-from database import (
-    DATA_DIR, get_db, init_db, get_or_create_location,
+from db import (
+    DATA_DIR, get_db, get_or_create_location,
     get_or_create_source, link_record_source, SOURCE_TYPE_CO_ARCHIVE,
     WSLCB_SOURCE_URL,
 )
+from schema import init_db
 from entities import (
     parse_and_link_entities, clean_applicants_string, clean_entity_name,
 )

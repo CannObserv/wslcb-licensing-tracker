@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from admin_auth import require_admin
 from admin_audit import get_audit_log, log_action
-from database import get_db
+from db import get_db
 from endorsements import (
     reprocess_endorsements,
     rename_endorsement,

@@ -150,7 +150,7 @@ class TestCheckUnenriched:
         """Fully enriched record with provenance should pass."""
         from integrity import check_unenriched_records
         from pipeline import ingest_record, IngestOptions
-        from database import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
+        from db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
 
         seed_endorsements(db)
         source_id = get_or_create_source(

@@ -1,4 +1,4 @@
-"""Tests for database.py — schema, connections, location helpers.
+"""Tests for db.py — connection management, constants, and core database helpers.
 
 All tests use in-memory SQLite via the ``db`` fixture.
 """
@@ -6,15 +6,15 @@ import sqlite3
 
 import pytest
 
-from database import (
+from db import (
     get_connection,
     get_or_create_location,
     get_or_create_source,
-    init_db,
     link_record_source,
     SOURCE_TYPE_LIVE_SCRAPE,
     SOURCE_TYPE_CO_ARCHIVE,
 )
+from schema import init_db
 
 
 # ── Schema initialization ──────────────────────────────────────────

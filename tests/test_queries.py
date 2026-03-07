@@ -7,7 +7,7 @@ canonical home); provenance tests use ``get_primary_source`` from
 import pytest
 
 from pipeline import insert_record
-from database import get_primary_source
+from db import get_primary_source
 
 
 # ── insert_record ──────────────────────────────────────────────────
@@ -277,7 +277,7 @@ class TestMultiEndorsementFilter:
 
 class TestGetPrimarySource:
     def _make_source(self, conn, source_type_id: int, snapshot_path: str | None, captured_at: str) -> int:
-        from database import get_or_create_source
+        from db import get_or_create_source
         return get_or_create_source(
             conn, source_type_id,
             snapshot_path=snapshot_path,
@@ -286,17 +286,17 @@ class TestGetPrimarySource:
         )
 
     def _link(self, conn, record_id: int, source_id: int, role: str):
-        from database import link_record_source
+        from db import link_record_source
         link_record_source(conn, record_id, source_id, role)
 
     def test_returns_none_when_no_sources(self, db, standard_new_application):
-        from pipeline import insert_record; from database import get_primary_source
+        from pipeline import insert_record; from db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
         assert get_primary_source(db, record_id) is None
 
     def test_first_seen_preferred_over_confirmed(self, db, standard_new_application):
-        from database import SOURCE_TYPE_LIVE_SCRAPE
-        from pipeline import insert_record; from database import get_primary_source
+        from db import SOURCE_TYPE_LIVE_SCRAPE
+        from pipeline import insert_record; from db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s_confirmed = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, "path/a.html", "2025-06-15T12:00:00")
@@ -311,8 +311,8 @@ class TestGetPrimarySource:
         assert result["id"] == s_first_seen
 
     def test_snapshot_path_preferred_within_role(self, db, standard_new_application):
-        from database import SOURCE_TYPE_LIVE_SCRAPE
-        from pipeline import insert_record; from database import get_primary_source
+        from db import SOURCE_TYPE_LIVE_SCRAPE
+        from pipeline import insert_record; from db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s_no_path = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, None, "2025-06-15T12:00:00")
@@ -327,8 +327,8 @@ class TestGetPrimarySource:
         assert result["id"] == s_with_path
 
     def test_returns_source_dict_fields(self, db, standard_new_application):
-        from database import SOURCE_TYPE_CO_ARCHIVE
-        from pipeline import insert_record; from database import get_primary_source
+        from db import SOURCE_TYPE_CO_ARCHIVE
+        from pipeline import insert_record; from db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s = self._make_source(db, SOURCE_TYPE_CO_ARCHIVE, "path/d.html", "2025-06-10T00:00:00")

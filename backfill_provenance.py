@@ -12,12 +12,13 @@ import logging
 import re
 from pathlib import Path
 
-from database import (
-    DATA_DIR, get_db, init_db,
+from db import (
+    DATA_DIR, get_db,
     get_or_create_source, link_record_source,
     SOURCE_TYPE_LIVE_SCRAPE, SOURCE_TYPE_CO_ARCHIVE,
     SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
+from schema import init_db
 from parser import parse_snapshot, discover_diff_files, parse_diff_timestamp
 
 logger = logging.getLogger(__name__)

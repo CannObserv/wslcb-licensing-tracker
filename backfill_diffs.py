@@ -44,10 +44,11 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from database import (
-    DATA_DIR, get_db, init_db, get_or_create_source,
+from db import (
+    DATA_DIR, get_db, get_or_create_source,
     SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
 )
+from schema import init_db
 from endorsements import discover_code_mappings, seed_endorsements, repair_code_name_endorsements
 from parser import discover_diff_files, extract_records_from_diff
 from queries import hydrate_records, RECORD_COLUMNS, RECORD_JOINS

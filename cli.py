@@ -59,7 +59,8 @@ def cmd_backfill_provenance(args):
 
 def cmd_backfill_addresses(args):
     """Validate un-validated locations via the address API."""
-    from database import init_db, get_db
+    from db import get_db
+    from schema import init_db
     from address_validator import backfill_addresses
     init_db()
     with get_db() as conn:
@@ -68,7 +69,8 @@ def cmd_backfill_addresses(args):
 
 def cmd_refresh_addresses(args):
     """Re-validate all locations via the address API."""
-    from database import init_db, get_db
+    from db import get_db
+    from schema import init_db
     from address_validator import refresh_addresses
     init_db()
     with get_db() as conn:
@@ -77,7 +79,8 @@ def cmd_refresh_addresses(args):
 
 def cmd_rebuild_links(args):
     """Rebuild all application→outcome links from scratch."""
-    from database import init_db, get_db
+    from db import get_db
+    from schema import init_db
     from link_records import build_all_links
     init_db()
     with get_db() as conn:
@@ -86,7 +89,8 @@ def cmd_rebuild_links(args):
 
 def cmd_check(args):
     """Run database integrity checks."""
-    from database import init_db, get_db
+    from db import get_db
+    from schema import init_db
     from integrity import run_all_checks, print_report
     init_db()
     with get_db() as conn:
@@ -98,7 +102,8 @@ def cmd_check(args):
 
 def cmd_cleanup_redundant(args):
     """Remove data from scrapes that found no new records."""
-    from database import get_db, init_db
+    from db import get_db
+    from schema import init_db
     from scraper import cleanup_redundant_scrapes
 
     init_db()
@@ -119,7 +124,8 @@ def cmd_cleanup_redundant(args):
 
 def cmd_reprocess_endorsements(args):
     """Regenerate record_endorsements from current code mappings."""
-    from database import init_db, get_db
+    from db import get_db
+    from schema import init_db
     from endorsements import reprocess_endorsements
 
     init_db()
@@ -144,7 +150,8 @@ def cmd_reprocess_endorsements(args):
 
 def cmd_reprocess_entities(args):
     """Regenerate record_entities from current applicants data."""
-    from database import init_db, get_db
+    from db import get_db
+    from schema import init_db
     from entities import reprocess_entities
 
     init_db()
@@ -170,7 +177,7 @@ def cmd_rebuild(args):
     """Rebuild the database from archived sources."""
     import logging
     from pathlib import Path
-    from database import DATA_DIR, DB_PATH
+    from db import DATA_DIR, DB_PATH
     from rebuild import rebuild_from_sources, compare_databases
 
     logger = logging.getLogger(__name__)
@@ -226,7 +233,7 @@ def cmd_rebuild(args):
 
 def cmd_admin_add_user(args):
     """Add an admin user by email."""
-    from database import get_db
+    from db import get_db
     email = args.email.strip()
     with get_db() as conn:
         existing = conn.execute(
@@ -245,7 +252,7 @@ def cmd_admin_add_user(args):
 
 def cmd_admin_list_users(args):
     """List all admin users."""
-    from database import get_db
+    from db import get_db
     with get_db() as conn:
         rows = conn.execute(
             "SELECT email, role, created_at, created_by FROM admin_users ORDER BY created_at"
@@ -261,7 +268,7 @@ def cmd_admin_list_users(args):
 
 def cmd_admin_remove_user(args):
     """Remove an admin user by email."""
-    from database import get_db
+    from db import get_db
     email = args.email.strip()
     with get_db() as conn:
         row = conn.execute(

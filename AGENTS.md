@@ -22,24 +22,23 @@ license_records → locations (FK: location_id, previous_location_id)
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
-- **Small modules.** The DB layer is split into `db.py` (connections/constants), `schema.py` (DDL/migrations/FTS), and `database.py` (helper functions + provenance queries). Entity normalization lives in `entities.py`; search/read queries in `queries.py`; record insertion and enrichment in `pipeline.py`. All ingestion flows through `pipeline.py`. Dependencies flow one-way: `pipeline → database, endorsements, entities, link_records, address_validator`; `queries → database, entities, endorsements, display, link_records`.
+- **Small modules.** The DB layer is split into `db.py` (connections/constants/helpers) and `schema.py` (DDL/migrations/FTS). Entity normalization lives in `entities.py`; search/read queries in `queries.py`; record insertion and enrichment in `pipeline.py`. All ingestion flows through `pipeline.py`. Dependencies flow one-way: `pipeline → db, schema, endorsements, entities, link_records, address_validator`; `queries → db, schema, entities, endorsements, display, link_records`.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
 ## Key Files
 
 | File | Purpose | Notes |
 |---|---|---|
-| `db.py` | Connection management, constants | Thin base layer. `get_connection()`, `get_db()`, `DATA_DIR`, `DB_PATH`, source type constants, `WSLCB_SOURCE_URL`, `_normalize_raw_address()`. `SOURCE_ROLE_PRIORITY` — shared dict `{"first_seen": 0, "repaired": 1, "confirmed": 2}` imported by both `database.py` and `display.py` to avoid circular imports. `US_STATES` — dict of US state code → full name; used by the state filter dropdown (defined here as pure reference data). |
+| `db.py` | Connection management, constants, and core helpers | `get_connection()`, `get_db()`, `DATA_DIR`, `DB_PATH`, source type constants, `WSLCB_SOURCE_URL`, `_normalize_raw_address()`. `SOURCE_ROLE_PRIORITY` — shared dict `{"first_seen": 0, "repaired": 1, "confirmed": 2}` imported by both `db.py` and `display.py` to avoid circular imports. `US_STATES` — dict of US state code → full name; used by the state filter dropdown (defined here as pure reference data). Location helper: `get_or_create_location()`. Source helpers: `get_or_create_source()`, `link_record_source()`. Provenance queries: `get_primary_source(conn, record_id) → dict | None` — returns the single most-relevant source for a record by role priority (`first_seen > repaired > confirmed`), then snapshot presence, then newest `captured_at`; `get_record_sources(conn, record_id) → list[dict]` — returns all provenance sources newest-first. |
 | `schema.py` | DDL, migrations, FTS | All table creation, `PRAGMA user_version` migration framework, FTS5 setup, data seeding. `init_db()`, `migrate()`, `MIGRATIONS` list. `_table_exists(conn, name)`, `_column_exists(conn, table, column)` — private introspection helpers used by migration guards; exported for testability (both args must be trusted schema-name literals). Migration 002 (`enrichment_tracking`) adds `record_enrichments` table and `raw_*` shadow columns. |
-| `database.py` | Database helper module | Re-exports all symbols from `db.py` and `schema.py`. Contains `get_or_create_location()`, `get_or_create_source()`, `link_record_source()`. Source-provenance queries: `get_primary_source(conn, record_id) → dict | None` — returns the single most-relevant source for a record by role priority (`first_seen > repaired > confirmed`), then snapshot presence, then newest `captured_at`; `get_record_sources(conn, record_id) → list[dict]` — returns all provenance sources newest-first. Existing `from database import ...` statements continue to work. |
 | `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`, `reprocess_entities()`. `strip_duplicate_marker(name)` — strips WSLCB `DUPLICATE` annotation tokens (e.g. `(DUPLICATE)`, `DUPLICATE`, `*DUPLICATE*`, unclosed `(DUPLICATE`) from a single applicant name; called by both `clean_applicants_string()` and `parse_and_link_entities()`. `ADDITIONAL_NAMES_MARKERS` — exported `frozenset` of WSLCB meta-label strings (`"ADDITIONAL NAMES ON FILE"` and typo variant) that must be skipped during entity creation; imported by `queries.py` for ingest-time flag detection. |
-| `queries.py` | Record search and read queries | `search_records()`, `export_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. `invalidate_filter_cache()` — clears the 5-minute in-process filter option cache; call after any admin mutation that changes endorsements or substances. `_build_where_clause()` accepts `endorsements: list[str]` for multi-select OR-semantics filtering (also handles mixed known/unknown names gracefully). `_EXPORT_SELECT` — module-level SQL constant for CSV export; bakes in `DATA_GAP_CUTOFF`, `PENDING_CUTOFF_DAYS`, and `LINKABLE_TYPES` at import time (no runtime `.format()`). Uses three correlated subqueries against `record_links` (via `idx_record_links_new`) instead of a materialised window-function CTE, so the outer WHERE filter is applied before link resolution. `outcome_status` uses `CASE (subquery) WHEN` form to evaluate the `section_type` lookup once rather than twice. Re-exports `insert_record` (from `pipeline`), `get_primary_source` / `get_record_sources` (from `database`), and `US_STATES` (from `db`) for backward compatibility. |
+| `queries.py` | Record search and read queries | `search_records()`, `export_records()`, `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`. `invalidate_filter_cache()` — clears the 5-minute in-process filter option cache; call after any admin mutation that changes endorsements or substances. `_build_where_clause()` accepts `endorsements: list[str]` for multi-select OR-semantics filtering (also handles mixed known/unknown names gracefully). `_EXPORT_SELECT` — module-level SQL constant for CSV export; bakes in `DATA_GAP_CUTOFF`, `PENDING_CUTOFF_DAYS`, and `LINKABLE_TYPES` at import time (no runtime `.format()`). Uses three correlated subqueries against `record_links` (via `idx_record_links_new`) instead of a materialised window-function CTE, so the outer WHERE filter is applied before link resolution. `outcome_status` uses `CASE (subquery) WHEN` form to evaluate the `section_type` lookup once rather than twice. Re-exports `insert_record` (from `pipeline`), `get_primary_source` / `get_record_sources` / `US_STATES` (from `db`) for backward compatibility. |
 | `endorsements.py` | License type normalization (core) | Loads `SEED_CODE_MAP` from `seed_code_map.json` at module init (103 codes). `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, `_merge_endorsement()` (shared merge helper), `get_endorsement_options()`, `get_record_endorsements()`, `resolve_endorsement()`, `set_canonical_endorsement()`, `rename_endorsement()`, `get_endorsement_groups()`. Re-exports all public names from `endorsements_admin` and `substances` for backward compatibility. |
 | `seed_code_map.json` | Seed data: WSLCB numeric code → endorsement name(s) | 103-entry JSON dict loaded by `endorsements.py` at module init. Keys are WSLCB license class ID strings; values are lists of endorsement names. Edit this file (not the Python module) when adding or correcting seed mappings. |
 | `endorsements_admin.py` | Admin UI helpers for endorsement management | Similarity algorithm (`endorsement_similarity()`, `_sim_tokenize()`, `_sim_features()`), `get_endorsement_list()`, `suggest_duplicate_endorsements()`, `dismiss_suggestion()`, `get_code_mappings()`, `add_code_mapping()`, `remove_code_mapping()`, `create_code()`. No dependency on `admin_audit` — audit logging is the caller's responsibility. |
 | `substances.py` | Regulated substance CRUD | `get_regulated_substances()`, `get_substance_endorsement_ids()`, `set_substance_endorsements()`, `add_substance()`, `remove_substance()`. No dependency on `admin_audit` — audit logging is the caller's responsibility. Route handlers in `app.py` call `log_action()` directly after each mutation. |
 | `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
-| `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `database.DATA_DIR`. `extract_tbody_from_snapshot(path, section_type, license_number, record_date, application_type) → str | None` — locates and returns the raw outer HTML of the matching `<tbody>` in a full HTML snapshot file. `extract_tbody_from_diff(path, ...) → str | None` — reconstructs a `<tbody>` from added (then removed) lines of a unified diff file. `_match_key(tbody, ...)` — shared BeautifulSoup key-matching helper. `_extract_tbody_lines(lines) → list[list[str]]` — splits flat diff lines into per-record groups, handling both `<tbody>`-wrapped and bare-`<tr>` formats. |
+| `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `db.DATA_DIR`. `extract_tbody_from_snapshot(path, section_type, license_number, record_date, application_type) → str | None` — locates and returns the raw outer HTML of the matching `<tbody>` in a full HTML snapshot file. `extract_tbody_from_diff(path, ...) → str | None` — reconstructs a `<tbody>` from added (then removed) lines of a unified diff file. `_match_key(tbody, ...)` — shared BeautifulSoup key-matching helper. `_extract_tbody_lines(lines) → list[list[str]]` — splits flat diff lines into per-record groups, handling both `<tbody>`-wrapped and bare-`<tr>` formats. |
 | `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()`, `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`. Logs to `scrape_log` table. Archives source HTML. Uses `pipeline.ingest_batch()` for record insertion. Skips parse/ingest when content hash matches last successful scrape (`status='unchanged'`). Use `cli.py scrape` to run. |
 | `cli.py` | Unified CLI entry point | Argparse subcommands for all operational tasks. Includes `cleanup-redundant` for removing data from zero-new-record scrapes. Replaces `python scraper.py --flag` pattern. |
 | `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records via `pipeline.ingest_batch()`, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `cli.py backfill-addresses`. |
@@ -69,10 +68,10 @@ license_records → locations (FK: location_id, previous_location_id)
 | `tests/test_parser.py` | Parser tests | Tests for all `parser.py` functions using static HTML fixtures. |
 | `tests/test_db.py` | Connection/constant tests | `db.py` connections, pragmas, raw address normalization, constant values. |
 | `tests/test_schema.py` | Migration framework tests | `PRAGMA user_version`, migration runner, existing DB detection, registry sanity checks. |
-| `tests/test_database.py` | Database helper tests | `database.py` shim: schema init, location/source helpers, provenance linking. |
+| `tests/test_database.py` | Database helper tests | `db.py` helpers: schema init, location/source helpers, provenance linking. |
 | `tests/test_pipeline.py` | Pipeline tests | `ingest_record()` and `ingest_batch()`: insertion, dedup, endorsements, provenance, entities, outcome linking. |
 | `tests/test_display.py` | Display tests | `format_outcome()` and `summarize_provenance()`: all outcome statuses, provenance grouping, date ranges. |
-| `tests/test_queries.py` | Query tests | Search, filter, stats, and export functions. Record insertion helpers import `insert_record` from `pipeline` (its canonical home); provenance helpers import `get_primary_source` from `database`. |
+| `tests/test_queries.py` | Query tests | Search, filter, stats, and export functions. Record insertion helpers import `insert_record` from `pipeline` (its canonical home); provenance helpers import `get_primary_source` from `db`. |
 | `tests/test_link_records.py` | Link records tests | `_link_section()`, `_link_incremental()`, `build_all_links()`, `get_outcome_status()`, `get_reverse_link_info()` — bulk and incremental linking. |
 | `tests/test_endorsements.py` | Endorsement tests | `_merge_endorsement()`, `process_record()`, `merge_mixed_case_endorsements()`, `repair_code_name_endorsements()`, query helpers. Revised UI helpers: `endorsement_similarity` (similarity algorithm including +/− polar-token hard rule), `get_endorsement_list`, `suggest_duplicate_endorsements`, `dismiss_suggestion`, `get_code_mappings`, `add_code_mapping`, `remove_code_mapping`, `create_code`. Regulated substance CRUD: `get_regulated_substances`, `get_substance_endorsement_ids`, `set_substance_endorsements`, `add_substance`, `remove_substance`. Substance functions are now imported from `substances` directly; audit logging tests verify the caller-delegates pattern. |
 | `tests/test_admin_endorsements.py` | Admin substance route tests | Uses TestClient with cross-thread in-memory DB fixture; patches `admin_routes.get_db`. Covers: `GET /admin/endorsements` (default tab, all section params), `POST /admin/endorsements/substances/add` (inserts row, audit-logged, blank-name error, non-admin rejected), `POST /admin/endorsements/substances/remove` (deletes row, cascades junction, audit-logged, non-admin rejected), `POST /admin/endorsements/substances/set-endorsements` (replaces associations, clears all, audit-logged, non-admin rejected). |
@@ -148,7 +147,7 @@ WHERE step = 'endorsements' AND CAST(version AS INTEGER) < 2;
 - `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
 - All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
-- `get_or_create_location()` in `database.py` handles the upsert logic (uses `_normalize_raw_address()` from `db.py`)
+- `get_or_create_location()` in `db.py` handles the upsert logic (uses `_normalize_raw_address()` from `db.py`)
 
 ### `license_records` (main table)
 - Uniqueness constraint: `(section_type, record_date, license_number, application_type)`
@@ -294,7 +293,7 @@ WHERE step = 'endorsements' AND CAST(version AS INTEGER) < 2;
 
 ### `source_types` (provenance enum)
 - Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`
-- Python constants in `db.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc. (re-exported by `database.py`)
+- Python constants in `db.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc.
 - Seeded by `init_db()` via `INSERT OR IGNORE`
 
 ### `sources` (provenance artifacts)
@@ -307,15 +306,15 @@ WHERE step = 'endorsements' AND CAST(version AS INTEGER) < 2;
 - `scrape_log_id` — FK to `scrape_log` for live scrapes (avoids duplicating operational data)
 - `metadata` — JSON blob for source-specific attributes (`truncated`, `file_size_bytes`, `sections_present`, `sha256`, `wayback_timestamp`)
 - UNIQUE constraint on `(source_type_id, snapshot_path)`
-- `get_or_create_source()` in `database.py` handles idempotent upsert
+- `get_or_create_source()` in `db.py` handles idempotent upsert
 
 ### `record_sources` (provenance junction)
 - M:M junction linking `license_records` ↔ `sources`
 - `role` — `'first_seen'` (introduced by this source), `'confirmed'` (already existed, corroborated), `'repaired'` (data fixed from this source); enforced by CHECK constraint
 - Composite PK `(record_id, source_id, role)` — a record can have multiple roles for the same source (e.g., `first_seen` + `repaired`)
-- `link_record_source()` in `database.py` handles idempotent insert
+- `link_record_source()` in `db.py` handles idempotent insert
 - `ON DELETE CASCADE` on both FKs
-- `get_record_sources()` in `database.py` returns provenance for display on detail page
+- `get_record_sources()` in `db.py` returns provenance for display on detail page
 
 ### Migration framework
 - `PRAGMA user_version` tracks the current schema version; each migration bumps it
@@ -395,7 +394,7 @@ A committed directory in `skills/` with the same name as a symlinked global skil
 ### Logging
 - **Never use `print()` for operational output** except in CLI summary lines (final human-readable output from `cli.py` subcommands). All other output goes through Python's `logging` module.
 - Each module declares `logger = logging.getLogger(__name__)` at the top.
-- Entry points (`app.py` lifespan, `scraper.py` main, `backfill_snapshots.py` main, `database.py` `__main__`) call `setup_logging()` from `log_config.py` before doing any work.
+- Entry points (`app.py` lifespan, `scraper.py` main, `backfill_snapshots.py` main, `db.py` `__main__`) call `setup_logging()` from `log_config.py` before doing any work.
 - Log levels:
   - `logger.debug()` — progress counters, verbose operational detail ("Fetched 12,000,000 bytes", "Found 3 data sections")
   - `logger.info()` — meaningful events (records inserted, scrape complete, migrations, summaries)
@@ -419,6 +418,7 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - HTML parsing tests use static fixture files in `tests/fixtures/`; keep them minimal and realistic.
 - Parser tests (`test_parser.py`) test pure functions — HTML in, dicts out. No database.
 - Database/query tests (`test_db.py`, `test_schema.py`, `test_database.py`, `test_queries.py`) use the `db` fixture or in-memory connections.
+- `test_database.py` imports from `db` and `schema` directly (the `database.py` backward-compat shim no longer exists).
 - Pipeline tests (`test_pipeline.py`) verify end-to-end ingestion: insert, endorsements, provenance, entities, outcome linking.
 - Display tests (`test_display.py`) test pure presentation formatting — no database.
 - Link record tests (`test_link_records.py`) test bulk and incremental linking with the parameterized `_link_section()` and `_link_incremental()` functions.
@@ -443,7 +443,7 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Modifying `parser.py` → add/update `test_parser.py` with fixture HTML
 - Modifying `db.py` → add/update `test_db.py`
 - Modifying `schema.py` → add/update `test_schema.py`
-- Modifying `database.py` → add/update `test_database.py`
+- Modifying `db.py` (helpers/provenance) → add/update `test_database.py`
 - Modifying `queries.py` → add/update `test_queries.py`
 - Modifying `pipeline.py` → add/update `test_pipeline.py`
 - Modifying `display.py` → add/update `test_display.py`

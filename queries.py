@@ -2,10 +2,10 @@
 
 Contains search, filter, stats, and read queries that combine data from
 multiple tables (records, locations, endorsements, entities).  Thin
-read layer on top of the core schema in ``database.py``.
+read layer on top of the core schema in ``schema.py``.
 
 Record insertion lives in ``pipeline.py`` (``insert_record``); source
-provenance queries live in ``database.py`` (``get_primary_source``,
+provenance queries live in ``db.py`` (``get_primary_source``,
 ``get_record_sources``); the US state constant lives in ``db.py``
 (``US_STATES``).
 
@@ -21,8 +21,8 @@ from endorsements import (
 from entities import (
     get_record_entities,
 )
-from db import US_STATES  # noqa: F401 — re-export
-from database import (  # noqa: F401 — re-exports
+from db import (  # noqa: F401 — re-exports
+    US_STATES,
     get_primary_source,
     get_record_sources,
 )

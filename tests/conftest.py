@@ -20,7 +20,8 @@ def db():
     closed after the test.  WAL mode is silently downgraded to
     ``memory`` journal by SQLite — this is expected and harmless.
     """
-    from database import get_connection, init_db
+    from db import get_connection
+    from schema import init_db
 
     conn = get_connection(":memory:")
     init_db(conn)

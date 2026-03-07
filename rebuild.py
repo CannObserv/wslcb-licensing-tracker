@@ -165,7 +165,7 @@ def rebuild_from_sources(
 def _ingest_diffs(conn, diff_files, data_dir) -> int:
     """Ingest records from diff archives.  Returns count of new records."""
     from parser import extract_records_from_diff
-    from database import (
+    from db import (
         get_or_create_source, SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
     )
     from pipeline import ingest_record, IngestOptions
@@ -252,7 +252,7 @@ def _ingest_diffs(conn, diff_files, data_dir) -> int:
 def _ingest_snapshots(conn, snapshots, data_dir) -> int:
     """Ingest records from HTML snapshots.  Returns count of new records."""
     from parser import extract_snapshot_date, parse_snapshot
-    from database import (
+    from db import (
         get_or_create_source, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL,
     )
     from pipeline import ingest_batch, IngestOptions

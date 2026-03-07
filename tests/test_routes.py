@@ -30,7 +30,7 @@ def db():
     the app in a background thread, so we need that flag here — hence
     this local override rather than reusing the shared fixture.
     """
-    from database import init_db
+    from schema import init_db
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")

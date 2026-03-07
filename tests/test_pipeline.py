@@ -56,7 +56,7 @@ class TestIngestRecord:
     def test_links_provenance(self, db, standard_new_application):
         """When source_id is provided, provenance should be linked."""
         from pipeline import ingest_record, IngestOptions
-        from database import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
+        from db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
 
         seed_endorsements(db)
         source_id = get_or_create_source(
@@ -81,7 +81,7 @@ class TestIngestRecord:
     def test_duplicate_gets_confirmed_provenance(self, db, standard_new_application):
         """Duplicate records should get 'confirmed' provenance role."""
         from pipeline import ingest_record, IngestOptions
-        from database import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
+        from db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
 
         seed_endorsements(db)
         source1 = get_or_create_source(

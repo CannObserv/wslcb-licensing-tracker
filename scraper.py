@@ -15,10 +15,11 @@ from pathlib import Path
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
-from database import (
-    DATA_DIR, get_db, init_db, get_or_create_source,
+from db import (
+    DATA_DIR, get_db, get_or_create_source,
     SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL,
 )
+from schema import init_db
 from parser import SECTION_MAP, parse_records_from_table
 from endorsements import seed_endorsements, discover_code_mappings, repair_code_name_endorsements
 from address_validator import TIMEOUT as _AV_TIMEOUT
