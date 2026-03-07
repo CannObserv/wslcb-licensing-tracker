@@ -617,6 +617,21 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
         )
 
 
+def _m012_entities_name_index(conn: sqlite3.Connection) -> None:
+    """Add a case-insensitive index on entities.name for /entities search.
+
+    Supports efficient ``LIKE '%term%' COLLATE NOCASE`` queries against the
+    60k-row entities table used by the new ``GET /entities`` landing page.
+    The index is created idempotently via ``IF NOT EXISTS``.
+    """
+    if not _table_exists(conn, "entities"):
+        return
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entities_name "
+        "ON entities (name COLLATE NOCASE)"
+    )
+
+
 def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
     """Strip WSLCB DUPLICATE annotation tokens from applicants strings.
 
@@ -696,6 +711,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (9, "regulated_substances", _m009_regulated_substances),
     (10, "additional_names_flag", _m010_additional_names_flag),
     (11, "clean_duplicate_markers", _m011_clean_duplicate_markers),
+    (12, "entities_name_index", _m012_entities_name_index),
 ]
 
 

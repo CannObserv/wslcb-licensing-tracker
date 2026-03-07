@@ -1,0 +1,69 @@
+{# HTMX partial — swapped into #entities-results by GET /entities with HX-Request. #}
+<div class="text-sm text-gray-500 mb-3">
+    {% if total == 0 %}
+        No entities found.
+    {% elif total == 1 %}
+        1 entity
+    {% else %}
+        {{ "{:,}".format(total) }} entities
+    {% endif %}
+    {% if q or entity_type %}
+        <a href="/entities" class="ml-2 text-co-purple hover:text-co-purple-700">Clear filters</a>
+    {% endif %}
+</div>
+
+{% if entities %}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200 text-sm">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider w-full">Name</th>
+                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                <th class="px-4 py-3 text-right font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Records</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+            {% for entity in entities %}
+            <tr class="hover:bg-gray-50 transition">
+                <td class="px-4 py-3">
+                    <a href="/entity/{{ entity.id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">
+                        {{ entity.name }}
+                    </a>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    {% if entity.entity_type == 'organization' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Organization</span>
+                    {% elif entity.entity_type == 'person' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Person</span>
+                    {% else %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">Unknown</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 text-right text-gray-700 font-medium">{{ "{:,}".format(entity.record_count) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# Pagination #}
+{% if total_pages > 1 %}
+{% set base_qs = {"q": q, "type": entity_type, "sort": sort} | build_qs %}
+<div class="flex items-center justify-between mt-4 text-sm">
+    <div class="text-gray-500">
+        Page {{ page }} of {{ total_pages }}
+    </div>
+    <div class="flex gap-1">
+        {% if page > 1 %}
+        <a href="/entities?{{ base_qs }}&page={{ page - 1 }}"
+           class="px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50">← Prev</a>
+        {% endif %}
+        {% if page < total_pages %}
+        <a href="/entities?{{ base_qs }}&page={{ page + 1 }}"
+           class="px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50">Next →</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% endif %}

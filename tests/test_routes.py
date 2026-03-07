@@ -433,8 +433,8 @@ class TestStatCardLinks:
         finally:
             _stop(patches)
 
-    def test_unique_entities_card_is_not_a_link(self, db):
-        """Unique Entities card must not be a link until /entities landing page exists (#50)."""
+    def test_unique_entities_card_links_to_entities(self, db):
+        """Unique Entities card links to /entities (#50)."""
         client, patches = _make_client(db)
         try:
             resp = client.get("/")
@@ -443,8 +443,12 @@ class TestStatCardLinks:
                                     "<!-- Additional Stats -->",
                                     "<!-- Application Pipeline -->")
             tag = _card_tag(section, "Unique Entities")
-            assert not tag.startswith("<a "), (
-                f"Unique Entities card should NOT be a link until #50 (/entities) is built.\n"
+            assert tag.startswith("<a "), (
+                f"Unique Entities card should be an <a> link to /entities.\n"
+                f"Tag: {tag!r}"
+            )
+            assert 'href="/entities"' in tag, (
+                f"Unique Entities card href should be /entities.\n"
                 f"Tag: {tag!r}"
             )
         finally:
@@ -573,5 +577,137 @@ class TestExportCsvRoute:
             resp = client.get("/api/v1/export")
             assert "attachment" in resp.headers["content-disposition"]
             assert "wslcb_records.csv" in resp.headers["content-disposition"]
+        finally:
+            _stop(patches)
+
+
+class TestEntitiesRoute:
+    """Tests for GET /entities landing page."""
+
+    def _insert_entities(self, db):
+        """Insert two persons and one org."""
+        from pipeline import insert_record
+
+        # applicants format: "BUSINESS NAME; PERSON1; PERSON2"
+        # parse_and_link_entities skips the first element (business name).
+        records = [
+            {"section_type": "new_application", "record_date": "2025-06-01",
+             "business_name": "ACME CO", "business_location": "1 MAIN ST, SEATTLE, WA",
+             "applicants": "ACME CO; ALICE JONES", "license_type": "CANNABIS RETAILER",
+             "application_type": "NEW APPLICATION", "license_number": "222001",
+             "contact_phone": "", "city": "SEATTLE", "state": "WA", "zip_code": "98101",
+             "previous_business_name": "", "previous_applicants": "",
+             "previous_business_location": "", "previous_city": "",
+             "previous_state": "", "previous_zip_code": "",
+             "scraped_at": "2025-06-01T12:00:00+00:00"},
+            {"section_type": "new_application", "record_date": "2025-06-02",
+             "business_name": "BOB SHOP", "business_location": "2 ELM ST, TACOMA, WA",
+             "applicants": "BOB SHOP; BOB SMITH; ACME HOLDINGS LLC",
+             "license_type": "CANNABIS RETAILER",
+             "application_type": "NEW APPLICATION", "license_number": "222002",
+             "contact_phone": "", "city": "TACOMA", "state": "WA", "zip_code": "98402",
+             "previous_business_name": "", "previous_applicants": "",
+             "previous_business_location": "", "previous_city": "",
+             "previous_state": "", "previous_zip_code": "",
+             "scraped_at": "2025-06-02T12:00:00+00:00"},
+        ]
+        for r in records:
+            insert_record(db, r)
+        db.commit()
+
+    def test_entities_page_renders(self, db):
+        """GET /entities returns 200 with entity list."""
+        self._insert_entities(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/entities")
+            assert resp.status_code == 200
+            assert "ALICE JONES" in resp.text
+            assert "BOB SMITH" in resp.text
+            assert "ACME HOLDINGS LLC" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_entities_page_has_title(self, db):
+        """GET /entities page has an Entities heading."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/entities")
+            assert resp.status_code == 200
+            assert "Entities" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_htmx_returns_partial(self, db):
+        """HX-Request header returns partial HTML without base layout."""
+        self._insert_entities(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/entities", headers={"HX-Request": "true"})
+            assert resp.status_code == 200
+            # Partial should not include the full page chrome
+            assert "<html" not in resp.text
+            assert "ALICE JONES" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_search_filter(self, db):
+        """?q= filters results by name."""
+        self._insert_entities(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/entities?q=alice", headers={"HX-Request": "true"})
+            assert resp.status_code == 200
+            assert "ALICE JONES" in resp.text
+            assert "BOB SMITH" not in resp.text
+        finally:
+            _stop(patches)
+
+    def test_type_filter(self, db):
+        """?type=organization shows only orgs."""
+        self._insert_entities(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/entities?type=organization", headers={"HX-Request": "true"})
+            assert resp.status_code == 200
+            assert "ACME HOLDINGS LLC" in resp.text
+            assert "ALICE JONES" not in resp.text
+            assert "BOB SMITH" not in resp.text
+        finally:
+            _stop(patches)
+
+    def test_entities_link_to_detail(self, db):
+        """Each entity row links to /entity/{id}."""
+        self._insert_entities(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/entities")
+            assert resp.status_code == 200
+            assert "/entity/" in resp.text
+        finally:
+            _stop(patches)
+
+
+class TestDashboardEntitiesLink:
+    """Dashboard Unique Entities card links to /entities after #50 is built."""
+
+    def test_unique_entities_card_is_a_link(self, db):
+        """Unique Entities stat card must be an <a> linking to /entities."""
+        client, patches = _make_client(db)
+        try:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            section = _html_section(resp.text,
+                                    "<!-- Additional Stats -->",
+                                    "<!-- Application Pipeline -->")
+            tag = _card_tag(section, "Unique Entities")
+            assert tag.startswith("<a "), (
+                f"Unique Entities card should be an <a> link to /entities.\n"
+                f"Tag: {tag!r}"
+            )
+            assert 'href="/entities"' in tag, (
+                f"Unique Entities card href should be /entities.\n"
+                f"Tag: {tag!r}"
+            )
         finally:
             _stop(patches)

@@ -23,7 +23,7 @@ from queries import (
     search_records,
     get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
-    get_record_by_id, get_related_records, get_entity_records,
+    get_record_by_id, get_related_records, get_entity_records, get_entities,
     get_record_sources, get_record_link,
     hydrate_records,
 )
@@ -372,6 +372,39 @@ async def source_viewer(
         "found": tbody_html is not None,
         "srcdoc_attr": srcdoc_attr,
     })
+
+
+@app.get("/entities", response_class=HTMLResponse)
+async def entities_list(request: Request,
+                        q: str = "",
+                        type: str = "",
+                        sort: str = "count",
+                        page: int = 1):
+    """Searchable, paginated list of all applicant entities."""
+    with get_db() as conn:
+        result = get_entities(
+            conn,
+            q=q.strip() or None,
+            entity_type=type.strip() or None,
+            sort=sort,
+            page=page,
+            per_page=50,
+        )
+
+    total_pages = max(1, (result["total"] + 49) // 50)
+    ctx = {
+        "request": request,
+        "entities": result["entities"],
+        "total": result["total"],
+        "q": q,
+        "entity_type": type,
+        "sort": sort,
+        "page": page,
+        "total_pages": total_pages,
+    }
+    if request.headers.get("HX-Request"):
+        return await _tpl(request, "partials/entities_results.html", ctx)
+    return await _tpl(request, "entities.html", ctx)
 
 
 @app.get("/entity/{entity_id}", response_class=HTMLResponse)
