@@ -377,7 +377,7 @@ async def source_viewer(
 @app.get("/entities", response_class=HTMLResponse)
 async def entities_list(request: Request,
                         q: str = "",
-                        type: str = "",
+                        entity_type: str = Query(default="", alias="type"),
                         sort: str = "count",
                         page: int = 1):
     """Searchable, paginated list of all applicant entities."""
@@ -385,7 +385,7 @@ async def entities_list(request: Request,
         result = get_entities(
             conn,
             q=q.strip() or None,
-            entity_type=type.strip() or None,
+            entity_type=entity_type.strip() or None,
             sort=sort,
             page=page,
             per_page=50,
@@ -397,7 +397,7 @@ async def entities_list(request: Request,
         "entities": result["entities"],
         "total": result["total"],
         "q": q,
-        "entity_type": type,
+        "entity_type": entity_type,
         "sort": sort,
         "page": page,
         "total_pages": total_pages,

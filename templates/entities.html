@@ -12,7 +12,7 @@
 <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
     <div class="flex flex-col sm:flex-row gap-3">
         {# Name search #}
-        <div class="flex-1">
+        <div class="flex-1 relative">
             <input
                 type="search"
                 name="q"
@@ -24,15 +24,17 @@
                 hx-target="#entities-results"
                 hx-include="#filter-form"
                 hx-push-url="true"
+                hx-indicator="#entities-spinner"
             />
+            <span id="entities-spinner" class="htmx-indicator absolute right-2 top-2 text-gray-400">⟳</span>
         </div>
 
         {# Type filter buttons #}
         <div class="flex gap-1 items-center flex-wrap" id="filter-form">
             <input type="hidden" name="type" value="{{ entity_type }}" />
             <input type="hidden" name="sort" value="{{ sort }}" />
-            {% set type_options = [("all", "All", ""), ("person", "People", "person"), ("org", "Organizations", "organization")] %}
-            {% for label_id, label, val in type_options %}
+            {% set type_options = [("All", ""), ("People", "person"), ("Organizations", "organization")] %}
+            {% for label, val in type_options %}
             {% set active = (entity_type == val) %}
             <a href="/entities?{{ {"q": q, "sort": sort, "type": val} | build_qs }}"
                class="px-3 py-1.5 rounded text-sm border transition

@@ -186,6 +186,7 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_re_entity ON record_entities(entity_id);
         CREATE INDEX IF NOT EXISTS idx_re_role ON record_entities(role);
+        CREATE INDEX IF NOT EXISTS idx_entities_name ON entities (name COLLATE NOCASE);
 
         CREATE TABLE IF NOT EXISTS record_links (
             id INTEGER PRIMARY KEY,
@@ -617,21 +618,6 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
         )
 
 
-def _m012_entities_name_index(conn: sqlite3.Connection) -> None:
-    """Add a case-insensitive index on entities.name for /entities search.
-
-    Supports efficient ``LIKE '%term%' COLLATE NOCASE`` queries against the
-    60k-row entities table used by the new ``GET /entities`` landing page.
-    The index is created idempotently via ``IF NOT EXISTS``.
-    """
-    if not _table_exists(conn, "entities"):
-        return
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_entities_name "
-        "ON entities (name COLLATE NOCASE)"
-    )
-
-
 def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
     """Strip WSLCB DUPLICATE annotation tokens from applicants strings.
 
@@ -688,6 +674,21 @@ def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
         logger.info(
             "Migration 011: removed %d DUPLICATE-bearing entity rows", deleted
         )
+
+
+def _m012_entities_name_index(conn: sqlite3.Connection) -> None:
+    """Add a case-insensitive index on entities.name for /entities search.
+
+    Supports efficient ``LIKE '%term%' COLLATE NOCASE`` queries against the
+    60k-row entities table used by the new ``GET /entities`` landing page.
+    The index is created idempotently via ``IF NOT EXISTS``.
+    """
+    if not _table_exists(conn, "entities"):
+        return
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entities_name "
+        "ON entities (name COLLATE NOCASE)"
+    )
 
 
 # -- Migration registry ------------------------------------------------

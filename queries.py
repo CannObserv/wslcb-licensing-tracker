@@ -768,6 +768,7 @@ def get_entities(
     total_sql = f"SELECT COUNT(*) FROM ({base_sql})"
     total: int = conn.execute(total_sql, params).fetchone()[0]
 
+    page = max(1, page)
     offset = (page - 1) * per_page
     rows_sql = f"{base_sql} {order_clause} LIMIT ? OFFSET ?"
     rows = conn.execute(rows_sql, params + [per_page, offset]).fetchall()

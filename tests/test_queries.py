@@ -728,3 +728,21 @@ class TestGetEntities:
         result = get_entities(db, q="zzznomatch")
         assert result["total"] == 0
         assert result["entities"] == []
+
+    def test_page_zero_clamped_to_one(self, db):
+        """page=0 is clamped to page=1; does not produce negative OFFSET."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result_zero = get_entities(db, per_page=2, page=0)
+        result_one = get_entities(db, per_page=2, page=1)
+        assert result_zero["entities"] == result_one["entities"]
+
+    def test_negative_page_clamped_to_one(self, db):
+        """Negative page values are clamped to page=1."""
+        from queries import get_entities
+
+        self._insert_entities(db)
+        result_neg = get_entities(db, per_page=2, page=-5)
+        result_one = get_entities(db, per_page=2, page=1)
+        assert result_neg["entities"] == result_one["entities"]
