@@ -130,7 +130,7 @@ templates.env.filters["build_qs"] = _filter_build_qs
 async def _tpl(request: Request, template: str, ctx: dict, status_code: int = 200):
     """Render a template with ``current_user`` injected into the context."""
     ctx.setdefault("current_user", await get_current_user(request))
-    return templates.TemplateResponse(template, ctx, status_code=status_code)
+    return templates.TemplateResponse(request, template, ctx, status_code=status_code)
 
 
 # Inject shared template renderer into admin router (must precede first request).
