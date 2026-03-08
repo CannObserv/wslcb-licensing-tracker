@@ -125,12 +125,20 @@ Continue numbering from where the previous round ended. Never reset.
 
 ## Documentation sweep
 
-Flag missing documentation updates as numbered findings when changes affect:
+For each category below, actively check whether the named doc needs updating and flag any gap as a numbered **🟡 finding** (not a 💭 observation):
 
-- **Database schema** → AGENTS.md schema section (table descriptions, column notes)
-- **New files or public APIs** → AGENTS.md Key Files table and relevant sections
-- **User-facing behaviour** → README.md
-- **Deployment or CLI** → AGENTS.md Common Tasks
+| Changed | Check in AGENTS.md | Check in README.md |
+|---|---|---|
+| New `.py` module added or removed | Key Files table | Project Structure tree |
+| New template or static file | Key Files table (if notable) | Project Structure tree |
+| New or renamed route (`@app.get`, `@router.get`, etc.) | — | API Endpoints section |
+| New systemd unit file | Deployment section | Project Structure tree + Systemd setup |
+| Schema change (new table/column) | Schema section, Key Files | — |
+| New CLI subcommand | Common Tasks | — |
+| Seed data file added/changed | Key Files | License Type Normalization (count/location) |
+| Numeric count stated in README | — | Verify against actual code (e.g. seed entry count) |
+
+For README specifically: scan the **Project Structure** tree, **API Endpoints**, and **Testing** sections against the actual files on disk. A missing entry is a finding regardless of whether the feature's *behavior* changed.
 
 ## Parameterized invocation
 

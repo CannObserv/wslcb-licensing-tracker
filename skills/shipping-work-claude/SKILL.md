@@ -52,6 +52,23 @@ NO CONTINUATION IF TESTS FAIL
 
 If tests fail: stop, report the failure, fix it before proceeding. Do not push failing code under any circumstances.
 
+### Step 1.5 — README/AGENTS.md spot-check
+
+Before committing anything final, run:
+
+```bash
+bash skills/shipping-work-claude/scripts/doc-check.sh
+```
+
+This prints the files changed in the current branch/session alongside a checklist. Verify:
+
+- [ ] Any new `.py` modules are listed in the README Project Structure tree
+- [ ] Any new routes appear in the README API Endpoints section
+- [ ] Any new systemd unit files appear in README + AGENTS.md Deployment
+- [ ] Any new Key Files entries are in AGENTS.md
+
+If gaps exist, fix them **before** creating the final commit. A README drift finding at ship time means the CR missed it — fix it now.
+
 ### Step 2 — Ensure a clean working tree
 
 ```bash
