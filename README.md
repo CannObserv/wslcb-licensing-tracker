@@ -75,6 +75,10 @@ Uvicorn’s access and error logs are routed through the same formatter for cons
 ```
 wslcb-licensing-tracker/
 ├── app.py                  # FastAPI web application
+├── api_routes.py           # Versioned API router (/api/v1/*)
+├── admin_routes.py         # Admin router (/admin/*)
+├── admin_auth.py           # Admin authentication (exe.dev proxy headers)
+├── admin_audit.py          # Admin audit log helpers
 ├── cli.py                  # Unified CLI entry point (argparse subcommands)
 ├── pipeline.py             # Unified ingestion pipeline (ingest_record, ingest_batch)
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
@@ -84,6 +88,9 @@ wslcb-licensing-tracker/
 ├── queries.py              # Record search, filters, stats, CRUD
 ├── entities.py             # Entity (applicant) normalization
 ├── endorsements.py         # License endorsement normalization (code↔name mappings)
+├── endorsements_admin.py   # Admin helpers for endorsement management
+├── substances.py           # Regulated substance CRUD
+├── link_records.py         # Application→outcome record linking
 ├── log_config.py           # Centralized logging configuration
 ├── address_validator.py    # Address validation API client
 ├── scraper.py              # WSLCB page scraper — fetch, archive, ingest via pipeline
@@ -92,6 +99,7 @@ wslcb-licensing-tracker/
 ├── backfill_provenance.py  # One-time backfill of source provenance links
 ├── integrity.py            # Database integrity checks (used by cli.py check)
 ├── rebuild.py              # Rebuild database from archived sources (used by cli.py rebuild)
+├── seed_code_map.json      # Seed data: WSLCB numeric code → endorsement name(s)
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
 │   ├── base.html           # Base layout template
@@ -99,10 +107,19 @@ wslcb-licensing-tracker/
 │   ├── search.html         # Search interface with filters
 │   ├── detail.html         # Record detail page
 │   ├── 404.html            # Not-found error page
+│   ├── entities.html       # Entities landing page (searchable, paginated)
 │   ├── entity.html         # Entity detail page
+│   ├── admin/
+│   │   ├── base.html       # Admin base layout
+│   │   ├── dashboard.html  # System dashboard
+│   │   ├── endorsements.html # Endorsement management (list, suggestions, codes)
+│   │   ├── users.html      # Admin user management
+│   │   └── audit_log.html  # Audit log
 │   └── partials/
-│       ├── results.html      # Search results partial (HTMX)
-│       └── record_table.html # Shared record table (results + entity pages)
+│       ├── results.html           # Search results partial (HTMX)
+│       ├── record_table.html      # Shared record table (results + entity pages)
+│       ├── entities_results.html  # Entities results partial (HTMX)
+│       └── source_viewer.html     # Source viewer partial (HTMX iframe)
 ├── static/                 # Static assets
 │   └── images/             # Cannabis Observer brand assets (icon + wordmark SVGs)
 ├── data/                   # Persistent data (gitignored)
@@ -117,19 +134,34 @@ wslcb-licensing-tracker/
 ├── requirements.txt        # Python dependencies (runtime + dev)
 ├── pytest.ini              # Pytest configuration
 ├── tests/                  # Test suite
-│   ├── conftest.py         # Shared fixtures (in-memory DB, sample records)
-│   ├── test_parser.py      # Parser function tests
-│   ├── test_db.py          # Connection management and constant tests
-│   ├── test_schema.py      # Migration framework tests
-│   ├── test_database.py    # db.py helper tests (location/source/provenance)
-│   ├── test_queries.py     # Record insert/query tests
-│   ├── test_link_records.py # Record linking tests (bulk + incremental)
-│   ├── test_endorsements.py # Endorsement normalization tests
-│   ├── test_integrity.py   # Integrity check tests
-│   └── fixtures/           # Minimal HTML fixtures for parser tests
-├── wslcb-web.service       # systemd service for the web app
-├── wslcb-task@.service     # systemd template for oneshot tasks (scrape, refresh, backfill)
-└── wslcb-scraper.timer     # systemd timer (twice-daily: 12:30 AM and 6:30 AM Pacific)
+│   ├── conftest.py              # Shared fixtures (in-memory DB, sample records)
+│   ├── test_parser.py           # Parser function tests
+│   ├── test_db.py               # Connection management and constant tests
+│   ├── test_schema.py           # Migration framework tests
+│   ├── test_database.py         # db.py helper tests (location/source/provenance)
+│   ├── test_pipeline.py         # Ingestion pipeline tests
+│   ├── test_display.py          # Presentation formatting tests
+│   ├── test_queries.py          # Record insert/query tests
+│   ├── test_link_records.py     # Record linking tests (bulk + incremental)
+│   ├── test_endorsements.py     # Endorsement normalization tests
+│   ├── test_integrity.py        # Integrity check tests
+│   ├── test_rebuild.py          # Rebuild from sources tests
+│   ├── test_scraper.py          # Scraper hash deduplication tests
+│   ├── test_address_validator.py # Address validation client tests
+│   ├── test_routes.py           # Public route tests
+│   ├── test_api_routes.py       # Versioned API route tests
+│   ├── test_entities.py         # Entity normalization tests
+│   ├── test_source_viewer.py    # Source viewer route tests
+│   ├── test_admin_auth.py       # Admin authentication tests
+│   ├── test_admin_audit.py      # Admin audit log tests
+│   ├── test_admin_users.py      # Admin user management route tests
+│   ├── test_admin_endorsements.py # Admin endorsement/substance route tests
+│   └── fixtures/                # Minimal HTML fixtures for parser tests
+├── wslcb-web.service            # systemd service for the web app
+├── wslcb-task@.service          # systemd template for oneshot tasks
+├── wslcb-scraper.timer          # systemd timer (twice-daily: 12:30 AM and 6:30 AM Pacific)
+├── wslcb-healthcheck.service    # systemd health check service (restarts web on failure)
+└── wslcb-healthcheck.timer      # systemd health check timer (every 5 minutes)
 ```
 
 ## Setup
@@ -169,14 +201,18 @@ Then visit [http://localhost:8000](http://localhost:8000).
 ### Set up automated scraping (systemd)
 
 ```bash
-sudo cp wslcb-web.service /etc/systemd/system/
-sudo cp wslcb-task@.service /etc/systemd/system/
-sudo cp wslcb-scraper.timer /etc/systemd/system/
+sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer \
+     wslcb-healthcheck.service wslcb-healthcheck.timer /etc/systemd/system/
+sudo cp sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
+sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-web.service
 sudo systemctl enable --now wslcb-scraper.timer
+sudo systemctl enable --now wslcb-healthcheck.timer
 ```
+
+The healthcheck service polls `/api/v1/health` every 5 minutes and automatically restarts the web app if it is unreachable. The `sudoers.d-wslcb-healthcheck` snippet grants the necessary permission for a passwordless `systemctl restart wslcb-web.service`.
 
 The scraper runs twice daily at 12:30 AM and 6:30 AM Pacific with up to 5 minutes of random delay.
 
@@ -198,15 +234,42 @@ The SQLite database and archived HTML snapshots are stored in `./data/` relative
 
 ## API Endpoints
 
+### Public UI Routes
+
 | Endpoint | Description |
 |---|---|
 | `GET /` | Dashboard with summary statistics |
 | `GET /search` | Search interface (HTML) or HTMX partial results |
 | `GET /record/{id}` | Record detail page |
-| `GET /export` | CSV export (accepts same query params as `/search`) |
-| `GET /entity/{id}` | Entity detail page — lists all license records associated with a person or organization, with type badge (Person/Organization), record count, and distinct license count |
-| `GET /api/cities` | JSON list of cities for a given state (query param `state`) |
-| `GET /api/stats` | JSON summary statistics |
+| `GET /entities` | Searchable, paginated entity list |
+| `GET /entity/{id}` | Entity detail page — all license records for a person or organization |
+| `GET /source/{source_id}/record/{record_id}` | HTMX partial — renders archived source HTML for a specific record |
+
+### Versioned API (`/api/v1/`)
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/cities` | JSON list of cities for a given state (query param `state`) |
+| `GET /api/v1/stats` | JSON aggregate statistics |
+| `GET /api/v1/export` | Streaming CSV export (same query params as `/search`) |
+| `GET /api/v1/health` | Health check — 200 OK or 503 when the DB is unavailable |
+
+All `/api/v1/` responses use a consistent JSON envelope: `{"ok": bool, "message": "...", "data": ...}`. The CSV export endpoint is exempt and returns a raw `StreamingResponse`.
+
+### Admin Routes (`/admin/`)
+
+| Endpoint | Description |
+|---|---|
+| `GET /admin/` | System dashboard — record counts, recent scrapes, data quality checklist |
+| `GET /admin/endorsements` | Endorsement management — list, duplicate suggestions, code mappings |
+| `GET /admin/users` | Admin user management — add/remove admins |
+| `GET /admin/audit-log` | Audit log — paginated history of all admin mutations |
+
+Admin routes are protected by exe.dev proxy authentication (`X-ExeDev-Email` / `X-ExeDev-UserID` headers). The first admin user must be bootstrapped via CLI:
+
+```bash
+python cli.py admin add-user you@example.com
+```
 
 ## License Type Normalization
 
@@ -215,7 +278,7 @@ The WSLCB source page uses two different representations for license types:
 - **New applications** list endorsements as semicolon-separated text (e.g., `GROCERY STORE - BEER/WINE; SNACK BAR`)
 - **Approved/discontinued** records use opaque numeric codes (e.g., `450,`)
 
-Historical data also uses a hybrid `"CODE, NAME"` format (e.g., `"450, GROCERY STORE - BEER/WINE"`). The tracker normalizes all three into a shared `license_endorsements` table, linked to records via a `record_endorsements` junction table. A seed mapping of 98 known codes is built into `endorsements.py`, and new mappings are automatically discovered by cross-referencing license numbers that appear in both sections.
+Historical data also uses a hybrid `"CODE, NAME"` format (e.g., `"450, GROCERY STORE - BEER/WINE"`). The tracker normalizes all three into a shared `license_endorsements` table, linked to records via a `record_endorsements` junction table. A seed mapping of 103 known codes is loaded at startup from `seed_code_map.json`, and new mappings are automatically discovered by cross-referencing license numbers that appear in both sections.
 
 ## Address Standardization
 
@@ -385,11 +448,20 @@ Test structure:
 | `tests/test_pipeline.py` | Unified ingestion pipeline — insert, endorsements, provenance, outcome linking |
 | `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
 | `tests/test_link_records.py` | Record linking — bulk, incremental, outcome status, reverse links |
-| `tests/test_endorsements.py` | Endorsement normalization — merge helper, processing, repair |
+| `tests/test_endorsements.py` | Endorsement normalization — merge helper, processing, repair, alias system |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions |
 | `tests/test_rebuild.py` | Rebuild from sources — empty data, snapshot ingestion, overwrite/force, DB comparison |
 | `tests/test_scraper.py` | Scraper logic — content hash deduplication, redundant data cleanup |
 | `tests/test_queries.py` | Record insertion, deduplication, entity creation |
+| `tests/test_address_validator.py` | Address validation client — request building, response parsing, error handling |
+| `tests/test_routes.py` | Public route tests — dashboard layout, search, stat cards |
+| `tests/test_api_routes.py` | Versioned API routes — cities, stats, export, health check |
+| `tests/test_entities.py` | Entity normalization — extraction, cleaning, type classification |
+| `tests/test_source_viewer.py` | Source viewer route — snapshot dispatch, iframe rendering, not-found cases |
+| `tests/test_admin_auth.py` | Admin authentication — header extraction, env-var fallback, redirect/403 |
+| `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
+| `tests/test_admin_users.py` | Admin user management routes — add, remove, list, self-removal guard |
+| `tests/test_admin_endorsements.py` | Admin endorsement/substance routes — add, remove, set-endorsements |
 | `tests/conftest.py` | Shared fixtures: in-memory DB, sample record dicts |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |
 
