@@ -99,7 +99,10 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
             )
             return None
 
-        return response.json()
+        data = response.json()
+        for warn in data.get("warnings") or []:
+            logger.warning("Address API warning for %r: %s", address, warn)
+        return data
 
     except httpx.TimeoutException:
         logger.warning("Timeout calling address validation API for: %s", address)

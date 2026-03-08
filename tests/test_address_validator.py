@@ -112,6 +112,43 @@ def test_standardize_returns_none_on_timeout(monkeypatch):
     assert result is None
 
 
+# ── standardize() — warnings ────────────────────────────────────────
+
+
+def test_standardize_logs_warnings(monkeypatch, caplog):
+    """standardize() emits a warning log for each entry in the API warnings list."""
+    import logging
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    response_with_warnings = dict(_GOOD_RESPONSE, warnings=["ambiguous_input", "address_not_found"])
+    client = _mock_client(response_with_warnings)
+    with caplog.at_level(logging.WARNING, logger="address_validator"):
+        av.standardize("123 MAIN ST, SEATTLE, WA 98101", client=client)
+    messages = [r.message for r in caplog.records]
+    assert any("ambiguous_input" in m for m in messages)
+    assert any("address_not_found" in m for m in messages)
+
+
+def test_standardize_no_log_when_warnings_absent(monkeypatch, caplog):
+    """standardize() emits no warning logs when the warnings field is absent."""
+    import logging
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    client = _mock_client(_GOOD_RESPONSE)  # _GOOD_RESPONSE has no 'warnings' key
+    with caplog.at_level(logging.WARNING, logger="address_validator"):
+        av.standardize("123 MAIN ST, SEATTLE, WA 98101", client=client)
+    assert caplog.records == []
+
+
+def test_standardize_no_log_when_warnings_empty(monkeypatch, caplog):
+    """standardize() emits no warning logs when warnings is an empty list."""
+    import logging
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    response_empty_warnings = dict(_GOOD_RESPONSE, warnings=[])
+    client = _mock_client(response_empty_warnings)
+    with caplog.at_level(logging.WARNING, logger="address_validator"):
+        av.standardize("123 MAIN ST, SEATTLE, WA 98101", client=client)
+    assert caplog.records == []
+
+
 # ── validate_location() ──────────────────────────────────────────────
 
 
