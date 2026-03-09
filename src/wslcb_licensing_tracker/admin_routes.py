@@ -11,15 +11,15 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from admin_auth import require_admin
-from admin_audit import get_audit_log, log_action
-from db import get_db
-from endorsements import (
+from .admin_auth import require_admin
+from .admin_audit import get_audit_log, log_action
+from .db import get_db
+from .endorsements import (
     reprocess_endorsements,
     rename_endorsement,
     set_canonical_endorsement,
 )
-from endorsements_admin import (
+from .endorsements_admin import (
     add_code_mapping,
     create_code,
     dismiss_suggestion,
@@ -28,13 +28,13 @@ from endorsements_admin import (
     remove_code_mapping,
     suggest_duplicate_endorsements,
 )
-from integrity import (
+from .integrity import (
     check_endorsement_anomalies,
     check_orphaned_locations,
     check_unenriched_records,
 )
-from queries import invalidate_filter_cache
-from substances import (
+from .queries import invalidate_filter_cache
+from .substances import (
     add_substance,
     get_regulated_substances,
     remove_substance,

@@ -6,7 +6,7 @@ import pytest
 
 def _insert_record(db, record):
     """Insert a minimal license record directly and return its id."""
-    from queries import insert_record
+    from wslcb_licensing_tracker.queries import insert_record
     result = insert_record(db, record)
     assert result is not None
     return result[0]
@@ -32,7 +32,7 @@ class TestParseAndLinkEntities:
         # Clear pipeline-inserted links so we test parse_and_link_entities directly
         db.execute("DELETE FROM record_entities WHERE record_id = ?", (rid,))
 
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         n = parse_and_link_entities(db, rid, "BIZ; ALICE; BOB")
         assert n == 2
         links = _entity_links(db, rid)
@@ -42,7 +42,7 @@ class TestParseAndLinkEntities:
         rid = _insert_record(db, standard_new_application)
         db.execute("DELETE FROM record_entities WHERE record_id = ?", (rid,))
 
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         n = parse_and_link_entities(db, rid, "JUST A NAME")
         assert n == 0
         assert _entity_links(db, rid) == []
@@ -51,7 +51,7 @@ class TestParseAndLinkEntities:
         rid = _insert_record(db, standard_new_application)
         db.execute("DELETE FROM record_entities WHERE record_id = ?", (rid,))
 
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         parse_and_link_entities(db, rid, "BIZ; ALICE")
         # Second call without delete_existing — INSERT OR IGNORE, so no duplicates
         n = parse_and_link_entities(db, rid, "BIZ; ALICE")
@@ -62,7 +62,7 @@ class TestParseAndLinkEntities:
         rid = _insert_record(db, standard_new_application)
         db.execute("DELETE FROM record_entities WHERE record_id = ?", (rid,))
 
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         parse_and_link_entities(db, rid, "BIZ; ALICE; BOB")
         assert len(_entity_links(db, rid)) == 2
 
@@ -76,7 +76,7 @@ class TestParseAndLinkEntities:
         rid = _insert_record(db, standard_new_application)
         db.execute("DELETE FROM record_entities WHERE record_id = ?", (rid,))
 
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         parse_and_link_entities(db, rid, "BIZ; ALICE")
         assert len(_entity_links(db, rid)) == 1
 
@@ -89,7 +89,7 @@ class TestParseAndLinkEntities:
         rid = _insert_record(db, assumption_record)
         db.execute("DELETE FROM record_entities WHERE record_id = ?", (rid,))
 
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         parse_and_link_entities(db, rid, "BIZ; ALICE", role="applicant")
         parse_and_link_entities(db, rid, "OLD BIZ; BOB", role="previous_applicant")
 
@@ -113,7 +113,7 @@ class TestReprocessEntities:
             "SELECT COUNT(*) FROM record_entities WHERE record_id = ?", (rid,)
         ).fetchone()[0]
 
-        from entities import reprocess_entities
+        from wslcb_licensing_tracker.entities import reprocess_entities
         result = reprocess_entities(db, dry_run=True)
         assert result["records_processed"] >= 1
 
@@ -126,7 +126,7 @@ class TestReprocessEntities:
         _insert_record(db, standard_new_application)
         _insert_record(db, assumption_record)
 
-        from entities import reprocess_entities
+        from wslcb_licensing_tracker.entities import reprocess_entities
         result = reprocess_entities(db)
         assert result["records_processed"] == 2
 
@@ -134,14 +134,14 @@ class TestReprocessEntities:
         rid1 = _insert_record(db, standard_new_application)
         rid2 = _insert_record(db, assumption_record)
 
-        from entities import reprocess_entities
+        from wslcb_licensing_tracker.entities import reprocess_entities
         result = reprocess_entities(db, record_id=rid1)
         assert result["records_processed"] == 1
 
     def test_idempotent(self, db, standard_new_application):
         rid = _insert_record(db, standard_new_application)
 
-        from entities import reprocess_entities
+        from wslcb_licensing_tracker.entities import reprocess_entities
         r1 = reprocess_entities(db)
         db.commit()
         links_after_first = db.execute(
@@ -160,7 +160,7 @@ class TestReprocessEntities:
     def test_version_stamp_bumped(self, db, standard_new_application):
         rid = _insert_record(db, standard_new_application)
 
-        from entities import reprocess_entities, _ENTITY_REPROCESS_VERSION
+        from wslcb_licensing_tracker.entities import reprocess_entities, _ENTITY_REPROCESS_VERSION
         reprocess_entities(db, record_id=rid)
         db.commit()
 
@@ -175,7 +175,7 @@ class TestReprocessEntities:
         rid1 = _insert_record(db, standard_new_application)
         rid2 = _insert_record(db, assumption_record)
 
-        from entities import reprocess_entities, _ENTITY_REPROCESS_VERSION
+        from wslcb_licensing_tracker.entities import reprocess_entities, _ENTITY_REPROCESS_VERSION
         reprocess_entities(db)
         db.commit()
 
@@ -201,7 +201,7 @@ class TestReprocessEntities:
         )
         db.commit()
 
-        from entities import reprocess_entities
+        from wslcb_licensing_tracker.entities import reprocess_entities
         reprocess_entities(db, record_id=rid)
         db.commit()
 
@@ -216,7 +216,7 @@ class TestReprocessEntities:
     def test_previous_applicants_also_reprocessed(self, db, assumption_record):
         rid = _insert_record(db, assumption_record)
 
-        from entities import reprocess_entities
+        from wslcb_licensing_tracker.entities import reprocess_entities
         result = reprocess_entities(db, record_id=rid)
         db.commit()
 
@@ -233,7 +233,7 @@ class TestReprocessEntities:
             (rid,),
         ).fetchone()
 
-        from entities import reprocess_entities
+        from wslcb_licensing_tracker.entities import reprocess_entities
         reprocess_entities(db, record_id=rid, dry_run=True)
 
         after = db.execute(
@@ -251,12 +251,12 @@ class TestAdditionalNamesMarker:
     """Tests for ADDITIONAL_NAMES_MARKERS skip logic in parse_and_link_entities."""
 
     def test_marker_constant_exported(self):
-        from entities import ADDITIONAL_NAMES_MARKERS
+        from wslcb_licensing_tracker.entities import ADDITIONAL_NAMES_MARKERS
         assert "ADDITIONAL NAMES ON FILE" in ADDITIONAL_NAMES_MARKERS
         assert "ADDTIONAL NAMES ON FILE" in ADDITIONAL_NAMES_MARKERS
 
     def test_exact_marker_not_created_as_entity(self, db):
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         record_id = db.execute(
             "INSERT INTO license_records (section_type, record_date, license_number, "
             "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
@@ -274,7 +274,7 @@ class TestAdditionalNamesMarker:
         assert "JANE DOE" in names
 
     def test_typo_marker_not_created_as_entity(self, db):
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         record_id = db.execute(
             "INSERT INTO license_records (section_type, record_date, license_number, "
             "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
@@ -293,7 +293,7 @@ class TestAdditionalNamesMarker:
 
     def test_positions_are_contiguous_across_marker(self, db):
         """Positions for real entities must be 0,1,2,… with no gap for the skipped marker."""
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         record_id = db.execute(
             "INSERT INTO license_records (section_type, record_date, license_number, "
             "application_type, scraped_at) VALUES ('new_application', '2025-01-01', "
@@ -320,7 +320,7 @@ class TestStripDuplicateMarker:
     """Tests for the pure strip_duplicate_marker() helper."""
 
     def _strip(self, name):
-        from entities import strip_duplicate_marker
+        from wslcb_licensing_tracker.entities import strip_duplicate_marker
         return strip_duplicate_marker(name)
 
     def test_parenthesized(self):
@@ -369,7 +369,7 @@ class TestCleanApplicantsStringDuplicate:
     """DUPLICATE markers must be stripped by clean_applicants_string()."""
 
     def _clean(self, s):
-        from entities import clean_applicants_string
+        from wslcb_licensing_tracker.entities import clean_applicants_string
         return clean_applicants_string(s)
 
     def test_parenthesized_marker_stripped(self):
@@ -409,7 +409,7 @@ class TestParseAndLinkEntitiesDuplicate:
         ).fetchone()[0]
 
     def test_duplicate_annotated_name_links_clean_entity(self, db):
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         rid = self._make_record(db, "DUP001")
         # "ADAM (DUPLICATE) BENTON" must resolve to / create "ADAM BENTON"
         parse_and_link_entities(db, rid, "BIZ; ADAM (DUPLICATE) BENTON")
@@ -426,7 +426,7 @@ class TestParseAndLinkEntitiesDuplicate:
 
     def test_duplicate_and_clean_in_same_string_links_once(self, db):
         """When the source lists both forms, only one entity link is created."""
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         rid = self._make_record(db, "DUP002")
         parse_and_link_entities(
             db, rid, "BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON"
@@ -445,7 +445,7 @@ class TestParseAndLinkEntitiesDuplicate:
 
     def test_lone_duplicate_token_creates_synthesized_entity(self, db):
         """When no clean counterpart exists, synthesize and create the clean entity."""
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         rid = self._make_record(db, "DUP003")
         parse_and_link_entities(db, rid, "BIZ; LORIE DUPLICATE FAZIO")
         db.commit()
@@ -465,7 +465,7 @@ class TestParseAndLinkEntitiesDuplicate:
 
     def test_numbered_parenthesized_all_resolve_to_same_entity(self, db):
         """(DUPLICATE), (DUPLICATE 2), (DUPLICATE 3) all collapse to the same entity."""
-        from entities import parse_and_link_entities
+        from wslcb_licensing_tracker.entities import parse_and_link_entities
         rid = self._make_record(db, "DUP004")
         applicants = (
             "BIZ; KATIE (DUPLICATE) DAVIS; KATIE (DUPLICATE 2) DAVIS; "

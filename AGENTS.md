@@ -12,8 +12,8 @@ This is a Python web application that scrapes Washington State Liquor and Cannab
 ## Architecture at a Glance
 
 ```
-scraper.py ─┐
-backfill_snapshots.py ─┼─→ pipeline.py ─→ data/wslcb.db (SQLite + FTS5) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
+src/wslcb_licensing_tracker/scraper.py ─┐
+src/wslcb_licensing_tracker/backfill_snapshots.py ─┼─→ pipeline.py ─→ data/wslcb.db (SQLite + FTS5) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
 backfill_diffs.py ───┘                                                         ←─ display.py (presentation)
                        ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html (archived snapshots)
 
@@ -22,6 +22,7 @@ license_records → locations (FK: location_id, previous_location_id)
 ```
 
 - **No build step.** The frontend uses Tailwind CSS via CDN and HTMX. No node_modules, no bundler.
+- **Source layout.** All Python source lives in `src/wslcb_licensing_tracker/`. The CLI entry point is `wslcb` (installed via `uv sync`). Run as `python -m wslcb_licensing_tracker.cli <subcommand>` or `wslcb <subcommand>`.
 - **Small modules.** The DB layer is split into `db.py` (connections/constants/helpers) and `schema.py` (DDL/migrations/FTS). Entity normalization lives in `entities.py`; search/read queries in `queries.py`; record insertion and enrichment in `pipeline.py`. All ingestion flows through `pipeline.py`. Dependencies flow one-way: `pipeline → db, schema, endorsements, entities, link_records, address_validator`; `queries → db, schema, entities, endorsements, display, link_records`.
 - **SQLite is the only datastore.** No Redis, no Postgres. WAL mode is enabled for concurrent reads.
 
@@ -29,44 +30,44 @@ license_records → locations (FK: location_id, previous_location_id)
 
 | File | Purpose | Notes |
 |---|---|---|
-| `db.py` | Connection management, constants, and core helpers | `get_connection()`, `get_db()`, `DATA_DIR`, `DB_PATH`, source type constants, `WSLCB_SOURCE_URL`, `_normalize_raw_address()`. `SOURCE_ROLE_PRIORITY` — shared dict `{"first_seen": 0, "repaired": 1, "confirmed": 2}` imported by both `db.py` and `display.py` to avoid circular imports. `US_STATES` — dict of US state code → full name; used by the state filter dropdown (defined here as pure reference data). Location helper: `get_or_create_location()`. Source helpers: `get_or_create_source()`, `link_record_source()`. Provenance queries: `get_primary_source(conn, record_id) → dict | None` — returns the single most-relevant source for a record by role priority (`first_seen > repaired > confirmed`), then snapshot presence, then newest `captured_at`; `get_record_sources(conn, record_id) → list[dict]` — returns all provenance sources newest-first. |
-| `schema.py` | DDL, migrations, FTS | All table creation, `PRAGMA user_version` migration framework, FTS5 setup, data seeding. `init_db()`, `migrate()`, `MIGRATIONS` list. `_table_exists(conn, name)`, `_column_exists(conn, table, column)` — private introspection helpers used by migration guards; exported for testability (both args must be trusted schema-name literals). Migration 002 (`enrichment_tracking`) adds `record_enrichments` table and `raw_*` shadow columns. |
-| `entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`, `reprocess_entities()`. `strip_duplicate_marker(name)` — strips WSLCB `DUPLICATE` annotation tokens (e.g. `(DUPLICATE)`, `DUPLICATE`, `*DUPLICATE*`, unclosed `(DUPLICATE`) from a single applicant name; called by both `clean_applicants_string()` and `parse_and_link_entities()`. `ADDITIONAL_NAMES_MARKERS` — exported `frozenset` of WSLCB meta-label strings (`"ADDITIONAL NAMES ON FILE"` and typo variant) that must be skipped during entity creation; imported by `queries.py` for ingest-time flag detection. |
-| `queries.py` | Record search and read queries | `search_records()`, `export_records()`, `export_records_cursor()` (streaming generator variant — yields one dict per row directly from the SQLite cursor; used by the `/export` route via `StreamingResponse`), `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`, `get_entities()`. `get_entities(conn, *, q, entity_type, sort, page, per_page) → dict` — paginated, searchable entity list; returns `{"entities": [...], "total": int}`; `sort` accepts `"count"` (default, record_count DESC) or `"name"` (ASC); any non-`"name"` value defaults to count-sort; `page` is clamped to `max(1, page)`. `invalidate_filter_cache()` — clears the 5-minute in-process filter option cache; call after any admin mutation that changes endorsements or substances. `_build_where_clause()` accepts `endorsements: list[str]` for multi-select OR-semantics filtering (also handles mixed known/unknown names gracefully). `_EXPORT_SELECT` — module-level SQL constant for CSV export; bakes in `DATA_GAP_CUTOFF`, `PENDING_CUTOFF_DAYS`, and `LINKABLE_TYPES` at import time (no runtime `.format()`). Uses three correlated subqueries against `record_links` (via `idx_record_links_new`) instead of a materialised window-function CTE, so the outer WHERE filter is applied before link resolution. `outcome_status` uses `CASE (subquery) WHEN` form to evaluate the `section_type` lookup once rather than twice. Re-exports `insert_record` (from `pipeline`), `get_primary_source` / `get_record_sources` / `US_STATES` (from `db`) for backward compatibility. |
-| `endorsements.py` | License type normalization (core) | Loads `SEED_CODE_MAP` from `seed_code_map.json` at module init (103 codes). `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, `_merge_endorsement()` (shared merge helper), `get_endorsement_options()`, `get_record_endorsements()`, `resolve_endorsement()`, `set_canonical_endorsement()`, `rename_endorsement()`, `get_endorsement_groups()`. Re-exports all public names from `endorsements_admin` and `substances` for backward compatibility. |
-| `seed_code_map.json` | Seed data: WSLCB numeric code → endorsement name(s) | 103-entry JSON dict loaded by `endorsements.py` at module init. Keys are WSLCB license class ID strings; values are lists of endorsement names. Edit this file (not the Python module) when adding or correcting seed mappings. |
-| `endorsements_admin.py` | Admin UI helpers for endorsement management | Similarity algorithm (`endorsement_similarity()`, `_sim_tokenize()`, `_sim_features()`), `get_endorsement_list()`, `suggest_duplicate_endorsements()`, `dismiss_suggestion()`, `get_code_mappings()`, `add_code_mapping()`, `remove_code_mapping()`, `create_code()`. No dependency on `admin_audit` — audit logging is the caller's responsibility. |
-| `substances.py` | Regulated substance CRUD | `get_regulated_substances()`, `get_substance_endorsement_ids()`, `set_substance_endorsements()`, `add_substance()`, `remove_substance()`. No dependency on `admin_audit` — audit logging is the caller's responsibility. Route handlers in `app.py` call `log_action()` directly after each mutation. |
-| `log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
-| `parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `db.DATA_DIR`. `extract_tbody_from_snapshot(path, section_type, license_number, record_date, application_type) → str | None` — locates and returns the raw outer HTML of the matching `<tbody>` in a full HTML snapshot file. `extract_tbody_from_diff(path, ...) → str | None` — reconstructs a `<tbody>` from added (then removed) lines of a unified diff file. `_match_key(tbody, ...)` — shared BeautifulSoup key-matching helper. `_extract_tbody_lines(lines) → list[list[str]]` — splits flat diff lines into per-record groups, handling both `<tbody>`-wrapped and bare-`<tr>` formats. |
-| `scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()`, `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`. Logs to `scrape_log` table. Archives source HTML. Uses `pipeline.ingest_batch()` for record insertion. Skips parse/ingest when content hash matches last successful scrape (`status='unchanged'`). Use `cli.py scrape` to run. |
-| `cli.py` | Unified CLI entry point | Argparse subcommands for all operational tasks. Includes `cleanup-redundant` for removing data from zero-new-record scrapes. Replaces `python scraper.py --flag` pattern. |
-| `backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records via `pipeline.ingest_batch()`, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `cli.py backfill-addresses`. |
-| `address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000/api/v1/`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. Response fields: `region` (→ `std_region`), `postal_code` (→ `std_postal_code`), `country` (→ `std_country`, validated as ISO 3166-1 alpha-2 before storage). `warnings` list from the API is logged via `logger.warning()` with the raw address for context; not stored in the DB. |
-| `app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. Public routes only — admin routes are in `admin_routes.py`, included via `app.include_router()` near the app setup block. `admin_routes.init_router(_tpl)` is called after `_tpl` is defined (must precede first request). `GET /source/{source_id}/record/{record_id}` — public HTMX partial; validates source↔record link, dispatches to `extract_tbody_from_snapshot` or `extract_tbody_from_diff` based on `source_type`, renders `partials/source_viewer.html`. `srcdoc_attr` is built server-side with `html.escape()` to correctly encode the full iframe page HTML for the attribute context. |
-| `api_routes.py` | FastAPI `APIRouter` for all `/api/v1/*` routes | All versioned public API handlers. `APIRouter(prefix="/api/v1", tags=["api"])`. JSON responses use `{"ok": bool, "message": str, "data": ...}` envelope via `_ok()` helper; CSV export (`/api/v1/export`) is exempt (returns `StreamingResponse`). Endpoints: `GET /api/v1/cities` (state→cities lookup, Cache-Control 5 min), `GET /api/v1/stats` (aggregate DB stats), `GET /api/v1/export` (streaming CSV), `GET /api/v1/health` (DB probe, 200/503, no auth). Tests must patch `api_routes.get_db`; `test_routes.py` `_make_client` also patches it for export tests. |
-| `admin_routes.py` | FastAPI `APIRouter` for all `/admin/*` routes | All admin route handlers extracted from `app.py`. Uses `init_router(tpl_fn)` to receive the shared `_tpl()` helper at startup (must be called before the first request; raises `RuntimeError` otherwise). Tests must patch `admin_routes.get_db` (not `app.get_db`) when testing admin endpoints. Public-route tests (`test_routes.py`) continue to patch `app.get_db` since those handlers were not moved. |
+| `src/wslcb_licensing_tracker/db.py` | Connection management, constants, and core helpers | `get_connection()`, `get_db()`, `DATA_DIR`, `DB_PATH`, source type constants, `WSLCB_SOURCE_URL`, `_normalize_raw_address()`. `SOURCE_ROLE_PRIORITY` — shared dict `{"first_seen": 0, "repaired": 1, "confirmed": 2}` imported by both `db.py` and `display.py` to avoid circular imports. `US_STATES` — dict of US state code → full name; used by the state filter dropdown (defined here as pure reference data). Location helper: `get_or_create_location()`. Source helpers: `get_or_create_source()`, `link_record_source()`. Provenance queries: `get_primary_source(conn, record_id) → dict | None` — returns the single most-relevant source for a record by role priority (`first_seen > repaired > confirmed`), then snapshot presence, then newest `captured_at`; `get_record_sources(conn, record_id) → list[dict]` — returns all provenance sources newest-first. |
+| `src/wslcb_licensing_tracker/schema.py` | DDL, migrations, FTS | All table creation, `PRAGMA user_version` migration framework, FTS5 setup, data seeding. `init_db()`, `migrate()`, `MIGRATIONS` list. `_table_exists(conn, name)`, `_column_exists(conn, table, column)` — private introspection helpers used by migration guards; exported for testability (both args must be trusted schema-name literals). Migration 002 (`enrichment_tracking`) adds `record_enrichments` table and `raw_*` shadow columns. |
+| `src/wslcb_licensing_tracker/entities.py` | Entity (applicant) normalization | `get_or_create_entity()`, `backfill_entities()`, `get_record_entities()`, `get_entity_by_id()`, `merge_duplicate_entities()`, `clean_applicants_string()`, `clean_record_strings()`, `parse_and_link_entities()`, `reprocess_entities()`. `strip_duplicate_marker(name)` — strips WSLCB `DUPLICATE` annotation tokens (e.g. `(DUPLICATE)`, `DUPLICATE`, `*DUPLICATE*`, unclosed `(DUPLICATE`) from a single applicant name; called by both `clean_applicants_string()` and `parse_and_link_entities()`. `ADDITIONAL_NAMES_MARKERS` — exported `frozenset` of WSLCB meta-label strings (`"ADDITIONAL NAMES ON FILE"` and typo variant) that must be skipped during entity creation; imported by `queries.py` for ingest-time flag detection. |
+| `src/wslcb_licensing_tracker/queries.py` | Record search and read queries | `search_records()`, `export_records()`, `export_records_cursor()` (streaming generator variant — yields one dict per row directly from the SQLite cursor; used by the `/export` route via `StreamingResponse`), `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`, `get_entities()`. `get_entities(conn, *, q, entity_type, sort, page, per_page) → dict` — paginated, searchable entity list; returns `{"entities": [...], "total": int}`; `sort` accepts `"count"` (default, record_count DESC) or `"name"` (ASC); any non-`"name"` value defaults to count-sort; `page` is clamped to `max(1, page)`. `invalidate_filter_cache()` — clears the 5-minute in-process filter option cache; call after any admin mutation that changes endorsements or substances. `_build_where_clause()` accepts `endorsements: list[str]` for multi-select OR-semantics filtering (also handles mixed known/unknown names gracefully). `_EXPORT_SELECT` — module-level SQL constant for CSV export; bakes in `DATA_GAP_CUTOFF`, `PENDING_CUTOFF_DAYS`, and `LINKABLE_TYPES` at import time (no runtime `.format()`). Uses three correlated subqueries against `record_links` (via `idx_record_links_new`) instead of a materialised window-function CTE, so the outer WHERE filter is applied before link resolution. `outcome_status` uses `CASE (subquery) WHEN` form to evaluate the `section_type` lookup once rather than twice. Re-exports `insert_record` (from `pipeline`), `get_primary_source` / `get_record_sources` / `US_STATES` (from `db`) for backward compatibility. |
+| `src/wslcb_licensing_tracker/endorsements.py` | License type normalization (core) | Loads `SEED_CODE_MAP` from `seed_code_map.json` at module init (103 codes). `process_record()`, `discover_code_mappings()`, `repair_code_name_endorsements()`, `_merge_endorsement()` (shared merge helper), `get_endorsement_options()`, `get_record_endorsements()`, `resolve_endorsement()`, `set_canonical_endorsement()`, `rename_endorsement()`, `get_endorsement_groups()`. Re-exports all public names from `endorsements_admin` and `substances` for backward compatibility. |
+| `src/wslcb_licensing_tracker/seed_code_map.json` | Seed data: WSLCB numeric code → endorsement name(s) | 103-entry JSON dict loaded by `endorsements.py` at module init. Keys are WSLCB license class ID strings; values are lists of endorsement names. Edit this file (not the Python module) when adding or correcting seed mappings. |
+| `src/wslcb_licensing_tracker/endorsements_admin.py` | Admin UI helpers for endorsement management | Similarity algorithm (`endorsement_similarity()`, `_sim_tokenize()`, `_sim_features()`), `get_endorsement_list()`, `suggest_duplicate_endorsements()`, `dismiss_suggestion()`, `get_code_mappings()`, `add_code_mapping()`, `remove_code_mapping()`, `create_code()`. No dependency on `admin_audit` — audit logging is the caller's responsibility. |
+| `src/wslcb_licensing_tracker/substances.py` | Regulated substance CRUD | `get_regulated_substances()`, `get_substance_endorsement_ids()`, `set_substance_endorsements()`, `add_substance()`, `remove_substance()`. No dependency on `admin_audit` — audit logging is the caller's responsibility. Route handlers in `app.py` call `log_action()` directly after each mutation. |
+| `src/wslcb_licensing_tracker/log_config.py` | Centralized logging setup | `setup_logging()` configures root logger; auto-detects TTY vs JSON format. Called once per entry point. |
+| `src/wslcb_licensing_tracker/parser.py` | Pure HTML/diff parsing | All parsing functions, file discovery, constants. No DB access, no side effects. Only depends on stdlib + bs4/lxml + `db.DATA_DIR`. `extract_tbody_from_snapshot(path, section_type, license_number, record_date, application_type) → str | None` — locates and returns the raw outer HTML of the matching `<tbody>` in a full HTML snapshot file. `extract_tbody_from_diff(path, ...) → str | None` — reconstructs a `<tbody>` from added (then removed) lines of a unified diff file. `_match_key(tbody, ...)` — shared BeautifulSoup key-matching helper. `_extract_tbody_lines(lines) → list[list[str]]` — splits flat diff lines into per-record groups, handling both `<tbody>`-wrapped and bare-`<tr>` formats. |
+| `src/wslcb_licensing_tracker/scraper.py` | Fetches and parses the WSLCB page | Exports `scrape()`, `compute_content_hash()`, `get_last_content_hash()`, `cleanup_redundant_scrapes()`. Logs to `scrape_log` table. Archives source HTML. Uses `pipeline.ingest_batch()` for record insertion. Skips parse/ingest when content hash matches last successful scrape (`status='unchanged'`). Use `cli.py scrape` to run. |
+| `src/wslcb_licensing_tracker/cli.py` | Unified CLI entry point | Argparse subcommands for all operational tasks. Includes `cleanup-redundant` for removing data from zero-new-record scrapes. Replaces `python scraper.py --flag` pattern. |
+| `src/wslcb_licensing_tracker/backfill_snapshots.py` | Ingest + repair from archived snapshots | Two-phase: (1) insert new records via `pipeline.ingest_batch()`, (2) repair broken ASSUMPTION/CHANGE OF LOCATION records. Safe to re-run. Address validation deferred to `cli.py backfill-addresses`. |
+| `src/wslcb_licensing_tracker/address_validator.py` | Client for address validation API | Calls `https://address-validator.exe.xyz:8000/api/v1/`. API key in `./env` file. Graceful degradation on failure. Exports `refresh_addresses()` for full re-validation. Response fields: `region` (→ `std_region`), `postal_code` (→ `std_postal_code`), `country` (→ `std_country`, validated as ISO 3166-1 alpha-2 before storage). `warnings` list from the API is logged via `logger.warning()` with the raw address for context; not stored in the DB. |
+| `src/wslcb_licensing_tracker/app.py` | FastAPI web app | Runs on port 8000. Mounts `/static`, uses Jinja2 templates. Uses `@app.lifespan`. Public routes only — admin routes are in `admin_routes.py`, included via `app.include_router()` near the app setup block. `admin_routes.init_router(_tpl)` is called after `_tpl` is defined (must precede first request). `GET /source/{source_id}/record/{record_id}` — public HTMX partial; validates source↔record link, dispatches to `extract_tbody_from_snapshot` or `extract_tbody_from_diff` based on `source_type`, renders `partials/source_viewer.html`. `srcdoc_attr` is built server-side with `html.escape()` to correctly encode the full iframe page HTML for the attribute context. |
+| `src/wslcb_licensing_tracker/api_routes.py` | FastAPI `APIRouter` for all `/api/v1/*` routes | All versioned public API handlers. `APIRouter(prefix="/api/v1", tags=["api"])`. JSON responses use `{"ok": bool, "message": str, "data": ...}` envelope via `_ok()` helper; CSV export (`/api/v1/export`) is exempt (returns `StreamingResponse`). Endpoints: `GET /api/v1/cities` (state→cities lookup, Cache-Control 5 min), `GET /api/v1/stats` (aggregate DB stats), `GET /api/v1/export` (streaming CSV), `GET /api/v1/health` (DB probe, 200/503, no auth). Tests must patch `api_routes.get_db`; `test_routes.py` `_make_client` also patches it for export tests. |
+| `src/wslcb_licensing_tracker/admin_routes.py` | FastAPI `APIRouter` for all `/admin/*` routes | All admin route handlers extracted from `app.py`. Uses `init_router(tpl_fn)` to receive the shared `_tpl()` helper at startup (must be called before the first request; raises `RuntimeError` otherwise). Tests must patch `admin_routes.get_db` (not `app.get_db`) when testing admin endpoints. Public-route tests (`test_routes.py`) continue to patch `app.get_db` since those handlers were not moved. |
 | `templates/` | Jinja2 HTML templates | `base.html` is the layout (includes Tailwind config with brand colors). `partials/results.html` is the HTMX target. `partials/record_table.html` is the shared record table (used by results and entity pages). `404.html` handles not-found errors. |
-| `pipeline.py` | Unified ingestion pipeline | `insert_record()` — canonical record-insertion function (dedup, location resolution, name cleaning, entity linking). `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult` — full enrichment pipeline wrapping `insert_record()`; all ingestion paths (scraper, snapshot backfill, diff backfill) go through this module. `_applicants_have_additional_names(*strings)` — returns `True` if any semicolon-delimited token in the given applicant strings matches `ADDITIONAL_NAMES_MARKERS`; used internally by `insert_record()` to set `has_additional_names`. Tracks enrichment completion via `_record_enrichment()` after each step. Exports step name constants: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`. |
-| `display.py` | Presentation formatting | `format_outcome()`, `summarize_provenance()`, `OUTCOME_STYLES`. Owns CSS classes, icons, badge text; domain layer returns semantic data only. `summarize_provenance()` emits `primary_source_id` per group — the `id` of the highest-priority source of that type (role priority from `db.SOURCE_ROLE_PRIORITY`, then snapshot presence, then newest `captured_at`). `_ROLE_PRIORITY` — module-level alias for `db.SOURCE_ROLE_PRIORITY`. |
-| `link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()` (semantic only — no CSS), `get_reverse_link_info()`, `outcome_filter_sql()`. Internally: `_link_section(mode)` handles bulk linking (parameterized for approval/discontinuance), `_link_incremental(direction)` handles single-record linking (parameterized for forward/backward). |
-| `backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records via `pipeline.ingest_record()`. Parsing logic lives in `parser.py`. Safe to re-run. |
-| `backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
-| `integrity.py` | Database integrity checks | `check_orphaned_locations()`, `check_broken_fks()`, `check_unenriched_records()`, `check_endorsement_anomalies()`, `check_entity_duplicates()`, `run_all_checks()`, `fix_orphaned_locations()`. Used by `cli.py check`. |
-| `rebuild.py` | Rebuild database from sources | `rebuild_from_sources()`, `compare_databases()`, `RebuildResult`, `ComparisonResult`. Four-phase rebuild: (1) replay diff archives, (2) replay HTML snapshots, (3) endorsement discovery, (4) build outcome links. Verification compares natural keys between production and rebuilt DBs. Used by `cli.py rebuild`. |
+| `src/wslcb_licensing_tracker/pipeline.py` | Unified ingestion pipeline | `insert_record()` — canonical record-insertion function (dedup, location resolution, name cleaning, entity linking). `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult` — full enrichment pipeline wrapping `insert_record()`; all ingestion paths (scraper, snapshot backfill, diff backfill) go through this module. `_applicants_have_additional_names(*strings)` — returns `True` if any semicolon-delimited token in the given applicant strings matches `ADDITIONAL_NAMES_MARKERS`; used internally by `insert_record()` to set `has_additional_names`. Tracks enrichment completion via `_record_enrichment()` after each step. Exports step name constants: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`. |
+| `src/wslcb_licensing_tracker/display.py` | Presentation formatting | `format_outcome()`, `summarize_provenance()`, `OUTCOME_STYLES`. Owns CSS classes, icons, badge text; domain layer returns semantic data only. `summarize_provenance()` emits `primary_source_id` per group — the `id` of the highest-priority source of that type (role priority from `db.SOURCE_ROLE_PRIORITY`, then snapshot presence, then newest `captured_at`). `_ROLE_PRIORITY` — module-level alias for `db.SOURCE_ROLE_PRIORITY`. |
+| `src/wslcb_licensing_tracker/link_records.py` | Application→outcome record linking | Bidirectional nearest-neighbor matching with ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()` (semantic only — no CSS), `get_reverse_link_info()`, `outcome_filter_sql()`. Internally: `_link_section(mode)` handles bulk linking (parameterized for approval/discontinuance), `_link_incremental(direction)` handles single-record linking (parameterized for forward/backward). |
+| `src/wslcb_licensing_tracker/backfill_diffs.py` | Ingest from CO diff archives | Orchestrates insertion from diff-extracted records via `pipeline.ingest_record()`. Parsing logic lives in `parser.py`. Safe to re-run. |
+| `src/wslcb_licensing_tracker/backfill_provenance.py` | One-time provenance backfill | Re-processes all snapshots to populate `record_sources` junction links for existing records. Safe to re-run. |
+| `src/wslcb_licensing_tracker/integrity.py` | Database integrity checks | `check_orphaned_locations()`, `check_broken_fks()`, `check_unenriched_records()`, `check_endorsement_anomalies()`, `check_entity_duplicates()`, `run_all_checks()`, `fix_orphaned_locations()`. Used by `cli.py check`. |
+| `src/wslcb_licensing_tracker/rebuild.py` | Rebuild database from sources | `rebuild_from_sources()`, `compare_databases()`, `RebuildResult`, `ComparisonResult`. Four-phase rebuild: (1) replay diff archives, (2) replay HTML snapshots, (3) endorsement discovery, (4) build outcome links. Verification compares natural keys between production and rebuilt DBs. Used by `cli.py rebuild`. |
 | `templates/entities.html` | Entities landing page | `GET /entities` — searchable, paginated list of all applicant entities. Search input (HTMX live, 300 ms debounce), type filter buttons (All / People / Organizations), sort toggle (Most Active / A–Z). HTMX target `#entities-results`; partial swapped from `partials/entities_results.html`. Route param `entity_type` uses `Query(alias="type")` to map the `?type=` query-string key without shadowing the Python builtin. |
 | `templates/partials/entities_results.html` | Entities results partial | HTMX-swapped into `#entities-results`; renders results table (name link → `/entity/{id}`, type badge, record count), row-count line, Clear filters link, and Prev/Next pagination. |
 | `templates/entity.html` | Entity detail page | Shows all records for a person or organization, with type badge and license count. |
 | `templates/partials/source_viewer.html` | Source viewer HTMX partial | Rendered by `GET /source/{source_id}/record/{record_id}`; shows source metadata header bar, sandboxed `<iframe srcdoc=…>` with the matched `<tbody>` HTML, or a "not found" notice. Close button clears `#source-viewer` innerHTML. Receives `source`, `record`, `found` (bool), `srcdoc_attr` (pre-escaped attribute value built server-side). |
 | `static/images/` | Cannabis Observer brand assets | `cannabis_observer-icon-square.svg` (icon) and `cannabis_observer-name.svg` (wordmark). See **Style Guide** for usage. |
-| `admin_auth.py` | Admin authentication middleware | `require_admin()` FastAPI dependency (redirects to exe.dev login or 403). `get_current_user()` non-enforcing variant (caches result on `request.state`). `AdminRedirectException` sentinel class. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. |
-| `admin_audit.py` | Admin audit log | `log_action(conn, email, action, target_type, target_id=None, details=None)` inserts one audit row (caller commits); serialises `details` dict to JSON. `get_audit_log(conn, page, per_page, filters)` returns `(rows, total_count)` with optional filters: `action`, `target_type`, `admin_email`, `date_from`/`date_to`; each row includes `details_parsed` (decoded dict or `None`). |
+| `src/wslcb_licensing_tracker/admin_auth.py` | Admin authentication middleware | `require_admin()` FastAPI dependency (redirects to exe.dev login or 403). `get_current_user()` non-enforcing variant (caches result on `request.state`). `AdminRedirectException` sentinel class. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. |
+| `src/wslcb_licensing_tracker/admin_audit.py` | Admin audit log | `log_action(conn, email, action, target_type, target_id=None, details=None)` inserts one audit row (caller commits); serialises `details` dict to JSON. `get_audit_log(conn, page, per_page, filters)` returns `(rows, total_count)` with optional filters: `action`, `target_type`, `admin_email`, `date_from`/`date_to`; each row includes `details_parsed` (decoded dict or `None`). |
 | `templates/admin/endorsements.html` | Endorsement management UI | Three-tab interface: (1) **Endorsement List** — searchable flat table of all endorsements with status badges, record counts, code associations, inline Rename, and checkbox-driven alias creation; (2) **Duplicate Suggestions** — algorithmically surfaced near-duplicate pairs with Accept/Dismiss actions; (3) **Code Mappings** — all WSLCB numeric codes with add/remove endorsement and create-new-code actions. |
 | `templates/admin/users.html` | Admin user management UI | Lists all admin users (email, role, added date, added-by). Inline add-user form (email input + button) and per-row remove buttons with JS confirm. Shows "you" label for the currently signed-in admin; remove button hidden for self. Error banner driven by `?error=` query param. |
 | `templates/admin/dashboard.html` | System dashboard | Record counts (total, by section type, last 24 h/7 d), last 5 scrape runs with status badges, data-quality checklist (orphaned locations, missing endorsements/entities, unresolved codes, placeholder endorsements), quick-link buttons to Endorsements / Audit Log / Users. |
 | `skills/` | Agent Skills | Local override skills (`reviewing-code-claude`, `shipping-work-claude`) and symlinks to `vendor/gregoryfoster-skills/` global skills (`reviewing-architecture-claude`, `managing-skills-claude`). See **Agent Skills** section. |
-| `requirements.txt` | Python dependencies | Runtime + dev (pytest) dependencies. Install with `pip install -r requirements.txt`. |
-| `pytest.ini` | Pytest configuration | Test paths and Python path settings. |
+| `pyproject.toml` | Project metadata and dependencies | Managed by `uv`. Install all deps with `uv sync --dev`. Lock file: `uv.lock`. |
+| `pyproject.toml` `[tool.pytest.ini_options]` | Pytest configuration | Integrated into `pyproject.toml`: `testpaths`, `pythonpath = ["src"]`, `asyncio_mode`. |
 | `tests/conftest.py` | Shared test fixtures | In-memory DB, sample record dicts, `FIXTURES_DIR` path constant. |
 | `tests/test_parser.py` | Parser tests | Tests for all `parser.py` functions using static HTML fixtures. |
 | `tests/test_db.py` | Connection/constant tests | `db.py` connections, pragmas, raw address normalization, constant values. |
@@ -122,10 +123,10 @@ Because `record_endorsements` is derived, `process_record()` is **idempotent**: 
 When endorsement code mappings change (new code discovered, alias set, mapping corrected), run:
 
 ```bash
-python cli.py reprocess-endorsements              # all records
-python cli.py reprocess-endorsements --code 394   # records with license_type '394,'
-python cli.py reprocess-endorsements --record-id 12345  # single record
-python cli.py reprocess-endorsements --dry-run    # preview without writing
+wslcb reprocess-endorsements              # all records
+wslcb reprocess-endorsements --code 394   # records with license_type '394,'
+wslcb reprocess-endorsements --record-id 12345  # single record
+wslcb reprocess-endorsements --dry-run    # preview without writing
 ```
 
 The `record_enrichments.version` stamp is bumped to `'2'` for every reprocessed record, enabling queries like:
@@ -245,8 +246,8 @@ Skill frontmatter must include `triggers` in `metadata` for AGENTS.md discovery.
 ## Conventions
 
 ### Python
-- Python 3.12+ with venv at `./venv/`
-- Dependencies listed in `requirements.txt`; install with `pip install -r requirements.txt`
+- Python 3.12+ with virtualenv managed by `uv` at `./.venv/`
+- Dependencies declared in `pyproject.toml`; install with `uv sync --dev`
 - Use `datetime.now(timezone.utc)` not `datetime.utcnow()` (deprecated)
 - Module docstrings on every `.py` file
 
@@ -272,7 +273,7 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 
 **Rules:**
 - Every new feature, bug fix, or behavioral change **must** have a test written **before** the implementation.
-- All tests must pass (`pytest`) before committing. Run `python -m pytest tests/ -v` to verify.
+- All tests must pass (`pytest`) before committing. Run `uv run pytest tests/ -v` to verify.
 - Tests must be fast: no network calls, no disk-based databases. Use the in-memory `db` fixture from `conftest.py`.
 - HTML parsing tests use static fixture files in `tests/fixtures/`; keep them minimal and realistic.
 - Parser tests (`test_parser.py`) test pure functions — HTML in, dicts out. No database.
@@ -286,10 +287,10 @@ This project follows a **red/green TDD** discipline for all new code and bug fix
 - Use the sample record fixtures from `conftest.py` (`standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`) for tests that need record dicts.
 
 **Infrastructure:**
-- pytest config in `pytest.ini`; test discovery in `tests/`
+- pytest config in `[tool.pytest.ini_options]` in `pyproject.toml`; test discovery in `tests/`
 - `tests/conftest.py` — shared fixtures (in-memory DB, sample records, `FIXTURES_DIR` path)
 - `tests/fixtures/` — static HTML files for parser tests
-- `requirements.txt` includes `pytest` in the dev section
+- `pyproject.toml` `[dependency-groups] dev` includes `pytest` and `pytest-asyncio`
 
 **Test helper utilities (module-level, `tests/test_routes.py`):**
 - `_html_section(html, start_comment, end_comment)` — slices the rendered HTML between two HTML comment anchors; used by all dashboard layout and link tests to isolate a section.
@@ -450,9 +451,9 @@ data/
 - `sudoers.d-wslcb-healthcheck` — sudoers snippet granting `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service` (scoped to that single command); install once to `/etc/sudoers.d/wslcb-healthcheck`
 - After changing service files:
   ```bash
-  sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer \
-       wslcb-healthcheck.service wslcb-healthcheck.timer /etc/systemd/system/
-  sudo cp sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
+  sudo cp deploy/wslcb-web.service deploy/wslcb-task@.service deploy/wslcb-scraper.timer \
+       deploy/wslcb-healthcheck.service deploy/wslcb-healthcheck.timer /etc/systemd/system/
+  sudo cp deploy/sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
   sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
   sudo systemctl daemon-reload
   sudo systemctl enable --now wslcb-healthcheck.timer
@@ -460,7 +461,7 @@ data/
   ```
 - Under systemd (non-TTY), all log output is JSON lines — structured fields (`timestamp`, `level`, `name`, `message`) are captured by the journal. Uvicorn access/error logs are routed through the same formatter.
 - All persistent data lives in `./data/`
-- Venv shebangs are absolute paths — if the project directory moves, recreate the venv
+- The virtualenv is at `.venv/` (created by `uv sync`). If the project directory moves, recreate with `uv sync --dev`.
 
 ## Git Workflow
 
@@ -502,34 +503,31 @@ data/
 - Operates on the `locations` table — each unique raw address is validated once and shared across all records that reference it
 - At scrape time, `validate_record()` checks if the location is already validated; skips the API call if so
 - Systemd services load the env file via `EnvironmentFile=` directive
-- Backfill: `python cli.py backfill-addresses` (processes all locations where `address_validated_at IS NULL`)
-- Refresh: `python cli.py refresh-addresses` (re-validates all locations; safe to interrupt)
+- Backfill: `wslcb backfill-addresses` (processes all locations where `address_validated_at IS NULL`)
+- Refresh: `wslcb refresh-addresses` (re-validates all locations; safe to interrupt)
 
 ## Common Tasks
 
 ### Run tests
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 All tests must pass before committing. Tests use in-memory SQLite and static fixtures — no network, no disk DB, runs in <1 second.
 
 ### Manage admin users
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py admin add-user you@example.com    # add an admin
-python cli.py admin list-users                  # show all admins
-python cli.py admin remove-user you@example.com # remove (blocks last user)
+wslcb admin add-user you@example.com    # add an admin
+wslcb admin list-users                  # show all admins
+wslcb admin remove-user you@example.com # remove (blocks last user)
 ```
 The first admin must be bootstrapped via CLI. Subsequent admins can be added via the web UI (`/admin/users`) once auth is working.
 
 ### Run a manual scrape
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py scrape
+uv run wslcb scrape
 ```
 
 ### Check scrape history
@@ -552,15 +550,13 @@ Re-validates every location against the address-validator API. Safe to interrupt
 Or manually:
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py refresh-addresses
+uv run wslcb refresh-addresses
 ```
 
 ### Backfill records from archived snapshots
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py backfill-snapshots
+uv run wslcb backfill-snapshots
 ```
 Two-phase process:
 1. **Ingest** — insert new records from all archived HTML snapshots (duplicates skipped)
@@ -571,28 +567,26 @@ Safe to re-run. Address validation is deferred; run `cli.py backfill-addresses` 
 ### Run integrity checks
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py check           # report issues
-python cli.py check --fix     # auto-fix safe issues (orphan cleanup)
+uv run wslcb check           # report issues
+uv run wslcb check --fix     # auto-fix safe issues (orphan cleanup)
 ```
 Exits with code 1 when issues are found. Checks: orphaned locations, broken FKs, un-enriched records, endorsement anomalies, entity duplicates.
 
 ### Rebuild database from archived sources
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py rebuild --output data/wslcb-rebuilt.db
+uv run wslcb rebuild --output data/wslcb-rebuilt.db
 ```
 Creates a fresh database by replaying all archived diff files and HTML snapshots through the ingestion pipeline. Four phases: (1) ingest diff archives, (2) ingest HTML snapshots, (3) endorsement discovery, (4) build outcome links.
 
 To overwrite an existing output file:
 ```bash
-python cli.py rebuild --output data/wslcb-rebuilt.db --force
+uv run wslcb rebuild --output data/wslcb-rebuilt.db --force
 ```
 
 To rebuild and verify against the production database:
 ```bash
-python cli.py rebuild --output data/wslcb-rebuilt.db --verify
+uv run wslcb rebuild --output data/wslcb-rebuilt.db --verify
 ```
 Verification compares record natural keys `(section_type, record_date, license_number, application_type)` and reports missing/extra records with per-section breakdown. Exits with code 1 if discrepancies are found.
 
@@ -601,18 +595,16 @@ Verification compares record natural keys `(section_type, record_date, license_n
 ### Clean up redundant scrape data
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py cleanup-redundant
+uv run wslcb cleanup-redundant
 ```
 Removes `record_sources` (confirmed) rows and `sources` rows from scrapes that inserted zero new records, deletes their duplicate snapshot files, and re-stamps their `scrape_log` entries as `status='unchanged'`. Use `--keep-files` to skip file deletion. Safe to re-run.
 
 ### Reprocess entity links
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py reprocess-entities              # all records
-python cli.py reprocess-entities --record-id 12345  # single record
-python cli.py reprocess-entities --dry-run    # preview without writing
+uv run wslcb reprocess-entities              # all records
+uv run wslcb reprocess-entities --record-id 12345  # single record
+uv run wslcb reprocess-entities --dry-run    # preview without writing
 ```
 
 Regenerates `record_entities` rows from `license_records.applicants` /
@@ -635,8 +627,7 @@ Use this after:
 ### Rebuild application→outcome links
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
-source venv/bin/activate
-python cli.py rebuild-links
+uv run wslcb rebuild-links
 ```
 Clears and rebuilds all `record_links` from scratch. Safe to run at any time (~85 seconds on current dataset). Links are also built incrementally during scraping and on first web app startup (if table is empty).
 

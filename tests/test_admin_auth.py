@@ -3,7 +3,7 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch
 
-from admin_auth import (
+from wslcb_licensing_tracker.admin_auth import (
     get_current_user,
     require_admin,
     AdminRedirectException,
@@ -42,7 +42,7 @@ def _make_request(headers: dict | None = None) -> MagicMock:
 
 def test_lookup_admin_returns_row(db):
     email = _seed_admin(db)
-    with patch("admin_auth.get_db") as mock_get_db:
+    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         result = _lookup_admin(email)
@@ -52,7 +52,7 @@ def test_lookup_admin_returns_row(db):
 
 
 def test_lookup_admin_missing_returns_none(db):
-    with patch("admin_auth.get_db") as mock_get_db:
+    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         result = _lookup_admin("nobody@example.com")
@@ -61,7 +61,7 @@ def test_lookup_admin_missing_returns_none(db):
 
 def test_lookup_admin_case_insensitive(db):
     _seed_admin(db, email="Admin@Example.COM")
-    with patch("admin_auth.get_db") as mock_get_db:
+    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         result = _lookup_admin("admin@example.com")
@@ -75,7 +75,7 @@ def test_lookup_admin_case_insensitive(db):
 async def test_get_current_user_with_valid_header(db):
     email = _seed_admin(db)
     req = _make_request({"X-ExeDev-Email": email, "X-ExeDev-UserID": "usr_1"})
-    with patch("admin_auth.get_db") as mock_get_db:
+    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         result = await get_current_user(req)
@@ -90,7 +90,7 @@ async def test_get_current_user_no_header_returns_none(db):
     # ensure no env var set
     with patch.dict(os.environ, {}, clear=True):
         os.environ.pop("ADMIN_DEV_EMAIL", None)
-        with patch("admin_auth.get_db") as mock_get_db:
+        with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
             mock_get_db.return_value.__enter__ = lambda s: db
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
             result = await get_current_user(req)
@@ -102,7 +102,7 @@ async def test_get_current_user_dev_email_fallback(db):
     email = _seed_admin(db)
     req = _make_request({})
     with patch.dict(os.environ, {"ADMIN_DEV_EMAIL": email, "ADMIN_DEV_USERID": "dev"}):
-        with patch("admin_auth.get_db") as mock_get_db:
+        with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
             mock_get_db.return_value.__enter__ = lambda s: db
             mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
             result = await get_current_user(req)
@@ -113,7 +113,7 @@ async def test_get_current_user_dev_email_fallback(db):
 @pytest.mark.asyncio
 async def test_get_current_user_not_in_admin_table(db):
     req = _make_request({"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"})
-    with patch("admin_auth.get_db") as mock_get_db:
+    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         result = await get_current_user(req)
@@ -126,7 +126,7 @@ async def test_get_current_user_not_in_admin_table(db):
 async def test_require_admin_valid(db):
     email = _seed_admin(db)
     req = _make_request({"X-ExeDev-Email": email, "X-ExeDev-UserID": "usr_1"})
-    with patch("admin_auth.get_db") as mock_get_db:
+    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         result = await require_admin(req)
@@ -147,7 +147,7 @@ async def test_require_admin_no_credentials_raises_redirect(db):
 async def test_require_admin_not_in_table_raises_403(db):
     from fastapi import HTTPException
     req = _make_request({"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"})
-    with patch("admin_auth.get_db") as mock_get_db:
+    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         with pytest.raises(HTTPException) as exc_info:
@@ -162,12 +162,12 @@ def _patch_db(db):
     mock = MagicMock()
     mock.__enter__ = lambda s: db
     mock.__exit__ = MagicMock(return_value=False)
-    return patch("db.get_db", return_value=mock)
+    return patch("wslcb_licensing_tracker.db.get_db", return_value=mock)
 
 
 def test_cli_add_and_list_and_remove_users(db):
     """Round-trip: add-user, list-users, remove-user via CLI command functions."""
-    from cli import cmd_admin_add_user, cmd_admin_list_users, cmd_admin_remove_user
+    from wslcb_licensing_tracker.cli import cmd_admin_add_user, cmd_admin_list_users, cmd_admin_remove_user
     import types
 
     with _patch_db(db):
@@ -190,7 +190,7 @@ def test_cli_add_and_list_and_remove_users(db):
 
 def test_cli_remove_last_user_exits(db):
     """Removing the only admin user should exit with error."""
-    from cli import cmd_admin_add_user, cmd_admin_remove_user
+    from wslcb_licensing_tracker.cli import cmd_admin_add_user, cmd_admin_remove_user
     import types
 
     with _patch_db(db):
@@ -202,7 +202,7 @@ def test_cli_remove_last_user_exits(db):
 
 def test_cli_add_duplicate_user_is_noop(db):
     """Adding an already-existing email is a no-op (no error, no duplicate row)."""
-    from cli import cmd_admin_add_user
+    from wslcb_licensing_tracker.cli import cmd_admin_add_user
     import types
 
     with _patch_db(db):

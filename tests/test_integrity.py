@@ -5,8 +5,8 @@ that fix functions resolve it.  All tests use in-memory SQLite.
 """
 import pytest
 
-from endorsements import seed_endorsements, _ensure_endorsement, _link_endorsement, process_record
-from queries import insert_record
+from wslcb_licensing_tracker.endorsements import seed_endorsements, _ensure_endorsement, _link_endorsement, process_record
+from wslcb_licensing_tracker.queries import insert_record
 
 
 def _make_record(db, **overrides):
@@ -44,7 +44,7 @@ def _make_record(db, **overrides):
 class TestCheckOrphanedLocations:
     def test_detects_orphan(self, db):
         """A location not referenced by any record is orphaned."""
-        from integrity import check_orphaned_locations
+        from wslcb_licensing_tracker.integrity import check_orphaned_locations
 
         seed_endorsements(db)
         # Create a location directly, not via a record
@@ -59,7 +59,7 @@ class TestCheckOrphanedLocations:
 
     def test_no_orphans(self, db):
         """Locations referenced by records should not be flagged."""
-        from integrity import check_orphaned_locations
+        from wslcb_licensing_tracker.integrity import check_orphaned_locations
 
         seed_endorsements(db)
         _make_record(db)  # creates a location
@@ -70,7 +70,7 @@ class TestCheckOrphanedLocations:
 
     def test_fix_removes_orphans(self, db):
         """fix_orphaned_locations should delete unreferenced rows."""
-        from integrity import check_orphaned_locations, fix_orphaned_locations
+        from wslcb_licensing_tracker.integrity import check_orphaned_locations, fix_orphaned_locations
 
         seed_endorsements(db)
         db.execute(
@@ -90,7 +90,7 @@ class TestCheckOrphanedLocations:
 class TestCheckBrokenFKs:
     def test_detects_broken_location_fk(self, db):
         """A record with location_id pointing to nonexistent location."""
-        from integrity import check_broken_fks
+        from wslcb_licensing_tracker.integrity import check_broken_fks
 
         seed_endorsements(db)
         rec_id = _make_record(db)
@@ -107,7 +107,7 @@ class TestCheckBrokenFKs:
 
     def test_no_broken_fks(self, db):
         """Valid records should have no broken FKs."""
-        from integrity import check_broken_fks
+        from wslcb_licensing_tracker.integrity import check_broken_fks
 
         seed_endorsements(db)
         _make_record(db)
@@ -123,7 +123,7 @@ class TestCheckBrokenFKs:
 class TestCheckUnenriched:
     def test_detects_missing_endorsement(self, db):
         """Records without endorsement enrichment should be detected."""
-        from integrity import check_unenriched_records
+        from wslcb_licensing_tracker.integrity import check_unenriched_records
 
         seed_endorsements(db)
         rec_id = _make_record(db)
@@ -136,7 +136,7 @@ class TestCheckUnenriched:
 
     def test_detects_missing_provenance(self, db):
         """Records without provenance should be detected."""
-        from integrity import check_unenriched_records
+        from wslcb_licensing_tracker.integrity import check_unenriched_records
 
         seed_endorsements(db)
         _make_record(db)
@@ -148,9 +148,9 @@ class TestCheckUnenriched:
 
     def test_clean_record_passes(self, db):
         """Fully enriched record with provenance should pass."""
-        from integrity import check_unenriched_records
-        from pipeline import ingest_record, IngestOptions
-        from db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.integrity import check_unenriched_records
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
 
         seed_endorsements(db)
         source_id = get_or_create_source(
@@ -198,7 +198,7 @@ class TestCheckUnenriched:
 class TestCheckEndorsementAnomalies:
     def test_detects_unresolved_code(self, db):
         """Numeric license_type with no endorsement links."""
-        from integrity import check_endorsement_anomalies
+        from wslcb_licensing_tracker.integrity import check_endorsement_anomalies
 
         seed_endorsements(db)
         rec_id = _make_record(db, license_type="9999,", license_number="ANOM01")
@@ -216,7 +216,7 @@ class TestCheckEndorsementAnomalies:
 class TestCheckEntityDuplicates:
     def test_detects_case_duplicates(self, db):
         """Entities that differ only by case should be flagged."""
-        from integrity import check_entity_duplicates
+        from wslcb_licensing_tracker.integrity import check_entity_duplicates
 
         seed_endorsements(db)
         # Insert entities that differ only by case
@@ -234,7 +234,7 @@ class TestCheckEntityDuplicates:
 class TestRunAllChecks:
     def test_returns_report_dict(self, db):
         """run_all_checks should return a structured report."""
-        from integrity import run_all_checks
+        from wslcb_licensing_tracker.integrity import run_all_checks
 
         seed_endorsements(db)
         _make_record(db)
@@ -249,7 +249,7 @@ class TestRunAllChecks:
 
     def test_fix_mode_cleans_orphans(self, db):
         """run_all_checks with fix=True should auto-fix safe issues."""
-        from integrity import run_all_checks
+        from wslcb_licensing_tracker.integrity import run_all_checks
 
         seed_endorsements(db)
         db.execute(

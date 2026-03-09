@@ -11,7 +11,7 @@ import pytest
 class TestFormatOutcome:
     def test_approved_has_display_properties(self):
         """format_outcome should add CSS classes and icon to semantic data."""
-        from display import format_outcome
+        from wslcb_licensing_tracker.display import format_outcome
 
         semantic = {
             "status": "approved",
@@ -30,7 +30,7 @@ class TestFormatOutcome:
         assert result["linked_record_id"] == 42
 
     def test_discontinued_has_display_properties(self):
-        from display import format_outcome
+        from wslcb_licensing_tracker.display import format_outcome
 
         semantic = {
             "status": "discontinued",
@@ -45,7 +45,7 @@ class TestFormatOutcome:
         assert "bg-red" in result["css_bg"]
 
     def test_pending_has_display_properties(self):
-        from display import format_outcome
+        from wslcb_licensing_tracker.display import format_outcome
 
         semantic = {
             "status": "pending",
@@ -60,7 +60,7 @@ class TestFormatOutcome:
         assert "bg-amber" in result["css_bg"]
 
     def test_data_gap_has_display_properties(self):
-        from display import format_outcome
+        from wslcb_licensing_tracker.display import format_outcome
 
         semantic = {
             "status": "data_gap",
@@ -75,7 +75,7 @@ class TestFormatOutcome:
         assert "bg-slate" in result["css_bg"]
 
     def test_unknown_has_display_properties(self):
-        from display import format_outcome
+        from wslcb_licensing_tracker.display import format_outcome
 
         semantic = {
             "status": "unknown",
@@ -91,7 +91,7 @@ class TestFormatOutcome:
 
     def test_none_status_passthrough(self):
         """Records that aren't linkable return status=None unchanged."""
-        from display import format_outcome
+        from wslcb_licensing_tracker.display import format_outcome
 
         semantic = {"status": None}
         result = format_outcome(semantic)
@@ -105,7 +105,7 @@ class TestFormatOutcome:
 class TestSummarizeProvenance:
     def test_groups_by_source_type(self):
         """Sources should be grouped by type with counts."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
@@ -119,7 +119,7 @@ class TestSummarizeProvenance:
 
     def test_computes_date_range(self):
         """Summary should include first and last dates."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
@@ -132,7 +132,7 @@ class TestSummarizeProvenance:
 
     def test_detects_repaired(self):
         """Summary should flag if any source has 'repaired' role."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"source_type": "co_archive", "captured_at": "2025-06-10T00:00:00", "role": "repaired"},
@@ -143,7 +143,7 @@ class TestSummarizeProvenance:
 
     def test_no_repaired_flag(self):
         """When no repaired role, flag should be False."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
@@ -153,7 +153,7 @@ class TestSummarizeProvenance:
         assert result["repaired"] is False
 
     def test_empty_sources(self):
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         result = summarize_provenance([])
 
@@ -164,7 +164,7 @@ class TestSummarizeProvenance:
 
     def test_group_badges_have_display_properties(self):
         """Each source type group should have icon, label, and CSS."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
@@ -183,7 +183,7 @@ class TestSummarizeProvenance:
 
     def test_null_captured_at_ignored(self):
         """Sources without captured_at should not break date computation."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"source_type": "live_scrape", "captured_at": None, "role": "first_seen"},
@@ -196,7 +196,7 @@ class TestSummarizeProvenance:
 
     def test_group_has_primary_source_id(self):
         """Each group in summarize_provenance should include primary_source_id."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"id": 10, "source_type": "live_scrape", "captured_at": "2025-06-14T12:00:00",
@@ -215,7 +215,7 @@ class TestSummarizeProvenance:
 
     def test_primary_source_id_prefers_snapshot_path(self):
         """primary_source_id should prefer sources with a snapshot_path."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"id": 5, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",
@@ -228,7 +228,7 @@ class TestSummarizeProvenance:
 
     def test_primary_source_id_first_seen_over_confirmed_no_snapshot(self):
         """first_seen role wins even when it has no snapshot path."""
-        from display import summarize_provenance
+        from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
             {"id": 1, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",

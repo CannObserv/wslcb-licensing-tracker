@@ -6,8 +6,8 @@ canonical home); provenance tests use ``get_primary_source`` from
 """
 import pytest
 
-from pipeline import insert_record
-from db import get_primary_source
+from wslcb_licensing_tracker.pipeline import insert_record
+from wslcb_licensing_tracker.db import get_primary_source
 
 
 # ── insert_record ──────────────────────────────────────────────────
@@ -136,7 +136,7 @@ class TestHasAdditionalNamesFlag:
         return base
 
     def test_flag_false_for_normal_record(self, db):
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
         rec = self._base_record()
         record_id, _ = insert_record(db, rec)
         row = db.execute(
@@ -146,7 +146,7 @@ class TestHasAdditionalNamesFlag:
         assert row["has_additional_names"] == 0
 
     def test_flag_true_for_exact_marker_in_applicants(self, db):
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
         rec = self._base_record(
             license_number="HAF002",
             applicants="ACME LLC; ADDITIONAL NAMES ON FILE; JANE DOE",
@@ -159,7 +159,7 @@ class TestHasAdditionalNamesFlag:
         assert row["has_additional_names"] == 1
 
     def test_flag_true_for_typo_marker(self, db):
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
         rec = self._base_record(
             license_number="HAF003",
             applicants="ACME LLC; ADDTIONAL NAMES ON FILE; BOB SMITH",
@@ -173,7 +173,7 @@ class TestHasAdditionalNamesFlag:
 
     def test_flag_in_record_columns(self, db):
         """has_additional_names is included in RECORD_COLUMNS and hydrated."""
-        from pipeline import insert_record; from queries import get_record_by_id
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.queries import get_record_by_id
         rec = self._base_record(
             license_number="HAF004",
             applicants="ACME LLC; ADDITIONAL NAMES ON FILE; JANE DOE",
@@ -191,8 +191,8 @@ class TestMultiEndorsementFilter:
     """_build_where_clause with endorsements as a list."""
 
     def _insert_with_endorsement(self, db, record_dict, endorsement_name):
-        from pipeline import insert_record
-        from endorsements import _ensure_endorsement, _link_endorsement
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.endorsements import _ensure_endorsement, _link_endorsement
         rec_id, _ = insert_record(db, record_dict)
         eid = _ensure_endorsement(db, endorsement_name)
         _link_endorsement(db, rec_id, eid)
@@ -200,12 +200,12 @@ class TestMultiEndorsementFilter:
         return rec_id
 
     def test_empty_list_returns_all(self, db, standard_new_application, approved_numeric_code):
-        from queries import _build_where_clause
+        from wslcb_licensing_tracker.queries import _build_where_clause
         import copy
         r1 = copy.deepcopy(standard_new_application)
         r2 = copy.deepcopy(approved_numeric_code)
         r2["license_number"] = "DIFF001"
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
         insert_record(db, r1)
         insert_record(db, r2)
         db.commit()
@@ -213,14 +213,14 @@ class TestMultiEndorsementFilter:
         assert where == ""
 
     def test_single_endorsement_filters_correctly(self, db, standard_new_application):
-        from queries import _build_where_clause, search_records
+        from wslcb_licensing_tracker.queries import _build_where_clause, search_records
         import copy
         r1 = copy.deepcopy(standard_new_application)
         r2 = copy.deepcopy(standard_new_application)
         r2["license_number"] = "DIFF002"
         self._insert_with_endorsement(db, r1, "CANNABIS RETAILER")
-        from pipeline import insert_record
-        from endorsements import _ensure_endorsement, _link_endorsement
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.endorsements import _ensure_endorsement, _link_endorsement
         id2, _ = insert_record(db, r2)
         eid2 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
         _link_endorsement(db, id2, eid2)
@@ -230,7 +230,7 @@ class TestMultiEndorsementFilter:
         assert records[0]["license_number"] == standard_new_application["license_number"]
 
     def test_two_endorsements_returns_union(self, db, standard_new_application):
-        from queries import search_records
+        from wslcb_licensing_tracker.queries import search_records
         import copy
         r1 = copy.deepcopy(standard_new_application)
         r2 = copy.deepcopy(standard_new_application)
@@ -250,8 +250,8 @@ class TestMultiEndorsementFilter:
         assert nums == {"MULTI001", "MULTI002"}
 
     def test_unknown_endorsement_returns_zero(self, db, standard_new_application):
-        from queries import search_records
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.queries import search_records
+        from wslcb_licensing_tracker.pipeline import insert_record
         insert_record(db, standard_new_application)
         db.commit()
         records, total = search_records(db, endorsements=["NONEXISTENT XYZ"])
@@ -260,7 +260,7 @@ class TestMultiEndorsementFilter:
     def test_mixed_known_and_unknown_returns_known_matches(self, db, standard_new_application):
         """When some endorsement names are known and some are not, the known
         ones still filter correctly (OR semantics; unknown names are ignored)."""
-        from queries import search_records
+        from wslcb_licensing_tracker.queries import search_records
         import copy
         r1 = copy.deepcopy(standard_new_application)
         r1["license_number"] = "MIXED001"
@@ -277,7 +277,7 @@ class TestMultiEndorsementFilter:
 
 class TestGetPrimarySource:
     def _make_source(self, conn, source_type_id: int, snapshot_path: str | None, captured_at: str) -> int:
-        from db import get_or_create_source
+        from wslcb_licensing_tracker.db import get_or_create_source
         return get_or_create_source(
             conn, source_type_id,
             snapshot_path=snapshot_path,
@@ -286,17 +286,17 @@ class TestGetPrimarySource:
         )
 
     def _link(self, conn, record_id: int, source_id: int, role: str):
-        from db import link_record_source
+        from wslcb_licensing_tracker.db import link_record_source
         link_record_source(conn, record_id, source_id, role)
 
     def test_returns_none_when_no_sources(self, db, standard_new_application):
-        from pipeline import insert_record; from db import get_primary_source
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
         assert get_primary_source(db, record_id) is None
 
     def test_first_seen_preferred_over_confirmed(self, db, standard_new_application):
-        from db import SOURCE_TYPE_LIVE_SCRAPE
-        from pipeline import insert_record; from db import get_primary_source
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s_confirmed = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, "path/a.html", "2025-06-15T12:00:00")
@@ -311,8 +311,8 @@ class TestGetPrimarySource:
         assert result["id"] == s_first_seen
 
     def test_snapshot_path_preferred_within_role(self, db, standard_new_application):
-        from db import SOURCE_TYPE_LIVE_SCRAPE
-        from pipeline import insert_record; from db import get_primary_source
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s_no_path = self._make_source(db, SOURCE_TYPE_LIVE_SCRAPE, None, "2025-06-15T12:00:00")
@@ -327,8 +327,8 @@ class TestGetPrimarySource:
         assert result["id"] == s_with_path
 
     def test_returns_source_dict_fields(self, db, standard_new_application):
-        from db import SOURCE_TYPE_CO_ARCHIVE
-        from pipeline import insert_record; from db import get_primary_source
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_CO_ARCHIVE
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.db import get_primary_source
         record_id, _ = insert_record(db, standard_new_application)
 
         s = self._make_source(db, SOURCE_TYPE_CO_ARCHIVE, "path/d.html", "2025-06-10T00:00:00")
@@ -351,8 +351,8 @@ class TestExportRecords:
 
     def _insert_linked_pair(self, db, new_app, approved):
         """Insert a new_application + approved pair and link them."""
-        from pipeline import insert_record
-        from link_records import build_all_links
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.link_records import build_all_links
 
         insert_record(db, new_app)
         insert_record(db, approved)
@@ -362,7 +362,7 @@ class TestExportRecords:
 
     def test_unlinked_record_has_null_link_columns(self, db, standard_new_application):
         """A new_application with no outcome has NULL days_to_outcome and outcome_date."""
-        from pipeline import insert_record; from queries import export_records
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.queries import export_records
 
         insert_record(db, standard_new_application)
         db.commit()
@@ -374,7 +374,7 @@ class TestExportRecords:
 
     def test_linked_record_has_correct_link_columns(self, db, standard_new_application):
         """A linked new_application has days_to_outcome and outcome_date populated."""
-        from queries import export_records
+        from wslcb_licensing_tracker.queries import export_records
 
         approved = {
             **standard_new_application,
@@ -393,7 +393,7 @@ class TestExportRecords:
 
     def test_high_confidence_link_preferred(self, db, standard_new_application):
         """When multiple links exist, high-confidence is returned."""
-        from pipeline import insert_record; from queries import export_records
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.queries import export_records
 
         approved_early = {
             **standard_new_application,
@@ -431,7 +431,7 @@ class TestExportRecords:
 
     def test_non_new_application_has_null_link_columns(self, db, standard_new_application):
         """Approved and discontinued records always have NULL link columns."""
-        from pipeline import insert_record; from queries import export_records
+        from wslcb_licensing_tracker.pipeline import insert_record; from wslcb_licensing_tracker.queries import export_records
 
         approved = {
             **standard_new_application,
@@ -454,8 +454,8 @@ class TestExportRecords:
         which fires for any NEW APPLICATION after DATA_GAP_CUTOFF.
         """
         from datetime import date, timedelta
-        from pipeline import insert_record
-        from queries import export_records
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import export_records
 
         recent = (date.today() - timedelta(days=10)).isoformat()
         rec = {**standard_new_application, "record_date": recent,
@@ -473,9 +473,9 @@ class TestExportRecords:
         Uses RENEWAL (not NEW APPLICATION) to avoid the data_gap branch.
         """
         from datetime import date, timedelta
-        from link_records import PENDING_CUTOFF_DAYS
-        from pipeline import insert_record
-        from queries import export_records
+        from wslcb_licensing_tracker.link_records import PENDING_CUTOFF_DAYS
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import export_records
 
         old = (date.today() - timedelta(days=PENDING_CUTOFF_DAYS + 10)).isoformat()
         rec = {**standard_new_application, "record_date": old,
@@ -489,9 +489,9 @@ class TestExportRecords:
 
     def test_outcome_status_data_gap(self, db, standard_new_application):
         """Unlinked NEW APPLICATION after DATA_GAP_CUTOFF → 'data_gap'."""
-        from link_records import DATA_GAP_CUTOFF
-        from pipeline import insert_record
-        from queries import export_records
+        from wslcb_licensing_tracker.link_records import DATA_GAP_CUTOFF
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import export_records
         from datetime import date
 
         # Use a date just after the cutoff that is also old enough to not be 'pending'
@@ -507,8 +507,8 @@ class TestExportRecords:
 
     def test_outcome_status_null_for_non_linkable_type(self, db, standard_new_application):
         """new_application with non-linkable application_type → NULL outcome_status."""
-        from pipeline import insert_record
-        from queries import export_records
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import export_records
 
         rec = {**standard_new_application, "application_type": "SOME UNLINKABLE TYPE"}
         insert_record(db, rec)
@@ -524,8 +524,8 @@ class TestExportRecordsCursor:
 
     def test_yields_dicts_matching_export_records(self, db, standard_new_application):
         """export_records_cursor yields the same rows as export_records."""
-        from pipeline import insert_record
-        from queries import export_records, export_records_cursor
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import export_records, export_records_cursor
 
         insert_record(db, standard_new_application)
         db.commit()
@@ -537,21 +537,21 @@ class TestExportRecordsCursor:
     def test_returns_generator(self, db):
         """export_records_cursor returns a generator (not a list)."""
         import types
-        from queries import export_records_cursor
+        from wslcb_licensing_tracker.queries import export_records_cursor
 
         assert isinstance(export_records_cursor(db), types.GeneratorType)
 
     def test_empty_db_yields_nothing(self, db):
         """export_records_cursor on an empty DB yields no rows."""
-        from queries import export_records_cursor
+        from wslcb_licensing_tracker.queries import export_records_cursor
 
         rows = list(export_records_cursor(db))
         assert rows == []
 
     def test_filters_applied(self, db, standard_new_application):
         """export_records_cursor respects filter arguments (section_type)."""
-        from pipeline import insert_record
-        from queries import export_records_cursor
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import export_records_cursor
 
         insert_record(db, standard_new_application)
         approved = {
@@ -576,7 +576,7 @@ class TestGetEntities:
 
     def _insert_entities(self, db):
         """Insert a mix of persons and an organization with record links."""
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
 
         # applicants format: "BUSINESS NAME; PERSON1; PERSON2"
         # parse_and_link_entities skips the first element (business name).
@@ -616,7 +616,7 @@ class TestGetEntities:
 
     def test_returns_all_entities(self, db):
         """No filters returns all entities with record counts."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db)
@@ -625,7 +625,7 @@ class TestGetEntities:
 
     def test_result_fields(self, db):
         """Each row has id, name, entity_type, record_count."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db)
@@ -637,7 +637,7 @@ class TestGetEntities:
 
     def test_default_sort_by_count_desc(self, db):
         """Default sort is record_count descending (most active first)."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db)
@@ -646,7 +646,7 @@ class TestGetEntities:
 
     def test_sort_by_name_asc(self, db):
         """sort='name' returns entities alphabetically."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db, sort="name")
@@ -655,7 +655,7 @@ class TestGetEntities:
 
     def test_search_by_name(self, db):
         """q filter narrows results to matching entity names."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db, q="alice")
@@ -664,7 +664,7 @@ class TestGetEntities:
 
     def test_search_case_insensitive(self, db):
         """Name search is case-insensitive."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db, q="ALICE")
@@ -672,7 +672,7 @@ class TestGetEntities:
 
     def test_search_partial_match(self, db):
         """Partial name matches are returned."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db, q="jones")
@@ -680,7 +680,7 @@ class TestGetEntities:
 
     def test_filter_by_type_person(self, db):
         """entity_type='person' returns only person entities."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db, entity_type="person")
@@ -689,7 +689,7 @@ class TestGetEntities:
 
     def test_filter_by_type_organization(self, db):
         """entity_type='organization' returns only org entities."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db, entity_type="organization")
@@ -698,7 +698,7 @@ class TestGetEntities:
 
     def test_pagination(self, db):
         """page and per_page control which rows are returned."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         page1 = get_entities(db, per_page=2, page=1)
@@ -714,7 +714,7 @@ class TestGetEntities:
 
     def test_empty_db(self, db):
         """Empty entities table returns empty list and zero total."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         result = get_entities(db)
         assert result["total"] == 0
@@ -722,7 +722,7 @@ class TestGetEntities:
 
     def test_search_no_match(self, db):
         """Search that matches nothing returns empty list, total=0."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result = get_entities(db, q="zzznomatch")
@@ -731,7 +731,7 @@ class TestGetEntities:
 
     def test_page_zero_clamped_to_one(self, db):
         """page=0 is clamped to page=1; does not produce negative OFFSET."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result_zero = get_entities(db, per_page=2, page=0)
@@ -740,7 +740,7 @@ class TestGetEntities:
 
     def test_negative_page_clamped_to_one(self, db):
         """Negative page values are clamped to page=1."""
-        from queries import get_entities
+        from wslcb_licensing_tracker.queries import get_entities
 
         self._insert_entities(db)
         result_neg = get_entities(db, per_page=2, page=-5)

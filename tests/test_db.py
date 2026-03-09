@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from db import (
+from wslcb_licensing_tracker.db import (
     DATA_DIR,
     DB_PATH,
     SOURCE_TYPE_CO_ARCHIVE,

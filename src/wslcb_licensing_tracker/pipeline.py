@@ -25,7 +25,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from entities import (
+from .entities import (
     parse_and_link_entities,
     clean_applicants_string,
     clean_entity_name,
@@ -115,7 +115,7 @@ def insert_record(
     creates) location rows and links entity records.  Checks for
     duplicates *before* creating locations to avoid orphaned rows.
     """
-    from db import get_or_create_location
+    from wslcb_licensing_tracker.db import get_or_create_location
 
     existing = conn.execute(
         """SELECT id FROM license_records
@@ -217,8 +217,8 @@ def ingest_record(
     Steps 2–5 only run for newly inserted records; duplicates get
     provenance linked with role ``'confirmed'`` and skip other steps.
     """
-    from endorsements import process_record
-    from db import link_record_source
+    from wslcb_licensing_tracker.endorsements import process_record
+    from wslcb_licensing_tracker.db import link_record_source
 
     # Step 1: Insert record (dedup, locations, name cleaning)
     try:
@@ -265,7 +265,7 @@ def ingest_record(
         # Step 4: Validate addresses
         if options.validate_addresses:
             try:
-                from address_validator import validate_record, validate_previous_location
+                from wslcb_licensing_tracker.address_validator import validate_record, validate_previous_location
                 validate_record(conn, record_id, client=options.av_client)
                 if record.get("previous_business_location"):
                     validate_previous_location(
@@ -280,7 +280,7 @@ def ingest_record(
         # Step 5: Link outcomes
         if options.link_outcomes:
             try:
-                from link_records import link_new_record
+                from wslcb_licensing_tracker.link_records import link_new_record
                 link_new_record(conn, record_id)
                 _record_enrichment(conn, record_id, STEP_OUTCOME_LINK)
             except Exception:

@@ -5,7 +5,7 @@ that use it, after the deduplication refactor (#24).
 """
 import pytest
 
-from endorsements import (
+from wslcb_licensing_tracker.endorsements import (
     seed_endorsements,
     process_record,
     _ensure_endorsement,
@@ -25,7 +25,7 @@ from endorsements import (
     remove_code_mapping,
     create_code,
 )
-from queries import insert_record
+from wslcb_licensing_tracker.queries import insert_record
 
 
 def _make_record(db, **overrides):
@@ -300,14 +300,14 @@ class TestResolveEndorsement:
 
     def test_returns_same_id_when_no_alias(self, db):
         """Non-aliased endorsement resolves to itself."""
-        from endorsements import resolve_endorsement
+        from wslcb_licensing_tracker.endorsements import resolve_endorsement
         eid = _ensure_endorsement(db, "STANDALONE")
         db.commit()
         assert resolve_endorsement(db, eid) == eid
 
     def test_returns_canonical_for_aliased(self, db):
         """Aliased endorsement resolves to its canonical."""
-        from endorsements import resolve_endorsement
+        from wslcb_licensing_tracker.endorsements import resolve_endorsement
         variant_id = _ensure_endorsement(db, "VARIANT NAME")
         canonical_id = _ensure_endorsement(db, "CANONICAL NAME")
         db.execute(
@@ -320,7 +320,7 @@ class TestResolveEndorsement:
 
     def test_alias_does_not_affect_canonical_itself(self, db):
         """Canonical ID is not changed by its own alias records."""
-        from endorsements import resolve_endorsement
+        from wslcb_licensing_tracker.endorsements import resolve_endorsement
         variant_id = _ensure_endorsement(db, "VARIANT B")
         canonical_id = _ensure_endorsement(db, "CANONICAL B")
         db.execute(
@@ -337,7 +337,7 @@ class TestGetEndorsementGroups:
 
     def test_groups_by_code(self, db):
         """Endorsements sharing a code appear in the same group."""
-        from endorsements import get_endorsement_groups
+        from wslcb_licensing_tracker.endorsements import get_endorsement_groups
         seed_endorsements(db)
 
         # Manually create two endorsements that share a code
@@ -366,7 +366,7 @@ class TestGetEndorsementGroups:
 
     def test_group_entries_are_independent_copies(self, db):
         """Modifying one group's entry dict must not affect another group."""
-        from endorsements import get_endorsement_groups
+        from wslcb_licensing_tracker.endorsements import get_endorsement_groups
         seed_endorsements(db)
 
         # Create an endorsement that belongs to two codes
@@ -392,7 +392,7 @@ class TestGetEndorsementGroups:
 
     def test_includes_record_counts(self, db):
         """Each endorsement entry has a record count."""
-        from endorsements import get_endorsement_groups
+        from wslcb_licensing_tracker.endorsements import get_endorsement_groups
         seed_endorsements(db)
         rec_id = _make_record(db)
         process_record(db, rec_id, "CANNABIS RETAILER")
@@ -411,7 +411,7 @@ class TestGetEndorsementGroups:
 
     def test_includes_canonical_flag(self, db):
         """Endorsed marked canonical when alias points to them."""
-        from endorsements import get_endorsement_groups, resolve_endorsement
+        from wslcb_licensing_tracker.endorsements import get_endorsement_groups, resolve_endorsement
         seed_endorsements(db)
         rec_id = _make_record(db)
         process_record(db, rec_id, "CANNABIS RETAILER")
@@ -442,7 +442,7 @@ class TestSetCanonical:
 
     def test_creates_alias_rows(self, db):
         """set_canonical creates alias rows for all variants pointing to canonical."""
-        from endorsements import set_canonical_endorsement, _ensure_endorsement
+        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement, _ensure_endorsement
         seed_endorsements(db)
 
         # Create two variants and a canonical, all sharing a code
@@ -476,7 +476,7 @@ class TestSetCanonical:
 
     def test_idempotent(self, db):
         """Calling set_canonical twice doesn't duplicate alias rows."""
-        from endorsements import set_canonical_endorsement
+        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement
         v_id = _ensure_endorsement(db, "VARIANT IDEM")
         c_id = _ensure_endorsement(db, "CANONICAL IDEM")
         db.commit()
@@ -498,7 +498,7 @@ class TestRenameEndorsement:
 
     def test_creates_named_endorsement_and_alias(self, db):
         """Renaming a bare code creates a new named endorsement and alias row."""
-        from endorsements import rename_endorsement
+        from wslcb_licensing_tracker.endorsements import rename_endorsement
         seed_endorsements(db)
 
         # Create a bare numeric-code endorsement
@@ -530,7 +530,7 @@ class TestRenameEndorsement:
 
     def test_rename_returns_existing_if_name_taken(self, db):
         """Rename to an existing name reuses that endorsement."""
-        from endorsements import rename_endorsement
+        from wslcb_licensing_tracker.endorsements import rename_endorsement
         seed_endorsements(db)
 
         bare_id = _ensure_endorsement(db, "8888")
@@ -552,7 +552,7 @@ class TestAliasResolutionInFilterOptions:
 
     def test_aliased_variant_excluded_from_options(self, db):
         """Variants with aliases don't appear in filter dropdown."""
-        from endorsements import get_endorsement_options
+        from wslcb_licensing_tracker.endorsements import get_endorsement_options
         seed_endorsements(db)
 
         rec_id_v = _make_record(db, license_number="ALIAS001")
@@ -587,7 +587,7 @@ class TestAliasResolutionInRecordEndorsements:
 
     def test_returns_canonical_name_for_aliased_record(self, db):
         """Records linked to a variant show the canonical name."""
-        from endorsements import get_record_endorsements
+        from wslcb_licensing_tracker.endorsements import get_record_endorsements
         seed_endorsements(db)
 
         rec_id = _make_record(db, license_number="ALIAS003")
@@ -615,8 +615,8 @@ class TestSearchFilterAliasResolution:
 
     def test_canonical_filter_matches_variant_linked_records(self, db):
         """Filtering by canonical name returns records linked to variants."""
-        from endorsements import set_canonical_endorsement, _ensure_endorsement
-        from queries import search_records
+        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement, _ensure_endorsement
+        from wslcb_licensing_tracker.queries import search_records
         seed_endorsements(db)
 
         rec_variant = _make_record(db, license_number="SF001")
@@ -703,7 +703,7 @@ class TestReprocessEndorsements:
 
     def test_reprocess_all_records(self, db):
         """reprocess_endorsements() with no filter reprocesses all records."""
-        from endorsements import reprocess_endorsements
+        from wslcb_licensing_tracker.endorsements import reprocess_endorsements
 
         seed_endorsements(db)
         rec1 = _make_record(db, license_number="RP001", license_type="CANNABIS RETAILER")
@@ -729,7 +729,7 @@ class TestReprocessEndorsements:
 
     def test_reprocess_by_record_id(self, db):
         """reprocess_endorsements(record_id=X) only touches that record."""
-        from endorsements import reprocess_endorsements
+        from wslcb_licensing_tracker.endorsements import reprocess_endorsements
 
         seed_endorsements(db)
         rec1 = _make_record(db, license_number="RP003", license_type="CANNABIS RETAILER")
@@ -757,7 +757,7 @@ class TestReprocessEndorsements:
 
     def test_reprocess_by_code(self, db):
         """reprocess_endorsements(code=X) only touches records with that code."""
-        from endorsements import reprocess_endorsements
+        from wslcb_licensing_tracker.endorsements import reprocess_endorsements
 
         seed_endorsements(db)
         # code 394 = CANNABIS RETAILER
@@ -791,7 +791,7 @@ class TestReprocessEndorsements:
 
     def test_reprocess_updates_enrichment_version(self, db):
         """reprocess_endorsements() bumps the record_enrichments version stamp."""
-        from endorsements import reprocess_endorsements
+        from wslcb_licensing_tracker.endorsements import reprocess_endorsements
 
         seed_endorsements(db)
         rec_id = _make_record(db, license_number="RP007", license_type="CANNABIS RETAILER")
@@ -816,7 +816,7 @@ class TestReprocessEndorsements:
 
     def test_dry_run_makes_no_changes(self, db):
         """dry_run=True reports counts without writing to the database."""
-        from endorsements import reprocess_endorsements
+        from wslcb_licensing_tracker.endorsements import reprocess_endorsements
 
         seed_endorsements(db)
         rec_id = _make_record(db, license_number="RP008", license_type="CANNABIS RETAILER")
@@ -932,7 +932,7 @@ class TestGetEndorsementList:
         assert entry["canonical_id"] is None
 
     def test_variant_flags(self, db):
-        from endorsements import set_canonical_endorsement
+        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement
         cid = _ensure_endorsement(db, "CANONICAL ENDO")
         vid = _ensure_endorsement(db, "VARIANT ENDO")
         set_canonical_endorsement(db, canonical_id=cid, variant_ids=[vid], created_by="test")
@@ -975,7 +975,7 @@ class TestSuggestDuplicateEndorsements:
         assert found
 
     def test_excludes_aliased_pair(self, db):
-        from endorsements import set_canonical_endorsement
+        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement
         cid = _ensure_endorsement(db, "TAKEOUT/DELIVERY")
         vid = _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
         set_canonical_endorsement(db, canonical_id=cid, variant_ids=[vid], created_by="test")
@@ -1163,7 +1163,7 @@ def _ensure_substance(conn, name: str, display_order: int = 0) -> int:
 
 class TestGetRegulatedSubstances:
     def test_returns_substances_in_display_order(self, db):
-        from endorsements import get_regulated_substances
+        from wslcb_licensing_tracker.endorsements import get_regulated_substances
         _ensure_substance(db, "Alcohol", 2)
         _ensure_substance(db, "Cannabis", 1)
         db.commit()
@@ -1172,7 +1172,7 @@ class TestGetRegulatedSubstances:
         assert names == ["Cannabis", "Alcohol"]
 
     def test_includes_endorsements_list(self, db):
-        from endorsements import get_regulated_substances
+        from wslcb_licensing_tracker.endorsements import get_regulated_substances
         eid = _ensure_endorsement(db, "CANNABIS RETAILER")
         sid = _ensure_substance(db, "Cannabis", 1)
         db.execute(
@@ -1187,7 +1187,7 @@ class TestGetRegulatedSubstances:
     def test_empty_when_no_seeded_endorsements(self, db):
         """Without seeded endorsements the substances exist but have no
         endorsement associations (junction rows reference non-existent eids)."""
-        from endorsements import get_regulated_substances
+        from wslcb_licensing_tracker.endorsements import get_regulated_substances
         results = get_regulated_substances(db)
         # Substances are seeded by migration 009; endorsements list is empty
         # until endorsements are seeded.
@@ -1198,7 +1198,7 @@ class TestGetRegulatedSubstances:
 
 class TestGetSubstanceEndorsementIds:
     def test_returns_ids_for_substance(self, db):
-        from endorsements import get_substance_endorsement_ids
+        from wslcb_licensing_tracker.endorsements import get_substance_endorsement_ids
         eid1 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
         eid2 = _ensure_endorsement(db, "WINE DISTRIBUTOR")
         sid = _ensure_substance(db, "Alcohol", 2)
@@ -1209,13 +1209,13 @@ class TestGetSubstanceEndorsementIds:
         assert set(ids) == {eid1, eid2}
 
     def test_returns_empty_for_unknown_substance(self, db):
-        from endorsements import get_substance_endorsement_ids
+        from wslcb_licensing_tracker.endorsements import get_substance_endorsement_ids
         assert get_substance_endorsement_ids(db, 9999) == []
 
 
 class TestSetSubstanceEndorsements:
     def test_replaces_associations(self, db):
-        from substances import set_substance_endorsements
+        from wslcb_licensing_tracker.substances import set_substance_endorsements
         eid1 = _ensure_endorsement(db, "OLD ENDORSEMENT")
         eid2 = _ensure_endorsement(db, "NEW ENDORSEMENT")
         sid = _ensure_substance(db, "Test Substance")
@@ -1231,8 +1231,8 @@ class TestSetSubstanceEndorsements:
 
     def test_audit_log_written_by_caller(self, db):
         """Audit logging is the caller's responsibility; verify pattern works."""
-        from substances import set_substance_endorsements
-        from admin_audit import log_action
+        from wslcb_licensing_tracker.substances import set_substance_endorsements
+        from wslcb_licensing_tracker.admin_audit import log_action
         sid = _ensure_substance(db, "Audit Test")
         set_substance_endorsements(db, sid, [])
         log_action(db, "admin@example.com", "substance.set_endorsements",
@@ -1245,7 +1245,7 @@ class TestSetSubstanceEndorsements:
         assert row[0] == "admin@example.com"
 
     def test_clearing_all_endorsements(self, db):
-        from substances import set_substance_endorsements
+        from wslcb_licensing_tracker.substances import set_substance_endorsements
         eid = _ensure_endorsement(db, "CLEAR ME")
         sid = _ensure_substance(db, "Clear Test")
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
@@ -1260,7 +1260,7 @@ class TestSetSubstanceEndorsements:
 
 class TestAddSubstance:
     def test_inserts_and_returns_id(self, db):
-        from substances import add_substance
+        from wslcb_licensing_tracker.substances import add_substance
         sid = add_substance(db, "Test Sub", display_order=5)
         db.commit()
         row = db.execute(
@@ -1272,8 +1272,8 @@ class TestAddSubstance:
 
     def test_audit_log_written_by_caller(self, db):
         """Audit logging is the caller's responsibility; verify pattern works."""
-        from substances import add_substance
-        from admin_audit import log_action
+        from wslcb_licensing_tracker.substances import add_substance
+        from wslcb_licensing_tracker.admin_audit import log_action
         sid = add_substance(db, "Audit Sub", display_order=1)
         log_action(db, "admin@x.com", "substance.add", "regulated_substance",
                    target_id=sid, details={"name": "Audit Sub"})
@@ -1286,7 +1286,7 @@ class TestAddSubstance:
 
 class TestRemoveSubstance:
     def test_deletes_substance(self, db):
-        from substances import add_substance, remove_substance
+        from wslcb_licensing_tracker.substances import add_substance, remove_substance
         sid = add_substance(db, "Delete Me", display_order=1)
         db.commit()
         remove_substance(db, sid)
@@ -1297,7 +1297,7 @@ class TestRemoveSubstance:
         assert row is None
 
     def test_cascades_to_junction(self, db):
-        from substances import add_substance, remove_substance
+        from wslcb_licensing_tracker.substances import add_substance, remove_substance
         eid = _ensure_endorsement(db, "CASCADE TEST")
         sid = add_substance(db, "Cascade Sub", display_order=1)
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
@@ -1311,8 +1311,8 @@ class TestRemoveSubstance:
 
     def test_audit_log_written_by_caller(self, db):
         """Audit logging is the caller's responsibility; verify pattern works."""
-        from substances import add_substance, remove_substance
-        from admin_audit import log_action
+        from wslcb_licensing_tracker.substances import add_substance, remove_substance
+        from wslcb_licensing_tracker.admin_audit import log_action
         sid = add_substance(db, "Audit Remove", display_order=1)
         db.commit()
         name = remove_substance(db, sid)

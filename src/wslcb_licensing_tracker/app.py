@@ -15,11 +15,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from db import get_db
-from schema import init_db
-from admin_auth import get_current_user, AdminRedirectException
-from entities import backfill_entities, get_entity_by_id
-from queries import (
+from .db import get_db
+from .schema import init_db
+from .admin_auth import get_current_user, AdminRedirectException
+from .entities import backfill_entities, get_entity_by_id
+from .queries import (
     search_records,
     get_filter_options, get_cities_for_state, US_STATES,
     get_stats,
@@ -27,17 +27,17 @@ from queries import (
     get_record_sources, get_record_link,
     hydrate_records,
 )
-from parser import extract_tbody_from_snapshot, extract_tbody_from_diff, strip_anchor_tags
-from db import DATA_DIR
-from endorsements import (
+from .parser import extract_tbody_from_snapshot, extract_tbody_from_diff, strip_anchor_tags
+from .db import DATA_DIR
+from .endorsements import (
     seed_endorsements, backfill, repair_code_name_endorsements,
     merge_mixed_case_endorsements,
 )
-from link_records import build_all_links, get_reverse_link_info, get_outcome_status
-from display import format_outcome, summarize_provenance
-from log_config import setup_logging
-import admin_routes
-import api_routes
+from .link_records import build_all_links, get_reverse_link_info, get_outcome_status
+from .display import format_outcome, summarize_provenance
+from .log_config import setup_logging
+from . import admin_routes
+from . import api_routes
 
 logger = logging.getLogger(__name__)
 

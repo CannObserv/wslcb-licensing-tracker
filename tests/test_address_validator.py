@@ -11,7 +11,7 @@ import logging
 import httpx
 import pytest
 
-import address_validator as av
+from wslcb_licensing_tracker import address_validator as av
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

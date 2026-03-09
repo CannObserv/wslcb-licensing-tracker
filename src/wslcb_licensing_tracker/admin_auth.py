@@ -17,7 +17,7 @@ import os
 
 from fastapi import HTTPException, Request
 
-from db import get_db
+from .db import get_db
 
 logger = logging.getLogger(__name__)
 

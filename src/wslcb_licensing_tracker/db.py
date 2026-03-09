@@ -30,7 +30,7 @@ SOURCE_TYPE_MANUAL = 5
 WSLCB_SOURCE_URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
 # All persistent data (DB + HTML snapshots) lives under DATA_DIR.
-DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent / "data"))
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
 DB_PATH = DATA_DIR / "wslcb.db"
 
 
@@ -296,8 +296,8 @@ def get_record_sources(
 
 
 if __name__ == "__main__":
-    from log_config import setup_logging
-    from schema import init_db
+    from wslcb_licensing_tracker.log_config import setup_logging
+    from wslcb_licensing_tracker.schema import init_db
     setup_logging()
     init_db()
     logger.info("Database initialized at %s", DB_PATH)

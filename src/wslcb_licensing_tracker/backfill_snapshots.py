@@ -11,18 +11,18 @@ separate ``cli.py backfill-addresses`` pass.
 """
 import logging
 
-from db import (
+from .db import (
     DATA_DIR, get_db, get_or_create_location,
     get_or_create_source, link_record_source, SOURCE_TYPE_CO_ARCHIVE,
     WSLCB_SOURCE_URL,
 )
-from schema import init_db
-from entities import (
+from .schema import init_db
+from .entities import (
     parse_and_link_entities, clean_applicants_string, clean_entity_name,
 )
-from endorsements import seed_endorsements, discover_code_mappings, repair_code_name_endorsements
-from parser import snapshot_paths, extract_snapshot_date, parse_snapshot
-from pipeline import ingest_batch, IngestOptions
+from .endorsements import seed_endorsements, discover_code_mappings, repair_code_name_endorsements
+from .parser import snapshot_paths, extract_snapshot_date, parse_snapshot
+from .pipeline import ingest_batch, IngestOptions
 
 logger = logging.getLogger(__name__)
 

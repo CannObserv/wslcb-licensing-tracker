@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from schema import init_db
-from rebuild import (
+from wslcb_licensing_tracker.schema import init_db
+from wslcb_licensing_tracker.rebuild import (
     rebuild_from_sources,
     compare_databases,
     RebuildResult,
@@ -80,9 +80,9 @@ def tmp_db(tmp_path):
 @pytest.fixture
 def prod_db(tmp_path):
     """Create a small 'production' DB with some records for comparison."""
-    from db import get_connection
-    from queries import insert_record
-    from endorsements import seed_endorsements
+    from wslcb_licensing_tracker.db import get_connection
+    from wslcb_licensing_tracker.queries import insert_record
+    from wslcb_licensing_tracker.endorsements import seed_endorsements
 
     path = tmp_path / "prod.db"
     conn = get_connection(path)
@@ -209,7 +209,7 @@ class TestCompareResult:
 
     def test_missing_records_detected(self, tmp_path, prod_db):
         """Records in prod but not rebuilt are reported."""
-        from db import get_connection
+        from wslcb_licensing_tracker.db import get_connection
 
         rebuilt_path = tmp_path / "rebuilt.db"
         conn = get_connection(rebuilt_path)
@@ -223,9 +223,9 @@ class TestCompareResult:
 
     def test_extra_records_detected(self, tmp_path, prod_db):
         """Records in rebuilt but not prod are reported."""
-        from db import get_connection
-        from queries import insert_record
-        from endorsements import seed_endorsements
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.queries import insert_record
+        from wslcb_licensing_tracker.endorsements import seed_endorsements
 
         rebuilt_path = tmp_path / "rebuilt.db"
         conn = get_connection(rebuilt_path)
@@ -279,7 +279,7 @@ class TestCompareResult:
 
     def test_section_breakdown(self, tmp_path, prod_db):
         """Comparison includes per-section counts."""
-        from db import get_connection
+        from wslcb_licensing_tracker.db import get_connection
 
         rebuilt_path = tmp_path / "rebuilt.db"
         conn = get_connection(rebuilt_path)

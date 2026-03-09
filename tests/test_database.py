@@ -10,7 +10,7 @@ import sqlite3
 
 import pytest
 
-from db import (
+from wslcb_licensing_tracker.db import (
     get_connection,
     get_or_create_location,
     get_or_create_source,
@@ -18,7 +18,7 @@ from db import (
     SOURCE_TYPE_LIVE_SCRAPE,
     SOURCE_TYPE_CO_ARCHIVE,
 )
-from schema import init_db
+from wslcb_licensing_tracker.schema import init_db
 
 
 # ── get_or_create_location ────────────────────────────────────────────────

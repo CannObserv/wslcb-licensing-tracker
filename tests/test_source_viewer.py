@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
+from wslcb_licensing_tracker.app import app
 
 
 # ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ from app import app
 @pytest.fixture
 def db():
     """In-memory SQLite DB with cross-thread access."""
-    from schema import init_db
+    from wslcb_licensing_tracker.schema import init_db
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -35,7 +35,7 @@ def client(db):
     ctx = MagicMock()
     ctx.__enter__ = lambda s: db
     ctx.__exit__ = MagicMock(return_value=False)
-    with patch("app.get_db", return_value=ctx):
+    with patch("wslcb_licensing_tracker.app.get_db", return_value=ctx):
         yield TestClient(app, raise_server_exceptions=True)
 
 
@@ -45,7 +45,7 @@ def client(db):
 
 def _insert_record(db, license_number="078001", section_type="new_application",
                    record_date="2025-06-15", application_type="NEW APPLICATION"):
-    from queries import insert_record
+    from wslcb_licensing_tracker.queries import insert_record
     rec = {
         "section_type": section_type,
         "record_date": record_date,
@@ -69,7 +69,7 @@ def _insert_record(db, license_number="078001", section_type="new_application",
 
 def _insert_source(db, source_type_id, snapshot_path="path/snap.html",
                    captured_at="2025-06-15T12:00:00+00:00"):
-    from db import get_or_create_source
+    from wslcb_licensing_tracker.db import get_or_create_source
     source_id = get_or_create_source(
         db, source_type_id,
         snapshot_path=snapshot_path,
@@ -81,7 +81,7 @@ def _insert_source(db, source_type_id, snapshot_path="path/snap.html",
 
 
 def _link(db, record_id, source_id, role="confirmed"):
-    from db import link_record_source
+    from wslcb_licensing_tracker.db import link_record_source
     link_record_source(db, record_id, source_id, role)
     db.commit()
 
@@ -102,7 +102,7 @@ class TestSourceViewerRoute:
 
     def test_404_no_record_source_link(self, client, db):
         """Valid IDs but no record_sources row -> 404."""
-        from db import SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_LIVE_SCRAPE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_LIVE_SCRAPE)
         # Intentionally do NOT link them
@@ -111,12 +111,12 @@ class TestSourceViewerRoute:
 
     def test_renders_iframe_when_tbody_found(self, client, db):
         """Returns 200 with iframe srcdoc when extractor returns HTML."""
-        from db import SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_LIVE_SCRAPE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_LIVE_SCRAPE, snapshot_path="path/live.html")
         _link(db, record_id, source_id)
 
-        with patch("app.extract_tbody_from_snapshot",
+        with patch("wslcb_licensing_tracker.app.extract_tbody_from_snapshot",
                    return_value="<tbody><tr><td>Business Name:</td><td>ACME</td></tr></tbody>"):
             resp = client.get(f"/source/{source_id}/record/{record_id}")
 
@@ -126,12 +126,12 @@ class TestSourceViewerRoute:
 
     def test_renders_not_found_message_when_extractor_returns_none(self, client, db):
         """Returns 200 with not-found notice when extractor returns None."""
-        from db import SOURCE_TYPE_CO_ARCHIVE
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_CO_ARCHIVE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_CO_ARCHIVE, snapshot_path="path/archive.html")
         _link(db, record_id, source_id)
 
-        with patch("app.extract_tbody_from_snapshot", return_value=None):
+        with patch("wslcb_licensing_tracker.app.extract_tbody_from_snapshot", return_value=None):
             resp = client.get(f"/source/{source_id}/record/{record_id}")
 
         assert resp.status_code == 200
@@ -139,12 +139,12 @@ class TestSourceViewerRoute:
 
     def test_diff_source_uses_diff_extractor(self, client, db):
         """co_diff_archive sources dispatch to extract_tbody_from_diff."""
-        from db import SOURCE_TYPE_CO_DIFF_ARCHIVE
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_CO_DIFF_ARCHIVE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_CO_DIFF_ARCHIVE, snapshot_path="path/diff.txt")
         _link(db, record_id, source_id)
 
-        with patch("app.extract_tbody_from_diff",
+        with patch("wslcb_licensing_tracker.app.extract_tbody_from_diff",
                    return_value="<tbody><tr><td>License Number:</td><td>078001</td></tr></tbody>") as mock_diff:
             resp = client.get(f"/source/{source_id}/record/{record_id}")
 
@@ -154,7 +154,7 @@ class TestSourceViewerRoute:
 
     def test_anchor_tags_stripped_from_srcdoc(self, client, db):
         """Anchor tags in tbody HTML are stripped before embedding in srcdoc."""
-        from db import SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.db import SOURCE_TYPE_LIVE_SCRAPE
         record_id = _insert_record(db)
         source_id = _insert_source(db, SOURCE_TYPE_LIVE_SCRAPE, snapshot_path="path/live.html")
         _link(db, record_id, source_id)
@@ -165,7 +165,7 @@ class TestSourceViewerRoute:
             '<td><a href="http://example.com">ACME CANNABIS CO</a></td>'
             '</tr></tbody>'
         )
-        with patch("app.extract_tbody_from_snapshot", return_value=anchored_tbody):
+        with patch("wslcb_licensing_tracker.app.extract_tbody_from_snapshot", return_value=anchored_tbody):
             resp = client.get(f"/source/{source_id}/record/{record_id}")
 
         assert resp.status_code == 200

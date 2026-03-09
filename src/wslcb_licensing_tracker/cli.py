@@ -24,24 +24,24 @@ refactor (#17).
 import argparse
 import sys
 
-from log_config import setup_logging
+from .log_config import setup_logging
 
 
 def cmd_scrape(args):
     """Run a live scrape of the WSLCB licensing page."""
-    from scraper import scrape
+    from wslcb_licensing_tracker.scraper import scrape
     scrape()
 
 
 def cmd_backfill_snapshots(args):
     """Ingest records from archived HTML snapshots."""
-    from backfill_snapshots import backfill_from_snapshots
+    from wslcb_licensing_tracker.backfill_snapshots import backfill_from_snapshots
     backfill_from_snapshots()
 
 
 def cmd_backfill_diffs(args):
     """Ingest records from unified-diff archives."""
-    from backfill_diffs import backfill_diffs
+    from wslcb_licensing_tracker.backfill_diffs import backfill_diffs
 
     backfill_diffs(
         section=args.section,
@@ -53,15 +53,15 @@ def cmd_backfill_diffs(args):
 
 def cmd_backfill_provenance(args):
     """Populate source provenance for existing records."""
-    from backfill_provenance import backfill_provenance
+    from wslcb_licensing_tracker.backfill_provenance import backfill_provenance
     backfill_provenance()
 
 
 def cmd_backfill_addresses(args):
     """Validate un-validated locations via the address API."""
-    from db import get_db
-    from schema import init_db
-    from address_validator import backfill_addresses
+    from wslcb_licensing_tracker.db import get_db
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.address_validator import backfill_addresses
     init_db()
     with get_db() as conn:
         backfill_addresses(conn)
@@ -69,9 +69,9 @@ def cmd_backfill_addresses(args):
 
 def cmd_refresh_addresses(args):
     """Re-validate all locations via the address API."""
-    from db import get_db
-    from schema import init_db
-    from address_validator import refresh_addresses
+    from wslcb_licensing_tracker.db import get_db
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.address_validator import refresh_addresses
     init_db()
     with get_db() as conn:
         refresh_addresses(conn)
@@ -79,9 +79,9 @@ def cmd_refresh_addresses(args):
 
 def cmd_rebuild_links(args):
     """Rebuild all application→outcome links from scratch."""
-    from db import get_db
-    from schema import init_db
-    from link_records import build_all_links
+    from wslcb_licensing_tracker.db import get_db
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.link_records import build_all_links
     init_db()
     with get_db() as conn:
         build_all_links(conn)
@@ -89,9 +89,9 @@ def cmd_rebuild_links(args):
 
 def cmd_check(args):
     """Run database integrity checks."""
-    from db import get_db
-    from schema import init_db
-    from integrity import run_all_checks, print_report
+    from wslcb_licensing_tracker.db import get_db
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.integrity import run_all_checks, print_report
     init_db()
     with get_db() as conn:
         report = run_all_checks(conn, fix=args.fix)
@@ -102,9 +102,9 @@ def cmd_check(args):
 
 def cmd_cleanup_redundant(args):
     """Remove data from scrapes that found no new records."""
-    from db import get_db
-    from schema import init_db
-    from scraper import cleanup_redundant_scrapes
+    from wslcb_licensing_tracker.db import get_db
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.scraper import cleanup_redundant_scrapes
 
     init_db()
     with get_db() as conn:
@@ -124,9 +124,9 @@ def cmd_cleanup_redundant(args):
 
 def cmd_reprocess_endorsements(args):
     """Regenerate record_endorsements from current code mappings."""
-    from db import get_db
-    from schema import init_db
-    from endorsements import reprocess_endorsements
+    from wslcb_licensing_tracker.db import get_db
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.endorsements import reprocess_endorsements
 
     init_db()
     with get_db() as conn:
@@ -150,9 +150,9 @@ def cmd_reprocess_endorsements(args):
 
 def cmd_reprocess_entities(args):
     """Regenerate record_entities from current applicants data."""
-    from db import get_db
-    from schema import init_db
-    from entities import reprocess_entities
+    from wslcb_licensing_tracker.db import get_db
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.entities import reprocess_entities
 
     init_db()
     with get_db() as conn:
@@ -177,8 +177,8 @@ def cmd_rebuild(args):
     """Rebuild the database from archived sources."""
     import logging
     from pathlib import Path
-    from db import DATA_DIR, DB_PATH
-    from rebuild import rebuild_from_sources, compare_databases
+    from wslcb_licensing_tracker.db import DATA_DIR, DB_PATH
+    from wslcb_licensing_tracker.rebuild import rebuild_from_sources, compare_databases
 
     logger = logging.getLogger(__name__)
     output = Path(args.output)
@@ -233,7 +233,7 @@ def cmd_rebuild(args):
 
 def cmd_admin_add_user(args):
     """Add an admin user by email."""
-    from db import get_db
+    from wslcb_licensing_tracker.db import get_db
     email = args.email.strip()
     with get_db() as conn:
         existing = conn.execute(
@@ -252,7 +252,7 @@ def cmd_admin_add_user(args):
 
 def cmd_admin_list_users(args):
     """List all admin users."""
-    from db import get_db
+    from wslcb_licensing_tracker.db import get_db
     with get_db() as conn:
         rows = conn.execute(
             "SELECT email, role, created_at, created_by FROM admin_users ORDER BY created_at"
@@ -268,7 +268,7 @@ def cmd_admin_list_users(args):
 
 def cmd_admin_remove_user(args):
     """Remove an admin user by email."""
-    from db import get_db
+    from wslcb_licensing_tracker.db import get_db
     email = args.email.strip()
     with get_db() as conn:
         row = conn.execute(
@@ -308,7 +308,7 @@ def main():
     p.set_defaults(func=cmd_backfill_snapshots)
 
     # backfill-diffs
-    from parser import SECTION_DIR_MAP
+    from wslcb_licensing_tracker.parser import SECTION_DIR_MAP
     p = sub.add_parser(
         "backfill-diffs",
         help="Ingest records from unified-diff archives",

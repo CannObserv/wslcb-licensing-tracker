@@ -26,7 +26,7 @@ Regulated substance CRUD (``get_regulated_substances``, ``add_substance``,
 ``remove_substance``, ``set_substance_endorsements``) lives in ``substances``.
 
 Backward-compatible re-exports from both sub-modules are provided below so
-existing ``from endorsements import ...`` call-sites continue to work without
+existing ``from wslcb_licensing_tracker.endorsements import ...`` call-sites continue to work without
 modification.
 """
 import json
@@ -36,7 +36,7 @@ import sqlite3
 from pathlib import Path
 
 # Re-exports: admin UI helpers
-from endorsements_admin import (
+from .endorsements_admin import (
     endorsement_similarity,
     get_endorsement_list,
     suggest_duplicate_endorsements,
@@ -47,7 +47,7 @@ from endorsements_admin import (
     create_code,
 )
 # Re-exports: regulated substance CRUD
-from substances import (
+from .substances import (
     get_regulated_substances,
     get_substance_endorsement_ids,
     set_substance_endorsements,

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
+from wslcb_licensing_tracker.app import app
 
 # The canonical placeholder that both search inputs must display.
 SEARCH_PLACEHOLDER = "Search business name, license #, location, applicant..."
@@ -30,7 +30,7 @@ def db():
     the app in a background thread, so we need that flag here — hence
     this local override rather than reusing the shared fixture.
     """
-    from schema import init_db
+    from wslcb_licensing_tracker.schema import init_db
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -74,11 +74,11 @@ def _make_client(db, stats: dict | None = None):
     ctx.__exit__ = MagicMock(return_value=False)
 
     patches = (
-        patch("admin_auth.get_db", return_value=ctx),
-        patch("admin_auth._lookup_admin", return_value=None),
-        patch("app.get_db", return_value=ctx),
-        patch("app.get_stats", return_value=stats),
-        patch("api_routes.get_db", return_value=ctx),
+        patch("wslcb_licensing_tracker.admin_auth.get_db", return_value=ctx),
+        patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None),
+        patch("wslcb_licensing_tracker.app.get_db", return_value=ctx),
+        patch("wslcb_licensing_tracker.app.get_stats", return_value=stats),
+        patch("wslcb_licensing_tracker.api_routes.get_db", return_value=ctx),
     )
     for p in patches:
         p.start()
@@ -459,7 +459,7 @@ class TestAdditionalNamesNotice:
     """Detail page shows the additional-names notice when has_additional_names=1."""
 
     def _insert_record(self, db, license_number, applicants, has_flag):
-        from queries import insert_record
+        from wslcb_licensing_tracker.queries import insert_record
         rec = {
             "section_type": "new_application",
             "record_date": "2025-06-01",
@@ -556,7 +556,7 @@ class TestExportCsvRoute:
 
     def test_export_returns_data_rows(self, db, standard_new_application):
         """An export with matching records returns header + data rows."""
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
         client, patches = _make_client(db)
         try:
             insert_record(db, standard_new_application)
@@ -586,7 +586,7 @@ class TestEntitiesRoute:
 
     def _insert_entities(self, db):
         """Insert two persons and one org."""
-        from pipeline import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
 
         # applicants format: "BUSINESS NAME; PERSON1; PERSON2"
         # parse_and_link_entities skips the first element (business name).

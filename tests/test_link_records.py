@@ -5,9 +5,9 @@ refactor (#24).  All tests use in-memory SQLite via the ``db`` fixture.
 """
 import pytest
 
-from endorsements import seed_endorsements
-from queries import insert_record
-from link_records import (
+from wslcb_licensing_tracker.endorsements import seed_endorsements
+from wslcb_licensing_tracker.queries import insert_record
+from wslcb_licensing_tracker.link_records import (
     build_all_links,
     link_new_record,
     get_outcome_status,
@@ -125,7 +125,7 @@ class TestBulkLinking:
 
     def test_all_approval_link_types(self, db):
         """All application types in _APPROVAL_LINK_TYPES can link."""
-        from link_records import _APPROVAL_LINK_TYPES
+        from wslcb_licensing_tracker.link_records import _APPROVAL_LINK_TYPES
         seed_endorsements(db)
 
         for i, app_type in enumerate(sorted(_APPROVAL_LINK_TYPES)):
@@ -308,7 +308,7 @@ class TestGetOutcomeStatus:
 
     def test_data_gap_status(self):
         """Post-cutoff NEW APPLICATION without link → data_gap."""
-        from link_records import DATA_GAP_CUTOFF
+        from wslcb_licensing_tracker.link_records import DATA_GAP_CUTOFF
         record = {
             "section_type": "new_application",
             "application_type": "NEW APPLICATION",

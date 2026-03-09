@@ -1,7 +1,7 @@
 """Tests for admin_audit.py — log_action and get_audit_log."""
 import pytest
 
-from admin_audit import get_audit_log, log_action
+from wslcb_licensing_tracker.admin_audit import get_audit_log, log_action
 
 
 # ---------------------------------------------------------------------------

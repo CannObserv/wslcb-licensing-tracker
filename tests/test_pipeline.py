@@ -4,7 +4,7 @@ All tests use in-memory SQLite via the ``db`` fixture.
 """
 import pytest
 
-from endorsements import seed_endorsements
+from wslcb_licensing_tracker.endorsements import seed_endorsements
 
 
 # ── ingest_record ──────────────────────────────────────────────────
@@ -13,7 +13,7 @@ from endorsements import seed_endorsements
 class TestIngestRecord:
     def test_inserts_new_record(self, db, standard_new_application):
         """ingest_record should insert a new record and return IngestResult."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -25,7 +25,7 @@ class TestIngestRecord:
 
     def test_duplicate_returns_existing(self, db, standard_new_application):
         """Duplicate records should return is_new=False."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -38,7 +38,7 @@ class TestIngestRecord:
 
     def test_processes_endorsements(self, db, standard_new_application):
         """New records should get endorsement links."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -55,8 +55,8 @@ class TestIngestRecord:
 
     def test_links_provenance(self, db, standard_new_application):
         """When source_id is provided, provenance should be linked."""
-        from pipeline import ingest_record, IngestOptions
-        from db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
 
         seed_endorsements(db)
         source_id = get_or_create_source(
@@ -80,8 +80,8 @@ class TestIngestRecord:
 
     def test_duplicate_gets_confirmed_provenance(self, db, standard_new_application):
         """Duplicate records should get 'confirmed' provenance role."""
-        from pipeline import ingest_record, IngestOptions
-        from db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.db import get_or_create_source, SOURCE_TYPE_LIVE_SCRAPE
 
         seed_endorsements(db)
         source1 = get_or_create_source(
@@ -116,7 +116,7 @@ class TestIngestRecord:
 
     def test_links_entities(self, db, standard_new_application):
         """Entities should always be linked via insert_record."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -134,7 +134,7 @@ class TestIngestRecord:
 
     def test_outcome_linking(self, db, standard_new_application, approved_numeric_code):
         """When link_outcomes=True, outcomes should be linked."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         # Insert the approved record first
@@ -163,7 +163,7 @@ class TestIngestRecord:
 
     def test_none_on_error(self, db):
         """A completely empty/invalid record should return None."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -177,7 +177,7 @@ class TestIngestRecord:
 class TestIngestBatch:
     def test_batch_inserts_multiple(self, db, standard_new_application, assumption_record):
         """ingest_batch should insert multiple records."""
-        from pipeline import ingest_batch, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_batch, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -189,7 +189,7 @@ class TestIngestBatch:
 
     def test_batch_counts_duplicates(self, db, standard_new_application):
         """Duplicates in batch should be counted as skipped."""
-        from pipeline import ingest_batch, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_batch, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -204,7 +204,7 @@ class TestIngestBatch:
 
     def test_batch_returns_record_ids(self, db, standard_new_application, assumption_record):
         """ingest_batch should return ids of newly inserted records."""
-        from pipeline import ingest_batch, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_batch, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -215,7 +215,7 @@ class TestIngestBatch:
 
     def test_batch_commits_periodically(self, db, standard_new_application):
         """Batch should commit at batch_size intervals."""
-        from pipeline import ingest_batch, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_batch, IngestOptions
 
         seed_endorsements(db)
         # Create 5 unique records
@@ -238,7 +238,7 @@ class TestIngestBatch:
 class TestEnrichmentTracking:
     def test_new_record_gets_endorsement_enrichment(self, db, standard_new_application):
         """After ingest, the endorsements step should be tracked."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -255,7 +255,7 @@ class TestEnrichmentTracking:
 
     def test_new_record_gets_entities_enrichment(self, db, standard_new_application):
         """After ingest, the entities step should be tracked."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -270,7 +270,7 @@ class TestEnrichmentTracking:
 
     def test_outcome_link_tracked_when_enabled(self, db, standard_new_application, approved_numeric_code):
         """When link_outcomes=True and linking succeeds, it should be tracked."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         # Insert approved first
@@ -295,7 +295,7 @@ class TestEnrichmentTracking:
 
     def test_duplicate_record_no_enrichment_tracking(self, db, standard_new_application):
         """Duplicate records should not add new enrichment rows."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -318,7 +318,7 @@ class TestEnrichmentTracking:
 
     def test_record_enrichment_idempotent(self, db, standard_new_application):
         """Calling _record_enrichment twice for the same step should upsert, not duplicate."""
-        from pipeline import ingest_record, IngestOptions, _record_enrichment
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions, _record_enrichment
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -337,7 +337,7 @@ class TestEnrichmentTracking:
 
     def test_find_unenriched_records(self, db, standard_new_application, assumption_record):
         """Query to find records missing a specific enrichment step."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -367,7 +367,7 @@ class TestEnrichmentTracking:
 class TestRawValuePreservation:
     def test_new_record_preserves_raw_values(self, db, standard_new_application):
         """Newly ingested records should store raw values before cleaning."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)
@@ -385,7 +385,7 @@ class TestRawValuePreservation:
 
     def test_raw_differs_from_cleaned(self, db):
         """When cleaning modifies a value, raw and cleaned should differ."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         record = {
@@ -427,7 +427,7 @@ class TestRawValuePreservation:
 
     def test_assumption_preserves_previous_raw(self, db, assumption_record):
         """ASSUMPTION records should preserve raw previous_* values."""
-        from pipeline import ingest_record, IngestOptions
+        from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
         seed_endorsements(db)
         opts = IngestOptions(validate_addresses=False, link_outcomes=False)

@@ -8,8 +8,8 @@ import sqlite3
 
 import pytest
 
-from db import get_connection
-from schema import (
+from wslcb_licensing_tracker.db import get_connection
+from wslcb_licensing_tracker.schema import (
     MIGRATIONS,
     _get_user_version,
     _set_user_version,
@@ -231,7 +231,7 @@ class TestInitDb:
         conn.close()
 
     def test_returns_none_when_no_conn(self, tmp_path, monkeypatch):
-        import db as db_mod
+        from wslcb_licensing_tracker import db as db_mod
         monkeypatch.setattr(db_mod, "DATA_DIR", tmp_path)
         monkeypatch.setattr(db_mod, "DB_PATH", tmp_path / "test.db")
         result = init_db()
@@ -373,7 +373,7 @@ class TestMigration003ContentHash:
 
     def test_migration_on_existing_db(self):
         """Existing DB without content_hash gets it via ALTER TABLE."""
-        from db import get_connection
+        from wslcb_licensing_tracker.db import get_connection
 
         conn = get_connection(":memory:")
         # Simulate an existing DB at version 2 (before this migration)
@@ -439,8 +439,8 @@ class TestMigration004AddressValidatorV1:
 
     def test_migration_renames_columns_on_existing_db(self):
         """Existing DB with old column names gets them renamed by migration 004."""
-        from db import get_connection
-        from schema import migrate
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import migrate
 
         conn = get_connection(":memory:")
         conn.execute("PRAGMA user_version = 3")
@@ -475,8 +475,8 @@ class TestMigration004AddressValidatorV1:
 
     def test_migration_backfills_country_for_validated_rows(self):
         """Existing validated rows get std_country = 'US' after migration 004."""
-        from db import get_connection
-        from schema import migrate
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import migrate
 
         conn = get_connection(":memory:")
         conn.execute("PRAGMA user_version = 3")
@@ -516,8 +516,8 @@ class TestMigration004AddressValidatorV1:
 
     def test_migration_skips_gracefully_without_locations_table(self):
         """Migration 004 does not crash when locations table doesn't exist."""
-        from db import get_connection
-        from schema import migrate
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import migrate
 
         conn = get_connection(":memory:")
         conn.execute("PRAGMA user_version = 3")
@@ -539,8 +539,8 @@ class TestMigration008EndorsementDismissedSuggestions:
     """Tests for migration 008: endorsement_dismissed_suggestions table."""
 
     def test_table_created_on_fresh_db(self):
-        from db import get_connection
-        from schema import init_db
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import init_db
 
         conn = get_connection(":memory:")
         init_db(conn)
@@ -555,8 +555,8 @@ class TestMigration008EndorsementDismissedSuggestions:
 
     def test_migration_adds_table_to_existing_db(self):
         """Migration 008 adds the table to a DB that only has migrations 1-7."""
-        from db import get_connection
-        from schema import migrate
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import migrate
 
         conn = get_connection(":memory:")
         # Bootstrap at version 7 (endorsement_aliases exists, dismissed doesn't)
@@ -590,8 +590,8 @@ class TestMigration008EndorsementDismissedSuggestions:
         conn.close()
 
     def test_dismissed_suggestions_schema(self):
-        from db import get_connection
-        from schema import init_db
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import init_db
 
         conn = get_connection(":memory:")
         init_db(conn)
@@ -616,8 +616,8 @@ class TestMigration008EndorsementDismissedSuggestions:
     def test_check_constraint_enforces_id_order(self):
         """CHECK (endorsement_id_a < endorsement_id_b) is enforced."""
         import sqlite3 as sqlite_mod
-        from db import get_connection
-        from schema import init_db
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import init_db
 
         conn = get_connection(":memory:")
         init_db(conn)
@@ -652,10 +652,10 @@ class TestMigration009RegulatedSubstances:
 
     def test_migration_adds_tables_to_existing_db(self):
         """Existing DB (user_version=0, tables present) gets migrated."""
-        from schema import migrate, _get_user_version
+        from wslcb_licensing_tracker.schema import migrate, _get_user_version
         conn = get_connection(":memory:")
         # Simulate pre-existing DB by running baseline only
-        from schema import _m001_baseline
+        from wslcb_licensing_tracker.schema import _m001_baseline
         _m001_baseline(conn)
         conn.commit()
         version = migrate(conn)
@@ -682,8 +682,8 @@ class TestMigration009RegulatedSubstances:
     def test_seed_cannabis_has_endorsements_after_endorsement_seed(self, db):
         """After seeding endorsements and re-running the migration, Cannabis
         should have all its expected endorsements linked."""
-        from endorsements import seed_endorsements
-        from schema import _m009_regulated_substances
+        from wslcb_licensing_tracker.endorsements import seed_endorsements
+        from wslcb_licensing_tracker.schema import _m009_regulated_substances
         seed_endorsements(db)
         db.commit()
         # Re-run seed (idempotent via INSERT OR IGNORE)
@@ -703,11 +703,11 @@ class TestMigration009RegulatedSubstances:
         assert count >= 10
 
     def test_undefined_endorsement_has_no_substance(self, db):
-        from endorsements import seed_endorsements, _ensure_endorsement
+        from wslcb_licensing_tracker.endorsements import seed_endorsements, _ensure_endorsement
         seed_endorsements(db)
         undef_id = _ensure_endorsement(db, "UNDEFINED")
         db.commit()
-        from schema import _m009_regulated_substances
+        from wslcb_licensing_tracker.schema import _m009_regulated_substances
         _m009_regulated_substances(db)
         db.commit()
         row = db.execute(
@@ -747,7 +747,7 @@ class TestMigration010AdditionalNamesFlag:
         db.execute("UPDATE license_records SET has_additional_names = 0 WHERE license_number = '999002'")
         db.commit()
         # Run migration directly
-        from schema import _m010_additional_names_flag
+        from wslcb_licensing_tracker.schema import _m010_additional_names_flag
         _m010_additional_names_flag(db)
         db.commit()
         row = db.execute(
@@ -765,7 +765,7 @@ class TestMigration010AdditionalNamesFlag:
         db.commit()
         db.execute("UPDATE license_records SET has_additional_names = 0 WHERE license_number = '999003'")
         db.commit()
-        from schema import _m010_additional_names_flag
+        from wslcb_licensing_tracker.schema import _m010_additional_names_flag
         _m010_additional_names_flag(db)
         db.commit()
         row = db.execute(
@@ -781,7 +781,7 @@ class TestMigration010AdditionalNamesFlag:
             "'ACME; JANE DOE; BOB SMITH', '2025-01-01T00:00:00+00:00')"
         )
         db.commit()
-        from schema import _m010_additional_names_flag
+        from wslcb_licensing_tracker.schema import _m010_additional_names_flag
         _m010_additional_names_flag(db)
         db.commit()
         row = db.execute(
@@ -798,7 +798,7 @@ class TestMigration010AdditionalNamesFlag:
             "'ACME; ADDITIONAL NAMES ON FILE WITH MORE; BOB', '2025-01-01T00:00:00+00:00')"
         )
         db.commit()
-        from schema import _m010_additional_names_flag
+        from wslcb_licensing_tracker.schema import _m010_additional_names_flag
         _m010_additional_names_flag(db)
         db.commit()
         row = db.execute(
@@ -811,7 +811,7 @@ class TestMigration010AdditionalNamesFlag:
         db.execute("INSERT OR IGNORE INTO entities (name, entity_type) VALUES ('ADDITIONAL NAMES ON FILE', 'person')")
         db.execute("INSERT OR IGNORE INTO entities (name, entity_type) VALUES ('ADDTIONAL NAMES ON FILE', 'person')")
         db.commit()
-        from schema import _m010_additional_names_flag
+        from wslcb_licensing_tracker.schema import _m010_additional_names_flag
         _m010_additional_names_flag(db)
         db.commit()
         rows = db.execute(
@@ -827,7 +827,7 @@ class TestM011CleanDuplicateMarkers:
     """schema._m011_clean_duplicate_markers() tests."""
 
     def _run(self, db):
-        from schema import _m011_clean_duplicate_markers
+        from wslcb_licensing_tracker.schema import _m011_clean_duplicate_markers
         _m011_clean_duplicate_markers(db)
         db.commit()
 

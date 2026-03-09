@@ -11,7 +11,7 @@ import logging
 import sqlite3
 from collections.abc import Callable
 
-from db import get_db
+from .db import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -636,7 +636,7 @@ def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
         return
 
     # Import at call-time to avoid circular-import issues at module load.
-    from entities import clean_applicants_string
+    from wslcb_licensing_tracker.entities import clean_applicants_string
 
     if not _column_exists(conn, "license_records", "applicants"):
         return

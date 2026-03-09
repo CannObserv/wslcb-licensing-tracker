@@ -79,14 +79,14 @@ def rebuild_from_sources(
 
     # Deferred imports to avoid circular dependencies and keep module
     # importable even when optional deps (httpx, etc.) are missing.
-    from db import get_connection
-    from schema import init_db
-    from endorsements import (
+    from wslcb_licensing_tracker.db import get_connection
+    from wslcb_licensing_tracker.schema import init_db
+    from wslcb_licensing_tracker.endorsements import (
         seed_endorsements, discover_code_mappings,
         repair_code_name_endorsements,
     )
-    from parser import snapshot_paths, discover_diff_files
-    from link_records import build_all_links
+    from wslcb_licensing_tracker.parser import snapshot_paths, discover_diff_files
+    from wslcb_licensing_tracker.link_records import build_all_links
 
     # Create fresh database
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,11 +164,11 @@ def rebuild_from_sources(
 
 def _ingest_diffs(conn, diff_files, data_dir) -> int:
     """Ingest records from diff archives.  Returns count of new records."""
-    from parser import extract_records_from_diff
-    from db import (
+    from wslcb_licensing_tracker.parser import extract_records_from_diff
+    from wslcb_licensing_tracker.db import (
         get_or_create_source, SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
     )
-    from pipeline import ingest_record, IngestOptions
+    from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
 
     # Deduplicate across all diff files (same logic as backfill_diffs.py)
     all_records: dict[tuple, dict] = {}
@@ -251,11 +251,11 @@ def _ingest_diffs(conn, diff_files, data_dir) -> int:
 
 def _ingest_snapshots(conn, snapshots, data_dir) -> int:
     """Ingest records from HTML snapshots.  Returns count of new records."""
-    from parser import extract_snapshot_date, parse_snapshot
-    from db import (
+    from wslcb_licensing_tracker.parser import extract_snapshot_date, parse_snapshot
+    from wslcb_licensing_tracker.db import (
         get_or_create_source, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL,
     )
-    from pipeline import ingest_batch, IngestOptions
+    from wslcb_licensing_tracker.pipeline import ingest_batch, IngestOptions
 
     total_inserted = 0
 

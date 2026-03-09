@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
+from wslcb_licensing_tracker.app import app
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ from app import app
 @pytest.fixture
 def db():
     """In-memory SQLite DB with cross-thread access for TestClient."""
-    from schema import init_db
+    from wslcb_licensing_tracker.schema import init_db
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -77,9 +77,9 @@ def _make_client(db, admin_email="admin@example.com"):
     ctx.__exit__ = MagicMock(return_value=False)
 
     patches = (
-        patch("admin_auth.get_db", return_value=ctx),
-        patch("admin_auth._lookup_admin", return_value=admin_data),
-        patch("admin_routes.get_db", return_value=ctx),
+        patch("wslcb_licensing_tracker.admin_auth.get_db", return_value=ctx),
+        patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=admin_data),
+        patch("wslcb_licensing_tracker.admin_routes.get_db", return_value=ctx),
     )
     for p in patches:
         p.start()
@@ -102,9 +102,9 @@ def _make_noauth_client(db):
     ctx.__exit__ = MagicMock(return_value=False)
 
     patches = (
-        patch("admin_auth.get_db", return_value=ctx),
-        patch("admin_auth._lookup_admin", return_value=None),
-        patch("admin_routes.get_db", return_value=ctx),
+        patch("wslcb_licensing_tracker.admin_auth.get_db", return_value=ctx),
+        patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None),
+        patch("wslcb_licensing_tracker.admin_routes.get_db", return_value=ctx),
     )
     for p in patches:
         p.start()

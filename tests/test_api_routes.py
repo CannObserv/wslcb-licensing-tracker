@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
+from wslcb_licensing_tracker.app import app
 
 
 @contextmanager
@@ -29,7 +29,7 @@ def _broken_db():
 @pytest.fixture
 def db():
     """Cross-thread in-memory DB for TestClient use."""
-    from schema import init_db
+    from wslcb_licensing_tracker.schema import init_db
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -47,7 +47,7 @@ def client(db):
     def _fake_db():
         yield db
 
-    with patch("api_routes.get_db", _fake_db):
+    with patch("wslcb_licensing_tracker.api_routes.get_db", _fake_db):
         yield TestClient(app)
 
 
@@ -160,12 +160,12 @@ class TestHealthEndpoint:
         assert resp.json()["data"]["db"] == "ok"
 
     def test_db_error_returns_503(self, client):
-        with patch("api_routes.get_db", _broken_db):
+        with patch("wslcb_licensing_tracker.api_routes.get_db", _broken_db):
             resp = client.get("/api/v1/health")
         assert resp.status_code == 503
 
     def test_db_error_envelope(self, client):
-        with patch("api_routes.get_db", _broken_db):
+        with patch("wslcb_licensing_tracker.api_routes.get_db", _broken_db):
             resp = client.get("/api/v1/health")
         body = resp.json()
         _assert_envelope(body, ok=False)

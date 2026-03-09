@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from scraper import get_last_content_hash, compute_content_hash
+from wslcb_licensing_tracker.scraper import get_last_content_hash, compute_content_hash
 
 
 class TestComputeContentHash:
@@ -128,12 +128,12 @@ class TestCleanupRedundantScrapes:
         return db.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     def test_no_redundant_scrapes(self, db):
-        from scraper import cleanup_redundant_scrapes
+        from wslcb_licensing_tracker.scraper import cleanup_redundant_scrapes
         result = cleanup_redundant_scrapes(db, delete_files=False)
         assert result["scrape_logs"] == 0
 
     def test_cleans_zero_insert_scrape(self, db):
-        from scraper import cleanup_redundant_scrapes
+        from wslcb_licensing_tracker.scraper import cleanup_redundant_scrapes
 
         rec_id = self._insert_record(db)
         self._setup_scrape(db, 1, "2025-01-01T00:00:00", "success",
@@ -161,7 +161,7 @@ class TestCleanupRedundantScrapes:
         assert db.execute("SELECT COUNT(*) FROM record_sources").fetchone()[0] == 0
 
     def test_preserves_productive_scrapes(self, db):
-        from scraper import cleanup_redundant_scrapes
+        from wslcb_licensing_tracker.scraper import cleanup_redundant_scrapes
 
         rec_id = self._insert_record(db)
         # This scrape found new records — should NOT be cleaned
@@ -179,7 +179,7 @@ class TestCleanupRedundantScrapes:
 
     def test_mixed_scrapes(self, db):
         """Only zero-insert scrapes are cleaned; productive ones are kept."""
-        from scraper import cleanup_redundant_scrapes
+        from wslcb_licensing_tracker.scraper import cleanup_redundant_scrapes
 
         rec_id = self._insert_record(db)
 
