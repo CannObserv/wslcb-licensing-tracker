@@ -22,8 +22,7 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
 echo "=== Tests ==="
-source venv/bin/activate
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 
 echo ""
 echo "Pre-ship checks passed."
