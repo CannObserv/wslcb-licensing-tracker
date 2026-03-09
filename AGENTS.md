@@ -168,18 +168,38 @@ After cloning this project, initialize submodules:
 git submodule update --init --recursive
 ```
 
-At the start of every conversation, pull the latest upstream skills:
+**Submodule freshness is enforced automatically.** A `UserPromptSubmit` hook in `.claude/settings.json` runs `git submodule update --remote --merge` once per calendar day (lock file: `/tmp/wslcb-submodule-update-YYYYMMDD`) and auto-commits any updated refs. No manual pull is needed during normal use.
 
-```bash
-git submodule update --remote --merge vendor/gregoryfoster-skills vendor/obra-superpowers
-```
-
-If any submodule ref changed, commit it:
+If any submodule ref changed outside of a Claude Code session, commit it manually:
 
 ```bash
 git add vendor/gregoryfoster-skills vendor/obra-superpowers
 git commit -m "chore: update skills submodules"
 ```
+
+### Claude Code skill discovery (.claude/skills/)
+
+Claude Code discovers project skills from `.claude/skills/<name>/SKILL.md`, not from the project root `skills/` directory. This project wires both discovery systems through a two-level symlink chain:
+
+```
+.claude/skills/<name>  →  ../../skills/<name>  →  (dir or ../vendor/…)
+```
+
+This means:
+- Local override directories in `skills/` automatically shadow vendor skills in Claude Code too
+- No duplication of symlink targets — `skills/` is the single source of truth
+- Adding a new skill to `skills/` requires a matching symlink in `.claude/skills/`
+
+To add a new skill symlink to both discovery systems:
+
+```bash
+ln -s ../vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>
+ln -s ../../skills/<skill-name> .claude/skills/<skill-name>
+git add skills/<skill-name> .claude/skills/<skill-name>
+git commit -m "feat: add <skill-name> skill"
+```
+
+The `CLAUDE.md` file in the project root contains `@AGENTS.md`, which causes Claude Code to auto-load this file at the start of every conversation.
 
 To add a new external skill repo, follow the `managing-skills-claude` skill (available at `vendor/gregoryfoster-skills/skills/managing-skills-claude/`).
 
