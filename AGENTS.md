@@ -464,7 +464,19 @@ data/
 
 ## Git Workflow
 
-- Push access via SSH deploy key (ed25519, stored at `~/.ssh/wslcb-deploy-key`)
+### Credentials (two transports — use the right one for each operation)
+
+| Operation | Transport | How it works |
+|---|---|---|
+| `git push` / `git pull` | SSH deploy key | `~/.ssh/config` routes `github.com` → `~/.ssh/wslcb-deploy-key`; no extra flags needed |
+| `gh` CLI (issues, PRs, comments) | PAT via `gh` CLI | Pre-authenticated as `gregoryfoster`; credentials at `~/.config/gh/hosts.yml` |
+
+- **Never use `gh` for git push/pull** and **never use the SSH key for API calls** — each transport only works for its intended layer.
+- Do not copy, log, or expose the PAT value; reference only the path `~/.config/gh/hosts.yml`.
+- Verify access: `gh auth status` (PAT) · `ssh -T git@github.com -i ~/.ssh/wslcb-deploy-key` (SSH key)
+
+### Repository
+
 - Remote: `git@github.com:CannObserv/wslcb-licensing-tracker.git`
 - Single `main` branch for now
 - Write clear commit messages; group related changes
