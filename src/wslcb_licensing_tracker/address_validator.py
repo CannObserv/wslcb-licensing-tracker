@@ -158,7 +158,7 @@ def validate_location(
 
         conn.execute(
             """UPDATE locations SET
-                address_line_1 = ?, address_line_2 = ?,
+                std_address_line_1 = ?, std_address_line_2 = ?,
                 std_city = ?, std_region = ?, std_postal_code = ?, std_country = ?,
                 address_validated_at = ?
             WHERE id = ?""",
