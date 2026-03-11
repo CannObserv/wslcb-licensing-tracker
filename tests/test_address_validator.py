@@ -84,11 +84,18 @@ def test_load_api_key_from_env_var(monkeypatch, tmp_path):
 
 
 def test_load_api_key_from_file(monkeypatch, tmp_path):
-    """Reads the API key from the ./env file."""
+    """Reads the API key from the project-root ./env file.
+
+    The module lives at src/wslcb_licensing_tracker/address_validator.py, so
+    _load_api_key() must walk 3 levels up from __file__ to reach the project root.
+    """
     monkeypatch.setattr(av, "_cached_api_key", None)
+    monkeypatch.delenv("ADDRESS_VALIDATOR_API_KEY", raising=False)
+    module_dir = tmp_path / "src" / "wslcb_licensing_tracker"
+    module_dir.mkdir(parents=True)
     env_file = tmp_path / "env"
     env_file.write_text("# comment\nADDRESS_VALIDATOR_API_KEY=file-key-456\n")
-    monkeypatch.setattr(av, "__file__", str(tmp_path / "address_validator.py"))
+    monkeypatch.setattr(av, "__file__", str(module_dir / "address_validator.py"))
     assert av._load_api_key() == "file-key-456"
 
 

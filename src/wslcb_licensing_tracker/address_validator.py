@@ -5,7 +5,7 @@ API. Operates on the `locations` table — each unique raw address is validated
 once and shared across all license records that reference it.
 
 Configuration:
-    API key is loaded from ./env file (ADDRESS_VALIDATOR_API_KEY=...)
+    API key is loaded from the project-root ./env file (ADDRESS_VALIDATOR_API_KEY=...)
     with fallback to the ADDRESS_VALIDATOR_API_KEY environment variable.
 """
 
@@ -36,8 +36,11 @@ def _load_api_key() -> str:
     if _cached_api_key is not None:
         return _cached_api_key
 
-    # Try reading from ./env file
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "env")
+    # Try reading from the project-root ./env file.
+    # __file__ is src/wslcb_licensing_tracker/address_validator.py, so walk up
+    # three levels (module dir → src/ → project root) to locate ./env.
+    _module_dir = os.path.dirname(os.path.abspath(__file__))
+    env_path = os.path.join(os.path.dirname(os.path.dirname(_module_dir)), "env")
     try:
         with open(env_path, "r") as f:
             for line in f:
