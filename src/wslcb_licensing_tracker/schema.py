@@ -68,12 +68,17 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             city TEXT DEFAULT '',
             state TEXT DEFAULT 'WA',
             zip_code TEXT DEFAULT '',
-            address_line_1 TEXT DEFAULT '',
-            address_line_2 TEXT DEFAULT '',
+            std_address_line_1 TEXT DEFAULT '',
+            std_address_line_2 TEXT DEFAULT '',
             std_city TEXT DEFAULT '',
             std_region TEXT DEFAULT '',
             std_postal_code TEXT DEFAULT '',
             std_country TEXT DEFAULT '',
+            validated_address TEXT,
+            validation_status TEXT,
+            dpv_match_code TEXT,
+            latitude REAL,
+            longitude REAL,
             address_validated_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(raw_address)
@@ -691,6 +696,37 @@ def _m012_entities_name_index(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m013_address_validator_v2(conn: sqlite3.Connection) -> None:
+    """Rename address_line_1/2 to std_address_line_1/2; add validate columns.
+
+    Renames the two unprefixed address line columns to use the std_ prefix
+    (consistent with std_city, std_region, etc.), and adds five columns to
+    store results from the new /api/v1/validate endpoint.
+    """
+    if not _table_exists(conn, "locations"):
+        return
+
+    # Rename address_line_1 -> std_address_line_1
+    if _column_exists(conn, "locations", "address_line_1") and not _column_exists(conn, "locations", "std_address_line_1"):
+        conn.execute("ALTER TABLE locations RENAME COLUMN address_line_1 TO std_address_line_1")
+
+    # Rename address_line_2 -> std_address_line_2
+    if _column_exists(conn, "locations", "address_line_2") and not _column_exists(conn, "locations", "std_address_line_2"):
+        conn.execute("ALTER TABLE locations RENAME COLUMN address_line_2 TO std_address_line_2")
+
+    # Add new validate columns (each guarded for idempotency)
+    new_cols = [
+        ("validated_address", "TEXT"),
+        ("validation_status", "TEXT"),
+        ("dpv_match_code", "TEXT"),
+        ("latitude", "REAL"),
+        ("longitude", "REAL"),
+    ]
+    for col, col_type in new_cols:
+        if not _column_exists(conn, "locations", col):
+            conn.execute(f"ALTER TABLE locations ADD COLUMN {col} {col_type}")
+
+
 # -- Migration registry ------------------------------------------------
 
 # Migration registry.
@@ -713,6 +749,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (10, "additional_names_flag", _m010_additional_names_flag),
     (11, "clean_duplicate_markers", _m011_clean_duplicate_markers),
     (12, "entities_name_index", _m012_entities_name_index),
+    (13, "address_validator_v2", _m013_address_validator_v2),
 ]
 
 
