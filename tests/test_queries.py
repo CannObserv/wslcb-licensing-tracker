@@ -185,6 +185,100 @@ class TestHasAdditionalNamesFlag:
         assert hydrated["has_additional_names"] == 1
 
 
+# ── std_address_line alias rename ────────────────────────────────────────────
+
+
+class TestStdAddressLineAliases:
+    """RECORD_COLUMNS and _EXPORT_SELECT expose std_address_line_1/2 keys."""
+
+    def _insert_record_with_address(self, db, record_dict):
+        from wslcb_licensing_tracker.pipeline import insert_record
+
+        rec_id, _ = insert_record(db, record_dict)
+        db.commit()
+        return rec_id
+
+    def test_record_columns_exposes_std_address_line_1(self, db, standard_new_application):
+        """get_record_by_id result has std_address_line_1, not address_line_1."""
+        from wslcb_licensing_tracker.queries import get_record_by_id
+
+        rec_id = self._insert_record_with_address(db, standard_new_application)
+        row = get_record_by_id(db, rec_id)
+        assert row is not None
+        assert "std_address_line_1" in row
+        assert "address_line_1" not in row
+
+    def test_record_columns_exposes_std_address_line_2(self, db, standard_new_application):
+        """get_record_by_id result has std_address_line_2, not address_line_2."""
+        from wslcb_licensing_tracker.queries import get_record_by_id
+
+        rec_id = self._insert_record_with_address(db, standard_new_application)
+        row = get_record_by_id(db, rec_id)
+        assert row is not None
+        assert "std_address_line_2" in row
+        assert "address_line_2" not in row
+
+    def test_record_columns_exposes_prev_std_address_line_1(self, db, change_of_location_record):
+        """get_record_by_id result has prev_std_address_line_1, not prev_address_line_1."""
+        from wslcb_licensing_tracker.queries import get_record_by_id
+
+        rec_id = self._insert_record_with_address(db, change_of_location_record)
+        row = get_record_by_id(db, rec_id)
+        assert row is not None
+        assert "prev_std_address_line_1" in row
+        assert "prev_address_line_1" not in row
+
+    def test_record_columns_exposes_prev_std_address_line_2(self, db, change_of_location_record):
+        """get_record_by_id result has prev_std_address_line_2, not prev_address_line_2."""
+        from wslcb_licensing_tracker.queries import get_record_by_id
+
+        rec_id = self._insert_record_with_address(db, change_of_location_record)
+        row = get_record_by_id(db, rec_id)
+        assert row is not None
+        assert "prev_std_address_line_2" in row
+        assert "prev_address_line_2" not in row
+
+    def test_export_select_exposes_std_address_line_1(self, db, standard_new_application):
+        """export_records result dicts have std_address_line_1, not address_line_1."""
+        from wslcb_licensing_tracker.queries import export_records
+
+        self._insert_record_with_address(db, standard_new_application)
+        rows = export_records(db)
+        assert len(rows) > 0
+        assert "std_address_line_1" in rows[0]
+        assert "address_line_1" not in rows[0]
+
+    def test_export_select_exposes_std_address_line_2(self, db, standard_new_application):
+        """export_records result dicts have std_address_line_2, not address_line_2."""
+        from wslcb_licensing_tracker.queries import export_records
+
+        self._insert_record_with_address(db, standard_new_application)
+        rows = export_records(db)
+        assert len(rows) > 0
+        assert "std_address_line_2" in rows[0]
+        assert "address_line_2" not in rows[0]
+
+    def test_export_select_exposes_prev_std_address_line_1(self, db, change_of_location_record):
+        """export_records result dicts have prev_std_address_line_1, not prev_address_line_1."""
+        from wslcb_licensing_tracker.queries import export_records
+
+        self._insert_record_with_address(db, change_of_location_record)
+        rows = export_records(db)
+        assert len(rows) > 0
+        assert "prev_std_address_line_1" in rows[0]
+        assert "prev_address_line_1" not in rows[0]
+
+    def test_export_select_exposes_prev_std_address_line_2(self, db, change_of_location_record):
+        """export_records result dicts have prev_std_address_line_2, not prev_address_line_2."""
+        from wslcb_licensing_tracker.queries import export_records
+
+        self._insert_record_with_address(db, change_of_location_record)
+        rows = export_records(db)
+        assert len(rows) > 0
+        assert "prev_std_address_line_2" in rows[0]
+        assert "prev_address_line_2" not in rows[0]
+
+
 # ── Multi-value endorsement filter ───────────────────────────────────────────
 
 class TestMultiEndorsementFilter:
