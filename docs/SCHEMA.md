@@ -9,13 +9,21 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - One row per unique raw address string from the WSLCB source
 - `raw_address` (UNIQUE) — the first-seen raw string, normalized (NBSP → space)
 - `city`, `state`, `zip_code` — regex-parsed from raw address at creation time
-- `address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`)
-- `address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); empty string if none
+- `std_address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`); empty string if none
+- `std_address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); empty string if none
 - `std_city` — standardized city name from the address validator
 - `std_state` — standardized 2-letter state code
 - `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
-- `address_validated_at` — ISO 8601 timestamp of when the address was validated; NULL = not yet validated
-- All `std_*` / `address_line_*` columns default to empty string (not NULL) for validated records
+- `std_postal_code` — standardized postal code from `/api/v1/validate`
+- `std_country` — ISO 3166-1 alpha-2 country code (e.g., `US`); validated before storage; empty string if invalid
+- `std_region` — standardized state/region code from the address validator
+- `validated_address` — full single-line validated address string from the API (e.g., `1200 WESTLAKE AVE N  SEATTLE WA 98109`); NULL if not confirmed
+- `validation_status` — USPS DPV status: `confirmed`, `corrected`, `not_confirmed`, or `unavailable`; NULL if not yet validated
+- `dpv_match_code` — USPS DPV match code (e.g., `Y` = confirmed, `S` = correctable, `D` = missing secondary, `N` = not confirmed); NULL if not yet validated
+- `latitude` — WGS84 latitude from the address validator; NULL if not confirmed
+- `longitude` — WGS84 longitude from the address validator; NULL if not confirmed
+- `address_validated_at` — ISO 8601 timestamp of when the address was confirmed (i.e., provider returned `address_line_1`); NULL = not yet confirmed (includes `not_confirmed` and `unavailable` responses)
+- All `std_*` columns default to empty string (not NULL) for new rows; `validated_address`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are nullable
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
 - `get_or_create_location()` in `db.py` handles the upsert logic (uses `_normalize_raw_address()` from `db.py`)
 
@@ -203,4 +211,6 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - Migration 009 (`regulated_substances`): adds `regulated_substances` and `regulated_substance_endorsements` tables
 - Migration 010 (`additional_names_flag`): adds `has_additional_names INTEGER NOT NULL DEFAULT 0` to `license_records`; backfills from `applicants`/`previous_applicants`; deletes spurious `ADDITIONAL NAMES ON FILE` and `ADDTIONAL NAMES ON FILE` entity rows (cascade removes `record_entities` links) with `idx_rse_endorsement` index; seeds Cannabis and Alcohol substance rows and their endorsement associations from existing `license_endorsements` data
 - Migration 011 (`clean_duplicate_markers`): strips WSLCB `DUPLICATE` annotation tokens from `applicants` and `previous_applicants` columns in `license_records` (frozen `raw_*` shadow columns are left untouched); deletes all `entities` rows whose `name LIKE '%DUPLICATE%'`; `record_entities` cascade-deletes automatically; after this migration run `cli.py reprocess-entities` to rebuild entity links from the cleaned strings
+- Migration 012 (`entities_name_index`): adds `idx_entities_name` index on `entities(name)` for faster entity lookup and deduplication queries
+- Migration 013 (`address_validator_v2`): renames `address_line_1`→`std_address_line_1` and `address_line_2`→`std_address_line_2` (consistent with the `std_` prefix on other standardized columns); adds five new columns to store results from `POST /api/v1/validate`: `validated_address TEXT`, `validation_status TEXT`, `dpv_match_code TEXT`, `latitude REAL`, `longitude REAL`
 - To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
