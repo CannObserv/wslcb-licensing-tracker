@@ -260,7 +260,7 @@ def _validate_batch(
 ) -> int:
     """Validate a list of (location_id, raw_address) rows against the API.
 
-    Commits and prints progress every *batch_size* records.
+    Commits and logs progress every *batch_size* records.
     Sleeps *rate_limit* seconds between API requests to be polite.
 
     Returns:
@@ -295,7 +295,7 @@ def _validate_batch(
 
 
 def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limit: float = 0.1) -> int:
-    """Backfill standardized addresses for all un-validated locations.
+    """Backfill validated addresses for all un-validated locations.
 
     Queries all locations where address_validated_at IS NULL and
     raw_address is non-empty, then validates each one.
@@ -322,7 +322,7 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limi
     """Re-validate all locations, regardless of current validation status.
 
     Useful when the upstream address-validator service has been updated and
-    standardized values may have changed.
+    validated values may have changed.
 
     Safe to interrupt — each location's address_validated_at timestamp is
     updated individually on success.
