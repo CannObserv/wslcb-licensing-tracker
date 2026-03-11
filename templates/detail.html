@@ -82,9 +82,9 @@
             <div>
                 <dt class="text-sm font-medium text-gray-500">Business Location</dt>
                 <dd class="mt-1 text-sm text-gray-900">
-                    {% if record.address_line_1 %}
-                    <div>{{ record.address_line_1 }}</div>
-                    {% if record.address_line_2 %}<div>{{ record.address_line_2 }}</div>{% endif %}
+                    {% if record.std_address_line_1 %}
+                    <div>{{ record.std_address_line_1 }}</div>
+                    {% if record.std_address_line_2 %}<div>{{ record.std_address_line_2 }}</div>{% endif %}
                     <div>{{ record.std_city }}, {{ record.std_region }} {{ record.std_postal_code }}</div>
                     {% if record.business_location %}
                     <div class="mt-1 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.business_location }}</div>
@@ -121,9 +121,9 @@
                         <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
                             <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Previous Location</div>
                             <div class="text-sm font-medium text-gray-900">
-                                {% if record.prev_address_line_1 %}
-                                {{ record.prev_address_line_1 }}
-                                {% if record.prev_address_line_2 %}<br>{{ record.prev_address_line_2 }}{% endif %}
+                                {% if record.prev_std_address_line_1 %}
+                                {{ record.prev_std_address_line_1 }}
+                                {% if record.prev_std_address_line_2 %}<br>{{ record.prev_std_address_line_2 }}{% endif %}
                                 <br>{{ record.prev_std_city }}, {{ record.prev_std_region }} {{ record.prev_std_postal_code }}
                                 {% else %}
                                 {{ record.previous_business_location }}
@@ -136,9 +136,9 @@
                         <div class="bg-co-purple-50 rounded-lg p-4 border border-co-purple-100">
                             <div class="text-xs font-semibold text-co-purple uppercase tracking-wide mb-2">New Location →</div>
                             <div class="text-sm font-medium text-gray-900">
-                                {% if record.address_line_1 %}
-                                {{ record.address_line_1 }}
-                                {% if record.address_line_2 %}<br>{{ record.address_line_2 }}{% endif %}
+                                {% if record.std_address_line_1 %}
+                                {{ record.std_address_line_1 }}
+                                {% if record.std_address_line_2 %}<br>{{ record.std_address_line_2 }}{% endif %}
                                 <br>{{ record.std_city }}, {{ record.std_region }} {{ record.std_postal_code }}
                                 {% else %}
                                 {{ record.business_location }}
