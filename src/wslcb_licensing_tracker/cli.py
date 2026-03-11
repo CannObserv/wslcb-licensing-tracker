@@ -64,7 +64,7 @@ def cmd_backfill_addresses(args):
     from wslcb_licensing_tracker.address_validator import backfill_addresses
     init_db()
     with get_db() as conn:
-        backfill_addresses(conn)
+        backfill_addresses(conn, rate_limit=args.rate_limit)
 
 
 def cmd_refresh_addresses(args):
@@ -74,7 +74,7 @@ def cmd_refresh_addresses(args):
     from wslcb_licensing_tracker.address_validator import refresh_addresses
     init_db()
     with get_db() as conn:
-        refresh_addresses(conn)
+        refresh_addresses(conn, rate_limit=args.rate_limit)
 
 
 def cmd_rebuild_links(args):
@@ -346,12 +346,26 @@ def main():
         "backfill-addresses",
         help="Validate un-validated locations via the address API",
     )
+    p.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0.1,
+        metavar="SECONDS",
+        help="Seconds to sleep between API calls (default: 0.1)",
+    )
     p.set_defaults(func=cmd_backfill_addresses)
 
     # refresh-addresses
     p = sub.add_parser(
         "refresh-addresses",
         help="Re-validate all locations via the address API",
+    )
+    p.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0.1,
+        metavar="SECONDS",
+        help="Seconds to sleep between API calls (default: 0.1)",
     )
     p.set_defaults(func=cmd_refresh_addresses)
 
