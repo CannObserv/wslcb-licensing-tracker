@@ -68,13 +68,25 @@ def cmd_backfill_addresses(args):
 
 
 def cmd_refresh_addresses(args):
-    """Re-validate all locations via the address API."""
+    """Re-validate locations via the address API.
+
+    By default re-validates all locations.  Pass --location-ids to target only
+    a specific set (e.g. IDs extracted from a prior run's lock-failure log).
+    """
     from wslcb_licensing_tracker.db import get_db
     from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.address_validator import refresh_addresses
+    from wslcb_licensing_tracker.address_validator import (
+        refresh_addresses,
+        refresh_specific_addresses,
+    )
     init_db()
     with get_db() as conn:
-        refresh_addresses(conn, rate_limit=args.rate_limit)
+        if args.location_ids:
+            with open(args.location_ids) as fh:
+                ids = [int(line.strip()) for line in fh if line.strip()]
+            refresh_specific_addresses(conn, ids, rate_limit=args.rate_limit)
+        else:
+            refresh_addresses(conn, rate_limit=args.rate_limit)
 
 
 def cmd_rebuild_links(args):
@@ -358,7 +370,7 @@ def main():
     # refresh-addresses
     p = sub.add_parser(
         "refresh-addresses",
-        help="Re-validate all locations via the address API",
+        help="Re-validate locations via the address API (all, or a specific set)",
     )
     p.add_argument(
         "--rate-limit",
@@ -366,6 +378,13 @@ def main():
         default=0.1,
         metavar="SECONDS",
         help="Seconds to sleep between API calls (default: 0.1)",
+    )
+    p.add_argument(
+        "--location-ids",
+        metavar="FILE",
+        default=None,
+        help="Path to a file of newline-separated location IDs to re-validate "
+             "(default: re-validate all locations)",
     )
     p.set_defaults(func=cmd_refresh_addresses)
 

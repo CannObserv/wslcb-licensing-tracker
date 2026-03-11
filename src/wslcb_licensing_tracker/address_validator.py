@@ -263,7 +263,13 @@ def _validate_batch(
 ) -> int:
     """Validate a list of (location_id, raw_address) rows against the API.
 
-    Commits and logs progress every *batch_size* records.
+    Commits after every record so the SQLite write lock is held for milliseconds
+    per update rather than for the full batch window (batch_size × rate_limit seconds).
+    Without per-record commits, a 100-record batch at 0.1 s/record holds the lock for
+    10 s — longer than Python's default 5 s busy_timeout, causing 'database is locked'
+    errors on concurrent web app writes.
+
+    Logs progress every *batch_size* records.
     Sleeps *rate_limit* seconds between API requests to be polite.
 
     Returns:
@@ -282,17 +288,16 @@ def _validate_batch(
         for row in rows:
             location_id, address = row[0], row[1]
             ok = validate_location(conn, location_id, address, client=client)
+            conn.commit()
             attempted += 1
             if ok:
                 succeeded += 1
 
             if attempted % batch_size == 0:
-                conn.commit()
                 logger.debug("Progress: %d/%d (%d succeeded)", attempted, total, succeeded)
 
             time.sleep(rate_limit)
 
-    conn.commit()
     logger.info("Done: %d/%d succeeded (%d failed)", succeeded, total, total - succeeded)
     return succeeded
 
@@ -344,3 +349,45 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limi
     ).fetchall()
 
     return _validate_batch(conn, rows, "Refreshing addresses", batch_size=batch_size, rate_limit=rate_limit)
+
+
+def refresh_specific_addresses(
+    conn: sqlite3.Connection,
+    location_ids: list[int],
+    batch_size: int = 100,
+    rate_limit: float = 0.1,
+) -> int:
+    """Re-validate a specific set of locations by ID.
+
+    Intended for targeted re-runs after lock-contention failures: extract the
+    failed IDs from the journal, pass them here to refresh only those rows
+    without re-processing the full location set.
+
+    Safe to interrupt — each location is committed individually.
+
+    Args:
+        conn: Database connection.
+        location_ids: List of locations.id values to re-validate.
+        batch_size: How often to log progress (default 100).
+        rate_limit: Seconds to sleep between API calls (default 0.1).
+
+    Returns:
+        Number of locations successfully validated.
+    """
+    if not location_ids:
+        logger.info("No location IDs provided — nothing to refresh")
+        return 0
+
+    api_key = _load_api_key()
+    if not api_key:
+        logger.error("No API key configured for address validation")
+        return 0
+
+    placeholders = ",".join("?" * len(location_ids))
+    rows = conn.execute(
+        f"SELECT id, raw_address FROM locations WHERE id IN ({placeholders})"
+        " AND raw_address IS NOT NULL AND raw_address != ''",
+        location_ids,
+    ).fetchall()
+
+    return _validate_batch(conn, rows, "Refreshing specific addresses", batch_size=batch_size, rate_limit=rate_limit)

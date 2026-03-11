@@ -373,3 +373,170 @@ def test_refresh_addresses_passes_rate_limit(db, monkeypatch):
     monkeypatch.setattr(av, "_validate_batch", fake_batch)
     av.refresh_addresses(db, rate_limit=0.25)
     assert captured["rate_limit"] == 0.25
+
+
+# ── refresh_specific_addresses() ─────────────────────────────────────
+
+
+def test_refresh_specific_addresses_only_processes_given_ids(db, monkeypatch):
+    """refresh_specific_addresses() validates only the requested location IDs."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("ADDR ONE, SEATTLE, WA",))
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("ADDR TWO, TACOMA, WA",))
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("ADDR THREE, OLYMPIA, WA",))
+    db.commit()
+    id1 = db.execute("SELECT id FROM locations WHERE raw_address = ?", ("ADDR ONE, SEATTLE, WA",)).fetchone()[0]
+    id3 = db.execute("SELECT id FROM locations WHERE raw_address = ?", ("ADDR THREE, OLYMPIA, WA",)).fetchone()[0]
+
+    calls = []
+    def fake_validate_location(conn, loc_id, raw_address, client=None):
+        calls.append(loc_id)
+        return True
+
+    monkeypatch.setattr(av, "validate_location", fake_validate_location)
+    result = av.refresh_specific_addresses(db, [id1, id3])
+    assert sorted(calls) == sorted([id1, id3])
+    assert result == 2
+
+
+def test_refresh_specific_addresses_returns_zero_for_empty_list(db, monkeypatch):
+    """refresh_specific_addresses() with an empty ID list does nothing and returns 0."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    calls = []
+    def fake_validate_location(conn, loc_id, raw_address, client=None):
+        calls.append(loc_id)
+        return True
+    monkeypatch.setattr(av, "validate_location", fake_validate_location)
+    result = av.refresh_specific_addresses(db, [])
+    assert calls == []
+    assert result == 0
+
+
+def test_refresh_specific_addresses_passes_rate_limit(db, monkeypatch):
+    """refresh_specific_addresses() forwards rate_limit to _validate_batch()."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    captured = {}
+
+    def fake_batch(conn, rows, label, batch_size=100, rate_limit=0.1):
+        captured["rate_limit"] = rate_limit
+        return 0
+
+    monkeypatch.setattr(av, "_validate_batch", fake_batch)
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("ANY ADDR, WA",))
+    db.commit()
+    loc_id = db.execute("SELECT id FROM locations WHERE raw_address = ?", ("ANY ADDR, WA",)).fetchone()[0]
+    av.refresh_specific_addresses(db, [loc_id], rate_limit=0.5)
+    assert captured["rate_limit"] == 0.5
+
+
+# ── _validate_batch() commit frequency ───────────────────────────────
+
+
+class _TrackingConn:
+    """sqlite3.Connection wrapper that counts commit() calls."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.commit_count = 0
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def commit(self):
+        self.commit_count += 1
+        return self._conn.commit()
+
+
+def test_validate_batch_commits_after_each_record(db, monkeypatch):
+    """_validate_batch() commits after every record to keep write lock hold time near zero.
+
+    Holding the lock open for the entire batch (100 records × 0.1 s = 10 s) causes
+    'database is locked' errors on the web app because Python's busy_timeout is 5 s.
+    Committing per-record drops the hold time to milliseconds.
+    """
+    for i in range(3):
+        db.execute("INSERT INTO locations (raw_address) VALUES (?)", (f"COMMIT TEST ADDR {i}, WA",))
+    db.commit()
+    rows = db.execute(
+        "SELECT id, raw_address FROM locations WHERE raw_address LIKE 'COMMIT TEST%'"
+    ).fetchall()
+
+    def fake_validate(conn, loc_id, raw, client=None):
+        return True
+
+    monkeypatch.setattr(av, "validate_location", fake_validate)
+
+    tracking = _TrackingConn(db)
+    av._validate_batch(tracking, rows, "Test", batch_size=100, rate_limit=0)
+
+    # With 3 records and batch_size=100, the old code commits exactly once (at the end).
+    # The new code should commit at least once per record (3+).
+    assert tracking.commit_count >= 3
+
+
+# ── CLI --location-ids integration ───────────────────────────────────
+
+
+def test_cmd_refresh_addresses_dispatches_to_refresh_specific_when_file_given(
+    tmp_path, monkeypatch
+):
+    """cmd_refresh_addresses() calls refresh_specific_addresses() when --location-ids is set."""
+    import types
+    from unittest.mock import patch, MagicMock
+    from wslcb_licensing_tracker import cli
+
+    ids_file = tmp_path / "ids.txt"
+    ids_file.write_text("101\n202\n303\n")
+
+    called_with = {}
+
+    def fake_specific(conn, location_ids, rate_limit=0.1):
+        called_with["ids"] = location_ids
+        return len(location_ids)
+
+    def fake_refresh(conn, rate_limit=0.1):
+        called_with["all"] = True
+        return 0
+
+    args = types.SimpleNamespace(location_ids=str(ids_file), rate_limit=0.1)
+    mock_conn = MagicMock()
+    with patch("wslcb_licensing_tracker.db.get_db") as mock_get_db, \
+         patch("wslcb_licensing_tracker.schema.init_db"), \
+         patch("wslcb_licensing_tracker.address_validator.refresh_specific_addresses", fake_specific), \
+         patch("wslcb_licensing_tracker.address_validator.refresh_addresses", fake_refresh):
+        mock_get_db.return_value.__enter__ = lambda s: mock_conn
+        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+        cli.cmd_refresh_addresses(args)
+
+    assert called_with.get("ids") == [101, 202, 303]
+    assert "all" not in called_with
+
+
+def test_cmd_refresh_addresses_dispatches_to_refresh_all_without_file(monkeypatch):
+    """cmd_refresh_addresses() calls refresh_addresses() when no --location-ids flag."""
+    import types
+    from unittest.mock import patch, MagicMock
+    from wslcb_licensing_tracker import cli
+
+    called_with = {}
+
+    def fake_specific(conn, location_ids, rate_limit=0.1):
+        called_with["specific"] = True
+        return 0
+
+    def fake_refresh(conn, rate_limit=0.1):
+        called_with["all"] = True
+        return 0
+
+    args = types.SimpleNamespace(location_ids=None, rate_limit=0.1)
+    mock_conn = MagicMock()
+    with patch("wslcb_licensing_tracker.db.get_db") as mock_get_db, \
+         patch("wslcb_licensing_tracker.schema.init_db"), \
+         patch("wslcb_licensing_tracker.address_validator.refresh_addresses", fake_refresh), \
+         patch("wslcb_licensing_tracker.address_validator.refresh_specific_addresses", fake_specific):
+        mock_get_db.return_value.__enter__ = lambda s: mock_conn
+        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+        cli.cmd_refresh_addresses(args)
+
+    assert called_with.get("all") is True
+    assert "specific" not in called_with

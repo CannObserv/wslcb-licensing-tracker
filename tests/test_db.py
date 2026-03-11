@@ -69,6 +69,14 @@ class TestGetConnection:
         assert mode in ("wal", "memory")
         conn.close()
 
+    def test_busy_timeout_set(self):
+        """Python's default sqlite3.connect(timeout=5.0) maps to busy_timeout=5000ms.
+        Documented here so a future reduction of the Python timeout doesn't silently break this."""
+        conn = get_connection(":memory:")
+        timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout >= 5000
+        conn.close()
+
 
 class TestGetDb:
     def test_context_manager(self):
