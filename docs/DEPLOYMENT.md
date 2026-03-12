@@ -1,0 +1,78 @@
+# Deployment
+
+Operations reference for the exe.dev VM deployment.
+
+## Services
+
+| Service | Purpose |
+|---|---|
+| `wslcb-web.service` | uvicorn on port 8000; `ExecStartPost` polls `/api/v1/health` up to 5×(3 s) |
+| `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter |
+| `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
+| `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure |
+
+### Task service instances
+
+```
+wslcb-task@scrape
+wslcb-task@refresh-addresses
+wslcb-task@backfill-addresses
+wslcb-task@backfill-snapshots
+wslcb-task@backfill-provenance
+wslcb-task@rebuild-links
+```
+
+### Sudoers rule (install once)
+
+```bash
+sudo cp deploy/sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
+sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
+```
+
+Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`.
+
+## After changing service files
+
+```bash
+sudo cp deploy/wslcb-web.service deploy/wslcb-task@.service deploy/wslcb-scraper.timer \
+     deploy/wslcb-healthcheck.service deploy/wslcb-healthcheck.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now wslcb-healthcheck.timer
+sudo systemctl restart wslcb-web.service
+```
+
+## Logging
+
+Under systemd (non-TTY), all output is JSON lines — `timestamp`, `level`, `name`, `message`. Captured by the journal. Uvicorn access/error logs routed through the same formatter.
+
+```bash
+journalctl -u wslcb-web.service -f
+journalctl -u 'wslcb-task@scrape.service' -f
+```
+
+## Address Validation
+
+External API at `https://address-validator.exe.xyz:8000`.
+
+- API key: `/etc/wslcb-licensing-tracker/env` (`ADDRESS_VALIDATOR_API_KEY=...`), `640 root:exedev`
+- Falls back to `<project-root>/env` for local dev
+- `ENABLE_ADDRESS_VALIDATION=true` in env enables DPV validation (phase 2); otherwise only standardization runs
+- Services load env via `EnvironmentFile=/etc/wslcb-licensing-tracker/env`
+
+### Common address commands
+
+```bash
+# Backfill un-processed locations
+uv run wslcb backfill-addresses
+
+# Re-standardize all locations
+sudo systemctl start 'wslcb-task@refresh-addresses.service'
+journalctl -u 'wslcb-task@refresh-addresses.service' -f
+# or manually:
+uv run wslcb refresh-addresses
+```
+
+## Environment
+
+- Virtualenv at `.venv/` (managed by `uv sync`). If project directory moves, recreate.
+- All persistent data in `./data/` (gitignored).
