@@ -15,6 +15,7 @@ the caller is responsible for committing.  Audit logging is performed
 by the route handler, not here, so this module has no dependency on
 ``admin_audit``.
 """
+
 import logging
 import re
 import sqlite3
@@ -28,9 +29,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Stop-words stripped before similarity comparison.
-_SIM_STOP_WORDS: frozenset[str] = frozenset({
-    "ENDORSEMENT", "THE", "AND", "OF", "FOR", "A",
-})
+_SIM_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "ENDORSEMENT",
+        "THE",
+        "AND",
+        "OF",
+        "FOR",
+        "A",
+    }
+)
 
 # Spelling normalizations applied *before* tokenization (phrase → phrase).
 _SIM_SPELLING: list[tuple[str, str]] = [
@@ -68,19 +76,13 @@ def _sim_tokenize(name: str) -> list[str]:
     sentinel = re.sub(r"(?<![a-zA-Z0-9])\-(?![a-zA-Z0-9])", " MINUS ", sentinel)
     # Remove < > and remaining punctuation/whitespace
     cleaned = re.sub(r"[<>,.;:!?/\\()[\]{}\"'`@#$%^&*=|~]", " ", sentinel)
-    tokens = [
-        t for t in cleaned.split()
-        if t and t not in _SIM_STOP_WORDS
-    ]
-    return tokens
+    return [t for t in cleaned.split() if t and t not in _SIM_STOP_WORDS]
 
 
 def _sim_features(tokens: list[str]) -> frozenset[str]:
     """Return unigrams + adjacent bigrams for *tokens*."""
     unigrams: list[str] = tokens
-    bigrams: list[str] = [
-        f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1)
-    ]
+    bigrams: list[str] = [f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1)]
     return frozenset(unigrams + bigrams)
 
 
@@ -90,7 +92,7 @@ _SIM_POLAR_TOKENS: frozenset[str] = frozenset({"PLUS", "MINUS"})
 def endorsement_similarity(name_a: str, name_b: str) -> float:
     """Blended similarity between two endorsement name strings.
 
-    Score = 0.70 × Jaccard(token+bigram features) + 0.30 × containment.
+    Score = 0.70 x Jaccard(token+bigram features) + 0.30 x containment.
 
     Containment = max(|A∩B|/|A|, |A∩B|/|B|) on unigram sets, which catches
     cases where one name is a proper subset of the other.
@@ -110,7 +112,7 @@ def endorsement_similarity(name_a: str, name_b: str) -> float:
     uni_a = frozenset(tok_a)
     uni_b = frozenset(tok_b)
 
-    # Hard exclusion: sole difference is + vs − polarity token.
+    # Hard exclusion: sole difference is + vs - polarity token.
     if (uni_a | uni_b) - (uni_a & uni_b) == _SIM_POLAR_TOKENS:
         return 0.0
 
@@ -135,6 +137,7 @@ def endorsement_similarity(name_a: str, name_b: str) -> float:
 # ---------------------------------------------------------------------------
 # Endorsement list / group helpers
 # ---------------------------------------------------------------------------
+
 
 def get_endorsement_list(conn: sqlite3.Connection) -> list[dict]:
     """Return all endorsements as a flat list for the revised admin UI.
@@ -169,24 +172,27 @@ def get_endorsement_list(conn: sqlite3.Connection) -> list[dict]:
     name_by_id: dict[int, str] = {r[0]: r[1] for r in rows}
 
     eid_to_codes: dict[int, list[str]] = {}
-    for eid, code in conn.execute(
-        "SELECT endorsement_id, code FROM endorsement_codes"
-    ).fetchall():
+    for eid, code in conn.execute("SELECT endorsement_id, code FROM endorsement_codes").fetchall():
         eid_to_codes.setdefault(eid, []).append(code)
 
     result = []
     for eid, name, count in rows:
         canonical_id = alias_map.get(eid)
-        result.append({
-            "id": eid,
-            "name": name,
-            "record_count": count,
-            "is_canonical": eid in canonical_ids,
-            "is_variant": eid in alias_map,
-            "canonical_id": canonical_id,
-            "canonical_name": name_by_id.get(canonical_id) if canonical_id else None,
-            "codes": sorted(eid_to_codes.get(eid, []), key=lambda c: (0, int(c)) if c.isdigit() else (1, c)),
-        })
+        result.append(
+            {
+                "id": eid,
+                "name": name,
+                "record_count": count,
+                "is_canonical": eid in canonical_ids,
+                "is_variant": eid in alias_map,
+                "canonical_id": canonical_id,
+                "canonical_name": name_by_id.get(canonical_id) if canonical_id else None,
+                "codes": sorted(
+                    eid_to_codes.get(eid, []),
+                    key=lambda c: (0, int(c)) if c.isdigit() else (1, c),
+                ),
+            }
+        )
     return result
 
 
@@ -235,18 +241,24 @@ def suggest_duplicate_endorsements(
             continue
         score = endorsement_similarity(name_a, name_b)
         if score >= threshold:
-            # normalise so id_a < id_b
+            # normalise so out_a < out_b
             if id_a > id_b:
-                id_a, name_a, cnt_a, id_b, name_b, cnt_b = id_b, name_b, cnt_b, id_a, name_a, cnt_a
-            suggestions.append({
-                "id_a": id_a,
-                "name_a": name_a,
-                "count_a": cnt_a,
-                "id_b": id_b,
-                "name_b": name_b,
-                "count_b": cnt_b,
-                "score": round(score, 3),
-            })
+                out_a_id, out_a_name, out_a_cnt = id_b, name_b, cnt_b
+                out_b_id, out_b_name, out_b_cnt = id_a, name_a, cnt_a
+            else:
+                out_a_id, out_a_name, out_a_cnt = id_a, name_a, cnt_a
+                out_b_id, out_b_name, out_b_cnt = id_b, name_b, cnt_b
+            suggestions.append(
+                {
+                    "id_a": out_a_id,
+                    "name_a": out_a_name,
+                    "count_a": out_a_cnt,
+                    "id_b": out_b_id,
+                    "name_b": out_b_name,
+                    "count_b": out_b_cnt,
+                    "score": round(score, 3),
+                }
+            )
 
     suggestions.sort(key=lambda s: s["score"], reverse=True)
     return suggestions
@@ -278,12 +290,14 @@ def dismiss_suggestion(
 # Code-mapping CRUD
 # ---------------------------------------------------------------------------
 
+
 def get_code_mappings(conn: sqlite3.Connection) -> list[dict]:
     """Return all WSLCB numeric codes with their endorsement mappings.
 
     Each dict has:
     - ``code`` — the numeric string (e.g. ``'450'``)
-    - ``endorsements`` — list of ``{id, name, record_count, is_variant, canonical_id, canonical_name}``
+    - ``endorsements`` — list of ``{id, name, record_count, is_variant, canonical_id,
+      canonical_name}``
     - ``record_count`` — total records ingested with this code as ``license_type``
 
     Ordered numerically by code.
@@ -339,18 +353,22 @@ def get_code_mappings(conn: sqlite3.Connection) -> list[dict]:
         for eid in eids:
             meta = eid_meta.get(eid, {"id": eid, "name": str(eid), "record_count": 0})
             canonical_id = alias_map.get(eid)
-            endorsements.append({
-                **meta,
-                "is_variant": eid in alias_map,
-                "canonical_id": canonical_id,
-                "canonical_name": name_by_id.get(canonical_id) if canonical_id else None,
-            })
+            endorsements.append(
+                {
+                    **meta,
+                    "is_variant": eid in alias_map,
+                    "canonical_id": canonical_id,
+                    "canonical_name": name_by_id.get(canonical_id) if canonical_id else None,
+                }
+            )
         endorsements.sort(key=lambda e: e["name"])
-        result.append({
-            "code": code,
-            "endorsements": endorsements,
-            "record_count": code_record_counts.get(code, 0),
-        })
+        result.append(
+            {
+                "code": code,
+                "endorsements": endorsements,
+                "record_count": code_record_counts.get(code, 0),
+            }
+        )
     return result
 
 
@@ -368,9 +386,10 @@ def add_code_mapping(
             "INSERT INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
             (code, endorsement_id),
         )
-        return True
     except sqlite3.IntegrityError:
         return False
+    else:
+        return True
 
 
 def remove_code_mapping(

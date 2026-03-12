@@ -13,24 +13,33 @@ steps below, each idempotent and individually toggleable via
 Steps (in order):
   1. Insert raw record via ``insert_record()`` (dedup, locations,
      name cleaning, entity linking)
-  2. Process endorsements (resolve codes → names)
+  2. Process endorsements (resolve codes -> names)
   3. Link provenance (if source_id provided)
   4. Validate addresses (if enabled and API available)
   5. Link outcomes (if enabled)
 
-Failures in steps 3–5 are logged but do not abort the pipeline.
+Failures in steps 3-5 are logged but do not abort the pipeline.
 """
+
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
+from .address_validator import validate_previous_location, validate_record
+from .db import get_or_create_location, link_record_source
+from .endorsements import process_record
 from .entities import (
-    parse_and_link_entities,
+    ADDITIONAL_NAMES_MARKERS,
     clean_applicants_string,
     clean_entity_name,
-    ADDITIONAL_NAMES_MARKERS,
+    parse_and_link_entities,
 )
+from .link_records import link_new_record
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +47,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class IngestOptions:
     """Configuration for the ingestion pipeline."""
+
     validate_addresses: bool = True
     link_outcomes: bool = True
     source_id: int | None = None
@@ -49,6 +59,7 @@ class IngestOptions:
 @dataclass
 class IngestResult:
     """Result of ingesting a single record."""
+
     record_id: int | None = None
     is_new: bool = False
 
@@ -56,6 +67,7 @@ class IngestResult:
 @dataclass
 class BatchResult:
     """Aggregate result of a batch ingestion."""
+
     inserted: int = 0
     skipped: int = 0
     errors: int = 0
@@ -85,13 +97,15 @@ def _record_enrichment(
     conn.execute(
         "INSERT OR REPLACE INTO record_enrichments "
         "(record_id, step, completed_at, version) VALUES (?, ?, ?, ?)",
-        (record_id, step, datetime.now(timezone.utc).isoformat(), version),
+        (record_id, step, datetime.now(UTC).isoformat(), version),
     )
 
 
 def _applicants_have_additional_names(*applicant_strings: str | None) -> bool:
-    """Return True if any of the applicant strings contains an
-    ADDITIONAL NAMES ON FILE marker token (exact or typo variant)."""
+    """Return True if any applicant string contains an ADDITIONAL NAMES ON FILE marker.
+
+    Checks exact and typo variant tokens.
+    """
     for s in applicant_strings:
         if not s:
             continue
@@ -101,7 +115,8 @@ def _applicants_have_additional_names(*applicant_strings: str | None) -> bool:
 
 
 def insert_record(
-    conn: sqlite3.Connection, record: dict,
+    conn: sqlite3.Connection,
+    record: dict,
 ) -> tuple[int, bool] | None:
     """Insert a record, returning ``(id, is_new)`` or *None* on error.
 
@@ -115,8 +130,6 @@ def insert_record(
     creates) location rows and links entity records.  Checks for
     duplicates *before* creating locations to avoid orphaned rows.
     """
-    from wslcb_licensing_tracker.db import get_or_create_location
-
     existing = conn.execute(
         """SELECT id FROM license_records
            WHERE section_type = :section_type
@@ -148,17 +161,15 @@ def insert_record(
     cleaned_biz = clean_entity_name(record.get("business_name", ""))
     cleaned_prev_biz = clean_entity_name(record.get("previous_business_name", ""))
     cleaned_applicants = clean_applicants_string(record.get("applicants", ""))
-    cleaned_prev_applicants = clean_applicants_string(
-        record.get("previous_applicants", "")
-    )
+    cleaned_prev_applicants = clean_applicants_string(record.get("previous_applicants", ""))
     # Preserve raw (as-parsed) values before cleaning
     raw_biz = record.get("business_name", "")
     raw_prev_biz = record.get("previous_business_name", "")
     raw_applicants = record.get("applicants", "")
     raw_prev_applicants = record.get("previous_applicants", "")
-    has_additional_names = int(_applicants_have_additional_names(
-        cleaned_applicants, cleaned_prev_applicants
-    ))
+    has_additional_names = int(
+        _applicants_have_additional_names(cleaned_applicants, cleaned_prev_applicants)
+    )
     try:
         cursor = conn.execute(
             """INSERT INTO license_records
@@ -196,15 +207,14 @@ def insert_record(
         record_id = cursor.lastrowid
         parse_and_link_entities(conn, record_id, cleaned_applicants, "applicant")
         if cleaned_prev_applicants:
-            parse_and_link_entities(
-                conn, record_id, cleaned_prev_applicants, "previous_applicant"
-            )
-        return (record_id, True)
+            parse_and_link_entities(conn, record_id, cleaned_prev_applicants, "previous_applicant")
     except sqlite3.IntegrityError:
         return None
+    else:
+        return (record_id, True)
 
 
-def ingest_record(
+def ingest_record(  # noqa: C901, PLR0912
     conn: sqlite3.Connection,
     record: dict,
     options: IngestOptions,
@@ -214,12 +224,9 @@ def ingest_record(
     Returns an ``IngestResult`` on success (both new and duplicate),
     or ``None`` on unexpected error.
 
-    Steps 2–5 only run for newly inserted records; duplicates get
+    Steps 2-5 only run for newly inserted records; duplicates get
     provenance linked with role ``'confirmed'`` and skip other steps.
     """
-    from wslcb_licensing_tracker.endorsements import process_record
-    from wslcb_licensing_tracker.db import link_record_source
-
     # Step 1: Insert record (dedup, locations, name cleaning)
     try:
         result = insert_record(conn, record)
@@ -244,7 +251,8 @@ def ingest_record(
             _record_enrichment(conn, record_id, STEP_ENDORSEMENTS)
         except Exception:
             logger.exception(
-                "Error processing endorsements for record %d", record_id,
+                "Error processing endorsements for record %d",
+                record_id,
             )
 
         # Entity linking is performed by insert_record (step 1), so
@@ -255,50 +263,58 @@ def ingest_record(
         if options.source_id is not None:
             try:
                 link_record_source(
-                    conn, record_id, options.source_id, options.source_role,
+                    conn,
+                    record_id,
+                    options.source_id,
+                    options.source_role,
                 )
             except Exception:
                 logger.exception(
-                    "Error linking provenance for record %d", record_id,
+                    "Error linking provenance for record %d",
+                    record_id,
                 )
 
         # Step 4: Validate addresses
         if options.validate_addresses:
             try:
-                from wslcb_licensing_tracker.address_validator import validate_record, validate_previous_location
                 validate_record(conn, record_id, client=options.av_client)
                 if record.get("previous_business_location"):
                     validate_previous_location(
-                        conn, record_id, client=options.av_client,
+                        conn,
+                        record_id,
+                        client=options.av_client,
                     )
                 _record_enrichment(conn, record_id, STEP_ADDRESS)
             except Exception:
                 logger.exception(
-                    "Error validating address for record %d", record_id,
+                    "Error validating address for record %d",
+                    record_id,
                 )
 
         # Step 5: Link outcomes
         if options.link_outcomes:
             try:
-                from wslcb_licensing_tracker.link_records import link_new_record
                 link_new_record(conn, record_id)
                 _record_enrichment(conn, record_id, STEP_OUTCOME_LINK)
             except Exception:
                 logger.exception(
-                    "Error linking outcomes for record %d", record_id,
-                )
-    else:
-        # Duplicate — link provenance as 'confirmed'
-        if options.source_id is not None:
-            try:
-                link_record_source(
-                    conn, record_id, options.source_id, "confirmed",
-                )
-            except Exception:
-                logger.exception(
-                    "Error linking confirmed provenance for record %d",
+                    "Error linking outcomes for record %d",
                     record_id,
                 )
+    # Duplicate — link provenance as 'confirmed'
+    elif options.source_id is not None:
+        try:
+            link_record_source(
+                conn,
+                record_id,
+                options.source_id,
+                "confirmed",
+            )
+        except Exception:
+            logger.exception(
+                "Error linking confirmed provenance for record %d",
+                record_id,
+            )
 
     return IngestResult(record_id=record_id, is_new=is_new)
 
@@ -330,8 +346,11 @@ def ingest_batch(
             conn.commit()
             logger.debug(
                 "  progress: %d / %d (inserted=%d, skipped=%d, errors=%d)",
-                i + 1, len(records),
-                result.inserted, result.skipped, result.errors,
+                i + 1,
+                len(records),
+                result.inserted,
+                result.skipped,
+                result.errors,
             )
 
     conn.commit()

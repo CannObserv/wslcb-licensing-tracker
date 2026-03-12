@@ -8,23 +8,29 @@ Usage::
 
     python backfill_provenance.py
 """
+
 import logging
 import re
+import sqlite3
 from pathlib import Path
 
 from .db import (
-    DATA_DIR, get_db,
-    get_or_create_source, link_record_source,
-    SOURCE_TYPE_LIVE_SCRAPE, SOURCE_TYPE_CO_ARCHIVE,
-    SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
+    DATA_DIR,
+    SOURCE_TYPE_CO_ARCHIVE,
+    SOURCE_TYPE_CO_DIFF_ARCHIVE,
+    SOURCE_TYPE_LIVE_SCRAPE,
+    WSLCB_SOURCE_URL,
+    get_db,
+    get_or_create_source,
+    link_record_source,
 )
+from .parser import discover_diff_files, parse_diff_timestamp, parse_snapshot
 from .schema import init_db
-from .parser import parse_snapshot, discover_diff_files, parse_diff_timestamp
 
 logger = logging.getLogger(__name__)
 
 
-def _find_record_id(conn, rec: dict) -> int | None:
+def _find_record_id(conn: sqlite3.Connection, rec: dict) -> int | None:
     """Look up an existing record by its unique key.  Returns id or None."""
     row = conn.execute(
         """SELECT id FROM license_records
@@ -38,7 +44,9 @@ def _find_record_id(conn, rec: dict) -> int | None:
 
 
 def _link_snapshot_records(
-    conn, snap_path: Path, source_id: int,
+    conn: sqlite3.Connection,
+    snap_path: Path,
+    source_id: int,
 ) -> tuple[int, int]:
     """Parse a snapshot and link all its records to the given source.
 
@@ -46,7 +54,7 @@ def _link_snapshot_records(
     """
     try:
         records = parse_snapshot(snap_path)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("Failed to parse %s: %s", snap_path.name, e)
         return 0, 0
 
@@ -64,7 +72,7 @@ def _link_snapshot_records(
     return linked, missed
 
 
-def backfill_provenance():
+def backfill_provenance() -> None:  # noqa: C901, PLR0912, PLR0915
     """Populate source provenance for all existing records."""
     init_db()
 
@@ -75,7 +83,8 @@ def backfill_provenance():
                FROM scrape_log ORDER BY id"""
         ).fetchall()
         logger.info(
-            "Phase 1: processing %d scrape_log entries", len(log_rows),
+            "Phase 1: processing %d scrape_log entries",
+            len(log_rows),
         )
 
         for row in log_rows:
@@ -92,16 +101,22 @@ def backfill_provenance():
                 snap_abs = DATA_DIR / snap_rel
                 if snap_abs.exists():
                     linked, missed = _link_snapshot_records(
-                        conn, snap_abs, source_id,
+                        conn,
+                        snap_abs,
+                        source_id,
                     )
                     logger.debug(
                         "  scrape_log %d (%s): linked=%d missed=%d",
-                        row["id"], snap_rel, linked, missed,
+                        row["id"],
+                        snap_rel,
+                        linked,
+                        missed,
                     )
                 else:
                     logger.warning(
                         "  scrape_log %d: snapshot not found: %s",
-                        row["id"], snap_abs,
+                        row["id"],
+                        snap_abs,
                     )
             conn.commit()
 
@@ -110,17 +125,11 @@ def backfill_provenance():
         co_snapshots = sorted(archive_dir.glob("**/*.html"))
         # Exclude snapshots already handled via scrape_log to avoid
         # re-registering them under a different source type.
-        live_paths = {
-            row["snapshot_path"]
-            for row in log_rows
-            if row["snapshot_path"]
-        }
-        co_snapshots = [
-            p for p in co_snapshots
-            if str(p.relative_to(DATA_DIR)) not in live_paths
-        ]
+        live_paths = {row["snapshot_path"] for row in log_rows if row["snapshot_path"]}
+        co_snapshots = [p for p in co_snapshots if str(p.relative_to(DATA_DIR)) not in live_paths]
         logger.info(
-            "Phase 2: processing %d CO archive snapshots", len(co_snapshots),
+            "Phase 2: processing %d CO archive snapshots",
+            len(co_snapshots),
         )
 
         total_linked = 0
@@ -128,11 +137,8 @@ def backfill_provenance():
         for snap_path in co_snapshots:
             rel_path = str(snap_path.relative_to(DATA_DIR))
             # Extract date from filename for captured_at
-            m = re.search(r'(\d{4})_(\d{2})_(\d{2})', snap_path.name)
-            captured_at = (
-                f"{m.group(1)}-{m.group(2)}-{m.group(3)}T00:00:00+00:00"
-                if m else None
-            )
+            m = re.search(r"(\d{4})_(\d{2})_(\d{2})", snap_path.name)
+            captured_at = f"{m.group(1)}-{m.group(2)}-{m.group(3)}T00:00:00+00:00" if m else None
             source_id = get_or_create_source(
                 conn,
                 SOURCE_TYPE_CO_ARCHIVE,
@@ -141,19 +147,25 @@ def backfill_provenance():
                 captured_at=captured_at,
             )
             linked, missed = _link_snapshot_records(
-                conn, snap_path, source_id,
+                conn,
+                snap_path,
+                source_id,
             )
             total_linked += linked
             total_missed += missed
             if linked:
                 logger.debug(
-                    "  %s: linked=%d missed=%d", rel_path, linked, missed,
+                    "  %s: linked=%d missed=%d",
+                    rel_path,
+                    linked,
+                    missed,
                 )
             conn.commit()
 
         logger.info(
             "Phase 2 done: linked %d records (%d unmatched)",
-            total_linked, total_missed,
+            total_linked,
+            total_missed,
         )
 
         # ── Phase 3: CO diff archives ──────────────────────────
@@ -169,17 +181,17 @@ def backfill_provenance():
 
         # Build ts → [(source_id, path)] mapping from diff headers
         ts_to_source: dict[str, int] = {}
-        for diff_path, section_type in diff_files:
+        for diff_path, _section_type in diff_files:
             try:
                 old_ts = new_ts = None
-                with open(diff_path, encoding="utf-8") as f:
+                with diff_path.open(encoding="utf-8") as f:
                     for line in f:
                         if line.startswith("--- "):
                             old_ts = parse_diff_timestamp(line.rstrip("\n"))
                         elif line.startswith("+++ "):
                             new_ts = parse_diff_timestamp(line.rstrip("\n"))
                             break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning("Failed to read %s: %s", diff_path.name, e)
                 continue
 
@@ -200,7 +212,8 @@ def backfill_provenance():
         conn.commit()
         logger.info(
             "  Registered %d diff sources, %d unique timestamps",
-            len(diff_files), len(ts_to_source),
+            len(diff_files),
+            len(ts_to_source),
         )
 
         # Find orphan records and link them via scraped_at
@@ -212,23 +225,22 @@ def backfill_provenance():
 
         diff_linked = 0
         diff_missed = 0
-        batch = 0
-        for row in orphans:
+        for batch_num, row in enumerate(orphans, start=1):
             source_id = ts_to_source.get(row["scraped_at"])
             if source_id is not None:
                 link_record_source(conn, row["id"], source_id, "confirmed")
                 diff_linked += 1
             else:
                 diff_missed += 1
-            batch += 1
-            if batch % 10000 == 0:
+            if batch_num % 10000 == 0:
                 conn.commit()
-                logger.debug("    ...%d/%d", batch, len(orphans))
+                logger.debug("    ...%d/%d", batch_num, len(orphans))
         conn.commit()
 
         logger.info(
             "Phase 3 done: linked %d records from diffs (%d unmatched)",
-            diff_linked, diff_missed,
+            diff_linked,
+            diff_missed,
         )
 
         # ── Summary ──────────────────────────────────────────────
@@ -253,6 +265,6 @@ def backfill_provenance():
         ).fetchone()[0]
         if orphan_count:
             logger.warning(
-                "%d records have no source attribution", orphan_count,
+                "%d records have no source attribution",
+                orphan_count,
             )
-

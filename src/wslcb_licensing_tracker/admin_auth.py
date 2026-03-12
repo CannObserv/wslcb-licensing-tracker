@@ -12,6 +12,7 @@ Public API
 - :class:`AdminRedirectException` — raised by :func:`require_admin` when no
   credentials are present; handled by the app-level exception handler.
 """
+
 import logging
 import os
 
@@ -22,13 +23,14 @@ from .db import get_db
 logger = logging.getLogger(__name__)
 
 
-class AdminRedirectException(Exception):
+class AdminRedirectException(Exception):  # noqa: N818
     """Raised by :func:`require_admin` to trigger a login redirect.
 
     Caught by the app-level exception handler registered in ``app.py``.
     """
 
     def __init__(self, location: str) -> None:
+        """Store the redirect location URL."""
         self.location = location
 
 
@@ -94,7 +96,8 @@ async def require_admin(request: Request) -> dict:
         redirect_path = str(request.url.path)
         if request.url.query:
             redirect_path += f"?{request.url.query}"
-        raise AdminRedirectException(f"/__exe.dev/login?redirect={redirect_path}")
+        login_url = f"/__exe.dev/login?redirect={redirect_path}"
+        raise AdminRedirectException(login_url)
 
     admin = await get_current_user(request)
     if admin is None:

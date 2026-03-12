@@ -11,18 +11,49 @@ Usage via CLI::
     python cli.py rebuild --output data/wslcb-rebuilt.db --verify
     python cli.py rebuild --output data/wslcb-rebuilt.db --force
 """
+
 import logging
 import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from wslcb_licensing_tracker.db import (
+    SOURCE_TYPE_CO_ARCHIVE,
+    SOURCE_TYPE_CO_DIFF_ARCHIVE,
+    WSLCB_SOURCE_URL,
+    get_connection,
+    get_or_create_source,
+)
+from wslcb_licensing_tracker.endorsements import (
+    discover_code_mappings,
+    repair_code_name_endorsements,
+    seed_endorsements,
+)
+from wslcb_licensing_tracker.link_records import build_all_links
+from wslcb_licensing_tracker.parser import (
+    discover_diff_files,
+    extract_records_from_diff,
+    extract_snapshot_date,
+    parse_snapshot,
+    snapshot_paths,
+)
+from wslcb_licensing_tracker.pipeline import IngestOptions, ingest_batch, ingest_record
+from wslcb_licensing_tracker.schema import init_db
+
 logger = logging.getLogger(__name__)
+
+# Commit after this many records during bulk ingestion
+_COMMIT_BATCH = 500
+
+# Sample size for comparison report
+_SAMPLE_SIZE = 10
 
 
 @dataclass
 class RebuildResult:
     """Aggregate result of a full rebuild."""
+
     records: int = 0
     from_snapshots: int = 0
     from_diffs: int = 0
@@ -36,6 +67,7 @@ class RebuildResult:
 @dataclass
 class ComparisonResult:
     """Result of comparing production vs rebuilt databases."""
+
     prod_count: int = 0
     rebuilt_count: int = 0
     missing_from_rebuilt: int = 0
@@ -45,7 +77,7 @@ class ComparisonResult:
     sample_extra: list = field(default_factory=list)
 
 
-def rebuild_from_sources(
+def rebuild_from_sources(  # sequential 4-phase pipeline; extracting phases would obscure the flow
     *,
     output_path: Path,
     data_dir: Path,
@@ -69,24 +101,11 @@ def rebuild_from_sources(
             output_path.unlink()
             logger.info("Removed existing output file: %s", output_path)
         else:
-            raise FileExistsError(
-                f"Output file already exists: {output_path}\n"
-                f"Use --force to overwrite."
-            )
+            msg = f"Output file already exists: {output_path}\nUse --force to overwrite."
+            raise FileExistsError(msg)
 
     start = time.monotonic()
     result = RebuildResult()
-
-    # Deferred imports to avoid circular dependencies and keep module
-    # importable even when optional deps (httpx, etc.) are missing.
-    from wslcb_licensing_tracker.db import get_connection
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.endorsements import (
-        seed_endorsements, discover_code_mappings,
-        repair_code_name_endorsements,
-    )
-    from wslcb_licensing_tracker.parser import snapshot_paths, discover_diff_files
-    from wslcb_licensing_tracker.link_records import build_all_links
 
     # Create fresh database
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +115,7 @@ def rebuild_from_sources(
     conn.commit()
 
     try:
-        # ── Phase 1: Replay diff archives (oldest data) ──────────────
+        # -- Phase 1: Replay diff archives (oldest data) --
         diff_files = discover_diff_files(data_dir)
         if diff_files:
             logger.info("Phase 1: Ingesting from %d diff file(s)", len(diff_files))
@@ -105,12 +124,14 @@ def rebuild_from_sources(
         else:
             logger.info("Phase 1: No diff files found, skipping")
 
-        # ── Phase 2: Replay HTML snapshots ───────────────────────────
+        # -- Phase 2: Replay HTML snapshots --
         snapshots = snapshot_paths(data_dir)
         if snapshots:
             logger.info("Phase 2: Ingesting from %d snapshot(s)", len(snapshots))
             result.from_snapshots = _ingest_snapshots(
-                conn, snapshots, data_dir,
+                conn,
+                snapshots,
+                data_dir,
             )
             logger.info(
                 "Phase 2 complete: %d records from snapshots",
@@ -119,57 +140,49 @@ def rebuild_from_sources(
         else:
             logger.info("Phase 2: No snapshots found, skipping")
 
-        # ── Phase 3: Endorsement discovery ───────────────────────────
+        # -- Phase 3: Endorsement discovery --
         logger.info("Phase 3: Running endorsement discovery")
         repair_code_name_endorsements(conn)
         learned = discover_code_mappings(conn)
         result.endorsement_mappings_discovered = len(learned)
         if learned:
             logger.info(
-                "Discovered %d new code mapping(s)", len(learned),
+                "Discovered %d new code mapping(s)",
+                len(learned),
             )
         conn.commit()
 
-        # ── Phase 4: Build outcome links ─────────────────────────────
+        # -- Phase 4: Build outcome links --
         logger.info("Phase 4: Building outcome links")
         build_all_links(conn)
-        result.outcome_links = conn.execute(
-            "SELECT COUNT(*) FROM record_links"
-        ).fetchone()[0]
+        result.outcome_links = conn.execute("SELECT COUNT(*) FROM record_links").fetchone()[0]
         conn.commit()
 
-        # ── Final counts ─────────────────────────────────────────────
-        result.records = conn.execute(
-            "SELECT COUNT(*) FROM license_records"
-        ).fetchone()[0]
-        result.locations = conn.execute(
-            "SELECT COUNT(*) FROM locations"
-        ).fetchone()[0]
-        result.entities = conn.execute(
-            "SELECT COUNT(*) FROM entities"
-        ).fetchone()[0]
+        # -- Final counts --
+        result.records = conn.execute("SELECT COUNT(*) FROM license_records").fetchone()[0]
+        result.locations = conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0]
+        result.entities = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
 
     finally:
         conn.close()
 
     result.elapsed_seconds = time.monotonic() - start
     logger.info(
-        "Rebuild complete: %d records (%d from diffs, %d from snapshots) "
-        "in %.1fs",
-        result.records, result.from_diffs, result.from_snapshots,
+        "Rebuild complete: %d records (%d from diffs, %d from snapshots) in %.1fs",
+        result.records,
+        result.from_diffs,
+        result.from_snapshots,
         result.elapsed_seconds,
     )
     return result
 
 
-def _ingest_diffs(conn, diff_files, data_dir) -> int:
+def _ingest_diffs(  # noqa: C901  # two-pass dedup logic + per-record source resolution
+    conn: sqlite3.Connection,
+    diff_files: list[tuple[Path, str]],
+    data_dir: Path,
+) -> int:
     """Ingest records from diff archives.  Returns count of new records."""
-    from wslcb_licensing_tracker.parser import extract_records_from_diff
-    from wslcb_licensing_tracker.db import (
-        get_or_create_source, SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
-    )
-    from wslcb_licensing_tracker.pipeline import ingest_record, IngestOptions
-
     # Deduplicate across all diff files (same logic as backfill_diffs.py)
     all_records: dict[tuple, dict] = {}
     ts_to_diff_path: dict[str, str] = {}
@@ -178,7 +191,7 @@ def _ingest_diffs(conn, diff_files, data_dir) -> int:
     for fp, sec_type in diff_files:
         try:
             recs = extract_records_from_diff(fp, sec_type)
-        except Exception:
+        except Exception:  # broad catch to skip corrupt diff files and continue
             logger.exception("Failed to parse diff %s", fp)
             continue
         for rec in recs:
@@ -196,7 +209,9 @@ def _ingest_diffs(conn, diff_files, data_dir) -> int:
         if files_processed % 200 == 0:
             logger.debug(
                 "  parsed %d / %d diff files (%d unique records)",
-                files_processed, len(diff_files), len(all_records),
+                files_processed,
+                len(diff_files),
+                len(all_records),
             )
 
     records = sorted(
@@ -205,13 +220,13 @@ def _ingest_diffs(conn, diff_files, data_dir) -> int:
     )
     logger.info(
         "Diff extraction: %d unique records from %d files",
-        len(records), files_processed,
+        len(records),
+        files_processed,
     )
 
     # Insert via pipeline
     source_cache: dict[str, int] = {}
     inserted = 0
-    COMMIT_BATCH = 500
 
     for i, rec in enumerate(records):
         # Resolve provenance source
@@ -221,7 +236,8 @@ def _ingest_diffs(conn, diff_files, data_dir) -> int:
         if diff_path:
             if diff_path not in source_cache:
                 source_cache[diff_path] = get_or_create_source(
-                    conn, SOURCE_TYPE_CO_DIFF_ARCHIVE,
+                    conn,
+                    SOURCE_TYPE_CO_DIFF_ARCHIVE,
                     snapshot_path=diff_path,
                     url=WSLCB_SOURCE_URL,
                     captured_at=scraped_at,
@@ -237,45 +253,43 @@ def _ingest_diffs(conn, diff_files, data_dir) -> int:
         if ir is not None and ir.is_new:
             inserted += 1
 
-        if (i + 1) % COMMIT_BATCH == 0:
+        if (i + 1) % _COMMIT_BATCH == 0:
             conn.commit()
             if (i + 1) % 5000 == 0:
                 logger.debug(
                     "  diff progress: %d / %d (inserted=%d)",
-                    i + 1, len(records), inserted,
+                    i + 1,
+                    len(records),
+                    inserted,
                 )
 
     conn.commit()
     return inserted
 
 
-def _ingest_snapshots(conn, snapshots, data_dir) -> int:
+def _ingest_snapshots(
+    conn: sqlite3.Connection,
+    snapshots: list[Path],
+    data_dir: Path,
+) -> int:
     """Ingest records from HTML snapshots.  Returns count of new records."""
-    from wslcb_licensing_tracker.parser import extract_snapshot_date, parse_snapshot
-    from wslcb_licensing_tracker.db import (
-        get_or_create_source, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL,
-    )
-    from wslcb_licensing_tracker.pipeline import ingest_batch, IngestOptions
-
     total_inserted = 0
 
     for snap_path in snapshots:
         snap_date = extract_snapshot_date(snap_path)
         try:
             records = parse_snapshot(snap_path)
-        except Exception:
+        except Exception:  # broad catch to skip corrupt snapshots and continue
             logger.exception("Failed to parse snapshot %s", snap_path.name)
             continue
 
         rel_path = str(snap_path.relative_to(data_dir))
         source_id = get_or_create_source(
-            conn, SOURCE_TYPE_CO_ARCHIVE,
+            conn,
+            SOURCE_TYPE_CO_ARCHIVE,
             snapshot_path=rel_path,
             url=WSLCB_SOURCE_URL,
-            captured_at=(
-                snap_date.replace("_", "-") + "T00:00:00+00:00"
-                if snap_date else None
-            ),
+            captured_at=(snap_date.replace("_", "-") + "T00:00:00+00:00" if snap_date else None),
         )
 
         opts = IngestOptions(
@@ -287,7 +301,9 @@ def _ingest_snapshots(conn, snapshots, data_dir) -> int:
         total_inserted += batch_result.inserted
         logger.debug(
             "  %s: +%d new, %d skipped",
-            snap_date, batch_result.inserted, batch_result.skipped,
+            snap_date,
+            batch_result.inserted,
+            batch_result.skipped,
         )
 
     return total_inserted
@@ -310,13 +326,11 @@ def compare_databases(
     """
     result = ComparisonResult()
 
-    _KEY_QUERY = (
-        "SELECT section_type, record_date, license_number, application_type "
-        "FROM license_records"
+    key_query = (
+        "SELECT section_type, record_date, license_number, application_type FROM license_records"
     )
-    _SECTION_QUERY = (
-        "SELECT section_type, COUNT(*) as cnt "
-        "FROM license_records GROUP BY section_type"
+    section_query = (
+        "SELECT section_type, COUNT(*) as cnt FROM license_records GROUP BY section_type"
     )
 
     prod_conn = sqlite3.connect(str(prod_path))
@@ -326,21 +340,17 @@ def compare_databases(
 
     try:
         # Total counts
-        result.prod_count = prod_conn.execute(
-            "SELECT COUNT(*) FROM license_records"
-        ).fetchone()[0]
+        result.prod_count = prod_conn.execute("SELECT COUNT(*) FROM license_records").fetchone()[0]
         result.rebuilt_count = rebuilt_conn.execute(
             "SELECT COUNT(*) FROM license_records"
         ).fetchone()[0]
 
         # Per-section counts
         prod_sections = {
-            r["section_type"]: r["cnt"]
-            for r in prod_conn.execute(_SECTION_QUERY).fetchall()
+            r["section_type"]: r["cnt"] for r in prod_conn.execute(section_query).fetchall()
         }
         rebuilt_sections = {
-            r["section_type"]: r["cnt"]
-            for r in rebuilt_conn.execute(_SECTION_QUERY).fetchall()
+            r["section_type"]: r["cnt"] for r in rebuilt_conn.execute(section_query).fetchall()
         }
         all_sections = set(prod_sections) | set(rebuilt_sections)
         for sec in sorted(all_sections):
@@ -351,28 +361,35 @@ def compare_databases(
 
         # Key-level diff
         prod_keys = set()
-        for r in prod_conn.execute(_KEY_QUERY).fetchall():
-            prod_keys.add((
-                r["section_type"], r["record_date"],
-                r["license_number"], r["application_type"],
-            ))
+        for r in prod_conn.execute(key_query).fetchall():
+            prod_keys.add(
+                (
+                    r["section_type"],
+                    r["record_date"],
+                    r["license_number"],
+                    r["application_type"],
+                )
+            )
 
         rebuilt_keys = set()
-        for r in rebuilt_conn.execute(_KEY_QUERY).fetchall():
-            rebuilt_keys.add((
-                r["section_type"], r["record_date"],
-                r["license_number"], r["application_type"],
-            ))
+        for r in rebuilt_conn.execute(key_query).fetchall():
+            rebuilt_keys.add(
+                (
+                    r["section_type"],
+                    r["record_date"],
+                    r["license_number"],
+                    r["application_type"],
+                )
+            )
 
         missing = prod_keys - rebuilt_keys
         extra = rebuilt_keys - prod_keys
         result.missing_from_rebuilt = len(missing)
         result.extra_in_rebuilt = len(extra)
 
-        # Sample up to 10 of each for reporting
-        SAMPLE = 10
-        result.sample_missing = sorted(missing)[:SAMPLE]
-        result.sample_extra = sorted(extra)[:SAMPLE]
+        # Sample up to _SAMPLE_SIZE of each for reporting
+        result.sample_missing = sorted(missing)[:_SAMPLE_SIZE]
+        result.sample_extra = sorted(extra)[:_SAMPLE_SIZE]
 
     finally:
         prod_conn.close()

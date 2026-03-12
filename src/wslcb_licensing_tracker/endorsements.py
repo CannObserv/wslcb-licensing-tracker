@@ -26,33 +26,36 @@ Regulated substance CRUD (``get_regulated_substances``, ``add_substance``,
 ``remove_substance``, ``set_substance_endorsements``) lives in ``substances``.
 
 Backward-compatible re-exports from both sub-modules are provided below so
-existing ``from wslcb_licensing_tracker.endorsements import ...`` call-sites continue to work without
-modification.
+existing ``from wslcb_licensing_tracker.endorsements import ...`` call-sites continue to work
+without modification.
 """
+
 import json
 import logging
 import re
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
-# Re-exports: admin UI helpers
-from .endorsements_admin import (
-    endorsement_similarity,
-    get_endorsement_list,
-    suggest_duplicate_endorsements,
-    dismiss_suggestion,
-    get_code_mappings,
+# Re-exports: admin UI helpers (backward compat)
+from .endorsements_admin import (  # noqa: F401
     add_code_mapping,
-    remove_code_mapping,
     create_code,
+    dismiss_suggestion,
+    endorsement_similarity,
+    get_code_mappings,
+    get_endorsement_list,
+    remove_code_mapping,
+    suggest_duplicate_endorsements,
 )
-# Re-exports: regulated substance CRUD
-from .substances import (
+
+# Re-exports: regulated substance CRUD (backward compat)
+from .substances import (  # noqa: F401
+    add_substance,
     get_regulated_substances,
     get_substance_endorsement_ids,
-    set_substance_endorsements,
-    add_substance,
     remove_substance,
+    set_substance_endorsements,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,24 +86,21 @@ SEED_CODE_MAP: dict[str, list[str]] = json.loads(_SEED_CODE_MAP_PATH.read_text()
 # Endorsement CRUD helpers
 # ---
 
+
 def _ensure_endorsement(conn: sqlite3.Connection, name: str) -> int:
     """Return the id for *name*, creating the row if needed.
 
     Names are upper-cased before lookup/insert for consistency.
     """
     name = name.upper()
-    row = conn.execute(
-        "SELECT id FROM license_endorsements WHERE name = ?", (name,)
-    ).fetchone()
+    row = conn.execute("SELECT id FROM license_endorsements WHERE name = ?", (name,)).fetchone()
     if row:
         return row[0]
-    cur = conn.execute(
-        "INSERT INTO license_endorsements (name) VALUES (?)", (name,)
-    )
+    cur = conn.execute("INSERT INTO license_endorsements (name) VALUES (?)", (name,))
     return cur.lastrowid
 
 
-def _link_endorsement(conn: sqlite3.Connection, record_id: int, endorsement_id: int):
+def _link_endorsement(conn: sqlite3.Connection, record_id: int, endorsement_id: int) -> None:
     """Insert a record↔endorsement link, ignoring duplicates."""
     conn.execute(
         """INSERT OR IGNORE INTO record_endorsements (record_id, endorsement_id)
@@ -135,13 +135,10 @@ def _merge_endorsement(
     ).fetchall()
     for rec in records:
         conn.execute(
-            "INSERT OR IGNORE INTO record_endorsements (record_id, endorsement_id) "
-            "VALUES (?, ?)",
+            "INSERT OR IGNORE INTO record_endorsements (record_id, endorsement_id) VALUES (?, ?)",
             (rec[0], new_id),
         )
-    conn.execute(
-        "DELETE FROM record_endorsements WHERE endorsement_id = ?", (old_id,)
-    )
+    conn.execute("DELETE FROM record_endorsements WHERE endorsement_id = ?", (old_id,))
 
     # Migrate endorsement_codes
     codes = conn.execute(
@@ -150,19 +147,14 @@ def _merge_endorsement(
     ).fetchall()
     for c in codes:
         conn.execute(
-            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) "
-            "VALUES (?, ?)",
+            "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
             (c[0], new_id),
         )
-    conn.execute(
-        "DELETE FROM endorsement_codes WHERE endorsement_id = ?", (old_id,)
-    )
+    conn.execute("DELETE FROM endorsement_codes WHERE endorsement_id = ?", (old_id,))
 
     # Delete the old endorsement row
     if delete_old:
-        conn.execute(
-            "DELETE FROM license_endorsements WHERE id = ?", (old_id,)
-        )
+        conn.execute("DELETE FROM license_endorsements WHERE id = ?", (old_id,))
 
     return len(records)
 
@@ -170,6 +162,7 @@ def _merge_endorsement(
 # ---
 # Schema seeding
 # ---
+
 
 def seed_endorsements(conn: sqlite3.Connection) -> int:
     """Populate license_endorsements and endorsement_codes from SEED_CODE_MAP.
@@ -201,6 +194,7 @@ def seed_endorsements(conn: sqlite3.Connection) -> int:
 # ---
 # Repair: merge mixed-case endorsement duplicates
 # ---
+
 
 def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
     """Merge endorsements whose names differ only by case.
@@ -238,13 +232,17 @@ def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
                 "UPDATE license_endorsements SET name = ? WHERE id = ?",
                 (upper_name, mixed_id),
             )
-            logger.info("Renamed endorsement %r → %r (id=%d)",
-                        mixed_name, upper_name, mixed_id)
+            logger.info("Renamed endorsement %r → %r (id=%d)", mixed_name, upper_name, mixed_id)
             continue
 
         _merge_endorsement(conn, mixed_id, upper_row[0])
-        logger.info("Merged endorsement %r (id=%d) into %r (id=%d)",
-                    mixed_name, mixed_id, upper_name, upper_row[0])
+        logger.info(
+            "Merged endorsement %r (id=%d) into %r (id=%d)",
+            mixed_name,
+            mixed_id,
+            upper_name,
+            upper_row[0],
+        )
 
     conn.commit()
     return len(dupes)
@@ -253,6 +251,7 @@ def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
 # ---
 # Repair: migrate "CODE, NAME" endorsements to proper names
 # ---
+
 
 def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
     """Migrate record links from spurious ``CODE, NAME`` endorsements.
@@ -305,8 +304,7 @@ def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
             # No existing mapping — use the name from the CODE, NAME value.
             target_eid = _ensure_endorsement(conn, name)
             conn.execute(
-                "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) "
-                "VALUES (?, ?)",
+                "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
                 (code, target_eid),
             )
             target_eids = [target_eid]
@@ -329,9 +327,9 @@ def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
     if migrated:
         conn.commit()
         logger.info(
-            "Repaired %d record-endorsement link(s) from %d 'CODE, NAME' "
-            "endorsement(s).",
-            migrated, len(bogus),
+            "Repaired %d record-endorsement link(s) from %d 'CODE, NAME' endorsement(s).",
+            migrated,
+            len(bogus),
         )
     return migrated
 
@@ -358,8 +356,10 @@ def _cleanup_space_codes(conn: sqlite3.Connection) -> int:
 # Processing: parse raw license_type into normalized endorsements
 # ---
 
-def _process_code(conn: sqlite3.Connection, record_id: int,
-                  code: str, fallback_name: str | None = None) -> int:
+
+def _process_code(
+    conn: sqlite3.Connection, record_id: int, code: str, fallback_name: str | None = None
+) -> int:
     """Resolve a numeric code to endorsements and link to *record_id*.
 
     If the code is already mapped in ``endorsement_codes``, use those
@@ -400,8 +400,7 @@ def _process_code(conn: sqlite3.Connection, record_id: int,
     return 1
 
 
-def process_record(conn: sqlite3.Connection, record_id: int,
-                   raw_license_type: str) -> int:
+def process_record(conn: sqlite3.Connection, record_id: int, raw_license_type: str) -> int:
     """Parse a record's raw license_type and create endorsement links.
 
     Idempotent: deletes any existing ``record_endorsements`` rows for
@@ -421,9 +420,7 @@ def process_record(conn: sqlite3.Connection, record_id: int,
         return 0
 
     # Delete existing links so re-processing is idempotent.
-    conn.execute(
-        "DELETE FROM record_endorsements WHERE record_id = ?", (record_id,)
-    )
+    conn.execute("DELETE FROM record_endorsements WHERE record_id = ?", (record_id,))
 
     cleaned = raw_license_type.rstrip(",").strip()
 
@@ -488,13 +485,11 @@ def reprocess_endorsements(
         If True, compute what *would* be done and return the counts without
         making any database changes.
 
-    Returns
+    Returns:
     -------
     dict
         ``{"records_processed": int, "endorsements_linked": int}``
     """
-    from datetime import datetime, timezone
-
     # Build the query to select target records.
     if record_id is not None:
         rows = conn.execute(
@@ -511,13 +506,11 @@ def reprocess_endorsements(
             (code_stripped, code_stripped),
         ).fetchall()
     else:
-        rows = conn.execute(
-            "SELECT id, license_type FROM license_records"
-        ).fetchall()
+        rows = conn.execute("SELECT id, license_type FROM license_records").fetchall()
 
     records_processed = 0
     endorsements_linked = 0
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     for row in rows:
         rid, license_type = row[0], row[1]
@@ -548,7 +541,8 @@ def reprocess_endorsements(
     else:
         logger.info(
             "reprocess_endorsements: processed %d record(s), linked %d endorsement(s).",
-            records_processed, endorsements_linked,
+            records_processed,
+            endorsements_linked,
         )
 
     return {"records_processed": records_processed, "endorsements_linked": endorsements_linked}
@@ -579,7 +573,8 @@ def backfill(conn: sqlite3.Connection) -> int:
 # Code-mapping discovery (run after each scrape)
 # ---
 
-def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
+
+def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:  # noqa: C901
     """Cross-reference license numbers to learn new code→name mappings.
 
     For each unmapped numeric code, find new_application records sharing
@@ -592,14 +587,15 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
     # A placeholder endorsement has name == code (e.g. code "321" →
     # endorsement named "321"); these should be treated as unmapped so
     # we can resolve them when cross-reference data becomes available.
-    mapped = set(
-        r[0] for r in conn.execute("""
+    mapped = {
+        r[0]
+        for r in conn.execute("""
             SELECT DISTINCT ec.code
             FROM endorsement_codes ec
             JOIN license_endorsements le ON le.id = ec.endorsement_id
             WHERE le.name != ec.code
         """).fetchall()
-    )
+    }
 
     # All numeric codes in the data.  Handles both "450," (pure code)
     # and "450, GROCERY STORE - BEER/WINE" (historical CODE, NAME).
@@ -624,7 +620,8 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
 
     learned: dict[str, list[str]] = {}
     for code in unmapped:
-        matches = conn.execute("""
+        matches = conn.execute(
+            """
             SELECT n.license_type AS text_type, COUNT(*) AS cnt
             FROM license_records a
             JOIN license_records n
@@ -633,7 +630,9 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
             WHERE SUBSTR(a.license_type, 1, INSTR(a.license_type, ',') - 1) = ?
               AND a.section_type IN ('approved', 'discontinued')
             GROUP BY n.license_type
-        """, (code,)).fetchall()
+        """,
+            (code,),
+        ).fetchall()
         if not matches:
             continue
 
@@ -664,7 +663,7 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:
     return learned
 
 
-def _merge_placeholders(conn: sqlite3.Connection, learned: dict[str, list[str]]):
+def _merge_placeholders(conn: sqlite3.Connection, learned: dict[str, list[str]]) -> None:
     """If a code had a placeholder endorsement (name == code), migrate links."""
     for code, names in learned.items():
         placeholder = conn.execute(
@@ -717,11 +716,17 @@ def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
     migrated = 0
     for pid, code in placeholders:
         # Real endorsement(s) for this code
-        real_eids = [r[0] for r in conn.execute("""
+        real_eids = [
+            r[0]
+            for r in conn.execute(
+                """
             SELECT ec.endorsement_id FROM endorsement_codes ec
             JOIN license_endorsements le ON le.id = ec.endorsement_id
             WHERE ec.code = ? AND le.name != ?
-        """, (code, code)).fetchall()]
+        """,
+                (code, code),
+            ).fetchall()
+        ]
         if not real_eids:
             continue
 
@@ -742,7 +747,8 @@ def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
         conn.commit()
         logger.info(
             "Merged %d record link(s) from %d placeholder endorsement(s).",
-            migrated, len(placeholders),
+            migrated,
+            len(placeholders),
         )
     return migrated
 
@@ -750,6 +756,7 @@ def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
 # ---
 # Query helpers (used by app.py)
 # ---
+
 
 def get_endorsement_options(conn: sqlite3.Connection) -> list[str]:
     """Distinct canonical endorsement names linked to at least one record.
@@ -771,8 +778,9 @@ def get_endorsement_options(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in rows]
 
 
-def get_record_endorsements(conn: sqlite3.Connection,
-                            record_ids: list[int]) -> dict[int, list[str]]:
+def get_record_endorsements(
+    conn: sqlite3.Connection, record_ids: list[int]
+) -> dict[int, list[str]]:
     """Batch-fetch canonical endorsement names for a list of record ids.
 
     Alias resolution is applied: if the endorsement linked to a record has an
@@ -780,12 +788,13 @@ def get_record_endorsements(conn: sqlite3.Connection,
     """
     if not record_ids:
         return {}
-    CHUNK = 500
+    chunk_size = 500
     result: dict[int, list[str]] = {rid: [] for rid in record_ids}
-    for i in range(0, len(record_ids), CHUNK):
-        batch = record_ids[i:i + CHUNK]
+    for i in range(0, len(record_ids), chunk_size):
+        batch = record_ids[i : i + chunk_size]
         placeholders = ",".join("?" * len(batch))
-        rows = conn.execute(f"""
+        rows = conn.execute(
+            f"""
             SELECT re.record_id,
                    COALESCE(canonical.name, le.name) AS display_name
             FROM record_endorsements re
@@ -795,7 +804,9 @@ def get_record_endorsements(conn: sqlite3.Connection,
                    ON canonical.id = ea.canonical_endorsement_id
             WHERE re.record_id IN ({placeholders})
             ORDER BY re.record_id, display_name
-        """, batch).fetchall()
+        """,
+            batch,
+        ).fetchall()  # parameterized query, not injection risk
         for r in rows:
             result[r[0]].append(r[1])
     return result
@@ -804,6 +815,7 @@ def get_record_endorsements(conn: sqlite3.Connection,
 # ---
 # Alias management (admin interface helpers)
 # ---
+
 
 def resolve_endorsement(conn: sqlite3.Connection, endorsement_id: int) -> int:
     """Return the canonical endorsement ID for *endorsement_id*.
@@ -819,8 +831,7 @@ def resolve_endorsement(conn: sqlite3.Connection, endorsement_id: int) -> int:
         Primary key of the endorsement to resolve.
     """
     row = conn.execute(
-        "SELECT canonical_endorsement_id FROM endorsement_aliases"
-        " WHERE endorsement_id = ?",
+        "SELECT canonical_endorsement_id FROM endorsement_aliases WHERE endorsement_id = ?",
         (endorsement_id,),
     ).fetchone()
     return row[0] if row else endorsement_id
@@ -849,7 +860,7 @@ def set_canonical_endorsement(
     created_by:
         Admin email to record in the audit trail column.
 
-    Returns
+    Returns:
     -------
     int
         Number of alias rows written (created or updated).
@@ -873,7 +884,9 @@ def set_canonical_endorsement(
         written += 1
     logger.info(
         "set_canonical: %d alias(es) → endorsement#%d by %s",
-        written, canonical_id, created_by,
+        written,
+        canonical_id,
+        created_by,
     )
     return written
 
@@ -901,13 +914,14 @@ def rename_endorsement(
     created_by:
         Admin email for the audit trail.
 
-    Returns
+    Returns:
     -------
     int
         Primary key of the canonical (named) endorsement.
     """
     if not new_name:
-        raise ValueError("new_name must be a non-empty string")
+        msg = "new_name must be a non-empty string"
+        raise ValueError(msg)
 
     # Reuse an existing endorsement with that name, or create one
     existing = conn.execute(
@@ -931,7 +945,10 @@ def rename_endorsement(
     )
     logger.info(
         "rename_endorsement: #%d → '%s' (#%d) by %s",
-        endorsement_id, new_name, canonical_id, created_by,
+        endorsement_id,
+        new_name,
+        canonical_id,
+        created_by,
     )
     return canonical_id
 
@@ -971,9 +988,7 @@ def get_endorsement_groups(
     canonical_ids: set[int] = set(alias_map.values())
 
     # Fetch code memberships: endorsement_id → list[code]
-    code_rows = conn.execute(
-        "SELECT endorsement_id, code FROM endorsement_codes"
-    ).fetchall()
+    code_rows = conn.execute("SELECT endorsement_id, code FROM endorsement_codes").fetchall()
     eid_to_codes: dict[int, list[str]] = {}
     for eid, code in code_rows:
         eid_to_codes.setdefault(eid, []).append(code)
@@ -1016,6 +1031,3 @@ def get_endorsement_groups(
         groups.append({"code": None, "endorsements": ungrouped})
 
     return groups
-
-
-

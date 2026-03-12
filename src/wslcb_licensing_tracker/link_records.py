@@ -1,17 +1,18 @@
-"""Application→outcome record linking for WSLCB licensing tracker.
+"""Application-outcome record linking for WSLCB licensing tracker.
 
 Links new_application records to their corresponding approved or
 discontinued outcome records using a bidirectional nearest-neighbor
 algorithm with a configurable date tolerance window.
 
 The core insight: the WSLCB publishes "Notification Date" for new
-applications and "Approved/Discontinued Date" for outcomes — these are
+applications and "Approved/Discontinued Date" for outcomes - these are
 different events.  Outcome dates routinely precede notification dates
-by 1–3 days (weekend offsets), so a tolerance window is essential.
+by 1-3 days (weekend offsets), so a tolerance window is essential.
 """
+
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +20,20 @@ DATE_TOLERANCE_DAYS = 7
 
 # Application types that get linked to approved records (same type)
 _APPROVAL_LINK_TYPES = {
-    "RENEWAL", "NEW APPLICATION", "ASSUMPTION",
-    "ADDED/CHANGE OF CLASS", "CHANGE OF CORPORATE OFFICER",
-    "CHANGE OF LOCATION", "RESUME BUSINESS", "IN LIEU",
+    "RENEWAL",
+    "NEW APPLICATION",
+    "ASSUMPTION",
+    "ADDED/CHANGE OF CLASS",
+    "CHANGE OF CORPORATE OFFICER",
+    "CHANGE OF LOCATION",
+    "RESUME BUSINESS",
+    "IN LIEU",
 }
 
 # DISC. LIQUOR SALES links to discontinued/DISCONTINUED
 _DISC_LINK_TYPE = "DISC. LIQUOR SALES"
 
-# Cutoff: applications older than this with no outcome → 'unknown'
+# Cutoff: applications older than this with no outcome -> 'unknown'
 PENDING_CUTOFF_DAYS = 180
 
 # Date after which NEW APPLICATION approvals stopped being published
@@ -55,8 +61,7 @@ def outcome_filter_sql(
     linkable = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
     not_linked = f"{r}.id NOT IN (SELECT rl.new_app_id FROM record_links rl)"
     not_data_gap = (
-        f"NOT ({r}.application_type = 'NEW APPLICATION'"
-        f" AND {r}.record_date > '{DATA_GAP_CUTOFF}')"
+        f"NOT ({r}.application_type = 'NEW APPLICATION' AND {r}.record_date > '{DATA_GAP_CUTOFF}')"
     )
 
     if status == "approved":
@@ -99,7 +104,7 @@ def outcome_filter_sql(
 
 def _date_add(date_str: str, days: int) -> str:
     """Add *days* to an ISO date string.  Returns ISO date string."""
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
     return (dt + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
@@ -122,12 +127,14 @@ def build_all_links(conn: sqlite3.Connection) -> dict:
     conn.commit()
     logger.info(
         "Record linking complete: %d high-confidence + %d medium-confidence = %d total",
-        high, medium, high + medium,
+        high,
+        medium,
+        high + medium,
     )
     return {"high": high, "medium": medium, "total": high + medium}
 
 
-def _link_section(
+def _link_section(  # noqa: C901  # complexity driven by two-mode dispatch + forward/backward passes
     conn: sqlite3.Connection,
     *,
     mode: str,
@@ -150,7 +157,8 @@ def _link_section(
         fwd_type_match = "out.application_type = 'DISCONTINUED'"
         bwd_type_match = f"na.application_type = '{_DISC_LINK_TYPE}'"
     else:
-        raise ValueError(f"Unknown mode: {mode!r}")
+        msg = f"Unknown mode: {mode!r}"
+        raise ValueError(msg)
 
     # Forward pass: for each new_app, find earliest outcome within tolerance.
     forward = conn.execute(f"""
@@ -178,7 +186,8 @@ def _link_section(
 
     # Backward pass: for each claimed outcome, find the best new_app.
     outcome_ids = set(fwd_map.values())
-    backward = conn.execute(f"""
+    backward = conn.execute(
+        f"""
         SELECT out.id AS outcome_id, (
             SELECT na.id FROM license_records na
             WHERE na.section_type = 'new_application'
@@ -190,8 +199,10 @@ def _link_section(
         ) AS new_app_id
         FROM license_records out
         WHERE out.section_type = '{out_section}'
-          AND out.id IN ({','.join('?' for _ in outcome_ids)})
-    """, list(outcome_ids)).fetchall()
+          AND out.id IN ({",".join("?" for _ in outcome_ids)})
+    """,
+        list(outcome_ids),
+    ).fetchall()
 
     bwd_map: dict[int, int] = {}
     for row in backward:
@@ -231,8 +242,8 @@ def _insert_link(
     ).fetchone()
     days_gap = None
     if dates["new_date"] and dates["out_date"]:
-        d1 = datetime.strptime(dates["new_date"], "%Y-%m-%d")
-        d2 = datetime.strptime(dates["out_date"], "%Y-%m-%d")
+        d1 = datetime.strptime(dates["new_date"], "%Y-%m-%d").replace(tzinfo=UTC)
+        d2 = datetime.strptime(dates["out_date"], "%Y-%m-%d").replace(tzinfo=UTC)
         days_gap = (d2 - d1).days
 
     conn.execute(
@@ -244,7 +255,8 @@ def _insert_link(
 
 
 def link_new_record(
-    conn: sqlite3.Connection, record_id: int,
+    conn: sqlite3.Connection,
+    record_id: int,
 ) -> int | None:
     """Incrementally link a single newly-inserted record.
 
@@ -270,21 +282,27 @@ def link_new_record(
 
     if section == "new_application":
         return _link_incremental(
-            conn, direction="forward",
-            record_id=record_id, app_type=app_type,
-            lic_num=lic_num, record_date=rec_date,
+            conn,
+            direction="forward",
+            record_id=record_id,
+            app_type=app_type,
+            lic_num=lic_num,
+            record_date=rec_date,
         )
-    elif section in ("approved", "discontinued"):
+    if section in ("approved", "discontinued"):
         return _link_incremental(
-            conn, direction="backward",
-            record_id=record_id, app_type=app_type,
-            lic_num=lic_num, record_date=rec_date,
+            conn,
+            direction="backward",
+            record_id=record_id,
+            app_type=app_type,
+            lic_num=lic_num,
+            record_date=rec_date,
             outcome_section=section,
         )
     return None
 
 
-def _link_incremental(
+def _link_incremental(  # noqa: PLR0911, PLR0913  # many early returns + 7 args required for bidirectional linking
     conn: sqlite3.Connection,
     *,
     direction: str,
@@ -314,7 +332,8 @@ def _link_incremental(
             return None
 
         # Forward: find earliest outcome for this new_app.
-        outcome = conn.execute(f"""
+        outcome = conn.execute(
+            f"""
             SELECT id FROM license_records
             WHERE section_type = ?
               AND license_number = ?
@@ -322,7 +341,9 @@ def _link_incremental(
               AND record_date >= date(?, '-{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date ASC, id ASC
             LIMIT 1
-        """, (out_section, lic_num, out_type_val, record_date)).fetchone()
+        """,
+            (out_section, lic_num, out_type_val, record_date),
+        ).fetchone()
         if not outcome:
             return None
 
@@ -333,7 +354,8 @@ def _link_incremental(
         ).fetchone()["record_date"]
 
         # Backward verification: is this new_app the best for that outcome?
-        best_new = conn.execute(f"""
+        best_new = conn.execute(
+            f"""
             SELECT id FROM license_records
             WHERE section_type = 'new_application'
               AND license_number = ?
@@ -341,13 +363,15 @@ def _link_incremental(
               AND record_date <= date(?, '+{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date DESC, id DESC
             LIMIT 1
-        """, (lic_num, na_type_val, out_date)).fetchone()
+        """,
+            (lic_num, na_type_val, out_date),
+        ).fetchone()
 
         confidence = "high" if (best_new and best_new["id"] == record_id) else "medium"
         _insert_link(conn, record_id, outcome_id, confidence)
         return outcome_id
 
-    elif direction == "backward":
+    if direction == "backward":
         # outcome seeking a new_application
         if outcome_section is None:
             return None
@@ -361,7 +385,8 @@ def _link_incremental(
             return None
 
         # Backward: find latest new_app for this outcome.
-        best_new = conn.execute(f"""
+        best_new = conn.execute(
+            f"""
             SELECT id FROM license_records
             WHERE section_type = 'new_application'
               AND license_number = ?
@@ -369,7 +394,9 @@ def _link_incremental(
               AND record_date <= date(?, '+{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date DESC, id DESC
             LIMIT 1
-        """, (lic_num, na_type_val, record_date)).fetchone()
+        """,
+            (lic_num, na_type_val, record_date),
+        ).fetchone()
         if not best_new:
             return None
 
@@ -380,7 +407,8 @@ def _link_incremental(
         ).fetchone()["record_date"]
 
         # Forward verification: is this outcome the best for that new_app?
-        best_out = conn.execute(f"""
+        best_out = conn.execute(
+            f"""
             SELECT id FROM license_records
             WHERE section_type = ?
               AND license_number = ?
@@ -388,7 +416,9 @@ def _link_incremental(
               AND record_date >= date(?, '-{DATE_TOLERANCE_DAYS} days')
             ORDER BY record_date ASC, id ASC
             LIMIT 1
-        """, (outcome_section, lic_num, out_type_val, new_date)).fetchone()
+        """,
+            (outcome_section, lic_num, out_type_val, new_date),
+        ).fetchone()
 
         confidence = "high" if (best_out and best_out["id"] == record_id) else "medium"
         _insert_link(conn, new_app_id, record_id, confidence)
@@ -397,7 +427,7 @@ def _link_incremental(
     return None
 
 
-def get_outcome_status(record: dict, link: dict | None) -> dict:
+def get_outcome_status(record: dict, link: dict | None) -> dict:  # noqa: C901, PLR0911  # multiple branches + early-returns for distinct status values
     """Compute the semantic outcome status for a record.
 
     Returns a dict with keys: status, label, detail, linked_record_id,
@@ -420,27 +450,33 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
         days_label = f"{abs(days)} day{'s' if abs(days) != 1 else ''}" if days is not None else ""
 
         if outcome_section == "approved":
+            detail = f"Approved on {link['outcome_date']}"
+            if days_label:
+                detail += f" ({days_label} after application)"
             return {
                 "status": "approved",
                 "label": "Approved",
-                "detail": f"Approved on {link['outcome_date']}" + (f" ({days_label} after application)" if days_label else ""),
+                "detail": detail,
                 "linked_record_id": link["outcome_id"],
                 "confidence": link["confidence"],
                 "outcome_date": link["outcome_date"],
                 "days_gap": days,
             }
-        elif outcome_section == "discontinued":
+        if outcome_section == "discontinued":
+            detail = f"Discontinued on {link['outcome_date']}"
+            if days_label:
+                detail += f" ({days_label} after filing)"
             return {
                 "status": "discontinued",
                 "label": "Discontinued",
-                "detail": f"Discontinued on {link['outcome_date']}" + (f" ({days_label} after filing)" if days_label else ""),
+                "detail": detail,
                 "linked_record_id": link["outcome_id"],
                 "confidence": link["confidence"],
                 "outcome_date": link["outcome_date"],
                 "days_gap": days,
             }
 
-    # No link — determine why
+    # No link - determine why
     rec_date = record.get("record_date", "")
 
     # Data gap: post-May 2025 NEW APPLICATION records
@@ -448,7 +484,10 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
         return {
             "status": "data_gap",
             "label": "Data Unavailable",
-            "detail": "The WSLCB stopped publishing NEW APPLICATION approvals after May 2025 due to a data transfer issue.",
+            "detail": (
+                "The WSLCB stopped publishing NEW APPLICATION approvals "
+                "after May 2025 due to a data transfer issue."
+            ),
             "linked_record_id": None,
             "confidence": None,
         }
@@ -456,13 +495,18 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
     # Pending or unknown based on age
     if rec_date:
         try:
-            filed_date = datetime.strptime(rec_date, "%Y-%m-%d")
-            age_days = (datetime.now() - filed_date).days
+            filed_date = datetime.strptime(rec_date, "%Y-%m-%d").replace(
+                tzinfo=UTC,
+            )
+            age_days = (datetime.now(UTC) - filed_date).days
             if age_days <= PENDING_CUTOFF_DAYS:
                 return {
                     "status": "pending",
                     "label": "Pending",
-                    "detail": f"Filed {age_days} day{'s' if age_days != 1 else ''} ago. Typical time to approval: 50–90 days.",
+                    "detail": (
+                        f"Filed {age_days} day{'s' if age_days != 1 else ''} ago. "
+                        "Typical time to approval: 50-90 days."
+                    ),
                     "linked_record_id": None,
                     "confidence": None,
                 }
@@ -479,7 +523,8 @@ def get_outcome_status(record: dict, link: dict | None) -> dict:
 
 
 def get_reverse_link_info(
-    conn: sqlite3.Connection, record: dict,
+    conn: sqlite3.Connection,
+    record: dict,
 ) -> dict | None:
     """For an outcome record, get info about the originating application.
 

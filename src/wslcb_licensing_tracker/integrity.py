@@ -3,10 +3,14 @@
 Provides check functions that detect data quality issues and optional
 fix functions for safe auto-remediation.  Used by ``cli.py check``.
 """
+
 import logging
 import sqlite3
 
 logger = logging.getLogger(__name__)
+
+# Threshold for showing "... and N more" detail lines.
+_DETAIL_PREVIEW_LIMIT = 5
 
 
 # ── Orphaned locations ───────────────────────────────────────
@@ -25,7 +29,8 @@ def check_orphaned_locations(conn: sqlite3.Connection) -> dict:
         WHERE l.id NOT IN (
             SELECT DISTINCT location_id FROM license_records WHERE location_id IS NOT NULL
             UNION
-            SELECT DISTINCT previous_location_id FROM license_records WHERE previous_location_id IS NOT NULL
+            SELECT DISTINCT previous_location_id FROM license_records
+            WHERE previous_location_id IS NOT NULL
         )
     """).fetchall()
     details = [dict(r) for r in rows]
@@ -39,7 +44,10 @@ def fix_orphaned_locations(conn: sqlite3.Connection) -> int:
         return 0
     ids = [o["id"] for o in result["details"]]
     placeholders = ",".join("?" * len(ids))
-    conn.execute(f"DELETE FROM locations WHERE id IN ({placeholders})", ids)
+    conn.execute(
+        f"DELETE FROM locations WHERE id IN ({placeholders})",
+        ids,
+    )
     conn.commit()
     logger.info("Removed %d orphaned location(s).", len(ids))
     return len(ids)
@@ -55,18 +63,17 @@ def check_broken_fks(conn: sqlite3.Connection) -> list[dict]:
     """
     results = []
     for col in ("location_id", "previous_location_id"):
-        rows = conn.execute(f"""
+        rows = conn.execute(
+            f"""
             SELECT lr.id AS record_id, lr.{col} AS bad_id
             FROM license_records lr
             WHERE lr.{col} IS NOT NULL
               AND lr.{col} NOT IN (SELECT id FROM locations)
-        """).fetchall()
-        for r in rows:
-            results.append({
-                "record_id": r["record_id"],
-                "column": col,
-                "bad_id": r["bad_id"],
-            })
+        """
+        ).fetchall()
+        results.extend(
+            {"record_id": r["record_id"], "column": col, "bad_id": r["bad_id"]} for r in rows
+        )
     return results
 
 
@@ -214,7 +221,7 @@ def run_all_checks(
     return report
 
 
-def print_report(report: dict) -> int:
+def print_report(report: dict) -> int:  # noqa: C901, PLR0912 — sequential integrity report, branching is inherent
     """Print a human-readable integrity report to stdout.
 
     Returns the total number of issues found (0 = clean).
@@ -239,10 +246,10 @@ def print_report(report: dict) -> int:
     if n:
         total_issues += n
         print(f"\u274c Broken foreign keys: {n}")
-        for d in report["broken_fks"]["details"][:5]:
+        for d in report["broken_fks"]["details"][:_DETAIL_PREVIEW_LIMIT]:
             print(f"     record {d['record_id']}: {d['column']} = {d['bad_id']}")
-        if n > 5:
-            print(f"     ... and {n - 5} more")
+        if n > _DETAIL_PREVIEW_LIMIT:
+            print(f"     ... and {n - _DETAIL_PREVIEW_LIMIT} more")
     else:
         print("\u2705 No broken foreign keys")
 
@@ -279,10 +286,10 @@ def print_report(report: dict) -> int:
     if n:
         total_issues += n
         print(f"\u274c Entity duplicate groups: {n}")
-        for d in report["entity_duplicates"]["details"][:5]:
+        for d in report["entity_duplicates"]["details"][:_DETAIL_PREVIEW_LIMIT]:
             print(f"     {d['names']}")
-        if n > 5:
-            print(f"     ... and {n - 5} more")
+        if n > _DETAIL_PREVIEW_LIMIT:
+            print(f"     ... and {n - _DETAIL_PREVIEW_LIMIT} more")
     else:
         print("\u2705 No entity duplicates")
 

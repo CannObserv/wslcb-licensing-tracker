@@ -4,18 +4,20 @@ Manages the `entities` and `record_entities` tables — extracting
 individual people and organizations from semicolon-delimited applicant
 strings, deduplicating by name, and linking them to license records.
 """
+
 import logging
 import re
 import sqlite3
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
 # Patterns that indicate an organization rather than a person.
 # Input is always uppercased by get_or_create_entity(), so no IGNORECASE needed.
 _ORG_PATTERNS = re.compile(
-    r'\b(LLC|L\.?L\.?C\.?|INC\.?|CORP\.?|CORPORATION|TRUST|LTD\.?|LIMITED'
-    r'|PARTNERS|PARTNERSHIP|HOLDINGS|GROUP|ENTERPRISE|ENTERPRISES'
-    r'|ASSOCIATION|FOUNDATION|COMPANY|CO\.|L\.?P\.?)\b'
+    r"\b(LLC|L\.?L\.?C\.?|INC\.?|CORP\.?|CORPORATION|TRUST|LTD\.?|LIMITED"
+    r"|PARTNERS|PARTNERSHIP|HOLDINGS|GROUP|ENTERPRISE|ENTERPRISES"
+    r"|ASSOCIATION|FOUNDATION|COMPANY|CO\.|L\.?P\.?)\b"
 )
 
 
@@ -29,18 +31,17 @@ _ORG_PATTERNS = re.compile(
 #   Personal: JR, SR
 #   Fraternal/other: S.P.A, F.O.E, U.P, D.B.A, W. & S
 _LEGIT_TRAILING_DOT = re.compile(
-    r'(?:(?<=\s)|(?<=^))'
-    r'(?:INC|LLC|L\.L\.C|L\.L\.P|LTD|CORP|CO|L\.P|PTY'
-    r'|JR|SR'
-    r'|S\.P\.A|F\.O\.E|U\.P|D\.B\.A|P\.C|N\.A|P\.A'
-    r'|W\. & S)'
-    r'\.\s*$'
+    r"(?:(?<=\s)|(?<=^))"
+    r"(?:INC|LLC|L\.L\.C|L\.L\.P|LTD|CORP|CO|L\.P|PTY"
+    r"|JR|SR"
+    r"|S\.P\.A|F\.O\.E|U\.P|D\.B\.A|P\.C|N\.A|P\.A"
+    r"|W\. & S)"
+    r"\.\s*$"
 )
 
 
 def clean_entity_name(name: str) -> str:
-    """Normalize an entity name: uppercase, strip whitespace, and remove
-    stray trailing punctuation that isn't part of a recognized suffix.
+    """Normalize an entity name: uppercase, strip whitespace, remove stray trailing punctuation.
 
     The WSLCB source occasionally appends periods or commas to names
     as data-entry artifacts (e.g., ``WOLDU ARAYA BERAKI.``).  This
@@ -50,9 +51,9 @@ def clean_entity_name(name: str) -> str:
     cleaned = name.strip().upper()
     # Collapse runs of whitespace (WSLCB source uses inconsistent spacing;
     # e.g., "SMITH, JOHN  MICHAEL" vs "SMITH, JOHN MICHAEL").
-    cleaned = re.sub(r'\s+', ' ', cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
     # Iteratively strip trailing periods/commas that aren't legit suffixes
-    while cleaned and cleaned[-1] in '.,' and not _LEGIT_TRAILING_DOT.search(cleaned):
+    while cleaned and cleaned[-1] in ".," and not _LEGIT_TRAILING_DOT.search(cleaned):
         cleaned = cleaned[:-1].rstrip()
     return cleaned
 
@@ -71,13 +72,13 @@ def clean_entity_name(name: str) -> str:
 #      'ELIZABETH (DUPLICATE A MATTHEWS' where the closing ')' is absent.
 #   4. Bare word: DUPLICATE  — catches inline placements with no punctuation.
 _DUPLICATE_MARKER_RE = re.compile(
-    r'\s*'
-    r'(?:'
-    r'\(\s*DUPLICATE(?:\s+\d+)?\s*\)'  # (DUPLICATE), (DUPLICATE 2), ... — closed
-    r'|\*DUPLICATE\*'                   # *DUPLICATE*
-    r'|\(\s*DUPLICATE(?:\s+\d+)?'      # (DUPLICATE ... — unclosed paren
-    r'|DUPLICATE'                        # bare word
-    r')',
+    r"\s*"
+    r"(?:"
+    r"\(\s*DUPLICATE(?:\s+\d+)?\s*\)"  # (DUPLICATE), (DUPLICATE 2), ... — closed
+    r"|\*DUPLICATE\*"  # *DUPLICATE*
+    r"|\(\s*DUPLICATE(?:\s+\d+)?"  # (DUPLICATE ... — unclosed paren
+    r"|DUPLICATE"  # bare word
+    r")",
     re.IGNORECASE,
 )
 
@@ -99,18 +100,20 @@ def strip_duplicate_marker(name: str) -> str:
     spaces.  The caller is responsible for full normalization (e.g. uppercase)
     via ``clean_entity_name()``.
     """
-    stripped = _DUPLICATE_MARKER_RE.sub('', name)
+    stripped = _DUPLICATE_MARKER_RE.sub("", name)
     # Collapse runs of whitespace left behind after removal
-    return re.sub(r' {2,}', ' ', stripped).strip()
+    return re.sub(r" {2,}", " ", stripped).strip()
 
 
 # Meta-labels that WSLCB embeds in applicant lists as truncation notices.
 # These are not real people or organizations and must be excluded from entity
 # creation.  Both the canonical spelling and the typo variant are included.
-ADDITIONAL_NAMES_MARKERS: frozenset[str] = frozenset({
-    "ADDITIONAL NAMES ON FILE",
-    "ADDTIONAL NAMES ON FILE",   # typo variant present in WSLCB source
-})
+ADDITIONAL_NAMES_MARKERS: frozenset[str] = frozenset(
+    {
+        "ADDITIONAL NAMES ON FILE",
+        "ADDTIONAL NAMES ON FILE",  # typo variant present in WSLCB source
+    }
+)
 
 
 def clean_applicants_string(applicants: str | None) -> str | None:
@@ -148,9 +151,7 @@ def _entity_id_for_normalized(conn: sqlite3.Connection, normalized: str) -> int:
     is needed.  Use :func:`get_or_create_entity` for external callers that
     supply raw names.
     """
-    row = conn.execute(
-        "SELECT id FROM entities WHERE name = ?", (normalized,)
-    ).fetchone()
+    row = conn.execute("SELECT id FROM entities WHERE name = ?", (normalized,)).fetchone()
     if row:
         return row[0]
     entity_type = _classify_entity_type(normalized)
@@ -170,7 +171,8 @@ def get_or_create_entity(conn: sqlite3.Connection, name: str) -> int:
     """
     normalized = clean_entity_name(name)
     if not normalized:
-        raise ValueError("Entity name must not be empty")
+        msg = "Entity name must not be empty"
+        raise ValueError(msg)
     return _entity_id_for_normalized(conn, normalized)
 
 
@@ -182,8 +184,7 @@ def parse_and_link_entities(
     *,
     delete_existing: bool = False,
 ) -> int:
-    """Split a semicolon-delimited applicants string, skip the first
-    element (business name), create entities, and link them to the record.
+    """Split applicants string, skip first element (business name), create entities and link.
 
     Assigns contiguous 0-based positions to successfully linked entities
     (skipped names do not leave gaps).  Returns the number of entities
@@ -220,8 +221,7 @@ def parse_and_link_entities(
     linked = 0
     for name in entity_names:
         if name in ADDITIONAL_NAMES_MARKERS:
-            logger.debug("Skipping meta-label %r in record %d (role %s)",
-                         name, record_id, role)
+            logger.debug("Skipping meta-label %r in record %d (role %s)", name, record_id, role)
             continue  # not a real entity — no position consumed
         # `name` is already the output of clean_entity_name(strip_duplicate_marker(...))
         # so skip the redundant normalization pass inside get_or_create_entity.
@@ -237,8 +237,7 @@ def parse_and_link_entities(
 
 
 def backfill_entities(conn: sqlite3.Connection) -> int:
-    """Populate entities + record_entities for existing records, then
-    run startup cleanup.
+    """Populate entities + record_entities for existing records, then run startup cleanup.
 
     1. Link entities for records that have applicants but no entity
        links yet.
@@ -259,9 +258,7 @@ def backfill_entities(conn: sqlite3.Connection) -> int:
     for r in rows:
         parse_and_link_entities(conn, r["id"], r["applicants"], "applicant")
         if r["previous_applicants"]:
-            parse_and_link_entities(
-                conn, r["id"], r["previous_applicants"], "previous_applicant"
-            )
+            parse_and_link_entities(conn, r["id"], r["previous_applicants"], "previous_applicant")
 
     if rows:
         conn.commit()
@@ -282,27 +279,32 @@ def get_record_entities(
     """
     if not record_ids:
         return {}
-    CHUNK = 500
+    chunk = 500
     result: dict[int, dict[str, list[dict]]] = {
         rid: {"applicant": [], "previous_applicant": []} for rid in record_ids
     }
-    for i in range(0, len(record_ids), CHUNK):
-        batch = record_ids[i:i + CHUNK]
+    for i in range(0, len(record_ids), chunk):
+        batch = record_ids[i : i + chunk]
         placeholders = ",".join("?" * len(batch))
-        rows = conn.execute(f"""
+        rows = conn.execute(
+            f"""
             SELECT re.record_id, re.role, re.position,
                    e.id AS entity_id, e.name, e.entity_type
             FROM record_entities re
             JOIN entities e ON e.id = re.entity_id
             WHERE re.record_id IN ({placeholders})
             ORDER BY re.record_id, re.role, re.position
-        """, batch).fetchall()
+        """,
+            batch,
+        ).fetchall()
         for r in rows:
-            result[r["record_id"]][r["role"]].append({
-                "id": r["entity_id"],
-                "name": r["name"],
-                "entity_type": r["entity_type"],
-            })
+            result[r["record_id"]][r["role"]].append(
+                {
+                    "id": r["entity_id"],
+                    "name": r["name"],
+                    "entity_type": r["entity_type"],
+                }
+            )
     return result
 
 
@@ -316,9 +318,7 @@ def get_entity_by_id(conn: sqlite3.Connection, entity_id: int) -> dict | None:
 
 
 def clean_record_strings(conn: sqlite3.Connection) -> int:
-    """Startup cleanup: uppercase and strip trailing punctuation from
-    ``business_name``, ``previous_business_name``, ``applicants``, and
-    ``previous_applicants`` in ``license_records``.
+    """Uppercase and strip trailing punctuation from name/applicant columns in license_records.
 
     Only updates rows that actually change.  Returns the number of rows
     updated.  Callers should commit afterward (this function does not
@@ -340,10 +340,12 @@ def clean_record_strings(conn: sqlite3.Connection) -> int:
         clean_prev_biz = clean_entity_name(r["previous_business_name"] or "")
         clean_app = clean_applicants_string(r["applicants"] or "")
         clean_prev = clean_applicants_string(r["previous_applicants"] or "")
-        if (clean_biz != (r["business_name"] or "")
-                or clean_prev_biz != (r["previous_business_name"] or "")
-                or clean_app != (r["applicants"] or "")
-                or clean_prev != (r["previous_applicants"] or "")):
+        if (
+            clean_biz != (r["business_name"] or "")
+            or clean_prev_biz != (r["previous_business_name"] or "")
+            or clean_app != (r["applicants"] or "")
+            or clean_prev != (r["previous_applicants"] or "")
+        ):
             conn.execute(
                 """UPDATE license_records
                    SET business_name = ?,
@@ -360,8 +362,7 @@ def clean_record_strings(conn: sqlite3.Connection) -> int:
 
 
 def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
-    """Find and merge entities whose names differ only by stray trailing
-    punctuation or casing, and clean string columns in ``license_records``.
+    """Find and merge entities whose names differ only by trailing punctuation or casing.
 
     Performs all work in a single transaction (committed at the end):
 
@@ -380,9 +381,7 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
     clean_record_strings(conn)
 
     # Find entities whose cleaned name differs from their stored name
-    all_entities = conn.execute(
-        "SELECT id, name FROM entities ORDER BY id"
-    ).fetchall()
+    all_entities = conn.execute("SELECT id, name FROM entities ORDER BY id").fetchall()
 
     merged = 0
     for entity in all_entities:
@@ -390,14 +389,13 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
         if cleaned == entity["name"]:
             continue  # name is already clean
         if not cleaned:
-            logger.warning("Entity %d name reduces to empty after cleaning: %r",
-                           entity["id"], entity["name"])
+            logger.warning(
+                "Entity %d name reduces to empty after cleaning: %r", entity["id"], entity["name"]
+            )
             continue
 
         # Find the canonical entity (clean name)
-        canonical = conn.execute(
-            "SELECT id FROM entities WHERE name = ?", (cleaned,)
-        ).fetchone()
+        canonical = conn.execute("SELECT id FROM entities WHERE name = ?", (cleaned,)).fetchone()
 
         dirty_id = entity["id"]
 
@@ -439,23 +437,20 @@ def merge_duplicate_entities(conn: sqlite3.Connection) -> int:
             )
             # Delete the dirty entity
             conn.execute("DELETE FROM entities WHERE id = ?", (dirty_id,))
-            logger.info("Merged entity %d %r → %d %r",
-                        dirty_id, entity["name"], canon_id, cleaned)
+            logger.info("Merged entity %d %r → %d %r", dirty_id, entity["name"], canon_id, cleaned)
         else:
             # No canonical counterpart — just rename in place
             conn.execute(
                 "UPDATE entities SET name = ? WHERE id = ?",
                 (cleaned, dirty_id),
             )
-            logger.info("Renamed entity %d: %r → %r",
-                        dirty_id, entity["name"], cleaned)
+            logger.info("Renamed entity %d: %r → %r", dirty_id, entity["name"], cleaned)
         merged += 1
 
     # Commit record-string cleaning and entity merges/renames together
     conn.commit()
     if merged:
-        logger.info("Merged/renamed %d entities with stray trailing punctuation",
-                    merged)
+        logger.info("Merged/renamed %d entities with stray trailing punctuation", merged)
     return merged
 
 
@@ -493,17 +488,14 @@ def reprocess_entities(
         If True, compute what *would* be done and return the counts without
         making any database changes.
 
-    Returns
+    Returns:
     -------
     dict
         ``{"records_processed": int, "entities_linked": int}``
     """
-    from datetime import datetime, timezone
-
     if record_id is not None:
         rows = conn.execute(
-            "SELECT id, applicants, previous_applicants "
-            "FROM license_records WHERE id = ?",
+            "SELECT id, applicants, previous_applicants FROM license_records WHERE id = ?",
             (record_id,),
         ).fetchall()
     else:
@@ -513,7 +505,7 @@ def reprocess_entities(
 
     records_processed = 0
     entities_linked = 0
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     for row in rows:
         rid = row[0]
@@ -524,9 +516,7 @@ def reprocess_entities(
             records_processed += 1
             continue
 
-        linked = parse_and_link_entities(
-            conn, rid, applicants, "applicant", delete_existing=True
-        )
+        linked = parse_and_link_entities(conn, rid, applicants, "applicant", delete_existing=True)
         linked += parse_and_link_entities(
             conn, rid, previous_applicants, "previous_applicant", delete_existing=True
         )
@@ -549,7 +539,8 @@ def reprocess_entities(
     else:
         logger.info(
             "reprocess_entities: processed %d record(s), linked %d entity link(s).",
-            records_processed, entities_linked,
+            records_processed,
+            entities_linked,
         )
 
     return {"records_processed": records_processed, "entities_linked": entities_linked}

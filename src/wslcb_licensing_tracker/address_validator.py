@@ -25,7 +25,8 @@ import logging
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://address-validator.exe.xyz:8000"
 TIMEOUT = 5.0
+HTTP_OK = 200
+ISO_ALPHA2_LEN = 2
 
 _cached_api_key: str | None = None
 
@@ -44,24 +47,24 @@ def _load_api_key() -> str:
     falls back to os.environ, and returns an empty string if neither is found.
     The result is cached in a module-level variable after the first call.
     """
-    global _cached_api_key
+    global _cached_api_key  # noqa: PLW0603  # module-level cache is the intended pattern
     if _cached_api_key is not None:
         return _cached_api_key
 
     # Candidate env file paths, checked in order:
     # 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
     # 2. <project-root>/env                — local dev fallback
-    _module_dir = os.path.dirname(os.path.abspath(__file__))
-    _project_root = os.path.dirname(os.path.dirname(_module_dir))
+    _module_dir = Path(__file__).resolve().parent
+    _project_root = _module_dir.parent.parent
     _env_candidates = [
-        "/etc/wslcb-licensing-tracker/env",
-        os.path.join(_project_root, "env"),
+        Path("/etc/wslcb-licensing-tracker/env"),
+        _project_root / "env",
     ]
     for env_path in _env_candidates:
         try:
-            with open(env_path, "r") as f:
-                for line in f:
-                    line = line.strip()
+            with env_path.open() as f:
+                for raw_line in f:
+                    line = raw_line.strip()
                     if line.startswith("#") or not line:
                         continue
                     if line.startswith("ADDRESS_VALIDATOR_API_KEY="):
@@ -116,27 +119,28 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
         else:
             response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
 
-        if response.status_code != 200:
+        if response.status_code != HTTP_OK:
             logger.warning(
                 "Address standardize API returned status %d for: %s",
-                response.status_code, address,
+                response.status_code,
+                address,
             )
             return None
 
         data = response.json()
         for warn in data.get("warnings") or []:
             logger.warning("Address API warning for %r: %s", address, warn)
-        return data
-
     except httpx.TimeoutException:
         logger.warning("Timeout calling address standardize API for: %s", address)
         return None
     except httpx.HTTPError as e:
         logger.warning("HTTP error calling address standardize API: %s", e)
         return None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # catch-all for unexpected API client errors
         logger.warning("Unexpected error calling address standardize API: %s", e)
         return None
+    else:
+        return data
 
 
 def validate(address: str, client: httpx.Client | None = None) -> dict | None:
@@ -172,27 +176,28 @@ def validate(address: str, client: httpx.Client | None = None) -> dict | None:
         else:
             response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
 
-        if response.status_code != 200:
+        if response.status_code != HTTP_OK:
             logger.warning(
                 "Address validation API returned status %d for: %s",
-                response.status_code, address,
+                response.status_code,
+                address,
             )
             return None
 
         data = response.json()
         for warn in data.get("warnings") or []:
             logger.warning("Address API warning for %r: %s", address, warn)
-        return data
-
     except httpx.TimeoutException:
         logger.warning("Timeout calling address validation API for: %s", address)
         return None
     except httpx.HTTPError as e:
         logger.warning("HTTP error calling address validation API: %s", e)
         return None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # catch-all for unexpected API client errors
         logger.warning("Unexpected error calling address validation API: %s", e)
         return None
+    else:
+        return data
 
 
 def standardize_location(
@@ -234,7 +239,7 @@ def standardize_location(
     # Only store country if it is a valid ISO 3166-1 alpha-2 code (2 ASCII letters).
     std_country = (
         raw_country
-        if (len(raw_country) == 2 and raw_country.isalpha() and raw_country.isascii())
+        if (len(raw_country) == ISO_ALPHA2_LEN and raw_country.isalpha() and raw_country.isascii())
         else ""
     )
 
@@ -255,14 +260,15 @@ def standardize_location(
                 std_country,
                 result.get("standardized"),
                 "standardized",
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 location_id,
             ),
         )
-        return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # catch-all to avoid crashing the batch loop
         logger.warning("Failed to update location %d: %s", location_id, e)
         return False
+    else:
+        return True
 
 
 def validate_location(
@@ -323,7 +329,11 @@ def validate_location(
             raw_country = result.get("country", "")
             std_country = (
                 raw_country
-                if (len(raw_country) == 2 and raw_country.isalpha() and raw_country.isascii())
+                if (
+                    len(raw_country) == ISO_ALPHA2_LEN
+                    and raw_country.isalpha()
+                    and raw_country.isascii()
+                )
                 else ""
             )
             conn.execute(
@@ -346,21 +356,21 @@ def validate_location(
                     dpv,
                     result.get("latitude"),
                     result.get("longitude"),
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                     location_id,
                 ),
             )
             return True
-        else:
-            # not_confirmed or unavailable: store status so we know validation was
-            # attempted, but leave address_validated_at NULL for backfill retry.
-            conn.execute(
-                "UPDATE locations SET validation_status = ?, dpv_match_code = ? WHERE id = ?",
-                (status, dpv, location_id),
-            )
-            return False
-    except Exception as e:
+        # not_confirmed or unavailable: store status so we know validation was
+        # attempted, but leave address_validated_at NULL for backfill retry.
+        conn.execute(
+            "UPDATE locations SET validation_status = ?, dpv_match_code = ? WHERE id = ?",
+            (status, dpv, location_id),
+        )
+    except Exception as e:  # noqa: BLE001  # catch-all to avoid crashing the batch loop
         logger.warning("Failed to update location %d: %s", location_id, e)
+        return False
+    else:
         return False
 
 
@@ -381,7 +391,8 @@ def _validate_record_location(
     Returns True if the location was already processed or standardization succeeded.
     """
     row = conn.execute(
-        f"SELECT {fk_column} FROM license_records WHERE id = ?", (record_id,)
+        f"SELECT {fk_column} FROM license_records WHERE id = ?",
+        (record_id,),
     ).fetchone()
     if not row or not row[0]:
         return False
@@ -417,7 +428,7 @@ def validate_previous_location(
     record_id: int,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Standardize (and optionally validate) the previous location for a CHANGE OF LOCATION record."""
+    """Standardize (and optionally validate) the previous location for a CHANGE OF LOCATION record."""  # noqa: E501
     return _validate_record_location(conn, record_id, "previous_location_id", client)
 
 
@@ -469,7 +480,11 @@ def _validate_batch(
     return succeeded
 
 
-def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limit: float = 0.1) -> int:
+def backfill_addresses(
+    conn: sqlite3.Connection,
+    batch_size: int = 100,
+    rate_limit: float = 0.1,
+) -> int:
     """Standardize (and optionally validate) locations that need processing.
 
     Queries all locations where:
@@ -494,10 +509,20 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_lim
           AND raw_address != ''"""
     ).fetchall()
 
-    return _validate_batch(conn, rows, "Backfilling addresses", batch_size=batch_size, rate_limit=rate_limit)
+    return _validate_batch(
+        conn,
+        rows,
+        "Backfilling addresses",
+        batch_size=batch_size,
+        rate_limit=rate_limit,
+    )
 
 
-def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limit: float = 0.1) -> int:
+def refresh_addresses(
+    conn: sqlite3.Connection,
+    batch_size: int = 100,
+    rate_limit: float = 0.1,
+) -> int:
     """Re-standardize (and optionally re-validate) all locations.
 
     Useful when the upstream address-validator service has been updated and
@@ -519,7 +544,13 @@ def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limi
         WHERE raw_address IS NOT NULL AND raw_address != ''"""
     ).fetchall()
 
-    return _validate_batch(conn, rows, "Refreshing addresses", batch_size=batch_size, rate_limit=rate_limit)
+    return _validate_batch(
+        conn,
+        rows,
+        "Refreshing addresses",
+        batch_size=batch_size,
+        rate_limit=rate_limit,
+    )
 
 
 def refresh_specific_addresses(
@@ -561,4 +592,10 @@ def refresh_specific_addresses(
         location_ids,
     ).fetchall()
 
-    return _validate_batch(conn, rows, "Refreshing specific addresses", batch_size=batch_size, rate_limit=rate_limit)
+    return _validate_batch(
+        conn,
+        rows,
+        "Refreshing specific addresses",
+        batch_size=batch_size,
+        rate_limit=rate_limit,
+    )

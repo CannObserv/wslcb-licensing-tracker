@@ -1,17 +1,19 @@
 """Tests for admin_auth.py — authentication middleware and helpers."""
+
 import os
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from wslcb_licensing_tracker.admin_auth import (
-    get_current_user,
-    require_admin,
     AdminRedirectException,
     _lookup_admin,
+    get_current_user,
+    require_admin,
 )
 
-
 # ---- helpers -------------------------------------------------------
+
 
 def _seed_admin(db, email="admin@example.com", role="admin"):
     """Insert one admin user row and return the email."""
@@ -30,6 +32,7 @@ def _make_request(headers: dict | None = None) -> MagicMock:
     ``hasattr`` / attribute assignment behave like the real Starlette State.
     """
     import types
+
     req = MagicMock()
     req.headers = headers or {}
     req.url.path = "/admin/"
@@ -39,6 +42,7 @@ def _make_request(headers: dict | None = None) -> MagicMock:
 
 
 # ---- _lookup_admin -------------------------------------------------
+
 
 def test_lookup_admin_returns_row(db):
     email = _seed_admin(db)
@@ -70,6 +74,7 @@ def test_lookup_admin_case_insensitive(db):
 
 
 # ---- get_current_user ----------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_current_user_with_valid_header(db):
@@ -122,6 +127,7 @@ async def test_get_current_user_not_in_admin_table(db):
 
 # ---- require_admin -------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_require_admin_valid(db):
     email = _seed_admin(db)
@@ -146,6 +152,7 @@ async def test_require_admin_no_credentials_raises_redirect(db):
 @pytest.mark.asyncio
 async def test_require_admin_not_in_table_raises_403(db):
     from fastapi import HTTPException
+
     req = _make_request({"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"})
     with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
         mock_get_db.return_value.__enter__ = lambda s: db
@@ -157,23 +164,31 @@ async def test_require_admin_not_in_table_raises_403(db):
 
 # ---- CLI admin commands -------------------------------------------
 
+
 def _patch_db(db):
-    """Context manager that patches db.get_db (via cli) to use the in-memory db."""
+    """Context manager that patches cli.get_db to use the in-memory db."""
     mock = MagicMock()
     mock.__enter__ = lambda s: db
     mock.__exit__ = MagicMock(return_value=False)
-    return patch("wslcb_licensing_tracker.db.get_db", return_value=mock)
+    return patch("wslcb_licensing_tracker.cli.get_db", return_value=mock)
 
 
 def test_cli_add_and_list_and_remove_users(db):
     """Round-trip: add-user, list-users, remove-user via CLI command functions."""
-    from wslcb_licensing_tracker.cli import cmd_admin_add_user, cmd_admin_list_users, cmd_admin_remove_user
     import types
+
+    from wslcb_licensing_tracker.cli import (
+        cmd_admin_add_user,
+        cmd_admin_list_users,
+        cmd_admin_remove_user,
+    )
 
     with _patch_db(db):
         # add first user
         cmd_admin_add_user(types.SimpleNamespace(email="first@example.com"))
-        row = db.execute("SELECT email FROM admin_users WHERE email = 'first@example.com'").fetchone()
+        row = db.execute(
+            "SELECT email FROM admin_users WHERE email = 'first@example.com'"
+        ).fetchone()
         assert row is not None
 
         # add second user
@@ -184,14 +199,17 @@ def test_cli_add_and_list_and_remove_users(db):
 
         # remove first user succeeds (second still exists)
         cmd_admin_remove_user(types.SimpleNamespace(email="first@example.com"))
-        row = db.execute("SELECT email FROM admin_users WHERE email = 'first@example.com'").fetchone()
+        row = db.execute(
+            "SELECT email FROM admin_users WHERE email = 'first@example.com'"
+        ).fetchone()
         assert row is None
 
 
 def test_cli_remove_last_user_exits(db):
     """Removing the only admin user should exit with error."""
-    from wslcb_licensing_tracker.cli import cmd_admin_add_user, cmd_admin_remove_user
     import types
+
+    from wslcb_licensing_tracker.cli import cmd_admin_add_user, cmd_admin_remove_user
 
     with _patch_db(db):
         cmd_admin_add_user(types.SimpleNamespace(email="solo@example.com"))
@@ -202,12 +220,15 @@ def test_cli_remove_last_user_exits(db):
 
 def test_cli_add_duplicate_user_is_noop(db):
     """Adding an already-existing email is a no-op (no error, no duplicate row)."""
-    from wslcb_licensing_tracker.cli import cmd_admin_add_user
     import types
+
+    from wslcb_licensing_tracker.cli import cmd_admin_add_user
 
     with _patch_db(db):
         cmd_admin_add_user(types.SimpleNamespace(email="dup@example.com"))
         cmd_admin_add_user(types.SimpleNamespace(email="dup@example.com"))  # no-op
 
-    count = db.execute("SELECT COUNT(*) FROM admin_users WHERE email = 'dup@example.com'").fetchone()[0]
+    count = db.execute(
+        "SELECT COUNT(*) FROM admin_users WHERE email = 'dup@example.com'"
+    ).fetchone()[0]
     assert count == 1

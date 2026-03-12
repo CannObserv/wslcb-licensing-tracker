@@ -16,8 +16,11 @@ All project modules should obtain their logger with::
 and use ``logger.info()`` / ``logger.warning()`` / etc. instead of
 ``print()``.
 """
+
 import logging
 import sys
+
+from pythonjsonlogger.json import JsonFormatter
 
 _configured = False
 
@@ -30,7 +33,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     Args:
         level: Minimum log level (default ``logging.INFO``).
     """
-    global _configured
+    global _configured  # noqa: PLW0603
     if _configured:
         return
 
@@ -48,8 +51,6 @@ def setup_logging(level: int = logging.INFO) -> None:
         )
     else:
         # JSON lines for systemd journal / log collectors
-        from pythonjsonlogger.json import JsonFormatter
-
         formatter = JsonFormatter(
             "%(asctime)s %(levelname)s %(name)s %(message)s",
             rename_fields={"asctime": "timestamp", "levelname": "level"},

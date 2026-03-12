@@ -1,7 +1,9 @@
 """Backfill historical records from unified-diff archives.
 
-Parses diff files in ``data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/``
-and inserts recovered records into the database via ``pipeline.ingest_record()``.  Both added (+) and removed (-) lines are harvested — removals represent
+Parses diff files in
+``data/wslcb/licensinginfo-diffs/{notifications,approvals,discontinued}/``
+and inserts recovered records into the database via ``pipeline.ingest_record()``.
+Both added (+) and removed (-) lines are harvested -- removals represent
 records that aged off the WSLCB rolling window and are equally valid historical data.
 
 Two-pass extraction handles the diff boundary problem:
@@ -25,7 +27,9 @@ Usage::
     python backfill_diffs.py --section notifications
 
     # Process a single diff file:
-    python backfill_diffs.py --file data/wslcb/licensinginfo-diffs/notifications/2022_09_07-06_15_00-notifications-diff.txt
+    python backfill_diffs.py \
+        --file data/wslcb/licensinginfo-diffs/notifications/\
+2022_09_07-06_15_00-notifications-diff.txt
 
     # Full run across all sections:
     python backfill_diffs.py
@@ -40,19 +44,23 @@ afterward.
 
 import csv
 import logging
+import sqlite3
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .db import (
-    DATA_DIR, get_db, get_or_create_source,
-    SOURCE_TYPE_CO_DIFF_ARCHIVE, WSLCB_SOURCE_URL,
+    DATA_DIR,
+    SOURCE_TYPE_CO_DIFF_ARCHIVE,
+    WSLCB_SOURCE_URL,
+    get_db,
+    get_or_create_source,
 )
-from .schema import init_db
-from .endorsements import discover_code_mappings, seed_endorsements, repair_code_name_endorsements
+from .endorsements import discover_code_mappings, repair_code_name_endorsements, seed_endorsements
 from .parser import discover_diff_files, extract_records_from_diff
-from .queries import hydrate_records, RECORD_COLUMNS, RECORD_JOINS
-from .pipeline import ingest_record, IngestOptions, IngestResult
+from .pipeline import IngestOptions, ingest_record
+from .queries import RECORD_COLUMNS, RECORD_JOINS, hydrate_records
+from .schema import init_db
 
 logger = logging.getLogger(__name__)
 
@@ -61,23 +69,54 @@ logger = logging.getLogger(__name__)
 
 # Matches the field list used by the /export endpoint in app.py.
 CSV_FIELDS = [
-    "section_type", "record_date", "business_name", "business_location",
-    "std_address_line_1", "std_address_line_2", "applicants", "license_type",
-    "endorsements", "application_type", "license_number", "contact_phone",
-    "city", "state", "zip_code", "std_city", "std_region", "std_postal_code", "std_country",
-    "previous_business_name", "previous_applicants",
+    "section_type",
+    "record_date",
+    "business_name",
+    "business_location",
+    "std_address_line_1",
+    "std_address_line_2",
+    "applicants",
+    "license_type",
+    "endorsements",
+    "application_type",
+    "license_number",
+    "contact_phone",
+    "city",
+    "state",
+    "zip_code",
+    "std_city",
+    "std_region",
+    "std_postal_code",
+    "std_country",
+    "previous_business_name",
+    "previous_applicants",
     "previous_business_location",
-    "prev_std_address_line_1", "prev_std_address_line_2",
-    "prev_std_city", "prev_std_region", "prev_std_postal_code",
+    "prev_std_address_line_1",
+    "prev_std_address_line_2",
+    "prev_std_city",
+    "prev_std_region",
+    "prev_std_postal_code",
 ]
 
 # Lightweight field list for dry-run exports (no DB to query).
 _DRY_RUN_FIELDS = [
-    "section_type", "record_date", "business_name", "business_location",
-    "applicants", "license_type", "application_type", "license_number",
-    "contact_phone", "city", "state", "zip_code",
-    "previous_business_name", "previous_applicants",
-    "previous_business_location", "previous_city", "previous_state",
+    "section_type",
+    "record_date",
+    "business_name",
+    "business_location",
+    "applicants",
+    "license_type",
+    "application_type",
+    "license_number",
+    "contact_phone",
+    "city",
+    "state",
+    "zip_code",
+    "previous_business_name",
+    "previous_applicants",
+    "previous_business_location",
+    "previous_city",
+    "previous_state",
     "previous_zip_code",
 ]
 
@@ -86,7 +125,7 @@ CSV_DIR = DATA_DIR / "wslcb" / "licensinginfo-diffs"
 
 def _csv_export_path() -> Path:
     """Return the export path for the current UTC date and time."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     date_str = now.strftime("%Y_%m_%d")
     time_str = now.strftime("%H_%M_%S")
     return CSV_DIR / f"{date_str}-{time_str}-licensinginfo.lcb.wa.gov-diffs.csv"
@@ -95,20 +134,25 @@ def _csv_export_path() -> Path:
 def _write_dry_run_csv(records: list[dict], path: Path) -> None:
     """Write raw parsed *records* to CSV (dry-run, no DB available)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=_DRY_RUN_FIELDS, extrasaction="ignore",
+            f,
+            fieldnames=_DRY_RUN_FIELDS,
+            extrasaction="ignore",
         )
         writer.writeheader()
         for rec in sorted(
-            records, key=lambda r: (r["record_date"], r["section_type"]),
+            records,
+            key=lambda r: (r["record_date"], r["section_type"]),
         ):
             writer.writerow({k: rec.get(k, "") for k in _DRY_RUN_FIELDS})
     logger.info("CSV export (dry run): %d records → %s", len(records), path)
 
 
 def _write_csv_from_db(
-    conn, record_ids: list[int], path: Path,
+    conn: sqlite3.Connection,
+    record_ids: list[int],
+    path: Path,
 ) -> None:
     """Export inserted records from the DB, with cleaned names and endorsements.
 
@@ -120,15 +164,17 @@ def _write_csv_from_db(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # Fetch in batches to keep memory bounded.
-    BATCH = 5000
+    batch_size = 5000
     total_written = 0
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=CSV_FIELDS, extrasaction="ignore",
+            f,
+            fieldnames=CSV_FIELDS,
+            extrasaction="ignore",
         )
         writer.writeheader()
-        for start in range(0, len(record_ids), BATCH):
-            batch_ids = record_ids[start : start + BATCH]
+        for start in range(0, len(record_ids), batch_size):
+            batch_ids = record_ids[start : start + batch_size]
             placeholders = ",".join("?" * len(batch_ids))
             rows = conn.execute(
                 f"""SELECT {RECORD_COLUMNS} {RECORD_JOINS}
@@ -151,7 +197,7 @@ def _write_csv_from_db(
 COMMIT_BATCH_SIZE = 200
 
 
-def backfill_diffs(
+def backfill_diffs(  # noqa: C901, PLR0912, PLR0915
     *,
     section: str | None = None,
     single_file: str | None = None,
@@ -317,4 +363,3 @@ def backfill_diffs(
         csv_path = _csv_export_path()
         with get_db() as export_conn:
             _write_csv_from_db(export_conn, inserted_ids, csv_path)
-

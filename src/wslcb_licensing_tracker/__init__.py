@@ -1,0 +1,1 @@
+"""WSLCB Licensing Tracker package."""

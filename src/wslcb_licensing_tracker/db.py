@@ -1,5 +1,4 @@
-"""Connection management, constants, and core database helpers for the WSLCB
-licensing tracker.
+"""Connection management, constants, and core database helpers for the WSLCB licensing tracker.
 
 This is the stable base layer.  Schema creation and migrations live in
 ``schema.py``; query helpers in ``queries.py``; record-insertion logic in
@@ -10,6 +9,7 @@ source-provenance queries (``get_or_create_location``,
 ``get_or_create_source``, ``link_record_source``, ``get_primary_source``,
 ``get_record_sources``) live here.
 """
+
 import json
 import logging
 import os
@@ -52,7 +52,7 @@ def get_connection(path: str | Path | None = None) -> sqlite3.Connection:
 
 
 @contextmanager
-def get_db(path: str | Path | None = None):
+def get_db(path: str | Path | None = None):  # noqa: ANN201  # yields sqlite3.Connection
     """Context manager wrapping :func:`get_connection`."""
     conn = get_connection(path)
     try:
@@ -62,15 +62,15 @@ def get_db(path: str | Path | None = None):
 
 
 def _normalize_raw_address(raw: str) -> str:
-    """Normalize whitespace variants (NBSP → space) in raw address strings.
+    r"""Normalize whitespace variants (NBSP → space) in raw address strings.
 
-    The WSLCB source page sometimes uses non-breaking spaces (\\xa0)
+    The WSLCB source page sometimes uses non-breaking spaces (\xa0)
     instead of regular spaces.  We normalize before lookup so that
     cosmetically-identical strings map to the same location row.
     """
     if not raw:
         return raw
-    return re.sub(r'\xa0+', ' ', raw)
+    return re.sub(r"\xa0+", " ", raw)
 
 
 # Source-role priority used when selecting the "best" source for display.
@@ -81,28 +81,64 @@ SOURCE_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirm
 # the address validation layer.  Defined here as reference data with no query
 # concerns.
 US_STATES: dict[str, str] = {
-    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
-    "CA": "California", "CO": "Colorado", "CT": "Connecticut",
-    "DC": "District of Columbia", "DE": "Delaware", "FL": "Florida",
-    "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois",
-    "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky",
-    "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
-    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
-    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana",
-    "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
-    "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
-    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
-    "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
-    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
-    "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
-    "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
-    "WI": "Wisconsin", "WY": "Wyoming",
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DC": "District of Columbia",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
 }
 
 
 # ------------------------------------------------------------------
 # Location helpers
 # ------------------------------------------------------------------
+
 
 def get_or_create_location(
     conn: sqlite3.Connection,
@@ -118,9 +154,7 @@ def get_or_create_location(
     if not raw_address or not raw_address.strip():
         return None
     normalized = _normalize_raw_address(raw_address)
-    row = conn.execute(
-        "SELECT id FROM locations WHERE raw_address = ?", (normalized,)
-    ).fetchone()
+    row = conn.execute("SELECT id FROM locations WHERE raw_address = ?", (normalized,)).fetchone()
     if row:
         return row[0]
     cursor = conn.execute(
@@ -135,7 +169,8 @@ def get_or_create_location(
 # Source helpers
 # ------------------------------------------------------------------
 
-def get_or_create_source(
+
+def get_or_create_source(  # noqa: PLR0913  # 7 args — all needed for source provenance
     conn: sqlite3.Connection,
     source_type_id: int,
     snapshot_path: str | None = None,
@@ -165,8 +200,7 @@ def get_or_create_source(
                    (source_type_id, snapshot_path, url, captured_at,
                     scrape_log_id, metadata)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (source_type_id, snapshot_path, url, captured_at,
-             scrape_log_id, meta_json),
+            (source_type_id, snapshot_path, url, captured_at, scrape_log_id, meta_json),
         )
         row = conn.execute(
             """SELECT id FROM sources
@@ -174,10 +208,8 @@ def get_or_create_source(
             (source_type_id, snapshot_path),
         ).fetchone()
         if row is None:
-            raise RuntimeError(
-                f"Source row vanished for type={source_type_id},"
-                f" path={snapshot_path!r}"
-            )
+            msg = f"Source row vanished for type={source_type_id}, path={snapshot_path!r}"
+            raise RuntimeError(msg)
     else:
         # NULL snapshot_path — match on scrape_log_id when available so
         # distinct scrape events with failed snapshot saves each get their
@@ -202,8 +234,7 @@ def get_or_create_source(
                        (source_type_id, snapshot_path, url, captured_at,
                         scrape_log_id, metadata)
                    VALUES (?, NULL, ?, ?, ?, ?)""",
-                (source_type_id, url, captured_at,
-                 scrape_log_id, meta_json),
+                (source_type_id, url, captured_at, scrape_log_id, meta_json),
             )
             return cursor.lastrowid
     return row[0]
@@ -230,8 +261,10 @@ def link_record_source(
 # Provenance query helpers
 # ------------------------------------------------------------------
 
+
 def get_primary_source(
-    conn: sqlite3.Connection, record_id: int,
+    conn: sqlite3.Connection,
+    record_id: int,
 ) -> dict | None:
     """Return the single most-relevant source for a record, or None.
 
@@ -272,7 +305,8 @@ def get_primary_source(
 
 
 def get_record_sources(
-    conn: sqlite3.Connection, record_id: int,
+    conn: sqlite3.Connection,
+    record_id: int,
 ) -> list[dict]:
     """Return provenance sources for a record, newest first."""
     rows = conn.execute(
@@ -298,6 +332,7 @@ def get_record_sources(
 if __name__ == "__main__":
     from wslcb_licensing_tracker.log_config import setup_logging
     from wslcb_licensing_tracker.schema import init_db
+
     setup_logging()
     init_db()
     logger.info("Database initialized at %s", DB_PATH)

@@ -9,9 +9,10 @@ are needed.
 Extracted from ``scraper.py``, ``backfill_snapshots.py``, and
 ``backfill_diffs.py`` as part of the Phase 1 architecture refactor (#16).
 """
+
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -51,11 +52,11 @@ def parse_location(location: str) -> tuple[str, str, str]:
     if not location:
         return "", "WA", ""
     # Try to match: ..., CITY, ST ZIP
-    m = re.search(r',\s*([A-Z][A-Z .]+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)', location)
+    m = re.search(r",\s*([A-Z][A-Z .]+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)", location)
     if m:
         return m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
     # Fallback: try ..., CITY, ST
-    m = re.search(r',\s*([A-Z][A-Z .]+?),\s*([A-Z]{2})', location)
+    m = re.search(r",\s*([A-Z][A-Z .]+?),\s*([A-Z]{2})", location)
     if m:
         return m.group(1).strip(), m.group(2).strip(), ""
     return "", "WA", ""
@@ -66,7 +67,9 @@ def normalize_date(date_str: str) -> str:
     if not date_str:
         return ""
     try:
-        dt = datetime.strptime(date_str.strip(), "%m/%d/%Y")
+        dt = datetime.strptime(date_str.strip(), "%m/%d/%Y").replace(
+            tzinfo=UTC,
+        )
         return dt.strftime("%Y-%m-%d")
     except ValueError:
         return date_str.strip()
@@ -75,17 +78,23 @@ def normalize_date(date_str: str) -> str:
 # ── HTML table parsing ───────────────────────────────────────────────
 
 
-def parse_records_from_table(table, section_type: str) -> list[dict]:
+_CELL_COUNT = 2
+
+
+def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dispatch; not worth splitting
+    table: "BeautifulSoup",
+    section_type: str,
+) -> list[dict]:
     """Parse all records from a section table."""
     records = []
     rows = table.find_all("tr")
     current = {}
     date_field = DATE_FIELD_MAP[section_type]
-    scraped_at = datetime.now(timezone.utc).isoformat()
+    scraped_at = datetime.now(UTC).isoformat()
 
     for row in rows:
         cells = row.find_all("td")
-        if len(cells) != 2:
+        if len(cells) != _CELL_COUNT:
             # If we have a partially built record, save it before skipping
             continue
 
@@ -179,7 +188,7 @@ def snapshot_paths(data_dir: Path) -> list[Path]:
 
 def extract_snapshot_date(path: Path) -> str | None:
     """Extract date string from snapshot filename (e.g. '2025_12_16')."""
-    m = re.search(r'(\d{4}_\d{2}_\d{2})', path.name)
+    m = re.search(r"(\d{4}_\d{2}_\d{2})", path.name)
     return m.group(1) if m else None
 
 
@@ -192,7 +201,7 @@ def parse_snapshot(path: Path) -> list[dict]:
         th = table.find("th")
         if not th:
             continue
-        header = th.get_text(strip=True).replace('\xa0', ' ')
+        header = th.get_text(strip=True).replace("\xa0", " ")
         if header not in SECTION_MAP:
             continue
         section_type = SECTION_MAP[header]
@@ -204,7 +213,7 @@ def parse_snapshot(path: Path) -> list[dict]:
 
 
 def parse_diff_timestamp(header_line: str) -> str:
-    """Extract an ISO 8601 timestamp from a ``---`` or ``+++`` diff header.
+    r"""Extract an ISO 8601 timestamp from a ``---`` or ``+++`` diff header.
 
     Expected format: ``--- @\tWed, 07 Sep 2022 06:15:05 -0700``
     Returns the current UTC time as fallback if parsing fails.
@@ -213,11 +222,13 @@ def parse_diff_timestamp(header_line: str) -> str:
         # Strip the "--- @\t" / "+++ @\t" prefix.
         raw = header_line.split("\t", 1)[1]
         return parsedate_to_datetime(raw).isoformat()
-    except Exception:
-        return datetime.now(timezone.utc).isoformat()
+    except Exception:  # noqa: BLE001  # malformed diff headers vary widely; fall back to current time
+        return datetime.now(UTC).isoformat()
 
 
-def split_diff_lines(content: str):
+def split_diff_lines(
+    content: str,
+) -> tuple[list[str], list[str], list[str], list[str], str, str]:
     """Split a unified diff into added, removed, and context line lists.
 
     Returns ``(added, removed, new_with_ctx, old_with_ctx, old_ts, new_ts)``
@@ -232,7 +243,7 @@ def split_diff_lines(content: str):
     removed: list[str] = []
     new_ctx: list[str] = []
     old_ctx: list[str] = []
-    fallback_ts = datetime.now(timezone.utc).isoformat()
+    fallback_ts = datetime.now(UTC).isoformat()
     old_ts = fallback_ts
     new_ts = fallback_ts
 
@@ -284,9 +295,7 @@ def is_valid_record(record: dict) -> bool:
     )
 
 
-def extract_records_from_diff(
-    filepath: Path, section_type: str
-) -> list[dict]:
+def extract_records_from_diff(filepath: Path, section_type: str) -> list[dict]:
     """Extract deduplicated, validated records from a single diff file.
 
     Uses the two-pass strategy described in the ``backfill_diffs`` module
@@ -361,8 +370,7 @@ def discover_diff_files(
         dir_name = p.parent.name
         if dir_name not in SECTION_DIR_MAP:
             logger.error(
-                "Cannot infer section from directory '%s'. "
-                "Expected one of: %s",
+                "Cannot infer section from directory '%s'. Expected one of: %s",
                 dir_name,
                 list(SECTION_DIR_MAP.keys()),
             )
@@ -381,8 +389,7 @@ def discover_diff_files(
         if not dir_path.is_dir():
             logger.warning("Directory not found: %s", dir_path)
             continue
-        for fp in sorted(dir_path.glob("*.txt")):
-            result.append((fp, sec_type))
+        result.extend((fp, sec_type) for fp in sorted(dir_path.glob("*.txt")))
 
     return result
 
@@ -391,7 +398,7 @@ def discover_diff_files(
 
 
 def _match_key(
-    tbody,
+    tbody: "BeautifulSoup",
     section_type: str,
     license_number: str,
     record_date: str,
@@ -414,7 +421,7 @@ def _match_key(
 
     for row in tbody.find_all("tr"):
         cells = row.find_all("td")
-        if len(cells) != 2:
+        if len(cells) != _CELL_COUNT:
             continue
         label = cells[0].get_text(strip=True)
         value = cells[1].get_text(strip=True)
@@ -498,8 +505,8 @@ def extract_tbody_from_snapshot(
 _DATE_LABELS = tuple(DATE_FIELD_MAP.values())  # e.g. "Notification Date:"
 
 
-def _extract_tbody_lines(lines: list[str]) -> list[list[str]]:
-    """Split a flat list of HTML lines into per-record <tbody> line groups.
+def _extract_tbody_lines(lines: list[str]) -> list[list[str]]:  # noqa: C901  # two-format detection + stateful parsing
+    """Split a flat list of HTML lines into per-record ``<tbody>`` line groups.
 
     Two formats are handled:
 
@@ -509,13 +516,13 @@ def _extract_tbody_lines(lines: list[str]) -> list[list[str]]:
        new group starts when a label cell contains one of the date field
        labels (e.g. ``Notification Date``) and ends when the next date-label
        line is encountered (or the list is exhausted).  The resulting group
-       is wrapped in synthetic ``<tbody>\u2026</tbody>`` tags so downstream
+       is wrapped in synthetic ``<tbody>...</tbody>`` tags so downstream
        BeautifulSoup parsing works uniformly.
 
     Returns a list of line-lists, one per record ``<tbody>`` block.
     """
     # Detect format by checking for any <tbody> tag.
-    has_tbody = any("<tbody" in l.lower() for l in lines)
+    has_tbody = any("<tbody" in ln.lower() for ln in lines)
 
     if has_tbody:
         # Format 1: <tbody>-wrapped records.
@@ -537,11 +544,12 @@ def _extract_tbody_lines(lines: list[str]) -> list[list[str]]:
 
     # Format 2: bare <tr> rows — split on date field labels.
     def _is_date_label(line: str) -> bool:
-        """Return True only when *line* contains a date-field label as
-        the visible text of a ``<td>`` cell (possibly wrapped in ``<b>``).
-        Using a cell-context check prevents false matches on business
-        names or other content that might incidentally contain the label
-        text as a substring."""
+        """Return True when *line* contains a date-field label as the visible text of a ``<td>``.
+
+        Checks for the label inside a cell context (possibly wrapped in ``<b>``)
+        to prevent false matches on business names that incidentally contain
+        the label text as a substring.
+        """
         for label in _DATE_LABELS:
             if re.search(
                 r"<td[^>]*>\s*(?:<[^>]+>)*\s*" + re.escape(label) + r"\s*(?:</[^>]+>)*\s*</td>",
@@ -556,12 +564,12 @@ def _extract_tbody_lines(lines: list[str]) -> list[list[str]]:
     for line in lines:
         if _is_date_label(line):
             if current2:
-                groups2.append(["<tbody>"] + current2 + ["</tbody>"])
+                groups2.append(["<tbody>", *current2, "</tbody>"])
             current2 = [line]
         elif current2 is not None:
             current2.append(line)
     if current2:
-        groups2.append(["<tbody>"] + current2 + ["</tbody>"])
+        groups2.append(["<tbody>", *current2, "</tbody>"])
     return groups2
 
 

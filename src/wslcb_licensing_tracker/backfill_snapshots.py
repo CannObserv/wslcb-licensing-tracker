@@ -9,28 +9,39 @@ Single-pass over each snapshot, two-phase processing:
 Safe to re-run at any time.  Address validation is deferred to a
 separate ``cli.py backfill-addresses`` pass.
 """
+
 import logging
+import sqlite3
 
 from .db import (
-    DATA_DIR, get_db, get_or_create_location,
-    get_or_create_source, link_record_source, SOURCE_TYPE_CO_ARCHIVE,
+    DATA_DIR,
+    SOURCE_TYPE_CO_ARCHIVE,
     WSLCB_SOURCE_URL,
+    get_db,
+    get_or_create_location,
+    get_or_create_source,
+    link_record_source,
 )
-from .schema import init_db
+from .endorsements import discover_code_mappings, repair_code_name_endorsements, seed_endorsements
 from .entities import (
-    parse_and_link_entities, clean_applicants_string, clean_entity_name,
+    clean_applicants_string,
+    clean_entity_name,
+    parse_and_link_entities,
 )
-from .endorsements import seed_endorsements, discover_code_mappings, repair_code_name_endorsements
-from .parser import snapshot_paths, extract_snapshot_date, parse_snapshot
-from .pipeline import ingest_batch, IngestOptions
+from .parser import extract_snapshot_date, parse_snapshot, snapshot_paths
+from .pipeline import IngestOptions, ingest_batch
+from .schema import init_db
 
 logger = logging.getLogger(__name__)
 
 
 # ── Phase 2: Repair ──────────────────────────────────────────────────
 
+
 def _repair_assumptions(
-    conn, records: list[dict], source_id: int,
+    conn: sqlite3.Connection,
+    records: list[dict],
+    source_id: int,
 ) -> int:
     """Fix ASSUMPTION records that have empty or NULL business names.
 
@@ -47,13 +58,9 @@ def _repair_assumptions(
         if not rec["business_name"] and not rec["previous_business_name"]:
             continue
         cleaned_biz = clean_entity_name(rec["business_name"] or "")
-        cleaned_prev_biz = clean_entity_name(
-            rec["previous_business_name"] or ""
-        )
+        cleaned_prev_biz = clean_entity_name(rec["previous_business_name"] or "")
         cleaned_applicants = clean_applicants_string(rec["applicants"])
-        cleaned_prev_applicants = clean_applicants_string(
-            rec["previous_applicants"]
-        )
+        cleaned_prev_applicants = clean_applicants_string(rec["previous_applicants"])
         cursor = conn.execute(
             """UPDATE license_records
                SET business_name = ?,
@@ -88,15 +95,13 @@ def _repair_assumptions(
             if row:
                 rid = row["id"]
                 # Clear stale entity links and re-create from updated data
-                conn.execute(
-                    "DELETE FROM record_entities WHERE record_id = ?", (rid,)
-                )
-                parse_and_link_entities(
-                    conn, rid, cleaned_applicants, "applicant"
-                )
+                conn.execute("DELETE FROM record_entities WHERE record_id = ?", (rid,))
+                parse_and_link_entities(conn, rid, cleaned_applicants, "applicant")
                 if cleaned_prev_applicants:
                     parse_and_link_entities(
-                        conn, rid, cleaned_prev_applicants,
+                        conn,
+                        rid,
+                        cleaned_prev_applicants,
                         "previous_applicant",
                     )
                 link_record_source(conn, rid, source_id, "repaired")
@@ -105,7 +110,9 @@ def _repair_assumptions(
 
 
 def _repair_change_of_location(
-    conn, records: list[dict], source_id: int,
+    conn: sqlite3.Connection,
+    records: list[dict],
+    source_id: int,
 ) -> int:
     """Fix CHANGE OF LOCATION records with missing locations.
 
@@ -119,12 +126,15 @@ def _repair_change_of_location(
             continue
 
         loc_id = get_or_create_location(
-            conn, rec["business_location"],
-            city=rec["city"], state=rec["state"],
+            conn,
+            rec["business_location"],
+            city=rec["city"],
+            state=rec["state"],
             zip_code=rec["zip_code"],
         )
         prev_loc_id = get_or_create_location(
-            conn, rec["previous_business_location"],
+            conn,
+            rec["previous_business_location"],
             city=rec["previous_city"],
             state=rec["previous_state"],
             zip_code=rec["previous_zip_code"],
@@ -176,12 +186,14 @@ def _repair_change_of_location(
                          AND record_date = ?
                          AND license_number = ?
                          AND application_type = 'CHANGE OF LOCATION'""",
-                    (rec["section_type"], rec["record_date"],
-                     rec["license_number"]),
+                    (rec["section_type"], rec["record_date"], rec["license_number"]),
                 ).fetchone()
                 if row:
                     link_record_source(
-                        conn, row["id"], source_id, "repaired",
+                        conn,
+                        row["id"],
+                        source_id,
+                        "repaired",
                     )
                 updated += cursor.rowcount
                 continue
@@ -213,12 +225,14 @@ def _repair_change_of_location(
                          AND record_date = ?
                          AND license_number = ?
                          AND application_type = 'CHANGE OF LOCATION'""",
-                    (rec["section_type"], rec["record_date"],
-                     rec["license_number"]),
+                    (rec["section_type"], rec["record_date"], rec["license_number"]),
                 ).fetchone()
                 if row:
                     link_record_source(
-                        conn, row["id"], source_id, "repaired",
+                        conn,
+                        row["id"],
+                        source_id,
+                        "repaired",
                     )
             updated += cursor.rowcount
     return updated
@@ -226,7 +240,8 @@ def _repair_change_of_location(
 
 # ── Entry point ──────────────────────────────────────────────────────
 
-def backfill_from_snapshots():
+
+def backfill_from_snapshots() -> None:
     """Ingest records from archived snapshots, then repair broken records."""
     init_db()
 
@@ -262,8 +277,7 @@ def backfill_from_snapshots():
                 snapshot_path=rel_path,
                 url=WSLCB_SOURCE_URL,
                 captured_at=(
-                    snap_date.replace("_", "-") + "T00:00:00+00:00"
-                    if snap_date else None
+                    snap_date.replace("_", "-") + "T00:00:00+00:00" if snap_date else None
                 ),
             )
 
@@ -277,23 +291,43 @@ def backfill_from_snapshots():
 
             # Phase 2: repair broken records
             assumption_fixed += _repair_assumptions(
-                conn, records, source_id,
+                conn,
+                records,
+                source_id,
             )
             col_fixed += _repair_change_of_location(
-                conn, records, source_id,
+                conn,
+                records,
+                source_id,
             )
             conn.commit()
 
             total_inserted += batch_result.inserted
             total_skipped += batch_result.skipped
-            logger.debug("  %s: +%d new, %d skipped", snap_date, batch_result.inserted, batch_result.skipped)
+            logger.debug(
+                "  %s: +%d new, %d skipped",
+                snap_date,
+                batch_result.inserted,
+                batch_result.skipped,
+            )
 
-        # Discover any new code→endorsement mappings
+        # Discover any new code->endorsement mappings
         learned = discover_code_mappings(conn)
         if learned:
-            logger.info("Discovered %d new code mapping(s): %s", len(learned), list(learned.keys()))
+            logger.info(
+                "Discovered %d new code mapping(s): %s",
+                len(learned),
+                list(learned.keys()),
+            )
 
-    logger.info("Done! Inserted %d new records (%d duplicates skipped).", total_inserted, total_skipped)
+    logger.info(
+        "Done! Inserted %d new records (%d duplicates skipped).",
+        total_inserted,
+        total_skipped,
+    )
     if assumption_fixed or col_fixed:
-        logger.info("Repaired %d ASSUMPTION + %d CHANGE OF LOCATION record(s).", assumption_fixed, col_fixed)
-
+        logger.info(
+            "Repaired %d ASSUMPTION + %d CHANGE OF LOCATION record(s).",
+            assumption_fixed,
+            col_fixed,
+        )

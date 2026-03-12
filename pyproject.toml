@@ -21,6 +21,8 @@ wslcb = "wslcb_licensing_tracker.cli:main"
 dev = [
     "pytest>=9.0.2,<10",
     "pytest-asyncio>=1.3.0,<2",
+    "ruff>=0.15.0,<1",
+    "pre-commit>=4.0.0,<5",
 ]
 
 [tool.pytest.ini_options]
@@ -34,3 +36,33 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wslcb_licensing_tracker"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+exclude = ["tests/"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # Mutually exclusive docstring rules — pick D211 + D212
+    "D203",   # one-blank-line-before-class (conflicts with D211)
+    "D213",   # multi-line-summary-second-line (conflicts with D212)
+    # Conflicts with ruff formatter
+    "COM812", # trailing-comma-missing
+    "ISC001", # single-line-implicit-string-concatenation
+    # Deprecated
+    "ANN101", # missing-type-self
+    "ANN102", # missing-type-cls
+    # All SQL uses parameterized queries; dynamic parts are constants or
+    # generated placeholders (e.g. ",".join("?" * n)) — not user input.
+    "S608",   # possible-sql-injection-vector
+]
+
+[tool.ruff.lint.per-file-ignores]
+# print() is legitimate CLI output per project convention
+"src/wslcb_licensing_tracker/cli.py" = ["T201"]
+"src/wslcb_licensing_tracker/integrity.py" = ["T201"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

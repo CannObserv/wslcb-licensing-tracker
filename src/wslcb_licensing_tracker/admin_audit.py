@@ -8,6 +8,7 @@ Public API
 - :func:`log_action` — insert one audit row.
 - :func:`get_audit_log` — paginated retrieval with optional filters.
 """
+
 import json
 import logging
 import sqlite3
@@ -16,7 +17,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def log_action(
+def log_action(  # noqa: PLR0913
     conn: sqlite3.Connection,
     email: str,
     action: str,
@@ -55,7 +56,10 @@ def log_action(
     row_id = cursor.lastrowid
     logger.debug(
         "Audit log: %s by %s on %s#%s",
-        action, email, target_type, target_id,
+        action,
+        email,
+        target_type,
+        target_id,
     )
     return row_id  # type: ignore[return-value]
 
@@ -82,7 +86,7 @@ def get_audit_log(
         ``date_from`` (inclusive, ``YYYY-MM-DD``),
         ``date_to`` (inclusive, ``YYYY-MM-DD``).
 
-    Returns
+    Returns:
     -------
     (rows, total_count)
         *rows* is a list of dicts with keys matching the table columns plus a
@@ -117,7 +121,8 @@ def get_audit_log(
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
     total_count: int = conn.execute(
-        f"SELECT COUNT(*) FROM admin_audit_log {where_sql}", params
+        f"SELECT COUNT(*) FROM admin_audit_log {where_sql}",
+        params,
     ).fetchone()[0]
 
     offset = (page - 1) * per_page
@@ -129,21 +134,23 @@ def get_audit_log(
         ORDER BY id DESC
         LIMIT ? OFFSET ?
         """,
-        params + [per_page, offset],
+        [*params, per_page, offset],
     ).fetchall()
 
     rows: list[dict[str, Any]] = []
     for r in rows_raw:
         details_raw = r[5]
-        rows.append({
-            "id": r[0],
-            "admin_email": r[1],
-            "action": r[2],
-            "target_type": r[3],
-            "target_id": r[4],
-            "details": details_raw,
-            "details_parsed": json.loads(details_raw) if details_raw else None,
-            "created_at": r[6],
-        })
+        rows.append(
+            {
+                "id": r[0],
+                "admin_email": r[1],
+                "action": r[2],
+                "target_type": r[3],
+                "target_id": r[4],
+                "details": details_raw,
+                "details_parsed": json.loads(details_raw) if details_raw else None,
+                "created_at": r[6],
+            }
+        )
 
     return rows, total_count

@@ -7,23 +7,28 @@ When the page content hasn't changed since the last successful scrape
 (detected via SHA-256 hash comparison), the scrape is short-circuited
 and logged as ``status='unchanged'``.
 """
+
 import hashlib
 import logging
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone
-from .db import (
-    DATA_DIR, get_db, get_or_create_source,
-    SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL,
-)
-from .schema import init_db
-from .parser import SECTION_MAP, parse_records_from_table
-from .endorsements import seed_endorsements, discover_code_mappings, repair_code_name_endorsements
+
 from .address_validator import TIMEOUT as _AV_TIMEOUT
-from .pipeline import ingest_batch, IngestOptions
+from .db import (
+    DATA_DIR,
+    SOURCE_TYPE_LIVE_SCRAPE,
+    WSLCB_SOURCE_URL,
+    get_db,
+    get_or_create_source,
+)
+from .endorsements import discover_code_mappings, repair_code_name_endorsements, seed_endorsements
+from .parser import SECTION_MAP, parse_records_from_table
+from .pipeline import IngestOptions, ingest_batch
+from .schema import init_db
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +54,10 @@ def get_last_content_hash(conn: sqlite3.Connection) -> str | None:
 
 
 def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
-    """Save raw HTML to data/wslcb/licensinginfo/[yyyy]/[yyyy_mm_dd]/[yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html
+    """Save raw HTML to the per-date snapshot directory.
+
+    Path pattern:
+    ``data/wslcb/licensinginfo/[yyyy]/[yyyy_mm_dd]/[yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html``
 
     Saves the HTML exactly as received from the server (no transformation).
     Increments the version number if a snapshot for the same date already exists.
@@ -72,14 +80,14 @@ def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
     return filepath
 
 
-def scrape():
-    """Main scrape function."""
+def scrape() -> None:  # noqa: C901, PLR0915  # monolithic scrape flow; splitting would obscure the pipeline sequence
+    """Run a full scrape: fetch, archive, parse, ingest, and log."""
     init_db()
 
     logger.info("Starting scrape of %s", WSLCB_SOURCE_URL)
 
     with get_db() as conn:
-        # Ensure seed code→endorsement mappings exist (idempotent; needed
+        # Ensure seed code->endorsement mappings exist (idempotent; needed
         # because the scraper runs standalone, not through FastAPI lifespan).
         seed_endorsements(conn)
         repair_code_name_endorsements(conn)
@@ -87,7 +95,7 @@ def scrape():
         # Log the scrape start
         cursor = conn.execute(
             "INSERT INTO scrape_log (started_at, status) VALUES (?, 'running')",
-            (datetime.now(timezone.utc).isoformat(),),
+            (datetime.now(UTC).isoformat(),),
         )
         log_id = cursor.lastrowid
         conn.commit()
@@ -106,7 +114,7 @@ def scrape():
 
             if content_hash == last_hash:
                 logger.info(
-                    "Page unchanged (hash %s…); skipping parse/ingest",
+                    "Page unchanged (hash %s...); skipping parse/ingest",
                     content_hash[:12],
                 )
                 conn.execute(
@@ -115,7 +123,7 @@ def scrape():
                        content_hash = ?
                        WHERE id = ?""",
                     (
-                        datetime.now(timezone.utc).isoformat(),
+                        datetime.now(UTC).isoformat(),
                         content_hash,
                         log_id,
                     ),
@@ -124,19 +132,16 @@ def scrape():
                 return
 
             # Archive the raw HTML
-            scrape_time = datetime.now(timezone.utc)
+            scrape_time = datetime.now(UTC)
             snapshot_path = None
             try:
                 snapshot_path = save_html_snapshot(html, scrape_time)
                 logger.debug("Saved snapshot to %s", snapshot_path)
-            except Exception as snap_err:
+            except Exception as snap_err:  # noqa: BLE001  # non-fatal; scrape continues without snapshot
                 logger.warning("Failed to save HTML snapshot: %s", snap_err)
 
             # Register provenance source
-            rel_path = (
-                str(snapshot_path.relative_to(DATA_DIR))
-                if snapshot_path else None
-            )
+            rel_path = str(snapshot_path.relative_to(DATA_DIR)) if snapshot_path else None
             source_id = get_or_create_source(
                 conn,
                 SOURCE_TYPE_LIVE_SCRAPE,
@@ -154,12 +159,13 @@ def scrape():
             data_tables = []
             for t in all_tables:
                 th = t.find("th")
-                if th and th.get_text(strip=True).replace('\xa0', ' ') in SECTION_MAP:
-                    header_text = th.get_text(strip=True).replace('\xa0', ' ')
+                if th and th.get_text(strip=True).replace("\xa0", " ") in SECTION_MAP:
+                    header_text = th.get_text(strip=True).replace("\xa0", " ")
                     data_tables.append((SECTION_MAP[header_text], t))
 
             if not data_tables:
-                raise ValueError("Could not find data tables in page")
+                msg = "Could not find data tables in page"
+                raise ValueError(msg)  # noqa: TRY301  # raise kept inside try block intentionally
 
             logger.debug("Found %d data sections", len(data_tables))
 
@@ -196,7 +202,7 @@ def scrape():
                    snapshot_path = ?, content_hash = ?
                    WHERE id = ?""",
                 (
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                     counts["new"],
                     counts["approved"],
                     counts["discontinued"],
@@ -210,24 +216,31 @@ def scrape():
 
             total = counts["new"] + counts["approved"] + counts["discontinued"]
             logger.info(
-                "Done! Inserted %d new records "
-                "(new=%d, approved=%d, discontinued=%d, skipped=%d)",
-                total, counts["new"], counts["approved"],
-                counts["discontinued"], counts["skipped"],
+                "Done! Inserted %d new records (new=%d, approved=%d, discontinued=%d, skipped=%d)",
+                total,
+                counts["new"],
+                counts["approved"],
+                counts["discontinued"],
+                counts["skipped"],
             )
 
-            # Discover any new code→endorsement mappings from cross-references
+            # Discover any new code->endorsement mappings from cross-references
             learned = discover_code_mappings(conn)
             if learned:
-                logger.info("Discovered %d new code mapping(s): %s", len(learned), list(learned.keys()))
+                logger.info(
+                    "Discovered %d new code mapping(s): %s",
+                    len(learned),
+                    list(learned.keys()),
+                )
 
         except Exception as e:
             conn.execute(
-                "UPDATE scrape_log SET finished_at = ?, status = 'error', error_message = ? WHERE id = ?",
-                (datetime.now(timezone.utc).isoformat(), str(e), log_id),
+                "UPDATE scrape_log SET finished_at = ?, status = 'error', "
+                "error_message = ? WHERE id = ?",
+                (datetime.now(UTC).isoformat(), str(e), log_id),
             )
             conn.commit()
-            logger.error("Scrape failed: %s", e)
+            logger.exception("Scrape failed")
             raise
 
 
@@ -264,7 +277,7 @@ def cleanup_redundant_scrapes(
         return {"scrape_logs": 0, "sources": 0, "record_sources": 0, "files": 0}
 
     log_ids = [r[0] for r in redundant]
-    snapshot_paths = [r[1] for r in redundant if r[1]]
+    redundant_snapshot_paths = [r[1] for r in redundant if r[1]]
 
     # Find the source IDs tied to these scrape_log entries
     placeholders = ",".join("?" * len(log_ids))
@@ -311,8 +324,7 @@ def cleanup_redundant_scrapes(
 
     # Re-stamp scrape_log rows as 'unchanged'
     conn.execute(
-        f"UPDATE scrape_log SET status = 'unchanged' "
-        f"WHERE id IN ({placeholders})",
+        f"UPDATE scrape_log SET status = 'unchanged' WHERE id IN ({placeholders})",
         log_ids,
     )
     conn.commit()
@@ -320,7 +332,7 @@ def cleanup_redundant_scrapes(
     # Delete duplicate snapshot files
     files_deleted = 0
     if delete_files:
-        for rel_path in snapshot_paths:
+        for rel_path in redundant_snapshot_paths:
             filepath = DATA_DIR / rel_path
             if filepath.exists():
                 filepath.unlink()
@@ -336,7 +348,9 @@ def cleanup_redundant_scrapes(
     logger.info(
         "Cleanup complete: %d scrape logs re-stamped, %d sources removed, "
         "%d record_sources removed, %d files deleted",
-        result["scrape_logs"], result["sources"],
-        result["record_sources"], result["files"],
+        result["scrape_logs"],
+        result["sources"],
+        result["record_sources"],
+        result["files"],
     )
     return result

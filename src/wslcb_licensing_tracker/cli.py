@@ -21,28 +21,40 @@ Usage::
 Extracted from ``scraper.py`` as part of the Phase 1 architecture
 refactor (#17).
 """
+
 import argparse
+import logging
 import sys
+from pathlib import Path
 
+from .address_validator import backfill_addresses, refresh_addresses, refresh_specific_addresses
+from .backfill_diffs import backfill_diffs
+from .backfill_provenance import backfill_provenance
+from .backfill_snapshots import backfill_from_snapshots
+from .db import DATA_DIR, DB_PATH, get_db
+from .endorsements import reprocess_endorsements
+from .entities import reprocess_entities
+from .integrity import print_report, run_all_checks
+from .link_records import build_all_links
 from .log_config import setup_logging
+from .parser import SECTION_DIR_MAP
+from .rebuild import compare_databases, rebuild_from_sources
+from .schema import init_db
+from .scraper import cleanup_redundant_scrapes, scrape
 
 
-def cmd_scrape(args):
+def cmd_scrape(_args: argparse.Namespace) -> None:
     """Run a live scrape of the WSLCB licensing page."""
-    from wslcb_licensing_tracker.scraper import scrape
     scrape()
 
 
-def cmd_backfill_snapshots(args):
+def cmd_backfill_snapshots(_args: argparse.Namespace) -> None:
     """Ingest records from archived HTML snapshots."""
-    from wslcb_licensing_tracker.backfill_snapshots import backfill_from_snapshots
     backfill_from_snapshots()
 
 
-def cmd_backfill_diffs(args):
+def cmd_backfill_diffs(args: argparse.Namespace) -> None:
     """Ingest records from unified-diff archives."""
-    from wslcb_licensing_tracker.backfill_diffs import backfill_diffs
-
     backfill_diffs(
         section=args.section,
         single_file=args.file,
@@ -51,59 +63,43 @@ def cmd_backfill_diffs(args):
     )
 
 
-def cmd_backfill_provenance(args):
+def cmd_backfill_provenance(_args: argparse.Namespace) -> None:
     """Populate source provenance for existing records."""
-    from wslcb_licensing_tracker.backfill_provenance import backfill_provenance
     backfill_provenance()
 
 
-def cmd_backfill_addresses(args):
+def cmd_backfill_addresses(args: argparse.Namespace) -> None:
     """Validate un-validated locations via the address API."""
-    from wslcb_licensing_tracker.db import get_db
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.address_validator import backfill_addresses
     init_db()
     with get_db() as conn:
         backfill_addresses(conn, rate_limit=args.rate_limit)
 
 
-def cmd_refresh_addresses(args):
+def cmd_refresh_addresses(args: argparse.Namespace) -> None:
     """Re-validate locations via the address API.
 
     By default re-validates all locations.  Pass --location-ids to target only
     a specific set (e.g. IDs extracted from a prior run's lock-failure log).
     """
-    from wslcb_licensing_tracker.db import get_db
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.address_validator import (
-        refresh_addresses,
-        refresh_specific_addresses,
-    )
     init_db()
     with get_db() as conn:
         if args.location_ids:
-            with open(args.location_ids) as fh:
+            with Path(args.location_ids).open() as fh:
                 ids = [int(line.strip()) for line in fh if line.strip()]
             refresh_specific_addresses(conn, ids, rate_limit=args.rate_limit)
         else:
             refresh_addresses(conn, rate_limit=args.rate_limit)
 
 
-def cmd_rebuild_links(args):
+def cmd_rebuild_links(_args: argparse.Namespace) -> None:
     """Rebuild all application→outcome links from scratch."""
-    from wslcb_licensing_tracker.db import get_db
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.link_records import build_all_links
     init_db()
     with get_db() as conn:
         build_all_links(conn)
 
 
-def cmd_check(args):
+def cmd_check(args: argparse.Namespace) -> None:
     """Run database integrity checks."""
-    from wslcb_licensing_tracker.db import get_db
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.integrity import run_all_checks, print_report
     init_db()
     with get_db() as conn:
         report = run_all_checks(conn, fix=args.fix)
@@ -112,16 +108,13 @@ def cmd_check(args):
         sys.exit(1)
 
 
-def cmd_cleanup_redundant(args):
+def cmd_cleanup_redundant(args: argparse.Namespace) -> None:
     """Remove data from scrapes that found no new records."""
-    from wslcb_licensing_tracker.db import get_db
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.scraper import cleanup_redundant_scrapes
-
     init_db()
     with get_db() as conn:
         result = cleanup_redundant_scrapes(
-            conn, delete_files=not args.keep_files,
+            conn,
+            delete_files=not args.keep_files,
         )
     if result["scrape_logs"] == 0:
         print("Nothing to clean up.")
@@ -134,12 +127,8 @@ def cmd_cleanup_redundant(args):
         )
 
 
-def cmd_reprocess_endorsements(args):
+def cmd_reprocess_endorsements(args: argparse.Namespace) -> None:
     """Regenerate record_endorsements from current code mappings."""
-    from wslcb_licensing_tracker.db import get_db
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.endorsements import reprocess_endorsements
-
     init_db()
     with get_db() as conn:
         result = reprocess_endorsements(
@@ -160,12 +149,8 @@ def cmd_reprocess_endorsements(args):
         )
 
 
-def cmd_reprocess_entities(args):
+def cmd_reprocess_entities(args: argparse.Namespace) -> None:
     """Regenerate record_entities from current applicants data."""
-    from wslcb_licensing_tracker.db import get_db
-    from wslcb_licensing_tracker.schema import init_db
-    from wslcb_licensing_tracker.entities import reprocess_entities
-
     init_db()
     with get_db() as conn:
         result = reprocess_entities(
@@ -185,13 +170,8 @@ def cmd_reprocess_entities(args):
         )
 
 
-def cmd_rebuild(args):
+def cmd_rebuild(args: argparse.Namespace) -> None:
     """Rebuild the database from archived sources."""
-    import logging
-    from pathlib import Path
-    from wslcb_licensing_tracker.db import DATA_DIR, DB_PATH
-    from wslcb_licensing_tracker.rebuild import rebuild_from_sources, compare_databases
-
     logger = logging.getLogger(__name__)
     output = Path(args.output)
 
@@ -224,9 +204,12 @@ def cmd_rebuild(args):
         if cmp.section_counts:
             print("  Per-section breakdown:")
             for sec, counts in sorted(cmp.section_counts.items()):
-                diff = counts['rebuilt'] - counts['prod']
-                sign = '+' if diff > 0 else ''
-                print(f"    {sec:<20} prod={counts['prod']:,}  rebuilt={counts['rebuilt']:,}  ({sign}{diff:,})")
+                diff = counts["rebuilt"] - counts["prod"]
+                sign = "+" if diff > 0 else ""
+                print(
+                    f"    {sec:<20} prod={counts['prod']:,}"
+                    f"  rebuilt={counts['rebuilt']:,}  ({sign}{diff:,})"
+                )
         if cmp.sample_missing:
             print("  Sample missing records (in prod, not rebuilt):")
             for key in cmp.sample_missing[:5]:
@@ -243,9 +226,9 @@ def cmd_rebuild(args):
 
 # -- Admin subcommands -----------------------------------------------
 
-def cmd_admin_add_user(args):
+
+def cmd_admin_add_user(args: argparse.Namespace) -> None:
     """Add an admin user by email."""
-    from wslcb_licensing_tracker.db import get_db
     email = args.email.strip()
     with get_db() as conn:
         existing = conn.execute(
@@ -262,9 +245,8 @@ def cmd_admin_add_user(args):
     print(f"Added admin user: {email}")
 
 
-def cmd_admin_list_users(args):
+def cmd_admin_list_users(_args: argparse.Namespace) -> None:
     """List all admin users."""
-    from wslcb_licensing_tracker.db import get_db
     with get_db() as conn:
         rows = conn.execute(
             "SELECT email, role, created_at, created_by FROM admin_users ORDER BY created_at"
@@ -278,9 +260,8 @@ def cmd_admin_list_users(args):
         print(f"{email:<40} {role:<10} {created_at:<20} {created_by}")
 
 
-def cmd_admin_remove_user(args):
+def cmd_admin_remove_user(args: argparse.Namespace) -> None:
     """Remove an admin user by email."""
-    from wslcb_licensing_tracker.db import get_db
     email = args.email.strip()
     with get_db() as conn:
         row = conn.execute(
@@ -289,18 +270,17 @@ def cmd_admin_remove_user(args):
         if not row:
             print(f"User not found: {email}")
             sys.exit(1)
-        count = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
+        count: int = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
         if count <= 1:
             print("Cannot remove the last admin user.")
             sys.exit(1)
-        conn.execute(
-            "DELETE FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
-        )
+        conn.execute("DELETE FROM admin_users WHERE email = ? COLLATE NOCASE", (email,))
         conn.commit()
     print(f"Removed admin user: {email}")
 
 
-def main():
+def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statements; genuine refactoring not worthwhile
+    """Parse CLI arguments and dispatch to the appropriate subcommand handler."""
     setup_logging()
 
     top = argparse.ArgumentParser(
@@ -320,7 +300,6 @@ def main():
     p.set_defaults(func=cmd_backfill_snapshots)
 
     # backfill-diffs
-    from wslcb_licensing_tracker.parser import SECTION_DIR_MAP
     p = sub.add_parser(
         "backfill-diffs",
         help="Ingest records from unified-diff archives",
@@ -384,7 +363,7 @@ def main():
         metavar="FILE",
         default=None,
         help="Path to a file of newline-separated location IDs to re-validate "
-             "(default: re-validate all locations)",
+        "(default: re-validate all locations)",
     )
     p.set_defaults(func=cmd_refresh_addresses)
 
@@ -504,10 +483,9 @@ def main():
         top.print_help()
         sys.exit(1)
 
-    if args.command == "admin":
-        if not getattr(args, "admin_command", None):
-            p_admin.print_help()
-            sys.exit(1)
+    if args.command == "admin" and not getattr(args, "admin_command", None):
+        p_admin.print_help()
+        sys.exit(1)
 
     args.func(args)
 

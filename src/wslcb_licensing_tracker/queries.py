@@ -11,31 +11,34 @@ provenance queries live in ``db.py`` (``get_primary_source``,
 
 All three are re-exported here for backward compatibility.
 """
+
 import logging
 import sqlite3
 import time
 from collections.abc import Iterator
 
-from .endorsements import (
-    get_endorsement_options, get_record_endorsements, get_regulated_substances,
-)
-from .entities import (
-    get_record_entities,
-)
 from .db import (  # noqa: F401 — re-exports
     US_STATES,
     get_primary_source,
     get_record_sources,
 )
-from .pipeline import insert_record  # noqa: F401 — re-export
 from .display import format_outcome
+from .endorsements import (
+    get_endorsement_options,
+    get_record_endorsements,
+    get_regulated_substances,
+)
+from .entities import (
+    get_record_entities,
+)
 from .link_records import (
-    get_outcome_status,
-    PENDING_CUTOFF_DAYS,
     DATA_GAP_CUTOFF,
     LINKABLE_TYPES,
+    PENDING_CUTOFF_DAYS,
+    get_outcome_status,
     outcome_filter_sql,
 )
+from .pipeline import insert_record  # noqa: F401 — re-export
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,7 @@ _RECORD_SELECT = f"SELECT {RECORD_COLUMNS} {RECORD_JOINS}"
 # Record enrichment helpers
 # ------------------------------------------------------------------
 
+
 def enrich_record(record: dict) -> dict:
     """Add display-ready fields with standardized-first fallback.
 
@@ -97,13 +101,18 @@ def enrich_record(record: dict) -> dict:
     """
     record["display_city"] = record.get("std_city") or record.get("city") or ""
     record["display_zip"] = record.get("std_postal_code") or record.get("zip_code") or ""
-    record["display_previous_city"] = record.get("prev_std_city") or record.get("previous_city") or ""
-    record["display_previous_zip"] = record.get("prev_std_postal_code") or record.get("previous_zip_code") or ""
+    record["display_previous_city"] = (
+        record.get("prev_std_city") or record.get("previous_city") or ""
+    )
+    record["display_previous_zip"] = (
+        record.get("prev_std_postal_code") or record.get("previous_zip_code") or ""
+    )
     return record
 
 
 def hydrate_records(
-    conn: sqlite3.Connection, rows: list,
+    conn: sqlite3.Connection,
+    rows: list,
 ) -> list[dict]:
     """Enrich DB rows/dicts with endorsements, entities, and display fields.
 
@@ -118,21 +127,20 @@ def hydrate_records(
     entity_map = get_record_entities(conn, record_ids)
 
     # Bulk-fetch outcome links for new_application records
-    new_app_ids = [
-        r["id"] for r in rows if r["section_type"] == "new_application"
-    ]
+    new_app_ids = [r["id"] for r in rows if r["section_type"] == "new_application"]
     link_map = get_record_links_bulk(conn, new_app_ids) if new_app_ids else {}
 
     results = []
     for r in rows:
         d = enrich_record(r if isinstance(r, dict) else dict(r))
         d["endorsements"] = endorsement_map.get(d["id"], [])
-        d["entities"] = entity_map.get(
-            d["id"], {"applicant": [], "previous_applicant": []}
+        d["entities"] = entity_map.get(d["id"], {"applicant": [], "previous_applicant": []})
+        d["outcome_status"] = format_outcome(
+            get_outcome_status(
+                d,
+                link_map.get(d["id"]),
+            )
         )
-        d["outcome_status"] = format_outcome(get_outcome_status(
-            d, link_map.get(d["id"]),
-        ))
         results.append(d)
     return results
 
@@ -140,6 +148,7 @@ def hydrate_records(
 # ------------------------------------------------------------------
 # Search and filter queries
 # ------------------------------------------------------------------
+
 
 def _resolve_endorsement_ids(
     conn: sqlite3.Connection,
@@ -162,21 +171,21 @@ def _resolve_endorsement_ids(
         return []
     canonical_id = row[0]
     variant_ids = [
-        r[0] for r in conn.execute(
-            "SELECT endorsement_id FROM endorsement_aliases"
-            " WHERE canonical_endorsement_id = ?",
+        r[0]
+        for r in conn.execute(
+            "SELECT endorsement_id FROM endorsement_aliases WHERE canonical_endorsement_id = ?",
             (canonical_id,),
         ).fetchall()
     ]
-    return [canonical_id] + variant_ids
+    return [canonical_id, *variant_ids]
 
 
-def _build_where_clause(
+def _build_where_clause(  # noqa: C901, PLR0912, PLR0913  # inherently multi-branch filter builder
     conn: sqlite3.Connection,
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",       # legacy single-value (kept for compat)
+    endorsement: str = "",  # legacy single-value (kept for compat)
     endorsements: list[str] | None = None,  # multi-value; supersedes endorsement
     state: str = "",
     city: str = "",
@@ -212,9 +221,9 @@ def _build_where_clause(
     needs_location_join = False
 
     if query:
-        safe_query = query.replace('"', '').replace("'", "")
+        safe_query = query.replace('"', "").replace("'", "")
         terms = safe_query.split()
-        fts_query = " AND ".join(f'"{ t }"*' for t in terms if t)
+        fts_query = " AND ".join(f'"{t}"*' for t in terms if t)
         if fts_query:
             conditions.append(
                 "lr.id IN (SELECT rowid FROM license_records_fts WHERE license_records_fts MATCH ?)"
@@ -230,8 +239,8 @@ def _build_where_clause(
         params.append(application_type)
 
     # Resolve endorsement filter: prefer multi-value list, fall back to scalar.
-    _enames: list[str] = endorsements if endorsements is not None else (
-        [endorsement] if endorsement else []
+    _enames: list[str] = (
+        endorsements if endorsements is not None else ([endorsement] if endorsement else [])
     )
     if _enames:
         all_eids: list[int] = []
@@ -288,12 +297,12 @@ def _build_where_clause(
     return where, params, needs_location_join
 
 
-def search_records(
+def search_records(  # noqa: PLR0913  # all params are distinct filter axes
     conn: sqlite3.Connection,
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",           # legacy scalar; use endorsements for multi-select
+    endorsement: str = "",  # legacy scalar; use endorsements for multi-select
     endorsements: list[str] | None = None,
     state: str = "",
     city: str = "",
@@ -307,10 +316,15 @@ def search_records(
     t0 = time.perf_counter()
     where, params, needs_location_join = _build_where_clause(
         conn,
-        query=query, section_type=section_type,
-        application_type=application_type, endorsement=endorsement,
+        query=query,
+        section_type=section_type,
+        application_type=application_type,
+        endorsement=endorsement,
         endorsements=endorsements,
-        state=state, city=city, date_from=date_from, date_to=date_to,
+        state=state,
+        city=city,
+        date_from=date_from,
+        date_to=date_to,
         outcome_status=outcome_status,
     )
 
@@ -332,13 +346,16 @@ def search_records(
             {where}
             ORDER BY lr.record_date DESC, lr.id DESC
             LIMIT ? OFFSET ?""",
-        params + [per_page, offset],
+        [*params, per_page, offset],
     ).fetchall()
 
     results = hydrate_records(conn, rows)
     logger.debug(
         "search_records: %d/%d records, page %d, %.3fs",
-        len(results), total, page, time.perf_counter() - t0,
+        len(results),
+        total,
+        page,
+        time.perf_counter() - t0,
     )
     return results, total
 
@@ -441,12 +458,12 @@ _EXPORT_SELECT = f"""
 """
 
 
-def export_records(
+def export_records(  # noqa: PLR0913  # all params are distinct filter axes
     conn: sqlite3.Connection,
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",           # legacy scalar
+    endorsement: str = "",  # legacy scalar
     endorsements: list[str] | None = None,
     state: str = "",
     city: str = "",
@@ -465,10 +482,15 @@ def export_records(
     t0 = time.perf_counter()
     where, params, _ = _build_where_clause(
         conn,
-        query=query, section_type=section_type,
-        application_type=application_type, endorsement=endorsement,
+        query=query,
+        section_type=section_type,
+        application_type=application_type,
+        endorsement=endorsement,
         endorsements=endorsements,
-        state=state, city=city, date_from=date_from, date_to=date_to,
+        state=state,
+        city=city,
+        date_from=date_from,
+        date_to=date_to,
         outcome_status=outcome_status,
     )
 
@@ -477,23 +499,24 @@ def export_records(
             {where}
             ORDER BY lr.record_date DESC, lr.id DESC
             LIMIT ?""",
-        params + [limit],
+        [*params, limit],
     ).fetchall()
 
     results = [dict(r) for r in rows]
     logger.debug(
         "export_records: %d records, %.3fs",
-        len(results), time.perf_counter() - t0,
+        len(results),
+        time.perf_counter() - t0,
     )
     return results
 
 
-def export_records_cursor(
+def export_records_cursor(  # noqa: PLR0913  # all params are distinct filter axes
     conn: sqlite3.Connection,
     query: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: str = "",           # legacy scalar
+    endorsement: str = "",  # legacy scalar
     endorsements: list[str] | None = None,
     state: str = "",
     city: str = "",
@@ -513,10 +536,15 @@ def export_records_cursor(
     """
     where, params, _ = _build_where_clause(
         conn,
-        query=query, section_type=section_type,
-        application_type=application_type, endorsement=endorsement,
+        query=query,
+        section_type=section_type,
+        application_type=application_type,
+        endorsement=endorsement,
         endorsements=endorsements,
-        state=state, city=city, date_from=date_from, date_to=date_to,
+        state=state,
+        city=city,
+        date_from=date_from,
+        date_to=date_to,
         outcome_status=outcome_status,
     )
     cursor = conn.execute(
@@ -524,7 +552,7 @@ def export_records_cursor(
             {where}
             ORDER BY lr.record_date DESC, lr.id DESC
             LIMIT ?""",
-        params + [limit],
+        [*params, limit],
     )
     for row in cursor:
         yield dict(row)
@@ -577,9 +605,7 @@ def get_filter_options(conn: sqlite3.Connection) -> dict:
         f" ORDER BY display_state",
         list(US_STATES.keys()),
     ).fetchall()
-    options["state"] = [
-        {"code": r[0], "name": US_STATES[r[0]]} for r in rows
-    ]
+    options["state"] = [{"code": r[0], "name": US_STATES[r[0]]} for r in rows]
 
     options["endorsement"] = get_endorsement_options(conn)
     options["regulated_substance"] = get_regulated_substances(conn)
@@ -594,7 +620,8 @@ _city_cache: dict[str, tuple[float, list[str]]] = {}  # {state: (ts, cities)}
 
 
 def get_cities_for_state(
-    conn: sqlite3.Connection, state: str,
+    conn: sqlite3.Connection,
+    state: str,
 ) -> list[str]:
     """Return distinct display cities for locations in *state*.
 
@@ -632,7 +659,8 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     agg = conn.execute("""
         SELECT
             COUNT(*) AS total_records,
-            SUM(CASE WHEN section_type = 'new_application' THEN 1 ELSE 0 END) AS new_application_count,
+            SUM(CASE WHEN section_type = 'new_application'
+                THEN 1 ELSE 0 END) AS new_application_count,
             SUM(CASE WHEN section_type = 'approved' THEN 1 ELSE 0 END) AS approved_count,
             SUM(CASE WHEN section_type = 'discontinued' THEN 1 ELSE 0 END) AS discontinued_count,
             MIN(record_date) AS min_date,
@@ -655,12 +683,8 @@ def get_stats(conn: sqlite3.Connection) -> dict:
         "unique_licenses": conn.execute(
             "SELECT COUNT(DISTINCT license_number) FROM license_records"
         ).fetchone()[0],
-        "unique_entities": conn.execute(
-            "SELECT COUNT(*) FROM entities"
-        ).fetchone()[0],
-        "last_scrape": conn.execute(
-            "SELECT * FROM scrape_log ORDER BY id DESC LIMIT 1"
-        ).fetchone(),
+        "unique_entities": conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0],
+        "last_scrape": conn.execute("SELECT * FROM scrape_log ORDER BY id DESC LIMIT 1").fetchone(),
         "pipeline": pipeline,
     }
 
@@ -691,10 +715,12 @@ def _get_pipeline_stats(conn: sqlite3.Connection) -> dict:
 # Single-record lookups
 # ------------------------------------------------------------------
 
+
 def get_record_by_id(conn: sqlite3.Connection, record_id: int) -> dict | None:
     """Fetch a single record with location data joined."""
     row = conn.execute(
-        f"{_RECORD_SELECT} WHERE lr.id = ?", (record_id,)
+        f"{_RECORD_SELECT} WHERE lr.id = ?",
+        (record_id,),
     ).fetchone()
     return dict(row) if row else None
 
@@ -710,7 +736,7 @@ def get_related_records(
     return [dict(r) for r in rows]
 
 
-def get_entities(
+def get_entities(  # noqa: PLR0913  # all params are distinct query axes
     conn: sqlite3.Connection,
     *,
     q: str | None = None,
@@ -735,7 +761,7 @@ def get_entities(
     per_page:
         Rows per page (default 50).
 
-    Returns
+    Returns:
     -------
     dict with keys ``entities`` (list of row dicts) and ``total`` (int).
     """
@@ -753,9 +779,7 @@ def get_entities(
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
     order_clause = (
-        "ORDER BY record_count DESC, e.name ASC"
-        if sort != "name"
-        else "ORDER BY e.name ASC"
+        "ORDER BY record_count DESC, e.name ASC" if sort != "name" else "ORDER BY e.name ASC"
     )
 
     base_sql = f"""
@@ -773,7 +797,7 @@ def get_entities(
     page = max(1, page)
     offset = (page - 1) * per_page
     rows_sql = f"{base_sql} {order_clause} LIMIT ? OFFSET ?"
-    rows = conn.execute(rows_sql, params + [per_page, offset]).fetchall()
+    rows = conn.execute(rows_sql, [*params, per_page, offset]).fetchall()
 
     return {
         "entities": [dict(r) for r in rows],
@@ -781,9 +805,7 @@ def get_entities(
     }
 
 
-def get_entity_records(
-    conn: sqlite3.Connection, entity_id: int
-) -> list[dict]:
+def get_entity_records(conn: sqlite3.Connection, entity_id: int) -> list[dict]:
     """Fetch all records associated with an entity, with location data."""
     rows = conn.execute(
         f"""SELECT DISTINCT {RECORD_COLUMNS} {RECORD_JOINS}
@@ -816,7 +838,8 @@ def get_record_link(conn: sqlite3.Connection, record_id: int) -> dict | None:
 
 
 def get_record_links_bulk(
-    conn: sqlite3.Connection, record_ids: list[int],
+    conn: sqlite3.Connection,
+    record_ids: list[int],
 ) -> dict[int, dict]:
     """Fetch outcome links for multiple new_application records.
 
@@ -842,6 +865,3 @@ def get_record_links_bulk(
         if nid not in result or r["confidence"] == "high":
             result[nid] = dict(r)
     return result
-
-
-

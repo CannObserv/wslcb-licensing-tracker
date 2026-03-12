@@ -8,18 +8,20 @@ JSON envelope::
 The CSV export endpoint (/api/v1/export) is exempt from the envelope
 — it returns a StreamingResponse with media_type text/csv.
 """
+
 import csv
 import io
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .db import get_db, US_STATES
+from .db import US_STATES, get_db
 from .queries import (
+    export_records_cursor,
     get_cities_for_state,
     get_stats,
-    export_records_cursor,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
 
-def _ok(data, message: str = "OK") -> JSONResponse:
+def _ok(data: object, message: str = "OK") -> JSONResponse:
     """Return a 200 envelope response."""
     return JSONResponse({"ok": True, "message": message, "data": data})
 
@@ -36,8 +38,9 @@ def _ok(data, message: str = "OK") -> JSONResponse:
 # GET /api/v1/cities
 # ---------------------------------------------------------------------------
 
+
 @router.get("/cities")
-async def api_cities(state: str = ""):
+async def api_cities(state: str = "") -> JSONResponse:
     """Return cities for a given US state code.
 
     Used by the search form to populate the city dropdown dynamically.
@@ -60,8 +63,9 @@ async def api_cities(state: str = ""):
 # GET /api/v1/stats
 # ---------------------------------------------------------------------------
 
+
 @router.get("/stats")
-async def api_stats():
+async def api_stats() -> JSONResponse:
     """Return aggregate statistics about the licensing record database."""
     with get_db() as conn:
         stats = get_stats(conn)
@@ -78,8 +82,9 @@ async def api_stats():
 # GET /api/v1/health
 # ---------------------------------------------------------------------------
 
+
 @router.get("/health")
-async def api_health():
+async def api_health() -> JSONResponse:
     """Lightweight health check: verifies the process is alive and the DB is reachable.
 
     Returns HTTP 200 when healthy, HTTP 503 when the database cannot be
@@ -110,31 +115,51 @@ async def api_health():
 # ---------------------------------------------------------------------------
 
 _EXPORT_FIELDNAMES = [
-    "section_type", "record_date", "business_name", "business_location",
-    "std_address_line_1", "std_address_line_2", "applicants", "license_type",
-    "endorsements", "application_type", "license_number", "contact_phone",
-    "city", "state", "zip_code", "std_city", "std_region", "std_postal_code",
+    "section_type",
+    "record_date",
+    "business_name",
+    "business_location",
+    "std_address_line_1",
+    "std_address_line_2",
+    "applicants",
+    "license_type",
+    "endorsements",
+    "application_type",
+    "license_number",
+    "contact_phone",
+    "city",
+    "state",
+    "zip_code",
+    "std_city",
+    "std_region",
+    "std_postal_code",
     "std_country",
-    "previous_business_name", "previous_applicants",
+    "previous_business_name",
+    "previous_applicants",
     "previous_business_location",
-    "prev_std_address_line_1", "prev_std_address_line_2",
-    "prev_std_city", "prev_std_region", "prev_std_postal_code",
-    "outcome_status", "outcome_date", "days_to_outcome",
+    "prev_std_address_line_1",
+    "prev_std_address_line_2",
+    "prev_std_city",
+    "prev_std_region",
+    "prev_std_postal_code",
+    "outcome_status",
+    "outcome_date",
+    "days_to_outcome",
 ]
 
 
 @router.get("/export")
-async def export_csv(
+async def export_csv(  # noqa: PLR0913
     q: str = "",
     section_type: str = "",
     application_type: str = "",
-    endorsement: list[str] = Query(default=[]),
+    endorsement: Annotated[list[str], Query()] = [],  # noqa: B006
     state: str = "",
     city: str = "",
     date_from: str = "",
     date_to: str = "",
     outcome_status: str = "",
-):
+) -> StreamingResponse:
     """Stream search results as a CSV file.
 
     Accepts the same filter parameters as the search form.  Rows are
@@ -144,7 +169,7 @@ async def export_csv(
     if not state:
         city = ""
 
-    def _csv_generator():
+    def _csv_generator() -> None:
         """Yield CSV rows incrementally from the database cursor."""
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=_EXPORT_FIELDNAMES, extrasaction="ignore")

@@ -7,11 +7,13 @@ Migrations use SQLite's ``PRAGMA user_version`` for tracking.  Adding a
 new migration is a matter of appending a ``(version, name, callable)``
 tuple to :data:`MIGRATIONS`.
 """
+
 import logging
 import sqlite3
 from collections.abc import Callable
 
 from .db import get_db
+from .entities import clean_applicants_string
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +23,14 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 
 _FTS_COLUMNS = [
-    "business_name", "business_location", "applicants",
-    "license_type", "application_type", "license_number",
-    "previous_business_name", "previous_applicants",
+    "business_name",
+    "business_location",
+    "applicants",
+    "license_type",
+    "application_type",
+    "license_number",
+    "previous_business_name",
+    "previous_applicants",
     "previous_business_location",
 ]
 
@@ -31,6 +38,7 @@ _FTS_COLUMNS = [
 # ------------------------------------------------------------------
 # Schema introspection helpers
 # ------------------------------------------------------------------
+
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     """Return True if *name* is a table in the current database."""
@@ -47,13 +55,14 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     interpolated directly into the PRAGMA statement (SQLite does not support
     parameterized PRAGMA syntax).
     """
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(row[1] == column for row in rows)
 
 
 # ------------------------------------------------------------------
 # Migration definitions
 # ------------------------------------------------------------------
+
 
 def _m001_baseline(conn: sqlite3.Connection) -> None:
     """Create all tables for a fresh database.
@@ -315,7 +324,10 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_records_license_num ON license_records(license_number)",
         "CREATE INDEX IF NOT EXISTS idx_records_app_type ON license_records(application_type)",
         "CREATE INDEX IF NOT EXISTS idx_records_location ON license_records(location_id)",
-        "CREATE INDEX IF NOT EXISTS idx_records_prev_location ON license_records(previous_location_id)",
+        (
+            "CREATE INDEX IF NOT EXISTS idx_records_prev_location"
+            " ON license_records(previous_location_id)"
+        ),
     ]:
         conn.execute(idx_sql)
 
@@ -352,9 +364,7 @@ def _m002_enrichment_tracking(conn: sqlite3.Connection) -> None:
         "raw_previous_applicants",
     ):
         if not _column_exists(conn, "license_records", col):
-            conn.execute(
-                f"ALTER TABLE license_records ADD COLUMN {col} TEXT"
-            )
+            conn.execute(f"ALTER TABLE license_records ADD COLUMN {col} TEXT")
 
     # Backfill raw_* columns with current cleaned values for existing records
     conn.execute("""
@@ -379,9 +389,7 @@ def _m003_content_hash(conn: sqlite3.Connection) -> None:
         return
 
     if not _column_exists(conn, "scrape_log", "content_hash"):
-        conn.execute(
-            "ALTER TABLE scrape_log ADD COLUMN content_hash TEXT"
-        )
+        conn.execute("ALTER TABLE scrape_log ADD COLUMN content_hash TEXT")
 
 
 def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
@@ -396,11 +404,15 @@ def _m004_address_validator_v1(conn: sqlite3.Connection) -> None:
         return
 
     # Rename std_state -> std_region (SQLite RENAME COLUMN requires 3.25+)
-    if _column_exists(conn, "locations", "std_state") and not _column_exists(conn, "locations", "std_region"):
+    if _column_exists(conn, "locations", "std_state") and not _column_exists(
+        conn, "locations", "std_region"
+    ):
         conn.execute("ALTER TABLE locations RENAME COLUMN std_state TO std_region")
 
     # Rename std_zip -> std_postal_code
-    if _column_exists(conn, "locations", "std_zip") and not _column_exists(conn, "locations", "std_postal_code"):
+    if _column_exists(conn, "locations", "std_zip") and not _column_exists(
+        conn, "locations", "std_postal_code"
+    ):
         conn.execute("ALTER TABLE locations RENAME COLUMN std_zip TO std_postal_code")
 
     # Add std_country
@@ -555,16 +567,20 @@ def _m009_regulated_substances(conn: sqlite3.Connection) -> None:
         return
 
     # Assign Cannabis endorsements.
-    conn.execute("""
+    conn.execute(
+        """
         INSERT OR IGNORE INTO regulated_substance_endorsements (substance_id, endorsement_id)
         SELECT :sid, id FROM license_endorsements
         WHERE name LIKE '%CANNABIS%'
            OR name LIKE '%RETAIL CERT%'
            OR name = 'TRIBAL COMPACT'
-    """, {"sid": cannabis_id})
+    """,
+        {"sid": cannabis_id},
+    )
 
     # Assign Alcohol endorsements (everything except Cannabis and UNDEFINED).
-    conn.execute("""
+    conn.execute(
+        """
         INSERT OR IGNORE INTO regulated_substance_endorsements (substance_id, endorsement_id)
         SELECT :sid, id FROM license_endorsements
         WHERE name != 'UNDEFINED'
@@ -572,12 +588,16 @@ def _m009_regulated_substances(conn: sqlite3.Connection) -> None:
               SELECT endorsement_id FROM regulated_substance_endorsements
               WHERE substance_id = :cannabis_sid
           )
-    """, {"sid": alcohol_id, "cannabis_sid": cannabis_id})
+    """,
+        {"sid": alcohol_id, "cannabis_sid": cannabis_id},
+    )
 
 
 def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
-    """Add has_additional_names column; backfill from applicants strings;
-    delete spurious ADDITIONAL NAMES ON FILE entity rows."""
+    """Add has_additional_names column and backfill from applicants strings.
+
+    Also deletes spurious ADDITIONAL NAMES ON FILE entity rows.
+    """
     # Skip entirely if license_records doesn't exist yet
     # (partial-schema DBs used in some migration tests).
     if not _table_exists(conn, "license_records"):
@@ -585,8 +605,7 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
     # Add column if not already present (idempotent via PRAGMA table_info)
     if not _column_exists(conn, "license_records", "has_additional_names"):
         conn.execute(
-            "ALTER TABLE license_records "
-            "ADD COLUMN has_additional_names INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE license_records ADD COLUMN has_additional_names INTEGER NOT NULL DEFAULT 0"
         )
     # Backfill: set flag=1 for any record whose applicants or
     # previous_applicants string contains either marker variant as a whole
@@ -609,8 +628,7 @@ def _m010_additional_names_flag(conn: sqlite3.Connection) -> None:
                 clauses.append(f"{col} = ?")
                 params.extend([m, m, m, m])
         conn.execute(
-            f"UPDATE license_records SET has_additional_names = 1"
-            f" WHERE {' OR '.join(clauses)}",
+            f"UPDATE license_records SET has_additional_names = 1 WHERE {' OR '.join(clauses)}",
             params,
         )
     # Remove spurious entity rows created before this fix was in place.
@@ -641,9 +659,6 @@ def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
     if not _table_exists(conn, "license_records"):
         return
 
-    # Import at call-time to avoid circular-import issues at module load.
-    from wslcb_licensing_tracker.entities import clean_applicants_string
-
     if not _column_exists(conn, "license_records", "applicants"):
         return
 
@@ -658,8 +673,7 @@ def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
         new_prev = clean_applicants_string(row["previous_applicants"])
         if new_app != row["applicants"] or new_prev != row["previous_applicants"]:
             conn.execute(
-                "UPDATE license_records "
-                "SET applicants = ?, previous_applicants = ? WHERE id = ?",
+                "UPDATE license_records SET applicants = ?, previous_applicants = ? WHERE id = ?",
                 (new_app, new_prev, row["id"]),
             )
             updated += 1
@@ -674,12 +688,8 @@ def _m011_clean_duplicate_markers(conn: sqlite3.Connection) -> None:
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'"
     ).fetchone()
     if has_entities:
-        deleted = conn.execute(
-            "DELETE FROM entities WHERE name LIKE '%DUPLICATE%'"
-        ).rowcount
-        logger.info(
-            "Migration 011: removed %d DUPLICATE-bearing entity rows", deleted
-        )
+        deleted = conn.execute("DELETE FROM entities WHERE name LIKE '%DUPLICATE%'").rowcount
+        logger.info("Migration 011: removed %d DUPLICATE-bearing entity rows", deleted)
 
 
 def _m012_entities_name_index(conn: sqlite3.Connection) -> None:
@@ -691,10 +701,7 @@ def _m012_entities_name_index(conn: sqlite3.Connection) -> None:
     """
     if not _table_exists(conn, "entities"):
         return
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_entities_name "
-        "ON entities (name COLLATE NOCASE)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_name ON entities (name COLLATE NOCASE)")
 
 
 def _m013_address_validator_v2(conn: sqlite3.Connection) -> None:
@@ -708,11 +715,15 @@ def _m013_address_validator_v2(conn: sqlite3.Connection) -> None:
         return
 
     # Rename address_line_1 -> std_address_line_1
-    if _column_exists(conn, "locations", "address_line_1") and not _column_exists(conn, "locations", "std_address_line_1"):
+    if _column_exists(conn, "locations", "address_line_1") and not _column_exists(
+        conn, "locations", "std_address_line_1"
+    ):
         conn.execute("ALTER TABLE locations RENAME COLUMN address_line_1 TO std_address_line_1")
 
     # Rename address_line_2 -> std_address_line_2
-    if _column_exists(conn, "locations", "address_line_2") and not _column_exists(conn, "locations", "std_address_line_2"):
+    if _column_exists(conn, "locations", "address_line_2") and not _column_exists(
+        conn, "locations", "std_address_line_2"
+    ):
         conn.execute("ALTER TABLE locations RENAME COLUMN address_line_2 TO std_address_line_2")
 
     # Add new validate/standardize columns (each guarded for idempotency).
@@ -746,7 +757,9 @@ def _m014_address_standardize_pipeline(conn: sqlite3.Connection) -> None:
         return
 
     # Rename validated_address → std_address_string
-    if _column_exists(conn, "locations", "validated_address") and not _column_exists(conn, "locations", "std_address_string"):
+    if _column_exists(conn, "locations", "validated_address") and not _column_exists(
+        conn, "locations", "std_address_string"
+    ):
         conn.execute("ALTER TABLE locations RENAME COLUMN validated_address TO std_address_string")
 
     # Add address_standardized_at
@@ -794,6 +807,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
 # Migration runner
 # ------------------------------------------------------------------
 
+
 def _get_user_version(conn: sqlite3.Connection) -> int:
     """Return the current ``PRAGMA user_version``."""
     return conn.execute("PRAGMA user_version").fetchone()[0]
@@ -811,8 +825,7 @@ def _database_has_tables(conn: sqlite3.Connection) -> bool:
     (created before the migration framework was introduced).
     """
     row = conn.execute(
-        "SELECT count(*) FROM sqlite_master"
-        " WHERE type='table' AND name='license_records'"
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='license_records'"
     ).fetchone()
     return row[0] > 0
 
@@ -858,6 +871,7 @@ def migrate(conn: sqlite3.Connection) -> int:
 # ------------------------------------------------------------------
 # FTS5 full-text search
 # ------------------------------------------------------------------
+
 
 def _ensure_fts(conn: sqlite3.Connection) -> None:
     """Create or rebuild the FTS5 virtual table and its sync triggers.
@@ -924,11 +938,10 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
     """)
 
     new_vals = ", ".join(
-        f"(SELECT {c} FROM license_records_fts_content WHERE id = new.id)"
-        for c in _FTS_COLUMNS
+        f"(SELECT {c} FROM license_records_fts_content WHERE id = new.id)" for c in _FTS_COLUMNS
     )
 
-    conn.executescript(f"""
+    _trigger_sql = f"""
         DROP TRIGGER IF EXISTS license_records_ai;
         CREATE TRIGGER license_records_ai AFTER INSERT ON license_records BEGIN
             INSERT INTO license_records_fts(rowid, {cols})
@@ -952,19 +965,22 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
             INSERT INTO license_records_fts(license_records_fts, rowid, {cols})
             SELECT 'delete', old.id, {cols} FROM license_records_fts_content WHERE id = old.id;
         END;
-    """)
+    """
+    conn.executescript(_trigger_sql)
 
     if needs_rebuild:
-        conn.execute(f"""
+        _rebuild_sql = f"""
             INSERT INTO license_records_fts(rowid, {cols})
             SELECT id, {cols} FROM license_records_fts_content
-        """)
+        """
+        conn.execute(_rebuild_sql)
         logger.info("FTS index built.")
 
 
 # ------------------------------------------------------------------
 # Public entry point
 # ------------------------------------------------------------------
+
 
 def init_db(conn: sqlite3.Connection | None = None) -> sqlite3.Connection | None:
     """Create tables, run migrations, and build FTS.  Safe to call repeatedly.
