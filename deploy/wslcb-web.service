@@ -13,7 +13,7 @@ ExecStartPost=/bin/bash -c 'for i in 1 2 3 4 5; do sleep 3 && /usr/bin/curl -sf 
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=/home/exedev/wslcb-licensing-tracker/env
+EnvironmentFile=/etc/wslcb-licensing-tracker/env
 
 [Install]
 WantedBy=multi-user.target

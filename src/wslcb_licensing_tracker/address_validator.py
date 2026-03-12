@@ -48,24 +48,29 @@ def _load_api_key() -> str:
     if _cached_api_key is not None:
         return _cached_api_key
 
-    # Try reading from the project-root ./env file.
-    # __file__ is src/wslcb_licensing_tracker/address_validator.py, so walk up
-    # three levels (module dir → src/ → project root) to locate ./env.
+    # Candidate env file paths, checked in order:
+    # 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
+    # 2. <project-root>/env                — local dev fallback
     _module_dir = os.path.dirname(os.path.abspath(__file__))
-    env_path = os.path.join(os.path.dirname(os.path.dirname(_module_dir)), "env")
-    try:
-        with open(env_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("#") or not line:
-                    continue
-                if line.startswith("ADDRESS_VALIDATOR_API_KEY="):
-                    _cached_api_key = line.split("=", 1)[1].strip()
-                    return _cached_api_key
-    except FileNotFoundError:
-        pass  # Fall through to environment variable
-    except OSError as e:
-        logger.warning("Error reading ./env file: %s", e)
+    _project_root = os.path.dirname(os.path.dirname(_module_dir))
+    _env_candidates = [
+        "/etc/wslcb-licensing-tracker/env",
+        os.path.join(_project_root, "env"),
+    ]
+    for env_path in _env_candidates:
+        try:
+            with open(env_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") or not line:
+                        continue
+                    if line.startswith("ADDRESS_VALIDATOR_API_KEY="):
+                        _cached_api_key = line.split("=", 1)[1].strip()
+                        return _cached_api_key
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            logger.warning("Error reading env file %s: %s", env_path, e)
 
     # Fallback to environment variable
     _cached_api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
