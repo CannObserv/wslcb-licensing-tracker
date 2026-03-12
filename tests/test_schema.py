@@ -923,9 +923,10 @@ def test_fresh_db_has_std_address_line_columns(db):
 
 
 def test_fresh_db_has_validate_columns(db):
-    """Fresh DB baseline includes all five new /validate columns."""
+    """Fresh DB baseline includes all location enrichment columns."""
     cols = [row[1] for row in db.execute("PRAGMA table_info(locations)").fetchall()]
-    for col in ("validated_address", "validation_status", "dpv_match_code", "latitude", "longitude"):
+    for col in ("std_address_string", "validation_status", "dpv_match_code", "latitude", "longitude",
+                "address_standardized_at", "address_validated_at"):
         assert col in cols, f"Missing column: {col}"
 
 
@@ -963,8 +964,8 @@ def test_m013_renames_address_line_columns_and_adds_validate_cols():
     assert "std_address_line_2" in cols
     assert "address_line_1" not in cols
     assert "address_line_2" not in cols
-    for col in ("validated_address", "validation_status", "dpv_match_code", "latitude", "longitude"):
-        assert col in cols
+    for col in ("std_address_string", "validation_status", "dpv_match_code", "latitude", "longitude"):
+        assert col in cols, f"Missing column: {col}"
 
     row = conn.execute("SELECT std_address_line_1 FROM locations").fetchone()
     assert row[0] == "123 MAIN ST"
@@ -988,4 +989,128 @@ def test_m013_is_idempotent():
     """)
     _m013_address_validator_v2(conn)
     _m013_address_validator_v2(conn)  # should not raise
+    conn.close()
+
+
+# ── Migration 014: address_standardize_pipeline ────────────────────────
+
+
+def test_fresh_db_has_std_address_string_column(db):
+    """Fresh DB baseline has std_address_string (not validated_address)."""
+    cols = [row[1] for row in db.execute("PRAGMA table_info(locations)").fetchall()]
+    assert "std_address_string" in cols
+    assert "validated_address" not in cols
+
+
+def test_fresh_db_has_address_standardized_at_column(db):
+    """Fresh DB baseline has address_standardized_at column."""
+    cols = [row[1] for row in db.execute("PRAGMA table_info(locations)").fetchall()]
+    assert "address_standardized_at" in cols
+
+
+def test_m014_renames_validated_address_to_std_address_string():
+    """_m014 renames validated_address → std_address_string on existing DBs."""
+    from wslcb_licensing_tracker.schema import _m014_address_standardize_pipeline
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raw_address TEXT NOT NULL,
+            validated_address TEXT,
+            UNIQUE(raw_address)
+        )
+    """)
+    conn.execute(
+        "INSERT INTO locations (raw_address, validated_address) VALUES (?, ?)",
+        ("123 MAIN ST", "123 MAIN ST  SEATTLE WA 98101"),
+    )
+    conn.commit()
+
+    _m014_address_standardize_pipeline(conn)
+
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(locations)").fetchall()]
+    assert "std_address_string" in cols
+    assert "validated_address" not in cols
+    row = conn.execute("SELECT std_address_string FROM locations").fetchone()
+    assert row[0] == "123 MAIN ST  SEATTLE WA 98101"
+    conn.close()
+
+
+def test_m014_adds_address_standardized_at():
+    """_m014 adds address_standardized_at column."""
+    from wslcb_licensing_tracker.schema import _m014_address_standardize_pipeline
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raw_address TEXT NOT NULL,
+            address_validated_at TEXT,
+            UNIQUE(raw_address)
+        )
+    """)
+    conn.commit()
+
+    _m014_address_standardize_pipeline(conn)
+
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(locations)").fetchall()]
+    assert "address_standardized_at" in cols
+
+
+def test_m014_backfills_standardized_at_from_validated_at():
+    """_m014 backfills address_standardized_at for rows already validated
+    (they were implicitly standardized when /validate ran)."""
+    from wslcb_licensing_tracker.schema import _m014_address_standardize_pipeline
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raw_address TEXT NOT NULL,
+            address_validated_at TEXT,
+            UNIQUE(raw_address)
+        )
+    """)
+    conn.execute(
+        "INSERT INTO locations (raw_address, address_validated_at) VALUES (?, ?)",
+        ("VALIDATED ADDR", "2025-06-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO locations (raw_address) VALUES (?)",
+        ("UNVALIDATED ADDR",),
+    )
+    conn.commit()
+
+    _m014_address_standardize_pipeline(conn)
+
+    rows = conn.execute(
+        "SELECT raw_address, address_standardized_at FROM locations ORDER BY id"
+    ).fetchall()
+    assert rows[0]["address_standardized_at"] == "2025-06-01T00:00:00+00:00"
+    assert rows[1]["address_standardized_at"] is None
+    conn.close()
+
+
+def test_m014_is_idempotent():
+    """Running _m014 twice does not raise."""
+    from wslcb_licensing_tracker.schema import _m014_address_standardize_pipeline
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            raw_address TEXT NOT NULL,
+            validated_address TEXT,
+            address_validated_at TEXT,
+            UNIQUE(raw_address)
+        )
+    """)
+    conn.commit()
+    _m014_address_standardize_pipeline(conn)
+    _m014_address_standardize_pipeline(conn)  # should not raise
     conn.close()

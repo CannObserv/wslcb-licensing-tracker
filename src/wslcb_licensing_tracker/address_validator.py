@@ -1,12 +1,24 @@
 """Client module for the address validation API service.
 
-Provides functions to validate business addresses against the address-validator
-API. Operates on the `locations` table — each unique raw address is validated
-once and shared across all license records that reference it.
+Provides functions to standardize and optionally validate business addresses
+against the address-validator API.  Operates on the ``locations`` table —
+each unique raw address is processed once and shared across all license
+records that reference it.
 
-Configuration:
-    API key is loaded from the project-root ./env file (ADDRESS_VALIDATOR_API_KEY=...)
-    with fallback to the ADDRESS_VALIDATOR_API_KEY environment variable.
+Pipeline
+--------
+1. **Always**: :func:`standardize_location` calls ``POST /api/v1/standardize``
+   and writes ``std_*`` columns + ``address_standardized_at``.
+2. **Optional**: :func:`validate_location` calls ``POST /api/v1/validate``
+   (which runs standardize internally) and overlays DPV validation fields +
+   ``address_validated_at``.  Gated by the ``ENABLE_ADDRESS_VALIDATION``
+   environment variable (``"1"``, ``"true"``, or ``"yes"``).
+
+Configuration
+-------------
+API key is loaded from the project-root ``./env`` file
+(``ADDRESS_VALIDATOR_API_KEY=...``) with fallback to the
+``ADDRESS_VALIDATOR_API_KEY`` environment variable.
 """
 
 import logging
@@ -58,6 +70,68 @@ def _load_api_key() -> str:
     # Fallback to environment variable
     _cached_api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
     return _cached_api_key
+
+
+def _is_validation_enabled() -> bool:
+    """Return True if ENABLE_ADDRESS_VALIDATION is set to a truthy value.
+
+    Checks the environment variable at call time (not cached) so that tests
+    and runtime overrides take effect immediately.
+    """
+    return os.environ.get("ENABLE_ADDRESS_VALIDATION", "").lower() in ("1", "true", "yes")
+
+
+def standardize(address: str, client: httpx.Client | None = None) -> dict | None:
+    """Standardize an address via POST /api/v1/standardize.
+
+    Sends the full raw address string.  The server parses and standardizes
+    the address according to USPS Publication 28 rules.
+
+    Args:
+        address: The raw address string to standardize.
+        client: Optional httpx.Client to reuse for connection pooling.
+            If None, a one-shot request is made.
+
+    Returns:
+        A dict with keys (address_line_1, address_line_2, city, region,
+        postal_code, country, standardized, components, warnings) on success,
+        or None on any failure (network error, non-200 status, timeout).
+    """
+    api_key = _load_api_key()
+    if not api_key:
+        return None
+
+    url = f"{BASE_URL}/api/v1/standardize"
+    headers = {"X-API-Key": api_key}
+    payload = {"address": address}
+
+    try:
+        if client is not None:
+            response = client.post(url, json=payload, headers=headers)
+        else:
+            response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+
+        if response.status_code != 200:
+            logger.warning(
+                "Address standardize API returned status %d for: %s",
+                response.status_code, address,
+            )
+            return None
+
+        data = response.json()
+        for warn in data.get("warnings") or []:
+            logger.warning("Address API warning for %r: %s", address, warn)
+        return data
+
+    except httpx.TimeoutException:
+        logger.warning("Timeout calling address standardize API for: %s", address)
+        return None
+    except httpx.HTTPError as e:
+        logger.warning("HTTP error calling address standardize API: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("Unexpected error calling address standardize API: %s", e)
+        return None
 
 
 def validate(address: str, client: httpx.Client | None = None) -> dict | None:
@@ -116,25 +190,102 @@ def validate(address: str, client: httpx.Client | None = None) -> dict | None:
         return None
 
 
+def standardize_location(
+    conn: sqlite3.Connection,
+    location_id: int,
+    raw_address: str,
+    client: httpx.Client | None = None,
+) -> bool:
+    """Standardize and update a single location row via POST /api/v1/standardize.
+
+    Always runs regardless of the ENABLE_ADDRESS_VALIDATION flag.
+
+    On success, writes all std_address_line_1/2, std_city, std_region,
+    std_postal_code, std_country, std_address_string, validation_status
+    (set to "standardized"), and sets address_standardized_at.
+    dpv_match_code, latitude, and longitude are left NULL — those are
+    populated only by validate_location() when validation is enabled.
+
+    Does NOT commit — the caller is responsible for committing.
+    Skips (returns False) if raw_address is empty or None.
+
+    Args:
+        conn: SQLite database connection.
+        location_id: The ID of the location row to update.
+        raw_address: The raw business address to standardize.
+        client: Optional httpx.Client for connection reuse.
+
+    Returns:
+        True if address_standardized_at was set, False otherwise.
+    """
+    if not raw_address or not raw_address.strip():
+        return False
+
+    result = standardize(raw_address, client=client)
+    if result is None:
+        return False
+
+    raw_country = result.get("country", "")
+    # Only store country if it is a valid ISO 3166-1 alpha-2 code (2 ASCII letters).
+    std_country = (
+        raw_country
+        if (len(raw_country) == 2 and raw_country.isalpha() and raw_country.isascii())
+        else ""
+    )
+
+    try:
+        conn.execute(
+            """UPDATE locations SET
+                std_address_line_1 = ?, std_address_line_2 = ?,
+                std_city = ?, std_region = ?, std_postal_code = ?, std_country = ?,
+                std_address_string = ?, validation_status = ?,
+                address_standardized_at = ?
+            WHERE id = ?""",
+            (
+                result.get("address_line_1", ""),
+                result.get("address_line_2", ""),
+                result.get("city", ""),
+                result.get("region", ""),
+                result.get("postal_code", ""),
+                std_country,
+                result.get("standardized"),
+                "standardized",
+                datetime.now(timezone.utc).isoformat(),
+                location_id,
+            ),
+        )
+        return True
+    except Exception as e:
+        logger.warning("Failed to update location %d: %s", location_id, e)
+        return False
+
+
 def validate_location(
     conn: sqlite3.Connection,
     location_id: int,
     raw_address: str,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate and update a single location row via POST /api/v1/validate.
+    """Optionally validate a location row via POST /api/v1/validate.
+
+    Gated by the ENABLE_ADDRESS_VALIDATION environment variable.  When the
+    flag is off this function is a no-op and returns False immediately without
+    making any API call or DB write.
+
+    The /validate endpoint runs standardize internally, so this function does
+    NOT call standardize_location() — that is the caller's responsibility.
 
     On a confirmed or corrected response (address_line_1 is non-null):
-    writes all std_address_line_1/2, std_city, std_region, std_postal_code,
-    std_country, validated_address, validation_status, dpv_match_code,
-    latitude, longitude, and sets address_validated_at.
+    overlays std_address_string (from validated), std_address_line_1/2,
+    std_city, std_region, std_postal_code, std_country, validation_status,
+    dpv_match_code, latitude, longitude, and sets address_validated_at.
 
     On not_confirmed or unavailable (address_line_1 is null): writes
     validation_status and dpv_match_code only, leaves address_validated_at
     NULL so backfill-addresses will retry.
 
     Does NOT commit — the caller is responsible for committing.
-    Skips (returns False) if raw_address is empty or None.
+    Skips (returns False) if raw_address is empty, None, or flag is off.
 
     Args:
         conn: SQLite database connection.
@@ -145,6 +296,9 @@ def validate_location(
     Returns:
         True if address_validated_at was set (confirmed/corrected), False otherwise.
     """
+    if not _is_validation_enabled():
+        return False
+
     if not raw_address or not raw_address.strip():
         return False
 
@@ -162,8 +316,6 @@ def validate_location(
     try:
         if has_address:
             raw_country = result.get("country", "")
-            # Only store country if it is a valid ISO 3166-1 alpha-2 code (2 ASCII letters).
-            # .isascii() guards against Unicode letters that pass .isalpha() (e.g. 'ÜS').
             std_country = (
                 raw_country
                 if (len(raw_country) == 2 and raw_country.isalpha() and raw_country.isascii())
@@ -173,7 +325,7 @@ def validate_location(
                 """UPDATE locations SET
                     std_address_line_1 = ?, std_address_line_2 = ?,
                     std_city = ?, std_region = ?, std_postal_code = ?, std_country = ?,
-                    validated_address = ?, validation_status = ?, dpv_match_code = ?,
+                    std_address_string = ?, validation_status = ?, dpv_match_code = ?,
                     latitude = ?, longitude = ?,
                     address_validated_at = ?
                 WHERE id = ?""",
@@ -213,12 +365,15 @@ def _validate_record_location(
     fk_column: str,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate a location FK on a license record.
+    """Standardize (and optionally validate) a location FK on a license record.
 
     Looks up *fk_column* (e.g. 'location_id' or 'previous_location_id')
-    on the record and validates the referenced location row.
-    Returns True if already validated; False if the FK is NULL or
-    validation fails.
+    on the record and processes the referenced location row.
+
+    Skips if the location is already fully processed for the current config:
+    - address_standardized_at is set AND (validation disabled OR address_validated_at is set).
+
+    Returns True if the location was already processed or standardization succeeded.
     """
     row = conn.execute(
         f"SELECT {fk_column} FROM license_records WHERE id = ?", (record_id,)
@@ -226,14 +381,21 @@ def _validate_record_location(
     if not row or not row[0]:
         return False
     loc = conn.execute(
-        "SELECT id, raw_address, address_validated_at FROM locations WHERE id = ?",
+        "SELECT id, raw_address, address_standardized_at, address_validated_at"
+        " FROM locations WHERE id = ?",
         (row[0],),
     ).fetchone()
     if not loc:
         return False
-    if loc["address_validated_at"]:
-        return True  # Already validated
-    return validate_location(conn, loc["id"], loc["raw_address"], client=client)
+
+    already_std = bool(loc["address_standardized_at"])
+    already_val = bool(loc["address_validated_at"])
+    if already_std and (not _is_validation_enabled() or already_val):
+        return True  # Nothing more to do
+
+    ok = standardize_location(conn, loc["id"], loc["raw_address"], client=client)
+    validate_location(conn, loc["id"], loc["raw_address"], client=client)
+    return ok
 
 
 def validate_record(
@@ -241,7 +403,7 @@ def validate_record(
     record_id: int,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate the primary location for a license record."""
+    """Standardize (and optionally validate) the primary location for a license record."""
     return _validate_record_location(conn, record_id, "location_id", client)
 
 
@@ -250,7 +412,7 @@ def validate_previous_location(
     record_id: int,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Validate the previous location for a CHANGE OF LOCATION record."""
+    """Standardize (and optionally validate) the previous location for a CHANGE OF LOCATION record."""
     return _validate_record_location(conn, record_id, "previous_location_id", client)
 
 
@@ -261,19 +423,18 @@ def _validate_batch(
     batch_size: int = 100,
     rate_limit: float = 0.1,
 ) -> int:
-    """Validate a list of (location_id, raw_address) rows against the API.
+    """Standardize (and optionally validate) a list of (location_id, raw_address) rows.
 
-    Commits after every record so the SQLite write lock is held for milliseconds
-    per update rather than for the full batch window (batch_size × rate_limit seconds).
-    Without per-record commits, a 100-record batch at 0.1 s/record holds the lock for
-    10 s — longer than Python's default 5 s busy_timeout, causing 'database is locked'
-    errors on concurrent web app writes.
+    Calls standardize_location() for every row, then validate_location() (which
+    self-gates on the ENABLE_ADDRESS_VALIDATION flag).  Commits after every
+    record so the SQLite write lock is held for milliseconds per update rather
+    than for the full batch window.
 
     Logs progress every *batch_size* records.
     Sleeps *rate_limit* seconds between API requests to be polite.
 
     Returns:
-        Number of locations successfully validated.
+        Number of locations successfully standardized.
     """
     total = len(rows)
     if total == 0:
@@ -287,7 +448,8 @@ def _validate_batch(
     with httpx.Client(timeout=TIMEOUT) as client:
         for row in rows:
             location_id, address = row[0], row[1]
-            ok = validate_location(conn, location_id, address, client=client)
+            ok = standardize_location(conn, location_id, address, client=client)
+            validate_location(conn, location_id, address, client=client)
             conn.commit()
             attempted += 1
             if ok:
@@ -303,13 +465,17 @@ def _validate_batch(
 
 
 def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limit: float = 0.1) -> int:
-    """Backfill validated addresses for all un-validated locations.
+    """Standardize (and optionally validate) locations that need processing.
 
-    Queries all locations where address_validated_at IS NULL and
-    raw_address is non-empty, then validates each one.
+    Queries all locations where:
+    - address_standardized_at IS NULL (never standardized), OR
+    - address_validated_at IS NULL (standardized but not yet validated, picked
+      up when ENABLE_ADDRESS_VALIDATION is turned on).
+
+    Locations with both timestamps set are skipped.
 
     Returns:
-        Number of locations successfully validated.
+        Number of locations successfully standardized.
     """
     api_key = _load_api_key()
     if not api_key:
@@ -318,7 +484,7 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_lim
 
     rows = conn.execute(
         """SELECT id, raw_address FROM locations
-        WHERE address_validated_at IS NULL
+        WHERE (address_standardized_at IS NULL OR address_validated_at IS NULL)
           AND raw_address IS NOT NULL
           AND raw_address != ''"""
     ).fetchall()
@@ -327,16 +493,16 @@ def backfill_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_lim
 
 
 def refresh_addresses(conn: sqlite3.Connection, batch_size: int = 100, rate_limit: float = 0.1) -> int:
-    """Re-validate all locations, regardless of current validation status.
+    """Re-standardize (and optionally re-validate) all locations.
 
     Useful when the upstream address-validator service has been updated and
-    validated values may have changed.
+    standardized values may have changed.
 
-    Safe to interrupt — each location's address_validated_at timestamp is
+    Safe to interrupt — each location's address_standardized_at timestamp is
     updated individually on success.
 
     Returns:
-        Number of locations successfully validated.
+        Number of locations successfully standardized.
     """
     api_key = _load_api_key()
     if not api_key:
@@ -357,7 +523,7 @@ def refresh_specific_addresses(
     batch_size: int = 100,
     rate_limit: float = 0.1,
 ) -> int:
-    """Re-validate a specific set of locations by ID.
+    """Re-standardize (and optionally re-validate) a specific set of locations by ID.
 
     Intended for targeted re-runs after lock-contention failures: extract the
     failed IDs from the journal, pass them here to refresh only those rows
@@ -367,12 +533,12 @@ def refresh_specific_addresses(
 
     Args:
         conn: Database connection.
-        location_ids: List of locations.id values to re-validate.
+        location_ids: List of locations.id values to re-process.
         batch_size: How often to log progress (default 100).
         rate_limit: Seconds to sleep between API calls (default 0.1).
 
     Returns:
-        Number of locations successfully validated.
+        Number of locations successfully standardized.
     """
     if not location_ids:
         logger.info("No location IDs provided — nothing to refresh")

@@ -62,6 +62,7 @@ RECORD_COLUMNS = """
     COALESCE(loc.std_region, '') AS std_region,
     COALESCE(loc.std_postal_code, '') AS std_postal_code,
     COALESCE(loc.std_country, '') AS std_country,
+    loc.address_standardized_at,
     loc.address_validated_at,
     COALESCE(ploc.raw_address, '') AS previous_business_location,
     COALESCE(ploc.city, '') AS previous_city,
@@ -73,6 +74,7 @@ RECORD_COLUMNS = """
     COALESCE(ploc.std_region, '') AS prev_std_region,
     COALESCE(ploc.std_postal_code, '') AS prev_std_postal_code,
     COALESCE(ploc.std_country, '') AS prev_std_country,
+    ploc.address_standardized_at AS prev_address_standardized_at,
     ploc.address_validated_at AS prev_address_validated_at"""
 
 RECORD_JOINS = """

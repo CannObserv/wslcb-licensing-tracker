@@ -74,11 +74,12 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             std_region TEXT DEFAULT '',
             std_postal_code TEXT DEFAULT '',
             std_country TEXT DEFAULT '',
-            validated_address TEXT,
+            std_address_string TEXT,
             validation_status TEXT,
             dpv_match_code TEXT,
             latitude REAL,
             longitude REAL,
+            address_standardized_at TEXT,
             address_validated_at TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(raw_address)
@@ -714,9 +715,12 @@ def _m013_address_validator_v2(conn: sqlite3.Connection) -> None:
     if _column_exists(conn, "locations", "address_line_2") and not _column_exists(conn, "locations", "std_address_line_2"):
         conn.execute("ALTER TABLE locations RENAME COLUMN address_line_2 TO std_address_line_2")
 
-    # Add new validate columns (each guarded for idempotency)
+    # Add new validate/standardize columns (each guarded for idempotency).
+    # std_address_string is the current name; validated_address was used before
+    # _m014 renamed it. For DBs upgrading through the old m013 path that have
+    # validated_address, _m014 handles the rename.
     new_cols = [
-        ("validated_address", "TEXT"),
+        ("std_address_string", "TEXT"),
         ("validation_status", "TEXT"),
         ("dpv_match_code", "TEXT"),
         ("latitude", "REAL"),
@@ -725,6 +729,38 @@ def _m013_address_validator_v2(conn: sqlite3.Connection) -> None:
     for col, col_type in new_cols:
         if not _column_exists(conn, "locations", col):
             conn.execute(f"ALTER TABLE locations ADD COLUMN {col} {col_type}")
+
+
+def _m014_address_standardize_pipeline(conn: sqlite3.Connection) -> None:
+    """Introduce the standardize-first address pipeline.
+
+    - Renames ``validated_address`` → ``std_address_string`` (more general:
+      populated by either the /standardize or /validate path).
+    - Adds ``address_standardized_at`` to record when std_* columns were last
+      populated, independently of DPV validation.
+    - Backfills ``address_standardized_at`` from ``address_validated_at`` for
+      rows that were already validated (they were implicitly standardized when
+      /validate ran, since /validate calls /standardize internally).
+    """
+    if not _table_exists(conn, "locations"):
+        return
+
+    # Rename validated_address → std_address_string
+    if _column_exists(conn, "locations", "validated_address") and not _column_exists(conn, "locations", "std_address_string"):
+        conn.execute("ALTER TABLE locations RENAME COLUMN validated_address TO std_address_string")
+
+    # Add address_standardized_at
+    if not _column_exists(conn, "locations", "address_standardized_at"):
+        conn.execute("ALTER TABLE locations ADD COLUMN address_standardized_at TEXT")
+
+    # Backfill: rows already DPV-validated were also standardized
+    if _column_exists(conn, "locations", "address_validated_at"):
+        conn.execute("""
+            UPDATE locations
+               SET address_standardized_at = address_validated_at
+             WHERE address_validated_at IS NOT NULL
+               AND address_standardized_at IS NULL
+        """)
 
 
 # -- Migration registry ------------------------------------------------
@@ -750,6 +786,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (11, "clean_duplicate_markers", _m011_clean_duplicate_markers),
     (12, "entities_name_index", _m012_entities_name_index),
     (13, "address_validator_v2", _m013_address_validator_v2),
+    (14, "address_standardize_pipeline", _m014_address_standardize_pipeline),
 ]
 
 

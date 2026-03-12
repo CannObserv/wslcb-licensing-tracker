@@ -17,6 +17,7 @@ from wslcb_licensing_tracker import address_validator as av
 # ── Helpers ─────────────────────────────────────────────────────────
 
 V1_VALIDATE_URL = "https://address-validator.exe.xyz:8000/api/v1/validate"
+V1_STANDARDIZE_URL = "https://address-validator.exe.xyz:8000/api/v1/standardize"
 
 _GOOD_VALIDATE_RESPONSE = {
     "address_line_1": "123 MAIN ST",
@@ -168,6 +169,7 @@ def test_validate_logs_warnings(monkeypatch, caplog):
 def test_validate_location_writes_all_validate_columns(db, monkeypatch):
     """validate_location() writes std_address_line_1/2 and the five new columns on confirmed."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
     db.execute(
         "INSERT INTO locations (raw_address, city, state, zip_code) VALUES (?, ?, ?, ?)",
         ("123 MAIN ST, SEATTLE, WA 98101", "SEATTLE", "WA", "98101"),
@@ -181,7 +183,7 @@ def test_validate_location_writes_all_validate_columns(db, monkeypatch):
     assert ok is True
     row = db.execute(
         "SELECT std_address_line_1, std_address_line_2, std_city, std_region,"
-        "       std_postal_code, std_country, validated_address, validation_status,"
+        "       std_postal_code, std_country, std_address_string, validation_status,"
         "       dpv_match_code, latitude, longitude, address_validated_at"
         " FROM locations WHERE id = ?",
         (loc_id,),
@@ -192,7 +194,7 @@ def test_validate_location_writes_all_validate_columns(db, monkeypatch):
     assert row["std_region"] == "WA"
     assert row["std_postal_code"] == "98101"
     assert row["std_country"] == "US"
-    assert row["validated_address"] == "123 MAIN ST  SEATTLE WA 98101"
+    assert row["std_address_string"] == "123 MAIN ST  SEATTLE WA 98101"
     assert row["validation_status"] == "confirmed"
     assert row["dpv_match_code"] == "Y"
     assert row["latitude"] == 47.6062
@@ -203,6 +205,7 @@ def test_validate_location_writes_all_validate_columns(db, monkeypatch):
 def test_validate_location_not_confirmed_stores_status_no_validated_at(db, monkeypatch):
     """validate_location() stores validation_status for not_confirmed but leaves address_validated_at NULL."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
     db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("999 FAKE ST, NOWHERE, WA 99999",))
     loc_id = db.execute(
         "SELECT id FROM locations WHERE raw_address = ?", ("999 FAKE ST, NOWHERE, WA 99999",)
@@ -222,6 +225,7 @@ def test_validate_location_not_confirmed_stores_status_no_validated_at(db, monke
 def test_validate_location_unavailable_returns_false(db, monkeypatch):
     """validate_location() returns False and stores unavailable status when provider is not configured."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
     unavailable_response = {
         "address_line_1": None, "address_line_2": None,
         "city": None, "region": None, "postal_code": None,
@@ -258,6 +262,7 @@ def test_validate_location_rejects_non_alpha2_country(db, monkeypatch, bad_count
     str.isalpha() but fail str.isascii().
     """
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
     bad_response = dict(_GOOD_VALIDATE_RESPONSE, country=bad_country)
     raw = f"123 MAIN ST TEST {repr(bad_country)}, SEATTLE, WA 98101"
     db.execute("INSERT INTO locations (raw_address) VALUES (?)", (raw,))
@@ -272,6 +277,7 @@ def test_validate_location_rejects_non_alpha2_country(db, monkeypatch, bad_count
 def test_validate_location_skips_empty_address(db, monkeypatch):
     """validate_location() returns False and makes no API call for empty address."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
     db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("",))
     loc_id = db.execute("SELECT id FROM locations WHERE raw_address = ?", ("",)).fetchone()[0]
     client = _mock_client(_GOOD_VALIDATE_RESPONSE)
@@ -283,6 +289,7 @@ def test_validate_location_skips_empty_address(db, monkeypatch):
 def test_validate_location_returns_false_on_api_failure(db, monkeypatch):
     """validate_location() returns False without writing when API fails."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
     db.execute(
         "INSERT INTO locations (raw_address) VALUES (?)",
         ("456 FAIL AVE, NOWHERE, WA 99999",),
@@ -300,49 +307,56 @@ def test_validate_location_returns_false_on_api_failure(db, monkeypatch):
 # ── backfill_addresses() / refresh_addresses() ───────────────────────
 
 
-def test_backfill_addresses_only_processes_unvalidated(db, monkeypatch):
-    """backfill_addresses() skips already-validated locations."""
+def test_backfill_addresses_skips_already_validated_legacy(db, monkeypatch):
+    """backfill_addresses() skips locations where address_validated_at is already set
+    AND address_standardized_at is also set (fully processed)."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
     db.execute(
-        "INSERT INTO locations (raw_address, address_validated_at) VALUES (?, ?)",
-        ("ALREADY DONE, SEATTLE, WA 98101", "2025-01-01T00:00:00+00:00"),
+        "INSERT INTO locations (raw_address, address_standardized_at, address_validated_at)"
+        " VALUES (?, ?, ?)",
+        ("ALREADY DONE, SEATTLE, WA 98101", "2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00"),
     )
     db.execute(
         "INSERT INTO locations (raw_address) VALUES (?)",
-        ("NEEDS VALIDATION, TACOMA, WA 98401",),
+        ("NEEDS WORK, TACOMA, WA 98401",),
     )
     db.commit()
 
     calls = []
-    def fake_validate_location(conn, loc_id, raw_address, client=None):
+
+    def fake_standardize_location(conn, loc_id, raw_address, client=None):
         calls.append(raw_address)
         return True
 
-    monkeypatch.setattr(av, "validate_location", fake_validate_location)
+    monkeypatch.setattr(av, "standardize_location", fake_standardize_location)
+    monkeypatch.setattr(av, "validate_location", lambda *a, **kw: False)
     av.backfill_addresses(db)
     assert len(calls) == 1
-    assert calls[0] == "NEEDS VALIDATION, TACOMA, WA 98401"
+    assert calls[0] == "NEEDS WORK, TACOMA, WA 98401"
 
 
 def test_refresh_addresses_processes_all(db, monkeypatch):
-    """refresh_addresses() validates all locations regardless of validation status."""
+    """refresh_addresses() standardizes all locations regardless of current status."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
     db.execute(
-        "INSERT INTO locations (raw_address, address_validated_at) VALUES (?, ?)",
-        ("ALREADY DONE, SEATTLE, WA 98101", "2025-01-01T00:00:00+00:00"),
+        "INSERT INTO locations (raw_address, address_standardized_at, address_validated_at)"
+        " VALUES (?, ?, ?)",
+        ("ALREADY DONE, SEATTLE, WA 98101", "2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00"),
     )
     db.execute(
         "INSERT INTO locations (raw_address) VALUES (?)",
-        ("NEEDS VALIDATION, TACOMA, WA 98401",),
+        ("NEEDS WORK, TACOMA, WA 98401",),
     )
     db.commit()
 
     calls = []
-    def fake_validate_location(conn, loc_id, raw_address, client=None):
+
+    def fake_standardize_location(conn, loc_id, raw_address, client=None):
         calls.append(raw_address)
         return True
 
-    monkeypatch.setattr(av, "validate_location", fake_validate_location)
+    monkeypatch.setattr(av, "standardize_location", fake_standardize_location)
+    monkeypatch.setattr(av, "validate_location", lambda *a, **kw: False)
     av.refresh_addresses(db)
     assert len(calls) == 2
 
@@ -379,7 +393,7 @@ def test_refresh_addresses_passes_rate_limit(db, monkeypatch):
 
 
 def test_refresh_specific_addresses_only_processes_given_ids(db, monkeypatch):
-    """refresh_specific_addresses() validates only the requested location IDs."""
+    """refresh_specific_addresses() processes only the requested location IDs."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
     db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("ADDR ONE, SEATTLE, WA",))
     db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("ADDR TWO, TACOMA, WA",))
@@ -389,11 +403,13 @@ def test_refresh_specific_addresses_only_processes_given_ids(db, monkeypatch):
     id3 = db.execute("SELECT id FROM locations WHERE raw_address = ?", ("ADDR THREE, OLYMPIA, WA",)).fetchone()[0]
 
     calls = []
-    def fake_validate_location(conn, loc_id, raw_address, client=None):
+
+    def fake_standardize_location(conn, loc_id, raw_address, client=None):
         calls.append(loc_id)
         return True
 
-    monkeypatch.setattr(av, "validate_location", fake_validate_location)
+    monkeypatch.setattr(av, "standardize_location", fake_standardize_location)
+    monkeypatch.setattr(av, "validate_location", lambda *a, **kw: False)
     result = av.refresh_specific_addresses(db, [id1, id3])
     assert sorted(calls) == sorted([id1, id3])
     assert result == 2
@@ -403,10 +419,13 @@ def test_refresh_specific_addresses_returns_zero_for_empty_list(db, monkeypatch)
     """refresh_specific_addresses() with an empty ID list does nothing and returns 0."""
     monkeypatch.setattr(av, "_cached_api_key", "test-key")
     calls = []
-    def fake_validate_location(conn, loc_id, raw_address, client=None):
+
+    def fake_standardize_location(conn, loc_id, raw_address, client=None):
         calls.append(loc_id)
         return True
-    monkeypatch.setattr(av, "validate_location", fake_validate_location)
+
+    monkeypatch.setattr(av, "standardize_location", fake_standardize_location)
+    monkeypatch.setattr(av, "validate_location", lambda *a, **kw: False)
     result = av.refresh_specific_addresses(db, [])
     assert calls == []
     assert result == 0
@@ -461,10 +480,11 @@ def test_validate_batch_commits_after_each_record(db, monkeypatch):
         "SELECT id, raw_address FROM locations WHERE raw_address LIKE 'COMMIT TEST%'"
     ).fetchall()
 
-    def fake_validate(conn, loc_id, raw, client=None):
+    def fake_standardize(conn, loc_id, raw, client=None):
         return True
 
-    monkeypatch.setattr(av, "validate_location", fake_validate)
+    monkeypatch.setattr(av, "standardize_location", fake_standardize)
+    monkeypatch.setattr(av, "validate_location", lambda *a, **kw: False)
 
     tracking = _TrackingConn(db)
     av._validate_batch(tracking, rows, "Test", batch_size=100, rate_limit=0)
@@ -540,3 +560,262 @@ def test_cmd_refresh_addresses_dispatches_to_refresh_all_without_file(monkeypatc
 
     assert called_with.get("all") is True
     assert "specific" not in called_with
+
+
+# ── standardize() ────────────────────────────────────────────────────
+
+_GOOD_STANDARDIZE_RESPONSE = {
+    "address_line_1": "123 MAIN ST",
+    "address_line_2": "",
+    "city": "SEATTLE",
+    "region": "WA",
+    "postal_code": "98101",
+    "country": "US",
+    "standardized": "123 MAIN ST  SEATTLE WA 98101",
+    "components": {
+        "spec": "usps-pub28",
+        "spec_version": "unknown",
+        "values": {"primary_number": "123", "street_name": "MAIN"},
+    },
+    "warnings": [],
+    "api_version": "1",
+}
+
+
+def test_standardize_calls_v1_standardize_url(monkeypatch):
+    """standardize() POSTs to /api/v1/standardize."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    client = _mock_client(_GOOD_STANDARDIZE_RESPONSE)
+    av.standardize("123 MAIN ST, SEATTLE, WA 98101", client=client)
+    call_url = client.post.call_args[0][0]
+    assert call_url == V1_STANDARDIZE_URL
+
+
+def test_standardize_sends_address_in_payload(monkeypatch):
+    """standardize() sends the full raw address string in the request body."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    client = _mock_client(_GOOD_STANDARDIZE_RESPONSE)
+    av.standardize("123 MAIN ST, SEATTLE, WA 98101", client=client)
+    payload = client.post.call_args[1]["json"]
+    assert payload == {"address": "123 MAIN ST, SEATTLE, WA 98101"}
+
+
+def test_standardize_returns_response_on_success(monkeypatch):
+    """standardize() returns the full response dict on 200."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    client = _mock_client(_GOOD_STANDARDIZE_RESPONSE)
+    result = av.standardize("123 MAIN ST, SEATTLE, WA 98101", client=client)
+    assert result is not None
+    assert result["standardized"] == "123 MAIN ST  SEATTLE WA 98101"
+    assert result["address_line_1"] == "123 MAIN ST"
+
+
+def test_standardize_returns_none_on_non_200(monkeypatch):
+    """standardize() returns None when the API returns a non-200 status."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    client = _mock_client({"error": "bad_request"}, status_code=400)
+    assert av.standardize("bad address", client=client) is None
+
+
+def test_standardize_returns_none_without_api_key(monkeypatch):
+    """standardize() returns None when no API key is configured."""
+    monkeypatch.setattr(av, "_cached_api_key", "")
+    assert av.standardize("123 MAIN ST") is None
+
+
+def test_standardize_returns_none_on_timeout(monkeypatch):
+    """standardize() returns None on a timeout."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    client = MagicMock(spec=httpx.Client)
+    client.post.side_effect = httpx.TimeoutException("timed out")
+    assert av.standardize("123 MAIN ST", client=client) is None
+
+
+# ── standardize_location() ───────────────────────────────────────────
+
+
+def test_standardize_location_writes_std_columns(db, monkeypatch):
+    """standardize_location() writes std_* fields, std_address_string, validation_status,
+    and sets address_standardized_at; dpv_match_code and lat/lng remain NULL."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    db.execute(
+        "INSERT INTO locations (raw_address) VALUES (?)",
+        ("123 MAIN ST, SEATTLE, WA 98101",),
+    )
+    loc_id = db.execute(
+        "SELECT id FROM locations WHERE raw_address = ?",
+        ("123 MAIN ST, SEATTLE, WA 98101",),
+    ).fetchone()[0]
+    client = _mock_client(_GOOD_STANDARDIZE_RESPONSE)
+    ok = av.standardize_location(db, loc_id, "123 MAIN ST, SEATTLE, WA 98101", client=client)
+    assert ok is True
+    row = db.execute(
+        "SELECT std_address_line_1, std_city, std_region, std_postal_code, std_country,"
+        "       std_address_string, validation_status, dpv_match_code,"
+        "       latitude, longitude, address_standardized_at, address_validated_at"
+        " FROM locations WHERE id = ?",
+        (loc_id,),
+    ).fetchone()
+    assert row["std_address_line_1"] == "123 MAIN ST"
+    assert row["std_city"] == "SEATTLE"
+    assert row["std_region"] == "WA"
+    assert row["std_postal_code"] == "98101"
+    assert row["std_country"] == "US"
+    assert row["std_address_string"] == "123 MAIN ST  SEATTLE WA 98101"
+    assert row["validation_status"] == "standardized"
+    assert row["dpv_match_code"] is None
+    assert row["latitude"] is None
+    assert row["longitude"] is None
+    assert row["address_standardized_at"] is not None
+    assert row["address_validated_at"] is None
+
+
+def test_standardize_location_skips_empty_address(db, monkeypatch):
+    """standardize_location() returns False and makes no API call for empty address."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("",))
+    loc_id = db.execute(
+        "SELECT id FROM locations WHERE raw_address = ?", ("",)
+    ).fetchone()[0]
+    client = _mock_client(_GOOD_STANDARDIZE_RESPONSE)
+    ok = av.standardize_location(db, loc_id, "", client=client)
+    assert ok is False
+    client.post.assert_not_called()
+
+
+def test_standardize_location_returns_false_on_api_failure(db, monkeypatch):
+    """standardize_location() returns False without writing when the API fails."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("456 FAIL AVE, WA",))
+    loc_id = db.execute(
+        "SELECT id FROM locations WHERE raw_address = ?", ("456 FAIL AVE, WA",)
+    ).fetchone()[0]
+    client = _mock_client({}, status_code=500)
+    ok = av.standardize_location(db, loc_id, "456 FAIL AVE, WA", client=client)
+    assert ok is False
+    row = db.execute(
+        "SELECT address_standardized_at FROM locations WHERE id = ?", (loc_id,)
+    ).fetchone()
+    assert row["address_standardized_at"] is None
+
+
+# ── validate_location() — ENABLE_ADDRESS_VALIDATION flag ─────────────
+
+
+def test_validate_location_flag_off_is_noop(db, monkeypatch):
+    """validate_location() makes no API call and returns False when flag is off."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.delenv("ENABLE_ADDRESS_VALIDATION", raising=False)
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("123 MAIN ST, SEATTLE, WA",))
+    loc_id = db.execute(
+        "SELECT id FROM locations WHERE raw_address = ?", ("123 MAIN ST, SEATTLE, WA",)
+    ).fetchone()[0]
+    client = _mock_client(_GOOD_VALIDATE_RESPONSE)
+    ok = av.validate_location(db, loc_id, "123 MAIN ST, SEATTLE, WA", client=client)
+    assert ok is False
+    client.post.assert_not_called()
+    row = db.execute(
+        "SELECT address_validated_at FROM locations WHERE id = ?", (loc_id,)
+    ).fetchone()
+    assert row["address_validated_at"] is None
+
+
+def test_validate_location_flag_on_confirmed_overlays_validation(db, monkeypatch):
+    """validate_location() overlays std_address_string, dpv_match_code, lat/lng,
+    validation_status, and sets address_validated_at when flag is on and confirmed."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
+    db.execute(
+        "INSERT INTO locations (raw_address, city, state, zip_code) VALUES (?, ?, ?, ?)",
+        ("123 MAIN ST, SEATTLE, WA 98101", "SEATTLE", "WA", "98101"),
+    )
+    loc_id = db.execute(
+        "SELECT id FROM locations WHERE raw_address = ?",
+        ("123 MAIN ST, SEATTLE, WA 98101",),
+    ).fetchone()[0]
+    client = _mock_client(_GOOD_VALIDATE_RESPONSE)
+    ok = av.validate_location(db, loc_id, "123 MAIN ST, SEATTLE, WA 98101", client=client)
+    assert ok is True
+    row = db.execute(
+        "SELECT std_address_string, validation_status, dpv_match_code,"
+        "       latitude, longitude, address_validated_at"
+        " FROM locations WHERE id = ?",
+        (loc_id,),
+    ).fetchone()
+    assert row["std_address_string"] == "123 MAIN ST  SEATTLE WA 98101"
+    assert row["validation_status"] == "confirmed"
+    assert row["dpv_match_code"] == "Y"
+    assert row["latitude"] == 47.6062
+    assert row["longitude"] == -122.3321
+    assert row["address_validated_at"] is not None
+
+
+def test_validate_location_flag_on_not_confirmed_leaves_validated_at_null(db, monkeypatch):
+    """validate_location() leaves address_validated_at NULL for not_confirmed when flag is on."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    monkeypatch.setenv("ENABLE_ADDRESS_VALIDATION", "true")
+    db.execute("INSERT INTO locations (raw_address) VALUES (?)", ("999 FAKE ST, WA 99999",))
+    loc_id = db.execute(
+        "SELECT id FROM locations WHERE raw_address = ?", ("999 FAKE ST, WA 99999",)
+    ).fetchone()[0]
+    client = _mock_client(_NOT_CONFIRMED_RESPONSE)
+    ok = av.validate_location(db, loc_id, "999 FAKE ST, WA 99999", client=client)
+    assert ok is False
+    row = db.execute(
+        "SELECT validation_status, address_validated_at FROM locations WHERE id = ?",
+        (loc_id,),
+    ).fetchone()
+    assert row["validation_status"] == "not_confirmed"
+    assert row["address_validated_at"] is None
+
+
+# ── backfill_addresses() — new filter semantics ───────────────────────
+
+
+def test_backfill_addresses_skips_fully_processed_locations(db, monkeypatch):
+    """backfill_addresses() skips locations where both timestamps are set."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    db.execute(
+        "INSERT INTO locations (raw_address, address_standardized_at, address_validated_at)"
+        " VALUES (?, ?, ?)",
+        ("FULLY DONE, SEATTLE, WA 98101", "2025-01-01T00:00:00+00:00", "2025-01-01T00:00:00+00:00"),
+    )
+    db.execute(
+        "INSERT INTO locations (raw_address) VALUES (?)",
+        ("NEEDS WORK, TACOMA, WA 98401",),
+    )
+    db.commit()
+
+    calls = []
+
+    def fake_standardize_location(conn, loc_id, raw_address, client=None):
+        calls.append(raw_address)
+        return True
+
+    monkeypatch.setattr(av, "standardize_location", fake_standardize_location)
+    monkeypatch.setattr(av, "validate_location", lambda *a, **kw: False)
+    av.backfill_addresses(db)
+    assert len(calls) == 1
+    assert calls[0] == "NEEDS WORK, TACOMA, WA 98401"
+
+
+def test_backfill_addresses_includes_standardized_but_not_validated(db, monkeypatch):
+    """backfill_addresses() processes locations standardized but not yet validated
+    (address_validated_at IS NULL) so they can be validated when the flag is on."""
+    monkeypatch.setattr(av, "_cached_api_key", "test-key")
+    db.execute(
+        "INSERT INTO locations (raw_address, address_standardized_at) VALUES (?, ?)",
+        ("STANDARDIZED ONLY, SEATTLE, WA 98101", "2025-01-01T00:00:00+00:00"),
+    )
+    db.commit()
+
+    calls = []
+
+    def fake_standardize_location(conn, loc_id, raw_address, client=None):
+        calls.append(raw_address)
+        return True
+
+    monkeypatch.setattr(av, "standardize_location", fake_standardize_location)
+    monkeypatch.setattr(av, "validate_location", lambda *a, **kw: False)
+    av.backfill_addresses(db)
+    assert calls == ["STANDARDIZED ONLY, SEATTLE, WA 98101"]
