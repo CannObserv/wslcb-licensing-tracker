@@ -39,6 +39,15 @@ ISO_ALPHA2_LEN = 2
 
 _cached_api_key: str | None = None
 
+# Candidate env file paths, checked in order:
+# 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
+# 2. <project-root>/env                — local dev fallback
+# Exposed as a module-level list so tests can monkeypatch it.
+_env_candidates: list[Path] = [
+    Path("/etc/wslcb-licensing-tracker/env"),
+    Path(__file__).resolve().parent.parent.parent / "env",
+]
+
 
 def _load_api_key() -> str:
     """Load the API key from the ./env file or environment variable.
@@ -51,15 +60,6 @@ def _load_api_key() -> str:
     if _cached_api_key is not None:
         return _cached_api_key
 
-    # Candidate env file paths, checked in order:
-    # 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
-    # 2. <project-root>/env                — local dev fallback
-    _module_dir = Path(__file__).resolve().parent
-    _project_root = _module_dir.parent.parent
-    _env_candidates = [
-        Path("/etc/wslcb-licensing-tracker/env"),
-        _project_root / "env",
-    ]
     for env_path in _env_candidates:
         try:
             with env_path.open() as f:

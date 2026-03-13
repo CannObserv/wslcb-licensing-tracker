@@ -79,24 +79,18 @@ def test_load_api_key_from_env_var(monkeypatch, tmp_path):
     """Falls back to the environment variable when no ./env file exists."""
     monkeypatch.setattr(av, "_cached_api_key", None)
     monkeypatch.setenv("ADDRESS_VALIDATOR_API_KEY", "env-key-123")
-    # Point the module's __file__ to a tmp dir so no ./env file is found
-    monkeypatch.setattr(av, "__file__", str(tmp_path / "address_validator.py"))
+    # Override candidates with a nonexistent path so no file is found
+    monkeypatch.setattr(av, "_env_candidates", [tmp_path / "nonexistent.env"])
     assert av._load_api_key() == "env-key-123"
 
 
 def test_load_api_key_from_file(monkeypatch, tmp_path):
-    """Reads the API key from the project-root ./env file.
-
-    The module lives at src/wslcb_licensing_tracker/address_validator.py, so
-    _load_api_key() must walk 3 levels up from __file__ to reach the project root.
-    """
+    """Reads the API key from the project-root ./env file."""
     monkeypatch.setattr(av, "_cached_api_key", None)
     monkeypatch.delenv("ADDRESS_VALIDATOR_API_KEY", raising=False)
-    module_dir = tmp_path / "src" / "wslcb_licensing_tracker"
-    module_dir.mkdir(parents=True)
     env_file = tmp_path / "env"
     env_file.write_text("# comment\nADDRESS_VALIDATOR_API_KEY=file-key-456\n")
-    monkeypatch.setattr(av, "__file__", str(module_dir / "address_validator.py"))
+    monkeypatch.setattr(av, "_env_candidates", [env_file])
     assert av._load_api_key() == "file-key-456"
 
 
@@ -520,10 +514,10 @@ def test_cmd_refresh_addresses_dispatches_to_refresh_specific_when_file_given(
 
     args = types.SimpleNamespace(location_ids=str(ids_file), rate_limit=0.1)
     mock_conn = MagicMock()
-    with patch("wslcb_licensing_tracker.db.get_db") as mock_get_db, \
-         patch("wslcb_licensing_tracker.schema.init_db"), \
-         patch("wslcb_licensing_tracker.address_validator.refresh_specific_addresses", fake_specific), \
-         patch("wslcb_licensing_tracker.address_validator.refresh_addresses", fake_refresh):
+    with patch("wslcb_licensing_tracker.cli.get_db") as mock_get_db, \
+         patch("wslcb_licensing_tracker.cli.init_db"), \
+         patch("wslcb_licensing_tracker.cli.refresh_specific_addresses", fake_specific), \
+         patch("wslcb_licensing_tracker.cli.refresh_addresses", fake_refresh):
         mock_get_db.return_value.__enter__ = lambda s: mock_conn
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         cli.cmd_refresh_addresses(args)
@@ -550,10 +544,10 @@ def test_cmd_refresh_addresses_dispatches_to_refresh_all_without_file(monkeypatc
 
     args = types.SimpleNamespace(location_ids=None, rate_limit=0.1)
     mock_conn = MagicMock()
-    with patch("wslcb_licensing_tracker.db.get_db") as mock_get_db, \
-         patch("wslcb_licensing_tracker.schema.init_db"), \
-         patch("wslcb_licensing_tracker.address_validator.refresh_addresses", fake_refresh), \
-         patch("wslcb_licensing_tracker.address_validator.refresh_specific_addresses", fake_specific):
+    with patch("wslcb_licensing_tracker.cli.get_db") as mock_get_db, \
+         patch("wslcb_licensing_tracker.cli.init_db"), \
+         patch("wslcb_licensing_tracker.cli.refresh_addresses", fake_refresh), \
+         patch("wslcb_licensing_tracker.cli.refresh_specific_addresses", fake_specific):
         mock_get_db.return_value.__enter__ = lambda s: mock_conn
         mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
         cli.cmd_refresh_addresses(args)
