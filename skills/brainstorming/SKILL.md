@@ -75,11 +75,33 @@ Create a task for each item and complete them in order:
 **Write the design doc:**
 - Path: `docs/plans/YYYY-MM-DD-<topic>-design.md`
 - Include: goal, approved approach, key decisions and their rationale, out-of-scope items
-- Commit using Conventional Commits:
-  ```
-  docs: add design doc for <topic>
-  ```
-  or with issue reference:
+
+**Open GitHub issue:**
+
+Create a GitHub issue to track the work:
+
+```bash
+gh issue create \
+  --title "<topic — concise imperative phrase>" \
+  --body "$(cat <<'EOF'
+## Summary
+<1–3 sentence summary of what was designed>
+
+## Design doc
+`docs/plans/YYYY-MM-DD-<topic>-design.md`
+
+## Scope
+<bullet list of the key decisions / in-scope items from the design>
+EOF
+)"
+```
+
+- Title: short imperative phrase matching the design topic (e.g. "Add rate-limit header to validate endpoint")
+- Report the issue number to the user (e.g. "Opened #42")
+
+**Commit the design doc:**
+
+- Use `#<n> docs:` prefix on the commit message citing the issue number
   ```
   #<n> docs: add design doc for <topic>
   ```
