@@ -87,7 +87,8 @@ wslcb-licensing-tracker/
 ├── schema.py               # DDL, PRAGMA user_version migrations, FTS5, seeding
 ├── queries.py              # Record search, filters, stats, CRUD
 ├── entities.py             # Entity (applicant) normalization
-├── endorsements.py         # License endorsement normalization (code↔name mappings)
+├── endorsements.py         # Core endorsement pipeline (process_record, query helpers, alias management)
+├── endorsements_seed.py    # Seeding, repair, and backfill (seed_endorsements, discover_code_mappings, …)
 ├── endorsements_admin.py   # Admin helpers for endorsement management
 ├── substances.py           # Regulated substance CRUD
 ├── link_records.py         # Application→outcome record linking
