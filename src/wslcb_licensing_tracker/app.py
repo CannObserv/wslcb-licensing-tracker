@@ -78,6 +78,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         existing_links = conn.execute("SELECT COUNT(*) FROM record_links").fetchone()[0]
         if not existing_links:
             link_stats = build_all_links(conn)
+            conn.commit()
             if link_stats["total"]:
                 logger.info(
                     "Record linking: %d links (%d high, %d medium)",

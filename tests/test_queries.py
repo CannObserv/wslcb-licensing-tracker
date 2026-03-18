@@ -843,6 +843,12 @@ class TestGetEntities:
 
 
 class TestInvalidateAllFilterCaches:
+    def teardown_method(self):
+        from wslcb_licensing_tracker import queries
+
+        queries._filter_cache.clear()
+        queries._city_cache.clear()
+
     def test_clears_both_caches(self):
         from wslcb_licensing_tracker import queries
 
