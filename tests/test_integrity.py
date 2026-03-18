@@ -5,7 +5,7 @@ that fix functions resolve it.  All tests use in-memory SQLite.
 """
 import pytest
 
-from wslcb_licensing_tracker.endorsements import _ensure_endorsement, _link_endorsement, process_record
+from wslcb_licensing_tracker.endorsements import ensure_endorsement, link_endorsement, process_record
 from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
 from wslcb_licensing_tracker.pipeline import insert_record
 

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # sections before ~2025 (e.g. "450, GROCERY STORE - BEER/WINE").  The
 # first capturing group is the numeric code, the second is the name.
 # Handles names that themselves contain commas (e.g. "< 250,000 LITERS").
-_CODE_NAME_RE = re.compile(r"^(\d+),\s+(.+)$")
+CODE_NAME_RE = re.compile(r"^(\d+),\s+(.+)$")
 
 
 # ---
@@ -43,7 +43,7 @@ _CODE_NAME_RE = re.compile(r"^(\d+),\s+(.+)$")
 # ---
 
 
-def _ensure_endorsement(conn: sqlite3.Connection, name: str) -> int:
+def ensure_endorsement(conn: sqlite3.Connection, name: str) -> int:
     """Return the id for *name*, creating the row if needed.
 
     Names are upper-cased before lookup/insert for consistency.
@@ -56,7 +56,7 @@ def _ensure_endorsement(conn: sqlite3.Connection, name: str) -> int:
     return cur.lastrowid
 
 
-def _link_endorsement(conn: sqlite3.Connection, record_id: int, endorsement_id: int) -> None:
+def link_endorsement(conn: sqlite3.Connection, record_id: int, endorsement_id: int) -> None:
     """Insert a record↔endorsement link, ignoring duplicates."""
     conn.execute(
         """INSERT OR IGNORE INTO record_endorsements (record_id, endorsement_id)
@@ -70,7 +70,7 @@ def _link_endorsement(conn: sqlite3.Connection, record_id: int, endorsement_id: 
 # ---
 
 
-def _merge_endorsement(
+def merge_endorsement(
     conn: sqlite3.Connection,
     old_id: int,
     new_id: int,
@@ -139,27 +139,27 @@ def _process_code(
     ).fetchall()
     if rows:
         for r in rows:
-            _link_endorsement(conn, record_id, r[0])
+            link_endorsement(conn, record_id, r[0])
         return len(rows)
 
     # Unknown code — use fallback name from CODE, NAME if available
     if fallback_name:
-        eid = _ensure_endorsement(conn, fallback_name)
+        eid = ensure_endorsement(conn, fallback_name)
         conn.execute(
             "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
             (code, eid),
         )
-        _link_endorsement(conn, record_id, eid)
+        link_endorsement(conn, record_id, eid)
         return 1
 
     # No name available — create a numeric placeholder
     logger.info("Unknown code '%s' for record %d; creating placeholder.", code, record_id)
-    eid = _ensure_endorsement(conn, code)
+    eid = ensure_endorsement(conn, code)
     conn.execute(
         "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
         (code, eid),
     )
-    _link_endorsement(conn, record_id, eid)
+    link_endorsement(conn, record_id, eid)
     return 1
 
 
@@ -192,7 +192,7 @@ def process_record(conn: sqlite3.Connection, record_id: int, raw_license_type: s
         return _process_code(conn, record_id, cleaned)
 
     # Historical "CODE, NAME" format (e.g. "450, GROCERY STORE - BEER/WINE")
-    m = _CODE_NAME_RE.match(cleaned)
+    m = CODE_NAME_RE.match(cleaned)
     if m:
         code, name = m.group(1), m.group(2).strip()
         return _process_code(conn, record_id, code, fallback_name=name)
@@ -202,8 +202,8 @@ def process_record(conn: sqlite3.Connection, record_id: int, raw_license_type: s
     for part in raw_license_type.split(";"):
         name = part.strip()
         if name:
-            eid = _ensure_endorsement(conn, name)
-            _link_endorsement(conn, record_id, eid)
+            eid = ensure_endorsement(conn, name)
+            link_endorsement(conn, record_id, eid)
             linked += 1
     return linked
 

@@ -19,10 +19,10 @@ import sqlite3
 from pathlib import Path
 
 from .endorsements import (
-    _CODE_NAME_RE,
-    _ensure_endorsement,
-    _link_endorsement,
-    _merge_endorsement,
+    CODE_NAME_RE,
+    ensure_endorsement,
+    link_endorsement,
+    merge_endorsement,
     process_record,
 )
 
@@ -59,7 +59,7 @@ def seed_endorsements(conn: sqlite3.Connection) -> int:
     inserted = 0
     for code, names in SEED_CODE_MAP.items():
         for name in names:
-            eid = _ensure_endorsement(conn, name)
+            eid = ensure_endorsement(conn, name)
             cur = conn.execute(
                 """INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id)
                    VALUES (?, ?)""",
@@ -113,7 +113,7 @@ def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
         if not real_eids:
             continue
 
-        count = _merge_endorsement(conn, pid, real_eids[0])
+        count = merge_endorsement(conn, pid, real_eids[0])
         migrated += count
         if len(real_eids) > 1:
             records = conn.execute(
@@ -122,7 +122,7 @@ def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
             ).fetchall()
             for rec in records:
                 for eid in real_eids[1:]:
-                    _link_endorsement(conn, rec[0], eid)
+                    link_endorsement(conn, rec[0], eid)
 
     if migrated:
         logger.info(
@@ -144,7 +144,7 @@ def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
     For each endorsement where ``name != UPPER(name)`` and an UPPER
     counterpart already exists, migrate all record links and code
     mappings to the canonical (upper-case) row via
-    ``_merge_endorsement()``, then delete the mixed-case row.  If no
+    ``merge_endorsement()``, then delete the mixed-case row.  If no
     upper-case counterpart exists, the mixed-case row is simply
     renamed in place.
 
@@ -176,7 +176,7 @@ def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
             logger.info("Renamed endorsement %r → %r (id=%d)", mixed_name, upper_name, mixed_id)
             continue
 
-        _merge_endorsement(conn, mixed_id, upper_row[0])
+        merge_endorsement(conn, mixed_id, upper_row[0])
         logger.info(
             "Merged endorsement %r (id=%d) into %r (id=%d)",
             mixed_name,
@@ -222,7 +222,7 @@ def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
 
     migrated = 0
     for eid_old, full_name in bogus:
-        m = _CODE_NAME_RE.match(full_name)
+        m = CODE_NAME_RE.match(full_name)
         if not m:
             continue
         code, name = m.group(1), m.group(2).strip()
@@ -237,14 +237,14 @@ def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
         if mapped_eids:
             target_eids = [r[0] for r in mapped_eids]
         else:
-            target_eid = _ensure_endorsement(conn, name)
+            target_eid = ensure_endorsement(conn, name)
             conn.execute(
                 "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
                 (code, target_eid),
             )
             target_eids = [target_eid]
 
-        migrated += _merge_endorsement(conn, eid_old, target_eids[0])
+        migrated += merge_endorsement(conn, eid_old, target_eids[0])
         if len(target_eids) > 1:
             records = conn.execute(
                 "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
@@ -252,7 +252,7 @@ def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
             ).fetchall()
             for rec in records:
                 for tgt in target_eids[1:]:
-                    _link_endorsement(conn, rec[0], tgt)
+                    link_endorsement(conn, rec[0], tgt)
 
     _cleanup_space_codes(conn)
 
@@ -340,7 +340,7 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:  #
     """).fetchall()
     for r in rows:
         raw = r[0].rstrip(",").strip()
-        m = _CODE_NAME_RE.match(raw)
+        m = CODE_NAME_RE.match(raw)
         if m:
             all_codes.add(m.group(1))
         elif raw.isdigit():
@@ -380,7 +380,7 @@ def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:  #
             continue
 
         for name in always:
-            eid = _ensure_endorsement(conn, name)
+            eid = ensure_endorsement(conn, name)
             conn.execute(
                 "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
                 (code, eid),
@@ -401,8 +401,8 @@ def _merge_placeholders(conn: sqlite3.Connection, learned: dict[str, list[str]])
         if not placeholder:
             continue
         pid = placeholder[0]
-        first_eid = _ensure_endorsement(conn, names[0])
-        _merge_endorsement(conn, pid, first_eid)
+        first_eid = ensure_endorsement(conn, names[0])
+        merge_endorsement(conn, pid, first_eid)
         if len(names) > 1:
             records = conn.execute(
                 "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
@@ -410,5 +410,5 @@ def _merge_placeholders(conn: sqlite3.Connection, learned: dict[str, list[str]])
             ).fetchall()
             for rec in records:
                 for name in names[1:]:
-                    eid = _ensure_endorsement(conn, name)
-                    _link_endorsement(conn, rec[0], eid)
+                    eid = ensure_endorsement(conn, name)
+                    link_endorsement(conn, rec[0], eid)

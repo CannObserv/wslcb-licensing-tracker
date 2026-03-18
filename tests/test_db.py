@@ -96,3 +96,84 @@ class TestNormalizeRawAddress:
 
     def test_none_passthrough(self):
         assert _normalize_raw_address(None) is None
+
+
+# ── strip_duplicate_marker ──────────────────────────────────────────
+
+class TestStripDuplicateMarker:
+    """Tests for the pure strip_duplicate_marker() helper."""
+
+    def _strip(self, name):
+        from wslcb_licensing_tracker.db import strip_duplicate_marker
+        return strip_duplicate_marker(name)
+
+    def test_parenthesized(self):
+        assert self._strip("ADAM (DUPLICATE) BENTON") == "ADAM BENTON"
+
+    def test_parenthesized_numbered_2(self):
+        assert self._strip("KATIE (DUPLICATE 2) DAVIS") == "KATIE DAVIS"
+
+    def test_parenthesized_numbered_3(self):
+        assert self._strip("KATIE (DUPLICATE 3) DAVIS") == "KATIE DAVIS"
+
+    def test_inline_mid(self):
+        assert self._strip("ANNA MARIE DUPLICATE ADAMS") == "ANNA MARIE ADAMS"
+
+    def test_inline_prefix(self):
+        assert self._strip("DUPLICATE ITALIAN SUPPLY, LLC") == "ITALIAN SUPPLY, LLC"
+
+    def test_asterisk_variant(self):
+        assert self._strip("PAUL *DUPLICATE* SONG") == "PAUL SONG"
+
+    def test_trailing_with_paren(self):
+        # "JAY WON (DUPLICATE)" -> "JAY WON"
+        assert self._strip("JAY WON (DUPLICATE)") == "JAY WON"
+
+    def test_unclosed_paren(self):
+        # WSLCB source has one case with an unclosed open paren:
+        # 'ELIZABETH (DUPLICATE A MATTHEWS'
+        assert self._strip("ELIZABETH (DUPLICATE A MATTHEWS") == "ELIZABETH A MATTHEWS"
+
+    def test_no_marker_unchanged(self):
+        assert self._strip("ALICE SMITH") == "ALICE SMITH"
+
+    def test_collapse_extra_spaces(self):
+        """Double spaces left after DUPLICATE removal are collapsed to one."""
+        # Double space before AND after the marker: after removal 'ANNA  MARIE'
+        # must be collapsed to 'ANNA MARIE'.
+        assert self._strip("ANNA  DUPLICATE  MARIE") == "ANNA MARIE"
+
+    def test_result_has_no_double_space(self):
+        assert "  " not in self._strip("NEALY DUPLICATE EVANS")
+
+
+# ── clean_applicants_string ──────────────────────────────────────────
+
+class TestCleanApplicantsStringDuplicate:
+    """DUPLICATE markers must be stripped by clean_applicants_string()."""
+
+    def _clean(self, s):
+        from wslcb_licensing_tracker.db import clean_applicants_string
+        return clean_applicants_string(s)
+
+    def test_parenthesized_marker_stripped(self):
+        result = self._clean("BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON")
+        # Both tokens clean to "ADAM BENTON"; duplicates are collapsed
+        assert "(DUPLICATE)" not in result
+        assert "DUPLICATE" not in result
+
+    def test_inline_marker_stripped(self):
+        result = self._clean("BIZ; NEALY DUPLICATE EVANS; NEALY EVANS")
+        assert "DUPLICATE" not in result
+
+    def test_deduplication_after_stripping(self):
+        """When stripping leaves two identical tokens, only one is kept."""
+        result = self._clean("BIZ; ADAM (DUPLICATE) BENTON; ADAM BENTON")
+        parts = [p.strip() for p in result.split(";")] if result else []
+        assert parts.count("ADAM BENTON") == 1
+
+    def test_only_duplicate_token_synthesizes_clean_name(self):
+        """A lone DUPLICATE-annotated token should yield the stripped clean name."""
+        result = self._clean("BIZ; LORIE DUPLICATE FAZIO")
+        assert "LORIE FAZIO" in result
+        assert "DUPLICATE" not in result

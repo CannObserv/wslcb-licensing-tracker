@@ -96,6 +96,7 @@ def cmd_rebuild_links(_args: argparse.Namespace) -> None:
     init_db()
     with get_db() as conn:
         build_all_links(conn)
+        conn.commit()
 
 
 def cmd_check(args: argparse.Namespace) -> None:

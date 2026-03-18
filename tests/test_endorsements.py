@@ -1,15 +1,15 @@
 """Tests for endorsements.py — license endorsement normalization.
 
-Verifies the _merge_endorsement helper and the repair functions
+Verifies the merge_endorsement helper and the repair functions
 that use it, after the deduplication refactor (#24).
 """
 import pytest
 
 from wslcb_licensing_tracker.endorsements import (
     process_record,
-    _ensure_endorsement,
-    _link_endorsement,
-    _merge_endorsement,
+    ensure_endorsement,
+    link_endorsement,
+    merge_endorsement,
     get_endorsement_options,
     get_record_endorsements,
 )
@@ -61,22 +61,22 @@ def _make_record(db, **overrides):
     return result[0]
 
 
-# ── _merge_endorsement helper ─────────────────────────────────
+# ── merge_endorsement helper ─────────────────────────────────
 
 
 class TestMergeEndorsement:
-    """Tests for the shared _merge_endorsement helper."""
+    """Tests for the shared merge_endorsement helper."""
 
     def test_migrates_record_links(self, db):
         """Record links should move from old to new endorsement."""
         seed_endorsements(db)
         rec_id = _make_record(db)
 
-        old_eid = _ensure_endorsement(db, "OLD ENDORSEMENT")
-        new_eid = _ensure_endorsement(db, "NEW ENDORSEMENT")
-        _link_endorsement(db, rec_id, old_eid)
+        old_eid = ensure_endorsement(db, "OLD ENDORSEMENT")
+        new_eid = ensure_endorsement(db, "NEW ENDORSEMENT")
+        link_endorsement(db, rec_id, old_eid)
 
-        _merge_endorsement(db, old_eid, new_eid)
+        merge_endorsement(db, old_eid, new_eid)
 
         # Old link gone
         old_links = db.execute(
@@ -97,14 +97,14 @@ class TestMergeEndorsement:
         """Code mappings should move from old to new endorsement."""
         seed_endorsements(db)
 
-        old_eid = _ensure_endorsement(db, "OLD ENDORSEMENT")
-        new_eid = _ensure_endorsement(db, "NEW ENDORSEMENT")
+        old_eid = ensure_endorsement(db, "OLD ENDORSEMENT")
+        new_eid = ensure_endorsement(db, "NEW ENDORSEMENT")
         db.execute(
             "INSERT INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
             ("999", old_eid),
         )
 
-        _merge_endorsement(db, old_eid, new_eid)
+        merge_endorsement(db, old_eid, new_eid)
 
         # Code should now point to new endorsement
         row = db.execute(
@@ -116,10 +116,10 @@ class TestMergeEndorsement:
         """The old endorsement row should be deleted."""
         seed_endorsements(db)
 
-        old_eid = _ensure_endorsement(db, "DOOMED ENDORSEMENT")
-        new_eid = _ensure_endorsement(db, "KEEPER ENDORSEMENT")
+        old_eid = ensure_endorsement(db, "DOOMED ENDORSEMENT")
+        new_eid = ensure_endorsement(db, "KEEPER ENDORSEMENT")
 
-        _merge_endorsement(db, old_eid, new_eid)
+        merge_endorsement(db, old_eid, new_eid)
 
         row = db.execute(
             "SELECT * FROM license_endorsements WHERE id = ?", (old_eid,)
@@ -131,12 +131,12 @@ class TestMergeEndorsement:
         seed_endorsements(db)
         rec_id = _make_record(db)
 
-        old_eid = _ensure_endorsement(db, "OLD ENDORSEMENT")
-        new_eid = _ensure_endorsement(db, "NEW ENDORSEMENT")
-        _link_endorsement(db, rec_id, old_eid)
-        _link_endorsement(db, rec_id, new_eid)  # already linked to target
+        old_eid = ensure_endorsement(db, "OLD ENDORSEMENT")
+        new_eid = ensure_endorsement(db, "NEW ENDORSEMENT")
+        link_endorsement(db, rec_id, old_eid)
+        link_endorsement(db, rec_id, new_eid)  # already linked to target
 
-        _merge_endorsement(db, old_eid, new_eid)  # should not raise
+        merge_endorsement(db, old_eid, new_eid)  # should not raise
 
         links = db.execute(
             "SELECT * FROM record_endorsements WHERE record_id = ? AND endorsement_id = ?",
@@ -148,10 +148,10 @@ class TestMergeEndorsement:
         """When delete_old=False, old endorsement should be kept."""
         seed_endorsements(db)
 
-        old_eid = _ensure_endorsement(db, "KEPT ENDORSEMENT")
-        new_eid = _ensure_endorsement(db, "TARGET ENDORSEMENT")
+        old_eid = ensure_endorsement(db, "KEPT ENDORSEMENT")
+        new_eid = ensure_endorsement(db, "TARGET ENDORSEMENT")
 
-        _merge_endorsement(db, old_eid, new_eid, delete_old=False)
+        merge_endorsement(db, old_eid, new_eid, delete_old=False)
 
         row = db.execute(
             "SELECT * FROM license_endorsements WHERE id = ?", (old_eid,)
@@ -224,11 +224,11 @@ class TestMergeMixedCase:
         seed_endorsements(db)
         rec_id = _make_record(db)
 
-        upper_eid = _ensure_endorsement(db, "TEST ENDORSEMENT")
+        upper_eid = ensure_endorsement(db, "TEST ENDORSEMENT")
         mixed_eid = db.execute(
             "INSERT INTO license_endorsements (name) VALUES (?)", ("Test Endorsement",)
         ).lastrowid
-        _link_endorsement(db, rec_id, mixed_eid)
+        link_endorsement(db, rec_id, mixed_eid)
         db.commit()
 
         merge_mixed_case_endorsements(db)
@@ -258,7 +258,7 @@ class TestRepairCodeName:
             "INSERT INTO license_endorsements (name) VALUES (?)",
             ("450, GROCERY STORE - BEER/WINE",),
         ).lastrowid
-        _link_endorsement(db, rec_id, bogus_eid)
+        link_endorsement(db, rec_id, bogus_eid)
         db.commit()
 
         count = repair_code_name_endorsements(db)
@@ -305,15 +305,15 @@ class TestResolveEndorsement:
     def test_returns_same_id_when_no_alias(self, db):
         """Non-aliased endorsement resolves to itself."""
         from wslcb_licensing_tracker.endorsements import resolve_endorsement
-        eid = _ensure_endorsement(db, "STANDALONE")
+        eid = ensure_endorsement(db, "STANDALONE")
         db.commit()
         assert resolve_endorsement(db, eid) == eid
 
     def test_returns_canonical_for_aliased(self, db):
         """Aliased endorsement resolves to its canonical."""
         from wslcb_licensing_tracker.endorsements import resolve_endorsement
-        variant_id = _ensure_endorsement(db, "VARIANT NAME")
-        canonical_id = _ensure_endorsement(db, "CANONICAL NAME")
+        variant_id = ensure_endorsement(db, "VARIANT NAME")
+        canonical_id = ensure_endorsement(db, "CANONICAL NAME")
         db.execute(
             "INSERT INTO endorsement_aliases (endorsement_id, canonical_endorsement_id)"
             " VALUES (?, ?)",
@@ -325,8 +325,8 @@ class TestResolveEndorsement:
     def test_alias_does_not_affect_canonical_itself(self, db):
         """Canonical ID is not changed by its own alias records."""
         from wslcb_licensing_tracker.endorsements import resolve_endorsement
-        variant_id = _ensure_endorsement(db, "VARIANT B")
-        canonical_id = _ensure_endorsement(db, "CANONICAL B")
+        variant_id = ensure_endorsement(db, "VARIANT B")
+        canonical_id = ensure_endorsement(db, "CANONICAL B")
         db.execute(
             "INSERT INTO endorsement_aliases (endorsement_id, canonical_endorsement_id)"
             " VALUES (?, ?)",
@@ -345,8 +345,8 @@ class TestGetEndorsementGroups:
         seed_endorsements(db)
 
         # Manually create two endorsements that share a code
-        eid_a = _ensure_endorsement(db, "GROUP CODE A")
-        eid_b = _ensure_endorsement(db, "GROUP CODE B")
+        eid_a = ensure_endorsement(db, "GROUP CODE A")
+        eid_b = ensure_endorsement(db, "GROUP CODE B")
         shared_code = "TESTGROUP"
         db.execute(
             "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
@@ -374,7 +374,7 @@ class TestGetEndorsementGroups:
         seed_endorsements(db)
 
         # Create an endorsement that belongs to two codes
-        eid = _ensure_endorsement(db, "MULTI CODE")
+        eid = ensure_endorsement(db, "MULTI CODE")
         for code in ("CODE_X", "CODE_Y"):
             db.execute(
                 "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
@@ -422,7 +422,7 @@ class TestGetEndorsementGroups:
         db.commit()
 
         # Manually create a variant + alias
-        variant_id = _ensure_endorsement(db, "CANNABIS RETAILER VARIANT")
+        variant_id = ensure_endorsement(db, "CANNABIS RETAILER VARIANT")
         canonical_id = db.execute(
             "SELECT id FROM license_endorsements WHERE name = ?",
             ("CANNABIS RETAILER",),
@@ -446,14 +446,14 @@ class TestSetCanonical:
 
     def test_creates_alias_rows(self, db):
         """set_canonical creates alias rows for all variants pointing to canonical."""
-        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement, _ensure_endorsement
+        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement, ensure_endorsement
         seed_endorsements(db)
 
         # Create two variants and a canonical, all sharing a code
         code = "TESTCODE"
-        v1_id = _ensure_endorsement(db, "VARIANT ONE")
-        v2_id = _ensure_endorsement(db, "VARIANT TWO")
-        canonical_id = _ensure_endorsement(db, "CANONICAL ONE")
+        v1_id = ensure_endorsement(db, "VARIANT ONE")
+        v2_id = ensure_endorsement(db, "VARIANT TWO")
+        canonical_id = ensure_endorsement(db, "CANONICAL ONE")
         for eid in (v1_id, v2_id, canonical_id):
             db.execute(
                 "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
@@ -481,8 +481,8 @@ class TestSetCanonical:
     def test_idempotent(self, db):
         """Calling set_canonical twice doesn't duplicate alias rows."""
         from wslcb_licensing_tracker.endorsements import set_canonical_endorsement
-        v_id = _ensure_endorsement(db, "VARIANT IDEM")
-        c_id = _ensure_endorsement(db, "CANONICAL IDEM")
+        v_id = ensure_endorsement(db, "VARIANT IDEM")
+        c_id = ensure_endorsement(db, "CANONICAL IDEM")
         db.commit()
 
         set_canonical_endorsement(db, canonical_id=c_id, variant_ids=[v_id], created_by="t@t.com")
@@ -506,7 +506,7 @@ class TestRenameEndorsement:
         seed_endorsements(db)
 
         # Create a bare numeric-code endorsement
-        bare_id = _ensure_endorsement(db, "9999")
+        bare_id = ensure_endorsement(db, "9999")
         db.commit()
 
         new_id = rename_endorsement(
@@ -537,8 +537,8 @@ class TestRenameEndorsement:
         from wslcb_licensing_tracker.endorsements import rename_endorsement
         seed_endorsements(db)
 
-        bare_id = _ensure_endorsement(db, "8888")
-        existing_id = _ensure_endorsement(db, "EXISTING ENDORSEMENT")
+        bare_id = ensure_endorsement(db, "8888")
+        existing_id = ensure_endorsement(db, "EXISTING ENDORSEMENT")
         db.commit()
 
         returned_id = rename_endorsement(
@@ -561,8 +561,8 @@ class TestAliasResolutionInFilterOptions:
 
         rec_id_v = _make_record(db, license_number="ALIAS001")
         rec_id_c = _make_record(db, license_number="ALIAS002")
-        variant_id = _ensure_endorsement(db, "VARIANT FILTER")
-        canonical_id = _ensure_endorsement(db, "CANONICAL FILTER")
+        variant_id = ensure_endorsement(db, "VARIANT FILTER")
+        canonical_id = ensure_endorsement(db, "CANONICAL FILTER")
 
         # Link both records to each endorsement
         db.execute(
@@ -595,8 +595,8 @@ class TestAliasResolutionInRecordEndorsements:
         seed_endorsements(db)
 
         rec_id = _make_record(db, license_number="ALIAS003")
-        variant_id = _ensure_endorsement(db, "VARIANT DISPLAY")
-        canonical_id = _ensure_endorsement(db, "CANONICAL DISPLAY")
+        variant_id = ensure_endorsement(db, "VARIANT DISPLAY")
+        canonical_id = ensure_endorsement(db, "CANONICAL DISPLAY")
 
         db.execute(
             "INSERT OR IGNORE INTO record_endorsements VALUES (?, ?)",
@@ -619,15 +619,15 @@ class TestSearchFilterAliasResolution:
 
     def test_canonical_filter_matches_variant_linked_records(self, db):
         """Filtering by canonical name returns records linked to variants."""
-        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement, _ensure_endorsement
+        from wslcb_licensing_tracker.endorsements import set_canonical_endorsement, ensure_endorsement
         from wslcb_licensing_tracker.queries import search_records
         seed_endorsements(db)
 
         rec_variant = _make_record(db, license_number="SF001")
         rec_canonical = _make_record(db, license_number="SF002")
 
-        variant_id = _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
-        canonical_id = _ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        variant_id = ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        canonical_id = ensure_endorsement(db, "TAKEOUT/DELIVERY")
         db.execute(
             "INSERT OR IGNORE INTO record_endorsements VALUES (?, ?)",
             (rec_variant, variant_id),
@@ -914,7 +914,7 @@ class TestGetEndorsementList:
         assert len(result) >= 1
 
     def test_entry_structure(self, db):
-        eid = _ensure_endorsement(db, "TEST ENDORSEMENT")
+        eid = ensure_endorsement(db, "TEST ENDORSEMENT")
         db.commit()
         result = get_endorsement_list(db)
         entry = next(e for e in result if e["id"] == eid)
@@ -927,7 +927,7 @@ class TestGetEndorsementList:
         assert "codes" in entry
 
     def test_standalone_flags(self, db):
-        eid = _ensure_endorsement(db, "STANDALONE ENDO")
+        eid = ensure_endorsement(db, "STANDALONE ENDO")
         db.commit()
         result = get_endorsement_list(db)
         entry = next(e for e in result if e["id"] == eid)
@@ -937,8 +937,8 @@ class TestGetEndorsementList:
 
     def test_variant_flags(self, db):
         from wslcb_licensing_tracker.endorsements import set_canonical_endorsement
-        cid = _ensure_endorsement(db, "CANONICAL ENDO")
-        vid = _ensure_endorsement(db, "VARIANT ENDO")
+        cid = ensure_endorsement(db, "CANONICAL ENDO")
+        vid = ensure_endorsement(db, "VARIANT ENDO")
         set_canonical_endorsement(db, canonical_id=cid, variant_ids=[vid], created_by="test")
         db.commit()
         result = get_endorsement_list(db)
@@ -950,7 +950,7 @@ class TestGetEndorsementList:
         assert variant_entry["canonical_name"] == "CANONICAL ENDO"
 
     def test_codes_populated(self, db):
-        eid = _ensure_endorsement(db, "CODED ENDO")
+        eid = ensure_endorsement(db, "CODED ENDO")
         db.execute("INSERT INTO endorsement_codes (code, endorsement_id) VALUES ('999', ?)", (eid,))
         db.commit()
         result = get_endorsement_list(db)
@@ -965,8 +965,8 @@ class TestSuggestDuplicateEndorsements:
     """Tests for the duplicate-suggestion algorithm."""
 
     def test_surfaces_similar_pair(self, db):
-        _ensure_endorsement(db, "TAKEOUT/DELIVERY")
-        _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
         db.commit()
         suggestions = suggest_duplicate_endorsements(db)
         names = {(s["name_a"], s["name_b"]) for s in suggestions}
@@ -980,8 +980,8 @@ class TestSuggestDuplicateEndorsements:
 
     def test_excludes_aliased_pair(self, db):
         from wslcb_licensing_tracker.endorsements import set_canonical_endorsement
-        cid = _ensure_endorsement(db, "TAKEOUT/DELIVERY")
-        vid = _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        cid = ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        vid = ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
         set_canonical_endorsement(db, canonical_id=cid, variant_ids=[vid], created_by="test")
         db.commit()
         suggestions = suggest_duplicate_endorsements(db)
@@ -992,8 +992,8 @@ class TestSuggestDuplicateEndorsements:
         assert not found
 
     def test_excludes_dismissed_pair(self, db):
-        id_a = _ensure_endorsement(db, "TAKEOUT/DELIVERY")
-        id_b = _ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
+        id_a = ensure_endorsement(db, "TAKEOUT/DELIVERY")
+        id_b = ensure_endorsement(db, "TAKE OUT/DELIVERY ENDORSEMENT")
         dismiss_suggestion(db, id_a, id_b, "admin@test.com")
         db.commit()
         suggestions = suggest_duplicate_endorsements(db)
@@ -1005,18 +1005,18 @@ class TestSuggestDuplicateEndorsements:
 
     def test_ordered_by_score_descending(self, db):
         # Identical pair should score 1.0; similar but not identical scores lower
-        _ensure_endorsement(db, "GROWLERS TAKEOUT/DELIVERY")
-        _ensure_endorsement(db, "GROWLERS TAKE OUT/DELIVERY")
-        _ensure_endorsement(db, "PREMIXED COCKTAILS/WINE TO-GO")
-        _ensure_endorsement(db, "COCKTAILS/WINE TO-GO")
+        ensure_endorsement(db, "GROWLERS TAKEOUT/DELIVERY")
+        ensure_endorsement(db, "GROWLERS TAKE OUT/DELIVERY")
+        ensure_endorsement(db, "PREMIXED COCKTAILS/WINE TO-GO")
+        ensure_endorsement(db, "COCKTAILS/WINE TO-GO")
         db.commit()
         suggestions = suggest_duplicate_endorsements(db)
         scores = [s["score"] for s in suggestions]
         assert scores == sorted(scores, reverse=True)
 
     def test_pair_id_ordering(self, db):
-        id_a = _ensure_endorsement(db, "AARDVARK LICENCE")
-        id_b = _ensure_endorsement(db, "AARDVARK LICENSE")
+        id_a = ensure_endorsement(db, "AARDVARK LICENCE")
+        id_b = ensure_endorsement(db, "AARDVARK LICENSE")
         db.commit()
         suggestions = suggest_duplicate_endorsements(db)
         found = [s for s in suggestions if {s["name_a"], s["name_b"]} == {"AARDVARK LICENCE", "AARDVARK LICENSE"}]
@@ -1031,8 +1031,8 @@ class TestDismissSuggestion:
     """Tests for dismiss_suggestion."""
 
     def test_inserts_dismissed_row(self, db):
-        a = _ensure_endorsement(db, "ENDO A")
-        b = _ensure_endorsement(db, "ENDO B")
+        a = ensure_endorsement(db, "ENDO A")
+        b = ensure_endorsement(db, "ENDO B")
         dismiss_suggestion(db, a, b, "admin@test.com")
         db.commit()
         row = db.execute(
@@ -1044,8 +1044,8 @@ class TestDismissSuggestion:
         assert row[0] == "admin@test.com"
 
     def test_normalises_id_order(self, db):
-        a = _ensure_endorsement(db, "ENDO X")
-        b = _ensure_endorsement(db, "ENDO Y")
+        a = ensure_endorsement(db, "ENDO X")
+        b = ensure_endorsement(db, "ENDO Y")
         # Pass larger id first — should still be stored as min(a,b), max(a,b)
         dismiss_suggestion(db, max(a, b), min(a, b), "test")
         db.commit()
@@ -1057,8 +1057,8 @@ class TestDismissSuggestion:
         assert row is not None
 
     def test_idempotent(self, db):
-        a = _ensure_endorsement(db, "ENDO P")
-        b = _ensure_endorsement(db, "ENDO Q")
+        a = ensure_endorsement(db, "ENDO P")
+        b = ensure_endorsement(db, "ENDO Q")
         dismiss_suggestion(db, a, b, "test")
         dismiss_suggestion(db, a, b, "test")  # should not raise
         db.commit()
@@ -1083,7 +1083,7 @@ class TestGetCodeMappings:
         assert len(result) >= 1
 
     def test_entry_structure(self, db):
-        eid = _ensure_endorsement(db, "MAP TEST ENDO")
+        eid = ensure_endorsement(db, "MAP TEST ENDO")
         db.execute("INSERT INTO endorsement_codes (code, endorsement_id) VALUES ('777', ?)", (eid,))
         db.commit()
         result = get_code_mappings(db)
@@ -1093,8 +1093,8 @@ class TestGetCodeMappings:
         assert any(e["id"] == eid for e in entry["endorsements"])
 
     def test_numeric_sort_order(self, db):
-        eid = _ensure_endorsement(db, "SORT TEST A")
-        eid2 = _ensure_endorsement(db, "SORT TEST B")
+        eid = ensure_endorsement(db, "SORT TEST A")
+        eid2 = ensure_endorsement(db, "SORT TEST B")
         db.execute("INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES ('20', ?)", (eid,))
         db.execute("INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES ('100', ?)", (eid2,))
         db.commit()
@@ -1112,31 +1112,31 @@ class TestCodeMappingMutations:
     """Tests for add_code_mapping, remove_code_mapping, create_code."""
 
     def test_add_returns_true_for_new_row(self, db):
-        eid = _ensure_endorsement(db, "ADD TEST")
+        eid = ensure_endorsement(db, "ADD TEST")
         result = add_code_mapping(db, "888", eid)
         assert result is True
 
     def test_add_returns_false_for_duplicate(self, db):
-        eid = _ensure_endorsement(db, "DUP TEST")
+        eid = ensure_endorsement(db, "DUP TEST")
         add_code_mapping(db, "889", eid)
         result = add_code_mapping(db, "889", eid)
         assert result is False
 
     def test_remove_returns_true_for_existing(self, db):
-        eid = _ensure_endorsement(db, "REMOVE TEST")
+        eid = ensure_endorsement(db, "REMOVE TEST")
         add_code_mapping(db, "890", eid)
         db.commit()
         result = remove_code_mapping(db, "890", eid)
         assert result is True
 
     def test_remove_returns_false_when_absent(self, db):
-        eid = _ensure_endorsement(db, "ABSENT TEST")
+        eid = ensure_endorsement(db, "ABSENT TEST")
         result = remove_code_mapping(db, "891", eid)
         assert result is False
 
     def test_create_code_inserts_mappings(self, db):
-        eid1 = _ensure_endorsement(db, "CREATE A")
-        eid2 = _ensure_endorsement(db, "CREATE B")
+        eid1 = ensure_endorsement(db, "CREATE A")
+        eid2 = ensure_endorsement(db, "CREATE B")
         inserted = create_code(db, "892", [eid1, eid2])
         assert inserted == 2
         rows = db.execute(
@@ -1145,7 +1145,7 @@ class TestCodeMappingMutations:
         assert {r[0] for r in rows} == {eid1, eid2}
 
     def test_create_code_skips_existing_mapping(self, db):
-        eid = _ensure_endorsement(db, "SKIP TEST")
+        eid = ensure_endorsement(db, "SKIP TEST")
         add_code_mapping(db, "893", eid)
         # Should not raise; inserted count = 0 for the duplicate
         inserted = create_code(db, "893", [eid])
@@ -1177,7 +1177,7 @@ class TestGetRegulatedSubstances:
 
     def test_includes_endorsements_list(self, db):
         from wslcb_licensing_tracker.substances import get_regulated_substances
-        eid = _ensure_endorsement(db, "CANNABIS RETAILER")
+        eid = ensure_endorsement(db, "CANNABIS RETAILER")
         sid = _ensure_substance(db, "Cannabis", 1)
         db.execute(
             "INSERT OR IGNORE INTO regulated_substance_endorsements (substance_id, endorsement_id) VALUES (?, ?)",
@@ -1203,8 +1203,8 @@ class TestGetRegulatedSubstances:
 class TestGetSubstanceEndorsementIds:
     def test_returns_ids_for_substance(self, db):
         from wslcb_licensing_tracker.substances import get_substance_endorsement_ids
-        eid1 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
-        eid2 = _ensure_endorsement(db, "WINE DISTRIBUTOR")
+        eid1 = ensure_endorsement(db, "BEER DISTRIBUTOR")
+        eid2 = ensure_endorsement(db, "WINE DISTRIBUTOR")
         sid = _ensure_substance(db, "Alcohol", 2)
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid1))
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid2))
@@ -1220,8 +1220,8 @@ class TestGetSubstanceEndorsementIds:
 class TestSetSubstanceEndorsements:
     def test_replaces_associations(self, db):
         from wslcb_licensing_tracker.substances import set_substance_endorsements
-        eid1 = _ensure_endorsement(db, "OLD ENDORSEMENT")
-        eid2 = _ensure_endorsement(db, "NEW ENDORSEMENT")
+        eid1 = ensure_endorsement(db, "OLD ENDORSEMENT")
+        eid2 = ensure_endorsement(db, "NEW ENDORSEMENT")
         sid = _ensure_substance(db, "Test Substance")
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid1))
         db.commit()
@@ -1250,7 +1250,7 @@ class TestSetSubstanceEndorsements:
 
     def test_clearing_all_endorsements(self, db):
         from wslcb_licensing_tracker.substances import set_substance_endorsements
-        eid = _ensure_endorsement(db, "CLEAR ME")
+        eid = ensure_endorsement(db, "CLEAR ME")
         sid = _ensure_substance(db, "Clear Test")
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
         db.commit()
@@ -1302,7 +1302,7 @@ class TestRemoveSubstance:
 
     def test_cascades_to_junction(self, db):
         from wslcb_licensing_tracker.substances import add_substance, remove_substance
-        eid = _ensure_endorsement(db, "CASCADE TEST")
+        eid = ensure_endorsement(db, "CASCADE TEST")
         sid = add_substance(db, "Cascade Sub", display_order=1)
         db.execute("INSERT OR IGNORE INTO regulated_substance_endorsements VALUES (?,?)", (sid, eid))
         db.commit()

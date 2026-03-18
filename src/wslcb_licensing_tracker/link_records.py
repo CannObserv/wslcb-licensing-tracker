@@ -112,7 +112,7 @@ def build_all_links(conn: sqlite3.Connection) -> dict:
     """Run the full bidirectional linking algorithm.
 
     Clears ``record_links`` and rebuilds from scratch.
-    Returns a summary dict with counts.
+    Returns a summary dict with counts.  Caller must commit.
     """
     conn.execute("DELETE FROM record_links")
 
@@ -124,7 +124,6 @@ def build_all_links(conn: sqlite3.Connection) -> dict:
         high += h
         medium += m
 
-    conn.commit()
     logger.info(
         "Record linking complete: %d high-confidence + %d medium-confidence = %d total",
         high,

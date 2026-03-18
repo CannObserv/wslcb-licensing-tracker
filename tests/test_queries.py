@@ -286,10 +286,10 @@ class TestMultiEndorsementFilter:
 
     def _insert_with_endorsement(self, db, record_dict, endorsement_name):
         from wslcb_licensing_tracker.pipeline import insert_record
-        from wslcb_licensing_tracker.endorsements import _ensure_endorsement, _link_endorsement
+        from wslcb_licensing_tracker.endorsements import ensure_endorsement, link_endorsement
         rec_id, _ = insert_record(db, record_dict)
-        eid = _ensure_endorsement(db, endorsement_name)
-        _link_endorsement(db, rec_id, eid)
+        eid = ensure_endorsement(db, endorsement_name)
+        link_endorsement(db, rec_id, eid)
         db.commit()
         return rec_id
 
@@ -314,10 +314,10 @@ class TestMultiEndorsementFilter:
         r2["license_number"] = "DIFF002"
         self._insert_with_endorsement(db, r1, "CANNABIS RETAILER")
         from wslcb_licensing_tracker.pipeline import insert_record
-        from wslcb_licensing_tracker.endorsements import _ensure_endorsement, _link_endorsement
+        from wslcb_licensing_tracker.endorsements import ensure_endorsement, link_endorsement
         id2, _ = insert_record(db, r2)
-        eid2 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
-        _link_endorsement(db, id2, eid2)
+        eid2 = ensure_endorsement(db, "BEER DISTRIBUTOR")
+        link_endorsement(db, id2, eid2)
         db.commit()
         records, total = search_records(db, endorsements=["CANNABIS RETAILER"])
         assert total == 1
@@ -840,3 +840,23 @@ class TestGetEntities:
         result_neg = get_entities(db, per_page=2, page=-5)
         result_one = get_entities(db, per_page=2, page=1)
         assert result_neg["entities"] == result_one["entities"]
+
+
+class TestInvalidateAllFilterCaches:
+    def test_clears_both_caches(self):
+        from wslcb_licensing_tracker import queries
+
+        queries._filter_cache["data"] = "stale"
+        queries._city_cache["WA"] = (0.0, ["Seattle"])
+        queries.invalidate_all_filter_caches()
+        assert not queries._filter_cache
+        assert not queries._city_cache
+
+    def test_idempotent_on_empty_caches(self):
+        from wslcb_licensing_tracker import queries
+
+        queries._filter_cache.clear()
+        queries._city_cache.clear()
+        queries.invalidate_all_filter_caches()  # should not raise
+        assert not queries._filter_cache
+        assert not queries._city_cache

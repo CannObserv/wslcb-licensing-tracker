@@ -704,9 +704,9 @@ class TestMigration009RegulatedSubstances:
 
     def test_undefined_endorsement_has_no_substance(self, db):
         from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
-        from wslcb_licensing_tracker.endorsements import _ensure_endorsement
+        from wslcb_licensing_tracker.endorsements import ensure_endorsement
         seed_endorsements(db)
-        undef_id = _ensure_endorsement(db, "UNDEFINED")
+        undef_id = ensure_endorsement(db, "UNDEFINED")
         db.commit()
         from wslcb_licensing_tracker.schema import _m009_regulated_substances
         _m009_regulated_substances(db)
