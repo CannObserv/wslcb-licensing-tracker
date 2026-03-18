@@ -500,3 +500,33 @@ class TestPreviousLocationBackfill:
             (ap_id,),
         ).fetchone()["previous_location_id"]
         assert after_prev == original_prev
+
+    def test_no_backfill_when_new_app_missing_previous_location(self, db):
+        """When new_app has no previous_location_id, approved record stays NULL."""
+        seed_endorsements(db)
+        _make_record(
+            db,
+            section_type="new_application",
+            application_type="CHANGE OF LOCATION",
+            license_number="C004",
+            record_date="2025-06-10",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            # No previous_business_location supplied — previous_location_id will be NULL.
+        )
+        ap_id = _make_record(
+            db,
+            section_type="approved",
+            application_type="CHANGE OF LOCATION",
+            license_number="C004",
+            record_date="2025-06-12",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            applicants="",
+        )
+
+        build_all_links(db)
+
+        ap_prev = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (ap_id,),
+        ).fetchone()["previous_location_id"]
+        assert ap_prev is None

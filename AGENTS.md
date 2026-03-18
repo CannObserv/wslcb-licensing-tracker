@@ -73,6 +73,8 @@ license_records → locations (FK: location_id, previous_location_id)
 
 `process_record()` is idempotent — deletes existing rows before inserting fresh ones.
 
+`build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL (sourced from the matched new-application record). Run `wslcb rebuild-links` to repair existing rows.
+
 ## Conventions
 
 ### Python

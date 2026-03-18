@@ -232,7 +232,12 @@ def _insert_link(
     outcome_id: int,
     confidence: str,
 ) -> None:
-    """Insert a record_links row, computing days_gap from DB dates."""
+    """Insert a record_links row, computing days_gap from DB dates.
+
+    Also backfills ``previous_location_id`` on the outcome record when it is
+    a CHANGE OF LOCATION approved record with no prior value and the
+    new-application record carries one.
+    """
     dates = conn.execute(
         """SELECT
                (SELECT record_date FROM license_records WHERE id = ?) AS new_date,
