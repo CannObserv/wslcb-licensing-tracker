@@ -25,7 +25,7 @@ from wslcb_licensing_tracker.db import (
     get_connection,
     get_or_create_source,
 )
-from wslcb_licensing_tracker.endorsements import (
+from wslcb_licensing_tracker.endorsements_seed import (
     discover_code_mappings,
     repair_code_name_endorsements,
     seed_endorsements,

@@ -3,13 +3,6 @@
 Contains search, filter, stats, and read queries that combine data from
 multiple tables (records, locations, endorsements, entities).  Thin
 read layer on top of the core schema in ``schema.py``.
-
-Record insertion lives in ``pipeline.py`` (``insert_record``); source
-provenance queries live in ``db.py`` (``get_primary_source``,
-``get_record_sources``); the US state constant lives in ``db.py``
-(``US_STATES``).
-
-All three are re-exported here for backward compatibility.
 """
 
 import logging
@@ -17,16 +10,11 @@ import sqlite3
 import time
 from collections.abc import Iterator
 
-from .db import (  # noqa: F401 — re-exports
-    US_STATES,
-    get_primary_source,
-    get_record_sources,
-)
+from .db import US_STATES
 from .display import format_outcome
 from .endorsements import (
     get_endorsement_options,
     get_record_endorsements,
-    get_regulated_substances,
 )
 from .entities import (
     get_record_entities,
@@ -38,7 +26,7 @@ from .link_records import (
     get_outcome_status,
     outcome_filter_sql,
 )
-from .pipeline import insert_record  # noqa: F401 — re-export
+from .substances import get_regulated_substances
 
 logger = logging.getLogger(__name__)
 
@@ -565,14 +553,15 @@ _filter_cache: dict = {}  # {"data": ..., "ts": float}
 _FILTER_CACHE_TTL = 300  # seconds (5 minutes)
 
 
-def invalidate_filter_cache() -> None:
-    """Clear the in-process filter option cache.
+def invalidate_all_filter_caches() -> None:
+    """Clear all in-process filter caches.
 
-    Call after any admin mutation that changes endorsements or regulated
-    substances so the next search page load reflects the current state
-    rather than a stale snapshot.
+    Call after any admin mutation that changes endorsements, regulated
+    substances, or locations so the next search page load reflects the
+    current state rather than a stale snapshot.
     """
     _filter_cache.clear()
+    _city_cache.clear()
 
 
 _LOCATION_IDS_SUBQUERY = (

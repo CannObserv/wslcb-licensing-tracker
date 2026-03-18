@@ -56,7 +56,11 @@ from .db import (
     get_db,
     get_or_create_source,
 )
-from .endorsements import discover_code_mappings, repair_code_name_endorsements, seed_endorsements
+from .endorsements_seed import (
+    discover_code_mappings,
+    repair_code_name_endorsements,
+    seed_endorsements,
+)
 from .parser import discover_diff_files, extract_records_from_diff
 from .pipeline import IngestOptions, ingest_record
 from .queries import RECORD_COLUMNS, RECORD_JOINS, hydrate_records

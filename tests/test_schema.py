@@ -682,7 +682,7 @@ class TestMigration009RegulatedSubstances:
     def test_seed_cannabis_has_endorsements_after_endorsement_seed(self, db):
         """After seeding endorsements and re-running the migration, Cannabis
         should have all its expected endorsements linked."""
-        from wslcb_licensing_tracker.endorsements import seed_endorsements
+        from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
         from wslcb_licensing_tracker.schema import _m009_regulated_substances
         seed_endorsements(db)
         db.commit()
@@ -703,7 +703,8 @@ class TestMigration009RegulatedSubstances:
         assert count >= 10
 
     def test_undefined_endorsement_has_no_substance(self, db):
-        from wslcb_licensing_tracker.endorsements import seed_endorsements, _ensure_endorsement
+        from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
+        from wslcb_licensing_tracker.endorsements import _ensure_endorsement
         seed_endorsements(db)
         undef_id = _ensure_endorsement(db, "UNDEFINED")
         db.commit()

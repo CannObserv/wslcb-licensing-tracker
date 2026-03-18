@@ -4,7 +4,7 @@ All tests use in-memory SQLite via the ``db`` fixture.
 """
 import pytest
 
-from wslcb_licensing_tracker.endorsements import seed_endorsements
+from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
 
 
 # ── ingest_record ──────────────────────────────────────────────────

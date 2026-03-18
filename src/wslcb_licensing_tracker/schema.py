@@ -12,8 +12,7 @@ import logging
 import sqlite3
 from collections.abc import Callable
 
-from .db import get_db
-from .entities import clean_applicants_string
+from .db import clean_applicants_string, get_db
 
 logger = logging.getLogger(__name__)
 

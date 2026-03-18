@@ -21,9 +21,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import admin_routes, api_routes
 from .admin_auth import AdminRedirectException, get_current_user
-from .db import DATA_DIR, get_db
+from .db import DATA_DIR, get_db, get_record_sources
 from .display import format_outcome, summarize_provenance
-from .endorsements import (
+from .endorsements_seed import (
     backfill,
     merge_mixed_case_endorsements,
     repair_code_name_endorsements,
@@ -40,7 +40,6 @@ from .queries import (
     get_filter_options,
     get_record_by_id,
     get_record_link,
-    get_record_sources,
     get_related_records,
     get_stats,
     hydrate_records,
@@ -73,6 +72,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         entity_count = backfill_entities(conn)
         if entity_count:
             logger.info("Backfilled entities for %d record(s)", entity_count)
+        conn.commit()
         # Build application→outcome links if table is empty (first run).
         # Subsequent updates are handled incrementally by the scraper.
         existing_links = conn.execute("SELECT COUNT(*) FROM record_links").fetchone()[0]

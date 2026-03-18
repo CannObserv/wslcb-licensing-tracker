@@ -6,16 +6,14 @@ that use it, after the deduplication refactor (#24).
 import pytest
 
 from wslcb_licensing_tracker.endorsements import (
-    seed_endorsements,
     process_record,
     _ensure_endorsement,
     _link_endorsement,
     _merge_endorsement,
-    merge_mixed_case_endorsements,
-    repair_code_name_endorsements,
-    _merge_seeded_placeholders,
     get_endorsement_options,
     get_record_endorsements,
+)
+from wslcb_licensing_tracker.endorsements_admin import (
     endorsement_similarity,
     get_endorsement_list,
     suggest_duplicate_endorsements,
@@ -25,7 +23,13 @@ from wslcb_licensing_tracker.endorsements import (
     remove_code_mapping,
     create_code,
 )
-from wslcb_licensing_tracker.queries import insert_record
+from wslcb_licensing_tracker.endorsements_seed import (
+    seed_endorsements,
+    merge_mixed_case_endorsements,
+    repair_code_name_endorsements,
+    _merge_seeded_placeholders,
+)
+from wslcb_licensing_tracker.pipeline import insert_record
 
 
 def _make_record(db, **overrides):
@@ -1163,7 +1167,7 @@ def _ensure_substance(conn, name: str, display_order: int = 0) -> int:
 
 class TestGetRegulatedSubstances:
     def test_returns_substances_in_display_order(self, db):
-        from wslcb_licensing_tracker.endorsements import get_regulated_substances
+        from wslcb_licensing_tracker.substances import get_regulated_substances
         _ensure_substance(db, "Alcohol", 2)
         _ensure_substance(db, "Cannabis", 1)
         db.commit()
@@ -1172,7 +1176,7 @@ class TestGetRegulatedSubstances:
         assert names == ["Cannabis", "Alcohol"]
 
     def test_includes_endorsements_list(self, db):
-        from wslcb_licensing_tracker.endorsements import get_regulated_substances
+        from wslcb_licensing_tracker.substances import get_regulated_substances
         eid = _ensure_endorsement(db, "CANNABIS RETAILER")
         sid = _ensure_substance(db, "Cannabis", 1)
         db.execute(
@@ -1187,7 +1191,7 @@ class TestGetRegulatedSubstances:
     def test_empty_when_no_seeded_endorsements(self, db):
         """Without seeded endorsements the substances exist but have no
         endorsement associations (junction rows reference non-existent eids)."""
-        from wslcb_licensing_tracker.endorsements import get_regulated_substances
+        from wslcb_licensing_tracker.substances import get_regulated_substances
         results = get_regulated_substances(db)
         # Substances are seeded by migration 009; endorsements list is empty
         # until endorsements are seeded.
@@ -1198,7 +1202,7 @@ class TestGetRegulatedSubstances:
 
 class TestGetSubstanceEndorsementIds:
     def test_returns_ids_for_substance(self, db):
-        from wslcb_licensing_tracker.endorsements import get_substance_endorsement_ids
+        from wslcb_licensing_tracker.substances import get_substance_endorsement_ids
         eid1 = _ensure_endorsement(db, "BEER DISTRIBUTOR")
         eid2 = _ensure_endorsement(db, "WINE DISTRIBUTOR")
         sid = _ensure_substance(db, "Alcohol", 2)
@@ -1209,7 +1213,7 @@ class TestGetSubstanceEndorsementIds:
         assert set(ids) == {eid1, eid2}
 
     def test_returns_empty_for_unknown_substance(self, db):
-        from wslcb_licensing_tracker.endorsements import get_substance_endorsement_ids
+        from wslcb_licensing_tracker.substances import get_substance_endorsement_ids
         assert get_substance_endorsement_ids(db, 9999) == []
 
 

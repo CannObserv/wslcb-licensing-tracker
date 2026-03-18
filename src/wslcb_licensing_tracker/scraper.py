@@ -25,7 +25,11 @@ from .db import (
     get_db,
     get_or_create_source,
 )
-from .endorsements import discover_code_mappings, repair_code_name_endorsements, seed_endorsements
+from .endorsements_seed import (
+    discover_code_mappings,
+    repair_code_name_endorsements,
+    seed_endorsements,
+)
 from .parser import SECTION_MAP, parse_records_from_table
 from .pipeline import IngestOptions, ingest_batch
 from .schema import init_db

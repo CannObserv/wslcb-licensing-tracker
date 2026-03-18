@@ -6,7 +6,7 @@ import pytest
 
 def _insert_record(db, record):
     """Insert a minimal license record directly and return its id."""
-    from wslcb_licensing_tracker.queries import insert_record
+    from wslcb_licensing_tracker.pipeline import insert_record
     result = insert_record(db, record)
     assert result is not None
     return result[0]

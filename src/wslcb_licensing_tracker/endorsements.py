@@ -13,50 +13,21 @@ This module normalizes all three representations into a shared
 seeded from historical cross-referencing and refined automatically
 as new data arrives.
 
-TODO: FTS currently indexes raw license_type values, which are numeric
+See Also:
+- ``endorsements_seed`` — seeding, repair, and backfill operations
+- ``endorsements_admin`` — admin UI helpers (duplicate detection, code-mapping CRUD)
+- ``substances`` — regulated substance CRUD
+
+Note: FTS currently indexes raw license_type values, which are numeric
 codes for approved/discontinued records.  Text search for endorsement
 names won't match those records — only the endorsement filter works.
-Fixing this would require indexing resolved endorsement names in FTS.
-
-Admin UI helpers (``get_endorsement_list``, ``suggest_duplicate_endorsements``,
-similarity algorithm, ``dismiss_suggestion``, code-mapping CRUD) live in
-``endorsements_admin``.
-
-Regulated substance CRUD (``get_regulated_substances``, ``add_substance``,
-``remove_substance``, ``set_substance_endorsements``) lives in ``substances``.
-
-Backward-compatible re-exports from both sub-modules are provided below so
-existing ``from wslcb_licensing_tracker.endorsements import ...`` call-sites continue to work
-without modification.
+See GH issue #87 for the planned fix.
 """
 
-import json
 import logging
 import re
 import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
-
-# Re-exports: admin UI helpers (backward compat)
-from .endorsements_admin import (  # noqa: F401
-    add_code_mapping,
-    create_code,
-    dismiss_suggestion,
-    endorsement_similarity,
-    get_code_mappings,
-    get_endorsement_list,
-    remove_code_mapping,
-    suggest_duplicate_endorsements,
-)
-
-# Re-exports: regulated substance CRUD (backward compat)
-from .substances import (  # noqa: F401
-    add_substance,
-    get_regulated_substances,
-    get_substance_endorsement_ids,
-    remove_substance,
-    set_substance_endorsements,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +36,6 @@ logger = logging.getLogger(__name__)
 # first capturing group is the numeric code, the second is the name.
 # Handles names that themselves contain commas (e.g. "< 250,000 LITERS").
 _CODE_NAME_RE = re.compile(r"^(\d+),\s+(.+)$")
-
-# ---
-# Seed data: loaded from seed_code_map.json at module init.
-#
-# The JSON file maps WSLCB numeric code strings → lists of endorsement names,
-# built from cross-referencing license numbers that appear in both
-# new-application (text) and approved/discontinued (numeric code) sections.
-#
-# Most codes map 1-to-1.  A handful map to multiple always-present
-# endorsements (e.g. 320 always includes BEER DISTRIBUTOR + WINE DISTRIBUTOR).
-# Keys are string representations of WSLCB internal license class IDs,
-# stored as TEXT in the DB.
-# ---
-_SEED_CODE_MAP_PATH = Path(__file__).parent / "seed_code_map.json"
-SEED_CODE_MAP: dict[str, list[str]] = json.loads(_SEED_CODE_MAP_PATH.read_text())
 
 
 # ---
@@ -157,199 +113,6 @@ def _merge_endorsement(
         conn.execute("DELETE FROM license_endorsements WHERE id = ?", (old_id,))
 
     return len(records)
-
-
-# ---
-# Schema seeding
-# ---
-
-
-def seed_endorsements(conn: sqlite3.Connection) -> int:
-    """Populate license_endorsements and endorsement_codes from SEED_CODE_MAP.
-
-    Safe to call repeatedly — skips existing rows.  After seeding, merges
-    any placeholder endorsements (where the endorsement name equals the
-    numeric code) that now have real mappings.
-
-    Returns the number of new code mappings inserted.
-    """
-    inserted = 0
-    for code, names in SEED_CODE_MAP.items():
-        for name in names:
-            eid = _ensure_endorsement(conn, name)
-            cur = conn.execute(
-                """INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id)
-                   VALUES (?, ?)""",
-                (code, eid),
-            )
-            inserted += cur.rowcount
-    conn.commit()
-
-    # Merge any placeholder endorsements now that seed mappings exist.
-    _merge_seeded_placeholders(conn)
-
-    return inserted
-
-
-# ---
-# Repair: merge mixed-case endorsement duplicates
-# ---
-
-
-def merge_mixed_case_endorsements(conn: sqlite3.Connection) -> int:
-    """Merge endorsements whose names differ only by case.
-
-    For each endorsement where ``name != UPPER(name)`` and an UPPER
-    counterpart already exists, migrate all record links and code
-    mappings to the canonical (upper-case) row via
-    ``_merge_endorsement()``, then delete the mixed-case row.  If no
-    upper-case counterpart exists, the mixed-case row is simply
-    renamed in place.
-
-    Returns the number of endorsements fixed.
-    """
-    dupes = conn.execute("""
-        SELECT mc.id AS mixed_id, mc.name AS mixed_name
-        FROM license_endorsements mc
-        WHERE mc.name != UPPER(mc.name)
-    """).fetchall()
-
-    if not dupes:
-        return 0
-
-    for row in dupes:
-        mixed_id, mixed_name = row[0], row[1]
-        upper_name = mixed_name.upper()
-
-        upper_row = conn.execute(
-            "SELECT id FROM license_endorsements WHERE name = ?",
-            (upper_name,),
-        ).fetchone()
-
-        if not upper_row:
-            # No upper counterpart — rename in place
-            conn.execute(
-                "UPDATE license_endorsements SET name = ? WHERE id = ?",
-                (upper_name, mixed_id),
-            )
-            logger.info("Renamed endorsement %r → %r (id=%d)", mixed_name, upper_name, mixed_id)
-            continue
-
-        _merge_endorsement(conn, mixed_id, upper_row[0])
-        logger.info(
-            "Merged endorsement %r (id=%d) into %r (id=%d)",
-            mixed_name,
-            mixed_id,
-            upper_name,
-            upper_row[0],
-        )
-
-    conn.commit()
-    return len(dupes)
-
-
-# ---
-# Repair: migrate "CODE, NAME" endorsements to proper names
-# ---
-
-
-def repair_code_name_endorsements(conn: sqlite3.Connection) -> int:
-    """Migrate record links from spurious ``CODE, NAME`` endorsements.
-
-    Historical data used license_type values like ``"450, GROCERY STORE -
-    BEER/WINE"`` which were stored as endorsement names verbatim.  This
-    function re-resolves each one: if the embedded code is already mapped
-    in ``endorsement_codes``, migrate to those endorsements; otherwise
-    use the embedded name (creating the endorsement if needed) and
-    register the code mapping.
-
-    Also cleans up bogus ``endorsement_codes`` rows whose code column
-    contains spaces (artifacts of ``discover_code_mappings`` running on
-    ``CODE, NAME`` values).
-
-    Returns the number of record links migrated.  Safe to call
-    repeatedly — no-ops once all ``CODE, NAME`` endorsements are gone.
-    """
-    # Find all endorsements matching the CODE, NAME pattern.
-    bogus = conn.execute(
-        "SELECT id, name FROM license_endorsements WHERE name GLOB '[0-9]*, *'"
-    ).fetchall()
-    if not bogus:
-        # Also clean up space-codes even if no CODE, NAME endorsements remain.
-        deleted = _cleanup_space_codes(conn)
-        if deleted:
-            conn.commit()
-        return 0
-
-    migrated = 0
-    for eid_old, full_name in bogus:
-        m = _CODE_NAME_RE.match(full_name)
-        if not m:
-            continue
-        code, name = m.group(1), m.group(2).strip()
-
-        # Determine the target endorsement(s) for this code.
-        # Prefer existing endorsement_codes mappings (from SEED_CODE_MAP)
-        # so we converge on the canonical name.
-        mapped_eids = conn.execute(
-            """SELECT ec.endorsement_id FROM endorsement_codes ec
-               JOIN license_endorsements le ON le.id = ec.endorsement_id
-               WHERE ec.code = ? AND le.name != ?""",
-            (code, full_name),
-        ).fetchall()
-
-        if mapped_eids:
-            target_eids = [r[0] for r in mapped_eids]
-        else:
-            # No existing mapping — use the name from the CODE, NAME value.
-            target_eid = _ensure_endorsement(conn, name)
-            conn.execute(
-                "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
-                (code, target_eid),
-            )
-            target_eids = [target_eid]
-
-        # Merge into first target, then add links to any extras.
-        migrated += _merge_endorsement(conn, eid_old, target_eids[0])
-        if len(target_eids) > 1:
-            # Link records to the additional target endorsements.
-            records = conn.execute(
-                "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
-                (target_eids[0],),
-            ).fetchall()
-            for rec in records:
-                for tgt in target_eids[1:]:
-                    _link_endorsement(conn, rec[0], tgt)
-
-    # Clean up bogus endorsement_codes with spaces in the code column.
-    _cleanup_space_codes(conn)
-
-    if migrated:
-        conn.commit()
-        logger.info(
-            "Repaired %d record-endorsement link(s) from %d 'CODE, NAME' endorsement(s).",
-            migrated,
-            len(bogus),
-        )
-    return migrated
-
-
-def _cleanup_space_codes(conn: sqlite3.Connection) -> int:
-    """Remove ``endorsement_codes`` rows whose code contains spaces.
-
-    These are artifacts of ``discover_code_mappings()`` processing
-    ``CODE, NAME`` license_type values via ``REPLACE(license_type, ',', '')``,
-    producing codes like ``"379 Curbside/Delivery Endorsement"``.
-
-    Returns the number of rows deleted.
-    """
-    cur = conn.execute("DELETE FROM endorsement_codes WHERE code LIKE '% %'")
-    if cur.rowcount:
-        logger.info(
-            "Removed %d bogus endorsement_codes row(s) with spaces in code.",
-            cur.rowcount,
-        )
-    return cur.rowcount
 
 
 # ---
@@ -490,14 +253,12 @@ def reprocess_endorsements(
     dict
         ``{"records_processed": int, "endorsements_linked": int}``
     """
-    # Build the query to select target records.
     if record_id is not None:
         rows = conn.execute(
             "SELECT id, license_type FROM license_records WHERE id = ?",
             (record_id,),
         ).fetchall()
     elif code is not None:
-        # Match both bare "CODE," and "CODE, NAME" forms.
         code_stripped = code.rstrip(",").strip()
         rows = conn.execute(
             """SELECT id, license_type FROM license_records
@@ -525,7 +286,6 @@ def reprocess_endorsements(
         endorsements_linked += linked
         records_processed += 1
 
-        # Update enrichment version stamp.
         conn.execute(
             """INSERT OR REPLACE INTO record_enrichments
                (record_id, step, completed_at, version)
@@ -546,211 +306,6 @@ def reprocess_endorsements(
         )
 
     return {"records_processed": records_processed, "endorsements_linked": endorsements_linked}
-
-
-def backfill(conn: sqlite3.Connection) -> int:
-    """Process all records that don't yet have endorsement links.
-
-    Returns the number of records processed.
-    """
-    rows = conn.execute("""
-        SELECT lr.id, lr.license_type, lr.section_type
-        FROM license_records lr
-        LEFT JOIN record_endorsements re ON re.record_id = lr.id
-        WHERE re.record_id IS NULL
-          AND lr.license_type IS NOT NULL AND lr.license_type != ''
-    """).fetchall()
-
-    for r in rows:
-        process_record(conn, r["id"], r["license_type"])
-
-    if rows:
-        conn.commit()
-    return len(rows)
-
-
-# ---
-# Code-mapping discovery (run after each scrape)
-# ---
-
-
-def discover_code_mappings(conn: sqlite3.Connection) -> dict[str, list[str]]:  # noqa: C901
-    """Cross-reference license numbers to learn new code→name mappings.
-
-    For each unmapped numeric code, find new_application records sharing
-    the same license_number.  When every matched text record contains the
-    same endorsement(s), adopt that as the mapping.
-
-    Returns {code: [name, ...]} for newly discovered mappings.
-    """
-    # Codes that map to at least one real (non-placeholder) endorsement.
-    # A placeholder endorsement has name == code (e.g. code "321" →
-    # endorsement named "321"); these should be treated as unmapped so
-    # we can resolve them when cross-reference data becomes available.
-    mapped = {
-        r[0]
-        for r in conn.execute("""
-            SELECT DISTINCT ec.code
-            FROM endorsement_codes ec
-            JOIN license_endorsements le ON le.id = ec.endorsement_id
-            WHERE le.name != ec.code
-        """).fetchall()
-    }
-
-    # All numeric codes in the data.  Handles both "450," (pure code)
-    # and "450, GROCERY STORE - BEER/WINE" (historical CODE, NAME).
-    all_codes: set[str] = set()
-    rows = conn.execute("""
-        SELECT DISTINCT license_type
-        FROM license_records
-        WHERE section_type IN ('approved', 'discontinued')
-          AND license_type GLOB '[0-9]*'
-    """).fetchall()
-    for r in rows:
-        raw = r[0].rstrip(",").strip()
-        m = _CODE_NAME_RE.match(raw)
-        if m:
-            all_codes.add(m.group(1))
-        elif raw.isdigit():
-            all_codes.add(raw)
-    unmapped = [c for c in all_codes if c not in mapped]
-
-    if not unmapped:
-        return {}
-
-    learned: dict[str, list[str]] = {}
-    for code in unmapped:
-        matches = conn.execute(
-            """
-            SELECT n.license_type AS text_type, COUNT(*) AS cnt
-            FROM license_records a
-            JOIN license_records n
-                ON a.license_number = n.license_number
-                AND n.section_type = 'new_application'
-            WHERE SUBSTR(a.license_type, 1, INSTR(a.license_type, ',') - 1) = ?
-              AND a.section_type IN ('approved', 'discontinued')
-            GROUP BY n.license_type
-        """,
-            (code,),
-        ).fetchall()
-        if not matches:
-            continue
-
-        total = sum(r["cnt"] for r in matches)
-        type_freq: dict[str, int] = {}
-        for r in matches:
-            for t in r["text_type"].split(";"):
-                key = t.strip()
-                type_freq[key] = type_freq.get(key, 0) + r["cnt"]
-
-        # Endorsements present in every single match
-        always = [t for t, c in type_freq.items() if c == total and t]
-        if not always:
-            continue
-
-        for name in always:
-            eid = _ensure_endorsement(conn, name)
-            conn.execute(
-                "INSERT OR IGNORE INTO endorsement_codes (code, endorsement_id) VALUES (?, ?)",
-                (code, eid),
-            )
-        learned[code] = always
-
-    if learned:
-        # Resolve any placeholder endorsements that were just mapped
-        _merge_placeholders(conn, learned)
-        conn.commit()
-    return learned
-
-
-def _merge_placeholders(conn: sqlite3.Connection, learned: dict[str, list[str]]) -> None:
-    """If a code had a placeholder endorsement (name == code), migrate links."""
-    for code, names in learned.items():
-        placeholder = conn.execute(
-            "SELECT id FROM license_endorsements WHERE name = ?", (code,)
-        ).fetchone()
-        if not placeholder:
-            continue
-        pid = placeholder[0]
-        # Merge into the first real endorsement
-        first_eid = _ensure_endorsement(conn, names[0])
-        _merge_endorsement(conn, pid, first_eid)
-        # Link records to any additional endorsements
-        if len(names) > 1:
-            records = conn.execute(
-                "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
-                (first_eid,),
-            ).fetchall()
-            for rec in records:
-                for name in names[1:]:
-                    eid = _ensure_endorsement(conn, name)
-                    _link_endorsement(conn, rec[0], eid)
-
-
-def _merge_seeded_placeholders(conn: sqlite3.Connection) -> int:
-    """Merge placeholder endorsements that now have real seed mappings.
-
-    A placeholder endorsement has ``name == code`` (e.g. endorsement named
-    ``"331"`` for code ``"331"``).  If ``seed_endorsements`` has since
-    registered a real mapping for that code, migrate all record links from
-    the placeholder to the real endorsement(s) and delete the placeholder.
-
-    Returns the number of record links migrated.
-    """
-    # Find placeholder endorsements: name is purely numeric and matches a code
-    # that also has at least one *real* (non-placeholder) endorsement.
-    placeholders = conn.execute("""
-        SELECT le.id, le.name
-        FROM license_endorsements le
-        JOIN endorsement_codes ec ON ec.endorsement_id = le.id AND ec.code = le.name
-        WHERE le.name GLOB '[0-9]*' AND le.name NOT GLOB '*[a-zA-Z]*'
-          AND EXISTS (
-              SELECT 1 FROM endorsement_codes ec2
-              JOIN license_endorsements le2 ON le2.id = ec2.endorsement_id
-              WHERE ec2.code = le.name AND le2.name != le.name
-          )
-    """).fetchall()
-    if not placeholders:
-        return 0
-
-    migrated = 0
-    for pid, code in placeholders:
-        # Real endorsement(s) for this code
-        real_eids = [
-            r[0]
-            for r in conn.execute(
-                """
-            SELECT ec.endorsement_id FROM endorsement_codes ec
-            JOIN license_endorsements le ON le.id = ec.endorsement_id
-            WHERE ec.code = ? AND le.name != ?
-        """,
-                (code, code),
-            ).fetchall()
-        ]
-        if not real_eids:
-            continue
-
-        # Merge into first real endorsement
-        count = _merge_endorsement(conn, pid, real_eids[0])
-        migrated += count
-        # Link records to any additional endorsements
-        if len(real_eids) > 1:
-            records = conn.execute(
-                "SELECT record_id FROM record_endorsements WHERE endorsement_id = ?",
-                (real_eids[0],),
-            ).fetchall()
-            for rec in records:
-                for eid in real_eids[1:]:
-                    _link_endorsement(conn, rec[0], eid)
-
-    if migrated:
-        conn.commit()
-        logger.info(
-            "Merged %d record link(s) from %d placeholder endorsement(s).",
-            migrated,
-            len(placeholders),
-        )
-    return migrated
 
 
 # ---

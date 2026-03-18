@@ -36,7 +36,7 @@ from .integrity import (
     check_orphaned_locations,
     check_unenriched_records,
 )
-from .queries import invalidate_filter_cache
+from .queries import invalidate_all_filter_caches
 from .substances import (
     add_substance,
     get_regulated_substances,
@@ -385,7 +385,7 @@ async def admin_substance_add(
             details={"name": name},
         )
         conn.commit()
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse(
         "/admin/endorsements?section=substances&flash=substance_added", status_code=303
     )
@@ -409,7 +409,7 @@ async def admin_substance_remove(
             details={"name": substance_name},
         )
         conn.commit()
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse(
         "/admin/endorsements?section=substances&flash=substance_removed", status_code=303
     )
@@ -434,7 +434,7 @@ async def admin_substance_set_endorsements(
             details={"endorsement_count": len(endorsement_ids)},
         )
         conn.commit()
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse(
         f"/admin/endorsements?section=substances&selected={substance_id}&flash=substance_updated",
         status_code=303,
@@ -497,7 +497,7 @@ async def admin_alias_endorsement(
     safe_section = (
         return_section if return_section in _VALID_ENDORSEMENT_SECTIONS else "endorsements"
     )
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse(
         f"/admin/endorsements?flash=aliased&section={safe_section}", status_code=303
     )
@@ -554,7 +554,7 @@ async def admin_rename_endorsement(
         )
         conn.commit()
 
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse(
         "/admin/endorsements?flash=renamed&section=endorsements", status_code=303
     )
@@ -582,7 +582,7 @@ async def admin_dismiss_suggestion(
     safe_section = (
         return_section if return_section in _VALID_ENDORSEMENT_SECTIONS else "endorsements"
     )
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse(
         f"/admin/endorsements?flash=dismissed&section={safe_section}", status_code=303
     )
@@ -612,7 +612,7 @@ async def admin_code_add_endorsement(
                 details={"code": code, "reprocessed_records": reprocessed},
             )
         conn.commit()
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
 
 
@@ -638,7 +638,7 @@ async def admin_code_remove_endorsement(
                 details={"code": code, "reprocessed_records": reprocessed},
             )
         conn.commit()
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
 
 
@@ -669,7 +669,7 @@ async def admin_code_create(
                 },
             )
         conn.commit()
-    invalidate_filter_cache()
+    invalidate_all_filter_caches()
     return RedirectResponse("/admin/endorsements?flash=code_created&section=codes", status_code=303)
 
 

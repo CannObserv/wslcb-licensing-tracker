@@ -459,7 +459,7 @@ class TestAdditionalNamesNotice:
     """Detail page shows the additional-names notice when has_additional_names=1."""
 
     def _insert_record(self, db, license_number, applicants, has_flag):
-        from wslcb_licensing_tracker.queries import insert_record
+        from wslcb_licensing_tracker.pipeline import insert_record
         rec = {
             "section_type": "new_application",
             "record_date": "2025-06-01",

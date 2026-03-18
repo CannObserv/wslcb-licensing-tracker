@@ -45,7 +45,7 @@ def client(db):
 
 def _insert_record(db, license_number="078001", section_type="new_application",
                    record_date="2025-06-15", application_type="NEW APPLICATION"):
-    from wslcb_licensing_tracker.queries import insert_record
+    from wslcb_licensing_tracker.pipeline import insert_record
     rec = {
         "section_type": section_type,
         "record_date": record_date,

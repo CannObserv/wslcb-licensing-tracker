@@ -81,8 +81,8 @@ def tmp_db(tmp_path):
 def prod_db(tmp_path):
     """Create a small 'production' DB with some records for comparison."""
     from wslcb_licensing_tracker.db import get_connection
-    from wslcb_licensing_tracker.queries import insert_record
-    from wslcb_licensing_tracker.endorsements import seed_endorsements
+    from wslcb_licensing_tracker.pipeline import insert_record
+    from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
 
     path = tmp_path / "prod.db"
     conn = get_connection(path)
@@ -224,8 +224,8 @@ class TestCompareResult:
     def test_extra_records_detected(self, tmp_path, prod_db):
         """Records in rebuilt but not prod are reported."""
         from wslcb_licensing_tracker.db import get_connection
-        from wslcb_licensing_tracker.queries import insert_record
-        from wslcb_licensing_tracker.endorsements import seed_endorsements
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
 
         rebuilt_path = tmp_path / "rebuilt.db"
         conn = get_connection(rebuilt_path)

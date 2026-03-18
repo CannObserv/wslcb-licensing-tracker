@@ -22,7 +22,11 @@ from .db import (
     get_or_create_source,
     link_record_source,
 )
-from .endorsements import discover_code_mappings, repair_code_name_endorsements, seed_endorsements
+from .endorsements_seed import (
+    discover_code_mappings,
+    repair_code_name_endorsements,
+    seed_endorsements,
+)
 from .entities import (
     clean_applicants_string,
     clean_entity_name,

@@ -5,8 +5,8 @@ refactor (#24).  All tests use in-memory SQLite via the ``db`` fixture.
 """
 import pytest
 
-from wslcb_licensing_tracker.endorsements import seed_endorsements
-from wslcb_licensing_tracker.queries import insert_record
+from wslcb_licensing_tracker.endorsements_seed import seed_endorsements
+from wslcb_licensing_tracker.pipeline import insert_record
 from wslcb_licensing_tracker.link_records import (
     build_all_links,
     link_new_record,
