@@ -252,6 +252,22 @@ def _insert_link(
         (new_app_id, outcome_id, confidence, days_gap),
     )
 
+    # For CHANGE OF LOCATION links: copy previous_location_id from the
+    # new_application to the approved outcome when the outcome lacks it.
+    conn.execute(
+        """
+        UPDATE license_records
+        SET previous_location_id = (
+            SELECT previous_location_id FROM license_records WHERE id = ?
+        )
+        WHERE id = ?
+          AND application_type = 'CHANGE OF LOCATION'
+          AND previous_location_id IS NULL
+          AND (SELECT previous_location_id FROM license_records WHERE id = ?) IS NOT NULL
+        """,
+        (new_app_id, outcome_id, new_app_id),
+    )
+
 
 def link_new_record(
     conn: sqlite3.Connection,

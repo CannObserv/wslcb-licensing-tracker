@@ -361,3 +361,142 @@ class TestGetReverseLinkInfo:
         ).fetchone())
         info = get_reverse_link_info(db, record)
         assert info is None
+
+
+# ── previous_location_id backfill ─────────────────────────────────────────
+
+
+class TestPreviousLocationBackfill:
+    """Approved CHANGE OF LOCATION records get previous_location_id from
+    their matched new-application record when a link is created."""
+
+    def test_build_all_links_backfills_previous_location_id(self, db):
+        """build_all_links copies previous_location_id to approved outcome."""
+        seed_endorsements(db)
+        na_id = _make_record(
+            db,
+            section_type="new_application",
+            application_type="CHANGE OF LOCATION",
+            license_number="C001",
+            record_date="2025-06-10",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            previous_business_location="100 OLD RD, OLYMPIA, WA 98501",
+            previous_city="OLYMPIA",
+            previous_state="WA",
+            previous_zip_code="98501",
+        )
+        ap_id = _make_record(
+            db,
+            section_type="approved",
+            application_type="CHANGE OF LOCATION",
+            license_number="C001",
+            record_date="2025-06-12",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            applicants="",
+        )
+
+        # Approved record has no previous_location_id before linking.
+        before = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (ap_id,),
+        ).fetchone()
+        assert before["previous_location_id"] is None
+
+        build_all_links(db)
+
+        # After linking the approved record should inherit the previous location.
+        na_prev = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (na_id,),
+        ).fetchone()["previous_location_id"]
+        assert na_prev is not None, "new_application should have previous_location_id"
+
+        ap_prev = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (ap_id,),
+        ).fetchone()["previous_location_id"]
+        assert ap_prev == na_prev
+
+    def test_link_new_record_backfills_previous_location_id(self, db):
+        """link_new_record copies previous_location_id on incremental link."""
+        seed_endorsements(db)
+        na_id = _make_record(
+            db,
+            section_type="new_application",
+            application_type="CHANGE OF LOCATION",
+            license_number="C002",
+            record_date="2025-06-10",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            previous_business_location="100 OLD RD, OLYMPIA, WA 98501",
+            previous_city="OLYMPIA",
+            previous_state="WA",
+            previous_zip_code="98501",
+        )
+        ap_id = _make_record(
+            db,
+            section_type="approved",
+            application_type="CHANGE OF LOCATION",
+            license_number="C002",
+            record_date="2025-06-12",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            applicants="",
+        )
+
+        link_new_record(db, ap_id)
+
+        na_prev = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (na_id,),
+        ).fetchone()["previous_location_id"]
+        assert na_prev is not None
+
+        ap_prev = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (ap_id,),
+        ).fetchone()["previous_location_id"]
+        assert ap_prev == na_prev
+
+    def test_does_not_overwrite_existing_previous_location_id(self, db):
+        """If approved record already has previous_location_id, leave it alone."""
+        seed_endorsements(db)
+        # Insert new_app with one previous location.
+        _make_record(
+            db,
+            section_type="new_application",
+            application_type="CHANGE OF LOCATION",
+            license_number="C003",
+            record_date="2025-06-10",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            previous_business_location="100 OLD RD, OLYMPIA, WA 98501",
+            previous_city="OLYMPIA",
+            previous_state="WA",
+            previous_zip_code="98501",
+        )
+        # Approved record with a different pre-existing previous location.
+        ap_id = _make_record(
+            db,
+            section_type="approved",
+            application_type="CHANGE OF LOCATION",
+            license_number="C003",
+            record_date="2025-06-12",
+            business_location="200 NEW BLVD, OLYMPIA, WA 98502",
+            previous_business_location="999 OTHER ST, TACOMA, WA 98402",
+            previous_city="TACOMA",
+            previous_state="WA",
+            previous_zip_code="98402",
+            applicants="",
+        )
+
+        original_prev = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (ap_id,),
+        ).fetchone()["previous_location_id"]
+        assert original_prev is not None
+
+        build_all_links(db)
+
+        after_prev = db.execute(
+            "SELECT previous_location_id FROM license_records WHERE id = ?",
+            (ap_id,),
+        ).fetchone()["previous_location_id"]
+        assert after_prev == original_prev
