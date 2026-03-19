@@ -60,7 +60,7 @@
                     </div>
                     <div class="overflow-y-auto max-h-60" role="listbox" aria-multiselectable="true">
                         {% for e in filters.endorsement %}
-                        <label class="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer endorsement-option">
+                        <label class="flex items-center gap-2 px-3 min-h-[44px] hover:bg-gray-50 cursor-pointer endorsement-option">
                             <input type="checkbox" name="endorsement" value="{{ e }}"
                                    {% if e in endorsement %}checked{% endif %}
                                    class="rounded border-gray-300 accent-co-purple">
