@@ -7,3 +7,11 @@ repos:
         files: ^src/
       - id: ruff-format
         files: ^src/
+  - repo: local
+    hooks:
+      - id: build-tailwind-css
+        name: Build Tailwind CSS
+        language: system
+        entry: scripts/pre-commit-tailwind.sh
+        files: '^(templates/.*\.html|static/css/input\.css|tailwind\.config\.js)$'
+        pass_filenames: false

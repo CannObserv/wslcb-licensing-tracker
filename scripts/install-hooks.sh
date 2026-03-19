@@ -23,8 +23,16 @@ fi
 
 HOOK_FILE="$ROOT/.git/hooks/pre-commit"
 
-# If an existing hook was not installed by us, refuse to overwrite.
+# If an existing hook was not installed by us, check whether it is the
+# pre-commit framework.  That framework already runs our Tailwind build via
+# the local hook in .pre-commit-config.yaml — no manual integration needed.
 if [ -f "$HOOK_FILE" ] && ! grep -qF "$MARKER" "$HOOK_FILE"; then
+    if grep -q "pre-commit.com" "$HOOK_FILE" || grep -q "pre_commit" "$HOOK_FILE"; then
+        echo "info: the pre-commit framework hook is installed at $HOOK_FILE" >&2
+        echo "      The Tailwind build is registered in .pre-commit-config.yaml." >&2
+        echo "      No action needed — run 'pre-commit install' if the hook is missing." >&2
+        exit 0
+    fi
     echo "error: a pre-commit hook already exists at $HOOK_FILE" >&2
     echo "       It was not installed by this script. To integrate manually:" >&2
     echo "       1. Add the following lines to the end of your existing hook:" >&2
