@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* HTMX loading states */
+.htmx-request { opacity: 0.5; transition: opacity 300ms; }
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator { display: inline-block; }
+
+/* Record type badges */
+.badge-new { background: #dbeafe; color: #1e40af; }
+.badge-approved { background: #dcfce7; color: #166534; }
+.badge-discontinued { background: #fee2e2; color: #991b1b; }
+
+/* Table scroll shadow — indicates horizontal scrollability */
+.scroll-shadow-right {
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent 100%);
+}
