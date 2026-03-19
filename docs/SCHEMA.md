@@ -143,11 +143,11 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - Enables targeted re-processing queries, e.g., find records missing entity linking: `WHERE id NOT IN (SELECT record_id FROM record_enrichments WHERE step = 'entities')`
 
 ### `license_records_fts` (FTS5 virtual table)
-- Indexes: business_name, business_location, applicants, license_type, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
+- Indexes: business_name, business_location, applicants, license_type, resolved_endorsements, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
 - Uses `license_records_fts_content` VIEW as its content source — this view JOINs `license_records` → `locations` to expose `raw_address` as `business_location` / `previous_business_location` for indexing
 - Kept in sync via triggers on `license_records`: AFTER INSERT inserts new values; updates use a BEFORE UPDATE / AFTER UPDATE pair (delete old, insert new); BEFORE DELETE removes old values. All read from the content view
 - Never write to the FTS table directly
-- **Known limitation:** indexes raw `license_type`, so FTS text search won't match endorsement names for records that store numeric codes. The endorsement dropdown filter works correctly (uses junction table).
+- `resolved_endorsements` (semicolon-joined resolved endorsement names, kept in sync by `process_record()`) enables FTS text search to match approved/discontinued records whose raw `license_type` is a numeric code.
 
 ### `admin_users`
 - One row per admin user; keyed by email (`COLLATE NOCASE`)
@@ -213,4 +213,6 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - Migration 011 (`clean_duplicate_markers`): strips WSLCB `DUPLICATE` annotation tokens from `applicants` and `previous_applicants` columns in `license_records` (frozen `raw_*` shadow columns are left untouched); deletes all `entities` rows whose `name LIKE '%DUPLICATE%'`; `record_entities` cascade-deletes automatically; after this migration run `cli.py reprocess-entities` to rebuild entity links from the cleaned strings
 - Migration 012 (`entities_name_index`): adds `idx_entities_name` index on `entities(name)` for faster entity lookup and deduplication queries
 - Migration 013 (`address_validator_v2`): renames `address_line_1`→`std_address_line_1` and `address_line_2`→`std_address_line_2` (consistent with the `std_` prefix on other standardized columns); adds five new columns to store results from `POST /api/v1/validate`: `validated_address TEXT`, `validation_status TEXT`, `dpv_match_code TEXT`, `latitude REAL`, `longitude REAL`
+- Migration 014 (`address_standardize_pipeline`): renames `validated_address`→`std_address_string`; adds `address_standardized_at TEXT`; backfills `address_standardized_at` from `address_validated_at` for rows already DPV-validated
+- Migration 015 (`resolved_endorsements`): adds `resolved_endorsements TEXT NOT NULL DEFAULT ''` to `license_records`; backfills from `record_endorsements` (semicolon-joined, alphabetically ordered endorsement names); also included in FTS via `_FTS_COLUMNS` and the `license_records_fts_content` view
 - To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)

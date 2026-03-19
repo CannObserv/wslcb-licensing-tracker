@@ -743,48 +743,6 @@ def _m013_address_validator_v2(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE locations ADD COLUMN {col} {col_type}")
 
 
-def _m015_resolved_endorsements(conn: sqlite3.Connection) -> None:
-    """Add resolved_endorsements column to license_records and backfill.
-
-    Stores a semicolon-joined string of resolved endorsement names for each
-    record (e.g. "GROCERY STORE - BEER/WINE; SNACK BAR").  ``process_record()``
-    keeps this column in sync after each endorsement pass; this migration
-    backfills existing rows from their current ``record_endorsements`` links.
-
-    Including the column in FTS (see ``_FTS_COLUMNS``) allows text searches
-    for endorsement names to match approved/discontinued records whose raw
-    ``license_type`` column contains only an opaque numeric code.
-    """
-    if not _table_exists(conn, "license_records"):
-        return
-    if not _column_exists(conn, "license_records", "resolved_endorsements"):
-        conn.execute(
-            "ALTER TABLE license_records ADD COLUMN resolved_endorsements TEXT NOT NULL DEFAULT ''"
-        )
-    # Backfill: build semicolon-joined name strings from record_endorsements.
-    # Only update rows that currently have an empty string (leaves any already
-    # populated rows untouched so the migration is safe to re-run).
-    if _table_exists(conn, "record_endorsements") and _table_exists(conn, "license_endorsements"):
-        conn.execute("""
-            UPDATE license_records
-               SET resolved_endorsements = (
-                   SELECT group_concat(le.name, '; ')
-                     FROM record_endorsements re
-                     JOIN license_endorsements le ON le.id = re.endorsement_id
-                    WHERE re.record_id = license_records.id
-               )
-             WHERE resolved_endorsements = ''
-               AND EXISTS (
-                   SELECT 1 FROM record_endorsements WHERE record_id = license_records.id
-               )
-        """)
-        # Replace any NULL from group_concat with '' for records with no links
-        conn.execute(
-            "UPDATE license_records SET resolved_endorsements = ''"
-            " WHERE resolved_endorsements IS NULL"
-        )
-
-
 def _m014_address_standardize_pipeline(conn: sqlite3.Connection) -> None:
     """Introduce the standardize-first address pipeline.
 
@@ -817,6 +775,49 @@ def _m014_address_standardize_pipeline(conn: sqlite3.Connection) -> None:
              WHERE address_validated_at IS NOT NULL
                AND address_standardized_at IS NULL
         """)
+
+
+def _m015_resolved_endorsements(conn: sqlite3.Connection) -> None:
+    """Add resolved_endorsements column to license_records and backfill.
+
+    Stores a semicolon-joined string of resolved endorsement names for each
+    record (e.g. "GROCERY STORE - BEER/WINE; SNACK BAR").  ``process_record()``
+    keeps this column in sync after each endorsement pass; this migration
+    backfills existing rows from their current ``record_endorsements`` links.
+
+    Including the column in FTS (see ``_FTS_COLUMNS``) allows text searches
+    for endorsement names to match approved/discontinued records whose raw
+    ``license_type`` column contains only an opaque numeric code.
+    """
+    if not _table_exists(conn, "license_records"):
+        return
+    if not _column_exists(conn, "license_records", "resolved_endorsements"):
+        conn.execute(
+            "ALTER TABLE license_records ADD COLUMN resolved_endorsements TEXT NOT NULL DEFAULT ''"
+        )
+    # Backfill: build semicolon-joined name strings from record_endorsements.
+    # Only update rows that currently have an empty string (leaves any already
+    # populated rows untouched so the migration is safe to re-run).
+    if _table_exists(conn, "record_endorsements") and _table_exists(conn, "license_endorsements"):
+        conn.execute("""
+            UPDATE license_records
+               SET resolved_endorsements = (
+                   SELECT group_concat(le.name, '; ')
+                     FROM record_endorsements re
+                     JOIN license_endorsements le ON le.id = re.endorsement_id
+                    WHERE re.record_id = license_records.id
+                    ORDER BY le.name
+               )
+             WHERE resolved_endorsements = ''
+               AND EXISTS (
+                   SELECT 1 FROM record_endorsements WHERE record_id = license_records.id
+               )
+        """)
+        # Replace any NULL from group_concat with '' for records with no links
+        conn.execute(
+            "UPDATE license_records SET resolved_endorsements = ''"
+            " WHERE resolved_endorsements IS NULL"
+        )
 
 
 # -- Migration registry ------------------------------------------------

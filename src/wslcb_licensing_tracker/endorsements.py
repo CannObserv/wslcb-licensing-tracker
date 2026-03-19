@@ -18,10 +18,10 @@ See Also:
 - ``endorsements_admin`` — admin UI helpers (duplicate detection, code-mapping CRUD)
 - ``substances`` — regulated substance CRUD
 
-Note: FTS currently indexes raw license_type values, which are numeric
-codes for approved/discontinued records.  Text search for endorsement
-names won't match those records — only the endorsement filter works.
-See GH issue #87 for the planned fix.
+Note: ``resolved_endorsements`` (maintained by :func:`process_record`) is
+indexed by FTS5, so text search for endorsement names now also matches
+approved/discontinued records whose raw ``license_type`` stores a numeric
+code.  See GH #87.
 """
 
 import logging
@@ -176,6 +176,7 @@ def _sync_resolved_endorsements(conn: sqlite3.Connection, record_id: int) -> Non
           FROM record_endorsements re
           JOIN license_endorsements le ON le.id = re.endorsement_id
          WHERE re.record_id = ?
+         ORDER BY le.name
         """,
         (record_id,),
     ).fetchone()
