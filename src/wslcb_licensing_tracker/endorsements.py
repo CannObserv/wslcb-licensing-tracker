@@ -475,6 +475,41 @@ def set_canonical_endorsement(
     return written
 
 
+def remove_alias(
+    conn: sqlite3.Connection,
+    endorsement_id: int,
+    removed_by: str | None = None,
+) -> None:
+    """Remove the alias row for *endorsement_id*, making it standalone.
+
+    Parameters
+    ----------
+    conn:
+        Open database connection — caller must commit.
+    endorsement_id:
+        Primary key of the variant endorsement whose alias should be deleted.
+    removed_by:
+        Admin email for logging.
+
+    Raises:
+    ------
+    ValueError
+        If *endorsement_id* has no alias row.
+    """
+    cursor = conn.execute(
+        "DELETE FROM endorsement_aliases WHERE endorsement_id = ?",
+        (endorsement_id,),
+    )
+    if cursor.rowcount == 0:
+        msg = f"endorsement #{endorsement_id} has no alias to remove"
+        raise ValueError(msg)
+    logger.info(
+        "remove_alias: endorsement#%d unaliased by %s",
+        endorsement_id,
+        removed_by,
+    )
+
+
 def rename_endorsement(
     conn: sqlite3.Connection,
     endorsement_id: int,

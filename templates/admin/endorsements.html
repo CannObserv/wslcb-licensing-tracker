@@ -17,6 +17,8 @@
   {# Flash banner #}
   {% if flash == 'aliased' %}
   <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Alias saved.</div>
+  {% elif flash == 'unaliased' %}
+  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Alias removed — endorsement is now standalone.</div>
   {% elif flash == 'renamed' %}
   <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Endorsement renamed.</div>
   {% elif flash == 'dismissed' %}
@@ -309,6 +311,24 @@
                   </form>
                 </div>
               </details>
+              {# Remove alias action — only shown for variant endorsements #}
+              {% if e.is_variant %}
+              <details class="inline-block relative group/unalias ml-2">
+                <summary class="text-xs text-red-600 hover:underline cursor-pointer list-none">Remove alias</summary>
+                <div class="absolute z-10 left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                  <form method="post" action="/admin/endorsements/unalias" class="space-y-2">
+                    <input type="hidden" name="endorsement_id" value="{{ e.id }}">
+                    <p class="text-xs text-gray-700">Remove alias for <em>{{ e.name }}</em>? It will become a standalone endorsement.</p>
+                    <div class="flex gap-2">
+                      <button type="submit"
+                              class="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">Confirm</button>
+                      <button type="button" onclick="this.closest('details').removeAttribute('open')"
+                              class="px-3 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200">Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              </details>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}

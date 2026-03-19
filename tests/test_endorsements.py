@@ -497,6 +497,56 @@ class TestSetCanonical:
         assert count == 1
 
 
+class TestRemoveAlias:
+    """Tests for remove_alias() — removing an endorsement alias."""
+
+    def test_removes_alias_row(self, db):
+        """remove_alias deletes the endorsement_aliases row, making variant standalone."""
+        from wslcb_licensing_tracker.endorsements import remove_alias, set_canonical_endorsement
+        variant_id = ensure_endorsement(db, "FARMERS MARKET FOR BEER")
+        canonical_id = ensure_endorsement(db, "NON-PROFIT ARTS ORGANIZATION")
+        set_canonical_endorsement(db, canonical_id=canonical_id, variant_ids=[variant_id])
+        db.commit()
+
+        remove_alias(db, endorsement_id=variant_id, removed_by="admin@example.com")
+        db.commit()
+
+        row = db.execute(
+            "SELECT 1 FROM endorsement_aliases WHERE endorsement_id = ?",
+            (variant_id,),
+        ).fetchone()
+        assert row is None
+
+    def test_raises_when_no_alias(self, db):
+        """remove_alias raises ValueError when endorsement has no alias."""
+        from wslcb_licensing_tracker.endorsements import remove_alias
+        standalone_id = ensure_endorsement(db, "STANDALONE ENDORSEMENT")
+        db.commit()
+
+        with pytest.raises(ValueError, match="no alias"):
+            remove_alias(db, endorsement_id=standalone_id, removed_by="admin@example.com")
+
+    def test_other_aliases_unaffected(self, db):
+        """Removing one variant's alias leaves other variants of same canonical intact."""
+        from wslcb_licensing_tracker.endorsements import remove_alias, set_canonical_endorsement
+        v1 = ensure_endorsement(db, "VARIANT REMOVE ME")
+        v2 = ensure_endorsement(db, "VARIANT KEEP ME")
+        canonical_id = ensure_endorsement(db, "CANONICAL KEEP")
+        set_canonical_endorsement(db, canonical_id=canonical_id, variant_ids=[v1, v2])
+        db.commit()
+
+        remove_alias(db, endorsement_id=v1, removed_by="admin@example.com")
+        db.commit()
+
+        remaining = db.execute(
+            "SELECT endorsement_id FROM endorsement_aliases WHERE canonical_endorsement_id = ?",
+            (canonical_id,),
+        ).fetchall()
+        ids = {r[0] for r in remaining}
+        assert v2 in ids
+        assert v1 not in ids
+
+
 class TestRenameEndorsement:
     """Tests for rename_endorsement() — bare numeric code → text name."""
 

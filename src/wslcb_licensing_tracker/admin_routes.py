@@ -18,6 +18,8 @@ from .admin_audit import get_audit_log, log_action
 from .admin_auth import require_admin
 from .db import get_db
 from .endorsements import (
+    process_record,
+    remove_alias,
     rename_endorsement,
     reprocess_endorsements,
     set_canonical_endorsement,
@@ -557,6 +559,72 @@ async def admin_rename_endorsement(
     invalidate_all_filter_caches()
     return RedirectResponse(
         "/admin/endorsements?flash=renamed&section=endorsements", status_code=303
+    )
+
+
+@router.post("/endorsements/unalias", response_class=HTMLResponse)
+async def admin_unalias_endorsement(
+    _request: Request,
+    admin: Annotated[dict[str, Any], Depends(require_admin)],
+    endorsement_id: Annotated[int, Form()],
+) -> HTMLResponse:
+    """Remove an endorsement alias, making the variant standalone."""
+    with get_db() as conn:
+        alias_row = conn.execute(
+            "SELECT canonical_endorsement_id FROM endorsement_aliases WHERE endorsement_id = ?",
+            (endorsement_id,),
+        ).fetchone()
+        if not alias_row:
+            raise HTTPException(
+                status_code=422, detail="endorsement is not a variant — no alias to remove"
+            )
+        canonical_id = alias_row[0]
+
+        variant_name = conn.execute(
+            "SELECT name FROM license_endorsements WHERE id = ?",
+            (endorsement_id,),
+        ).fetchone()
+        variant_name = variant_name[0] if variant_name else str(endorsement_id)
+
+        canonical_name = conn.execute(
+            "SELECT name FROM license_endorsements WHERE id = ?",
+            (canonical_id,),
+        ).fetchone()
+        canonical_name = canonical_name[0] if canonical_name else str(canonical_id)
+
+        remove_alias(conn, endorsement_id=endorsement_id, removed_by=admin["email"])
+
+        # Reprocess resolved_endorsements FTS for all affected records.
+        affected = conn.execute(
+            """
+            SELECT lr.id, lr.license_type
+            FROM license_records lr
+            JOIN record_endorsements re ON re.record_id = lr.id
+            WHERE re.endorsement_id = ?
+            """,
+            (endorsement_id,),
+        ).fetchall()
+        for record_id, raw_license_type in affected:
+            process_record(conn, record_id, raw_license_type or "")
+
+        log_action(
+            conn,
+            email=admin["email"],
+            action="endorsement.remove_alias",
+            target_type="endorsement",
+            target_id=endorsement_id,
+            details={
+                "variant_name": variant_name,
+                "canonical_id": canonical_id,
+                "canonical_name": canonical_name,
+                "records_reprocessed": len(affected),
+            },
+        )
+        conn.commit()
+
+    invalidate_all_filter_caches()
+    return RedirectResponse(
+        "/admin/endorsements?flash=unaliased&section=endorsements", status_code=303
     )
 
 

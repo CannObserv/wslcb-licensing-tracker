@@ -422,3 +422,102 @@ class TestSubstanceSetEndorsements:
             (sid,),
         ).fetchone()[0]
         assert count == 1  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/endorsements/unalias
+# ---------------------------------------------------------------------------
+
+def _seed_alias(db, variant_name="FARMERS MARKET FOR BEER", canonical_name="NON-PROFIT ARTS ORGANIZATION"):
+    """Seed a variant→canonical alias and return (variant_id, canonical_id)."""
+    db.execute("INSERT OR IGNORE INTO license_endorsements (name) VALUES (?)", (variant_name,))
+    db.execute("INSERT OR IGNORE INTO license_endorsements (name) VALUES (?)", (canonical_name,))
+    db.commit()
+    variant_id = db.execute(
+        "SELECT id FROM license_endorsements WHERE name = ?", (variant_name,)
+    ).fetchone()[0]
+    canonical_id = db.execute(
+        "SELECT id FROM license_endorsements WHERE name = ?", (canonical_name,)
+    ).fetchone()[0]
+    db.execute(
+        "INSERT OR IGNORE INTO endorsement_aliases (endorsement_id, canonical_endorsement_id, created_by)"
+        " VALUES (?, ?, 'seed')",
+        (variant_id, canonical_id),
+    )
+    db.commit()
+    return variant_id, canonical_id
+
+
+class TestAdminUnalias:
+    def test_removes_alias_and_redirects(self, db):
+        """POST /unalias removes the alias row and redirects with flash."""
+        _seed_admin(db)
+        variant_id, _ = _seed_alias(db)
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/unalias",
+                data={"endorsement_id": str(variant_id)},
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 303
+        assert "flash=unaliased" in resp.headers["location"]
+        row = db.execute(
+            "SELECT 1 FROM endorsement_aliases WHERE endorsement_id = ?",
+            (variant_id,),
+        ).fetchone()
+        assert row is None
+
+    def test_422_when_not_a_variant(self, db):
+        """POST /unalias with a non-variant endorsement_id returns 422."""
+        _seed_admin(db)
+        standalone_id = _seed_endorsement(db, "STANDALONE SOLO")
+        client, patches = _make_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/unalias",
+                data={"endorsement_id": str(standalone_id)},
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code == 422
+
+    def test_audit_log_written(self, db):
+        """POST /unalias writes an audit log entry."""
+        _seed_admin(db)
+        variant_id, _ = _seed_alias(db)
+        client, patches = _make_client(db)
+        try:
+            client.post(
+                "/admin/endorsements/unalias",
+                data={"endorsement_id": str(variant_id)},
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        row = db.execute(
+            "SELECT action FROM admin_audit_log WHERE action = 'endorsement.remove_alias'"
+        ).fetchone()
+        assert row is not None
+
+    def test_non_admin_forbidden(self, db):
+        """POST /unalias without admin auth is rejected."""
+        variant_id, _ = _seed_alias(db)
+        client, patches = _make_noauth_client(db)
+        try:
+            resp = client.post(
+                "/admin/endorsements/unalias",
+                data={"endorsement_id": str(variant_id)},
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+        assert resp.status_code in (302, 303, 403)
+        row = db.execute(
+            "SELECT 1 FROM endorsement_aliases WHERE endorsement_id = ?",
+            (variant_id,),
+        ).fetchone()
+        assert row is not None  # alias unchanged
