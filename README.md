@@ -58,7 +58,7 @@ Each record includes:
 | Address validation | External API ([address-validator](https://address-validator.exe.xyz:8000/docs)) for USPS-standardized parsing |
 | Database | SQLite with [FTS5](https://www.sqlite.org/fts5.html) full-text search |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
-| Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (CDN, custom brand palette) |
+| Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (pre-built CLI, custom brand palette) |
 | Scheduling | systemd timer (twice-daily) |
 
 ## Logging
