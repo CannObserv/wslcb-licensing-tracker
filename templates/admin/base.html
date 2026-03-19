@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="flex gap-6">
+<div class="flex flex-col md:flex-row gap-6">
     {# Admin side nav #}
-    <aside class="w-48 flex-shrink-0">
+    <aside class="w-full md:w-48 flex-shrink-0">
         <nav aria-label="Admin navigation" class="bg-white border border-gray-200 rounded-lg overflow-hidden">
             <div class="px-4 py-3 bg-co-purple-50 border-b border-co-purple-100">
                 <span class="text-xs font-semibold text-co-purple uppercase tracking-wide">Admin</span>
@@ -42,4 +42,15 @@
         {% block admin_content %}{% endblock %}
     </div>
 </div>
+<script>
+(function () {
+    document.querySelectorAll('.js-flash-banner').forEach(function (el) {
+        setTimeout(function () {
+            el.style.transition = 'opacity 0.5s';
+            el.style.opacity = '0';
+            setTimeout(function () { el.remove(); }, 500);
+        }, 5000);
+    });
+}());
+</script>
 {% endblock %}

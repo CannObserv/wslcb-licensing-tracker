@@ -5,35 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}WSLCB Licensing Tracker{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='13' cy='13' r='9' fill='none' stroke='%2317de6b' stroke-width='3'/%3E%3Cline x1='20' y1='20' x2='29' y2='29' stroke='%2317de6b' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
-    <script src="https://cdn.tailwindcss.com?v=3.4.17"></script>
-    <script>
-    tailwind.config = {
-        theme: {
-            extend: {
-                colors: {
-                    'co-green': '#8cbe69',
-                    'co-purple': {
-                        DEFAULT: '#6d4488',
-                        50:  '#f5f0f8',
-                        100: '#ebe1f1',
-                        600: '#6d4488',
-                        700: '#5a3870',
-                        800: '#472c59',
-                    },
-                },
-            },
-        },
-    }
-    </script>
+    <link rel="stylesheet" href="/static/css/tailwind.css?v={{ css_version }}">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <style>
-        .htmx-request { opacity: 0.5; transition: opacity 300ms; }
-        .htmx-indicator { display: none; }
-        .htmx-request .htmx-indicator { display: inline-block; }
-        .badge-new { background: #dbeafe; color: #1e40af; }
-        .badge-approved { background: #dcfce7; color: #166534; }
-        .badge-discontinued { background: #fee2e2; color: #991b1b; }
-    </style>
 </head>
 <body class="h-full bg-gray-50">
     <nav aria-label="Main navigation" class="bg-white border-b border-gray-200 shadow-sm">
@@ -45,18 +18,39 @@
                         <span class="text-lg font-bold text-gray-900">WSLCB Licensing Tracker</span>
                     </a>
                 </div>
-                <div class="flex items-center gap-4">
+                {# Desktop nav links #}
+                <div class="hidden md:flex items-center gap-4">
                     <a href="/" class="text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
                     <a href="/search" class="text-sm text-gray-600 hover:text-co-purple-700">Records</a>
                     {% if current_user %}
                     <a href="/entities" class="text-sm text-gray-600 hover:text-co-purple-700">Entities</a>
-
                     <a href="/admin/" class="text-sm text-co-purple hover:text-co-purple-700 font-medium">Admin</a>
                     <span class="text-xs text-gray-400 font-mono hidden sm:inline">{{ current_user.email }}</span>
                     {% endif %}
                 </div>
+                {# Mobile hamburger button #}
+                <button id="nav-toggle" type="button"
+                        class="md:hidden p-2 rounded-md text-gray-500 hover:text-co-purple hover:bg-gray-100"
+                        aria-expanded="false" aria-controls="mobile-nav" aria-label="Open navigation menu">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path id="nav-icon-open" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        <path id="nav-icon-close" class="hidden" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
             </div>
         </div>
+    {# Mobile nav dropdown #}
+    <div id="mobile-nav" class="hidden md:hidden border-t border-gray-200 bg-white">
+        <div class="px-4 py-3 space-y-1">
+            <a href="/" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
+            <a href="/search" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Records</a>
+            {% if current_user %}
+            <a href="/entities" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Entities</a>
+            <a href="/admin/" class="block py-2 text-sm text-co-purple hover:text-co-purple-700 font-medium">Admin</a>
+            <div class="py-1 text-xs text-gray-400 font-mono">{{ current_user.email }}</div>
+            {% endif %}
+        </div>
+    </div>
     </nav>
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {% block content %}{% endblock %}
@@ -69,7 +63,7 @@
                     <img src="/static/images/cannabis_observer-icon-square.svg" alt="" class="w-4 h-4">
                     Cannabis Observer
                 </a>
-                <span aria-label="seedling, classical building, magnifying glass">🌱🏛️🔍</span>
+                <span aria-hidden="true">🌱🏛️🔍</span>
             </div>
             <p class="text-xs text-gray-400 text-center">
                 Data sourced from the
@@ -78,5 +72,34 @@
             </p>
         </div>
     </footer>
+<script>
+(function () {
+    const btn = document.getElementById('nav-toggle');
+    const menu = document.getElementById('mobile-nav');
+    const iconOpen = document.getElementById('nav-icon-open');
+    const iconClose = document.getElementById('nav-icon-close');
+
+    function closeMenu() {
+        menu.classList.add('hidden');
+        btn.setAttribute('aria-expanded', 'false');
+        iconOpen.classList.remove('hidden');
+        iconClose.classList.add('hidden');
+    }
+
+    btn.addEventListener('click', function () {
+        const open = menu.classList.toggle('hidden');
+        btn.setAttribute('aria-expanded', String(!open));
+        iconOpen.classList.toggle('hidden', !open);
+        iconClose.classList.toggle('hidden', open);
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !menu.classList.contains('hidden')) {
+            closeMenu();
+            btn.focus();
+        }
+    });
+}());
+</script>
 </body>
 </html>

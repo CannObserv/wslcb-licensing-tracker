@@ -16,25 +16,25 @@
 
   {# Flash banner #}
   {% if flash == 'aliased' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Alias saved.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Alias saved.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'unaliased' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Alias removed — endorsement is now standalone.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Alias removed — endorsement is now standalone.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'renamed' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Endorsement renamed.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Endorsement renamed.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'dismissed' %}
-  <div class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">Suggestion dismissed.</div>
+  <div class="js-flash-banner rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">Suggestion dismissed.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-amber-600 hover:text-amber-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'code_updated' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Code mapping updated and records reprocessed.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Code mapping updated and records reprocessed.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'code_created' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">New code created and records reprocessed.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">New code created and records reprocessed.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'substance_added' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Regulated substance added.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Regulated substance added.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'substance_removed' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Regulated substance deleted.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Regulated substance deleted.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'substance_updated' %}
-  <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Endorsement assignments saved.</div>
+  <div class="js-flash-banner rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">Endorsement assignments saved.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-green-600 hover:text-green-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% elif flash == 'substance_name_required' %}
-  <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">Substance name is required.</div>
+  <div class="js-flash-banner rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">Substance name is required.<button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-red-600 hover:text-red-900 font-bold leading-none" aria-label="Dismiss">&times;</button></div>
   {% endif %}
 
   {# Tab bar #}
@@ -537,120 +537,6 @@
 
 </div>
 
-<script>
-// ── Endorsement list filter ────────────────────────────────────────────────
-function filterEndorsements() {
-  const q = document.getElementById('endo-search').value.toLowerCase();
-  const statusVal = document.getElementById('endo-status-filter').value;
-  document.querySelectorAll('.endo-row').forEach(row => {
-    const nameMatch = !q || row.dataset.name.includes(q);
-    const statusMatch = !statusVal || row.dataset.status === statusVal;
-    row.style.display = (nameMatch && statusMatch) ? '' : 'none';
-  });
-}
-
-// ── Alias checkbox machinery ───────────────────────────────────────────────
-function rebuildVariantHiddens(checked, canonId) {
-  const hiddenContainer = document.getElementById('alias-variant-hiddens');
-  hiddenContainer.innerHTML = '';
-  checked.filter(cb => cb.dataset.id !== String(canonId)).forEach(cb => {
-    const inp = document.createElement('input');
-    inp.type = 'hidden';
-    inp.name = 'variant_ids';
-    inp.value = cb.dataset.id;
-    hiddenContainer.appendChild(inp);
-  });
-}
-
-function updateAliasPanel() {
-  const checked = [...document.querySelectorAll('.endo-check:checked')];
-  const listEl = document.getElementById('alias-selected-list');
-  const canonSelect = document.getElementById('alias-canonical-select');
-  const submitBtn = document.getElementById('alias-submit-btn');
-
-  if (checked.length < 2) {
-    listEl.textContent = checked.length === 1
-      ? `1 selected — check at least one more.`
-      : 'No endorsements selected yet.';
-    canonSelect.innerHTML = '<option value="">— pick from checked —</option>';
-    rebuildVariantHiddens([], null);
-    submitBtn.disabled = true;
-    return;
-  }
-
-  // Rebuild canonical dropdown with checked items
-  const prevCanon = canonSelect.value;
-  canonSelect.innerHTML = '<option value="">— choose canonical —</option>';
-  checked.forEach(cb => {
-    const opt = document.createElement('option');
-    opt.value = cb.dataset.id;
-    opt.textContent = cb.dataset.name;
-    canonSelect.appendChild(opt);
-  });
-  // Restore previous selection if still valid
-  if (prevCanon && [...canonSelect.options].some(o => o.value === prevCanon)) {
-    canonSelect.value = prevCanon;
-  }
-
-  listEl.innerHTML = `<strong>${checked.length} selected:</strong> ` +
-    checked.map(cb => `<em>${cb.dataset.name}</em>`).join(', ');
-
-  submitBtn.disabled = false;
-
-  // Eagerly populate variant hiddens with whatever canonical is currently selected
-  // (fixes the race where submit fires before onchange).
-  rebuildVariantHiddens(checked, canonSelect.value);
-
-  canonSelect.onchange = function() {
-    rebuildVariantHiddens(checked, this.value);
-  };
-}
-
-// Guard on the alias form submit: re-sync hiddens and validate canonical is chosen.
-document.addEventListener('DOMContentLoaded', () => {
-  const aliasForm = document.querySelector('#alias-form-details form');
-  if (aliasForm) {
-    aliasForm.addEventListener('submit', function(e) {
-      const checked = [...document.querySelectorAll('.endo-check:checked')];
-      const canonSelect = document.getElementById('alias-canonical-select');
-      if (!canonSelect.value) {
-        e.preventDefault();
-        alert('Please choose which endorsement is canonical before submitting.');
-        return;
-      }
-      // Final re-sync of hidden inputs in case onchange was skipped
-      rebuildVariantHiddens(checked, canonSelect.value);
-      if (!document.querySelectorAll('#alias-variant-hiddens input').length) {
-        e.preventDefault();
-        alert('At least one variant must differ from the canonical.');
-      }
-    });
-  }
-
-  // Pre-populate filter from server-side q param
-  {% if q %}
-  filterEndorsements();
-  {% endif %}
-});
-
-document.querySelectorAll('.endo-check').forEach(cb =>
-  cb.addEventListener('change', updateAliasPanel)
-);
-
-// ── Suggestion accept helper ───────────────────────────────────────────────
-function sugAccept(radio, canonicalId, variantId) {
-  const form = radio.closest('form');
-  form.querySelector('.sug-canonical-id').value = canonicalId;
-  form.querySelector('.sug-variant-id').value = variantId;
-}
-
-// ── Code list filter ───────────────────────────────────────────────────────
-function filterCodes() {
-  const q = document.getElementById('code-search').value.toLowerCase();
-  document.querySelectorAll('.code-row').forEach(row => {
-    const match = !q || row.dataset.code.includes(q) || (row.dataset.names || '').includes(q);
-    row.style.display = match ? '' : 'none';
-  });
-}
-</script>
+<script src="/static/js/admin-endorsements.js?v={{ css_version }}"></script>
+<script>{% if q %}filterEndorsements();{% endif %}</script>
 {% endblock %}

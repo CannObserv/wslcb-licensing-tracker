@@ -54,7 +54,11 @@ license_records → locations (FK: location_id, previous_location_id)
 | `rebuild.py` | `rebuild_from_sources()`, `compare_databases()`. Four phases: diff archives → HTML snapshots → endorsement discovery → outcome links. |
 | `log_config.py` | `setup_logging()` — auto-detects TTY vs JSON format. Call once per entry point. |
 | `cli.py` | Unified CLI entry point. All operational subcommands. |
-| `templates/` | `base.html` (layout + Tailwind config). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
+| `templates/` | `base.html` (main layout — nav, footer, CSS/JS includes). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
+| `tailwind.config.js` | Tailwind CSS config — content paths, co-green/co-purple palette. Consumed by `scripts/build-css.sh`. |
+| `static/css/input.css` | Tailwind source: `@tailwind` directives + HTMX loading states + badge classes + `.scroll-shadow-right`. |
+| `static/js/search.js` | Client-side logic for search page: section-type toggle, state→city fetch, endorsement multi-select dropdown. |
+| `static/js/admin-endorsements.js` | Admin endorsements page JS: filter, alias panel, rebuild-hiddens, suggestion helpers, code filter. |
 
 ## Frozen vs. Derived Data Contract
 
@@ -102,7 +106,7 @@ uv run pytest tests/ -v   # must pass before committing
 - Sample record fixtures in `conftest.py`: `standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`.
 
 ### Templates
-- Tailwind via CDN + custom `tailwind.config` in `base.html`. No bundler.
+- Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`. Config in `tailwind.config.js`. No bundler.
 - HTMX for partial updates; `/search` detects `HX-Request` header.
 - Custom Jinja2 filters in `app.py`: `section_label`, `phone_format`, `build_qs`.
 - See [`docs/STYLE.md`](STYLE.md) for brand colors and CSS conventions.
@@ -130,6 +134,18 @@ Never use `gh` for git push/pull. Never use SSH key for API calls.
 ```
 
 Common types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`. Put `(closes #N)` in commit **body** (not subject) to auto-close on push.
+
+## Dev Setup (one-time after clone)
+
+```bash
+# Install pre-commit hook (auto-rebuilds Tailwind CSS before each commit)
+scripts/install-hooks.sh
+
+# Manual CSS rebuild (if you change templates or tailwind.config.js without committing)
+scripts/build-css.sh
+```
+
+The hook auto-downloads the Tailwind CLI binary on first run (~26MB, platform-specific, gitignored at `scripts/bin/`).
 
 ## Common Tasks
 

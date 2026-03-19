@@ -14,7 +14,8 @@
 
 {% if entities %}
 <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-    <table class="min-w-full divide-y divide-gray-200 text-sm">
+    <div class="overflow-x-auto scroll-shadow-right">
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
         <thead class="bg-gray-50">
             <tr>
                 <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider w-full">Name</th>
@@ -44,6 +45,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
 {# Pagination #}

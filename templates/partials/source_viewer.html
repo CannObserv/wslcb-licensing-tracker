@@ -7,7 +7,7 @@
   <div class="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600">
     <div class="flex items-center gap-3 flex-wrap min-w-0">
       <span class="font-medium">
-        {% if source.source_type == 'live_scrape' %}⚡{% elif source.source_type in ('co_archive', 'co_diff_archive') %}📁{% elif source.source_type == 'internet_archive' %}🏛️{% else %}•{% endif %}
+        <span aria-hidden="true">{% if source.source_type == 'live_scrape' %}⚡{% elif source.source_type in ('co_archive', 'co_diff_archive') %}📁{% elif source.source_type == 'internet_archive' %}🏛️{% else %}•{% endif %}</span>
         {{ source.source_label }}
       </span>
       {% if source.captured_at %}
@@ -31,9 +31,9 @@
     <iframe
       id="source-viewer-iframe"
       sandbox="allow-same-origin"
-      style="width:100%; border:0; display:block; min-height:80px;"
+      class="w-full border-0 block min-h-[80px] max-h-[60vh] overflow-y-auto"
       srcdoc="{{ srcdoc_attr | safe }}"
-      onload="this.style.height=(this.contentWindow.document.body.scrollHeight+16)+'px'"
+      onload="this.style.height=Math.min(this.contentWindow.document.body.scrollHeight+16, window.innerHeight*0.6)+'px'"
     ></iframe>
   </div>
   {% else %}

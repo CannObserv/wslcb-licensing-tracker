@@ -6,4 +6,4 @@ data/
 env
 .pytest_cache/
 .worktrees/
-.worktrees/
+scripts/bin/

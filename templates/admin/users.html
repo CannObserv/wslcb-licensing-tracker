@@ -6,8 +6,9 @@
     <h1 class="text-2xl font-bold text-gray-900">Admin Users</h1>
 
     {% if error %}
-    <div class="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
-        ⚠️ {{ error }}
+    <div class="js-flash-banner bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
+        <span aria-hidden="true">⚠️</span> {{ error }}
+        <button type="button" onclick="this.closest('.js-flash-banner').remove()" class="float-right text-red-600 hover:text-red-900 font-bold leading-none" aria-label="Dismiss">&times;</button>
     </div>
     {% endif %}
 
