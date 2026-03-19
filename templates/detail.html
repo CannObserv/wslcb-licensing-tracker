@@ -87,7 +87,7 @@
                     {% if record.std_address_line_2 %}<div>{{ record.std_address_line_2 }}</div>{% endif %}
                     <div>{{ record.std_city }}, {{ record.std_region }} {{ record.std_postal_code }}</div>
                     {% if record.business_location %}
-                    <div class="mt-1 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.business_location }}</div>
+                    <div class="mt-1 text-xs text-gray-400">Source: {{ record.business_location }}</div>
                     {% endif %}
                     {% else %}
                     {{ record.business_location }}
@@ -130,7 +130,7 @@
                                 {% endif %}
                             </div>
                             {% if record.previous_business_location %}
-                            <div class="mt-2 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.previous_business_location }}</div>
+                            <div class="mt-2 text-xs text-gray-400">Source: {{ record.previous_business_location }}</div>
                             {% endif %}
                         </div>
                         <div class="bg-co-purple-50 rounded-lg p-4 border border-co-purple-100">
@@ -145,7 +145,7 @@
                                 {% endif %}
                             </div>
                             {% if record.business_location %}
-                            <div class="mt-2 text-xs text-gray-400" title="Original text from WSLCB">Source: {{ record.business_location }}</div>
+                            <div class="mt-2 text-xs text-gray-400">Source: {{ record.business_location }}</div>
                             {% endif %}
                         </div>
                     </div>
@@ -214,16 +214,13 @@
                             hx-swap="innerHTML"
                             hx-indicator="#source-viewer-spinner"
                             class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }} cursor-pointer hover:ring-2 hover:ring-current focus:outline-none focus:ring-2 focus:ring-current transition-shadow"
-                            title="View original source — {{ group.count }} {{ group.label | lower }}{{ 's' if group.count != 1 }}"
                         ><span aria-hidden="true">{{ group.icon }}</span> {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></button>
                         {% else %}
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }}"
-                              title="Confirmed in {{ group.count }} {{ group.label | lower }}{{ 's' if group.count != 1 }}"><span aria-hidden="true">{{ group.icon }}</span> {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></span>
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }}"><span aria-hidden="true">{{ group.icon }}</span> {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></span>
                         {% endif %}
                         {% endfor %}
                         {% if provenance.repaired %}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-sky-50 text-sky-700 border border-sky-200"
-                              title="Data was repaired from a snapshot source"><span aria-hidden="true">🔧</span> Repaired</span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-sky-50 text-sky-700 border border-sky-200"><span aria-hidden="true">🔧</span> Repaired</span>
                         {% endif %}
                         {% if provenance.first_date and provenance.last_date %}
                         <span class="text-[11px] text-gray-400 ml-1">{% if provenance.first_date == provenance.last_date %}{{ provenance.first_date }}{% else %}{{ provenance.first_date }} – {{ provenance.last_date }}{% endif %}</span>
@@ -231,7 +228,7 @@
                     </div>
                     {% if provenance.total > 3 %}
                     <details class="mt-2">
-                        <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-600">Show all {{ provenance.total }} sources</summary>
+                        <summary class="text-xs text-gray-600 cursor-pointer hover:text-gray-800">Show all {{ provenance.total }} sources</summary>
                         <div class="mt-2 flex flex-wrap gap-1.5">
                             {% for s in sources %}
                             {% set sd = provenance.groups.get(s.source_type, {}) %}
@@ -242,11 +239,9 @@
                                 hx-swap="innerHTML"
                                 hx-indicator="#source-viewer-spinner"
                                 class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }} cursor-pointer hover:ring-1 hover:ring-current focus:outline-none"
-                                title="{{ s.role }} — view source"
                             >{{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}</button>
                             {% else %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }}"
-                                title="{{ s.role }}">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }}">
                                 {{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}
                             </span>
                             {% endif %}
@@ -289,7 +284,7 @@
             </thead>
             <tbody class="divide-y divide-gray-200">
                 {% for r in related %}
-                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50
+                <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50 focus-within:ring-2 focus-within:ring-co-purple focus-within:ring-offset-1
                     {%- if outcome and outcome.linked_record_id == r.id %} border-l-2 border-green-400 bg-green-50/50
                     {%- elif reverse_link and reverse_link.new_app_id == r.id %} border-l-2 border-blue-400 bg-blue-50/50{% endif %}"
                     tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
