@@ -470,6 +470,44 @@ class TestAdminUnalias:
         ).fetchone()
         assert row is None
 
+    def test_reprocesses_resolved_endorsements(self, db):
+        """POST /unalias updates resolved_endorsements FTS for affected records."""
+        _seed_admin(db)
+        variant_id, _ = _seed_alias(db)
+
+        # Seed a license_records row whose license_type matches the variant name.
+        # Pre-populate resolved_endorsements with the canonical name (simulating
+        # what it held before unaliasing).
+        record_id = db.execute(
+            """
+            INSERT INTO license_records
+                (section_type, record_date, license_type, scraped_at, resolved_endorsements)
+            VALUES ('NEW', '2024-01-01', 'FARMERS MARKET FOR BEER', datetime('now'),
+                    'NON-PROFIT ARTS ORGANIZATION')
+            """,
+        ).lastrowid
+        db.execute(
+            "INSERT INTO record_endorsements (record_id, endorsement_id) VALUES (?, ?)",
+            (record_id, variant_id),
+        )
+        db.commit()
+
+        client, patches = _make_client(db)
+        try:
+            client.post(
+                "/admin/endorsements/unalias",
+                data={"endorsement_id": str(variant_id)},
+                follow_redirects=False,
+            )
+        finally:
+            _stop(patches)
+
+        resolved = db.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE id = ?",
+            (record_id,),
+        ).fetchone()[0]
+        assert resolved == "FARMERS MARKET FOR BEER"
+
     def test_422_when_not_a_variant(self, db):
         """POST /unalias with a non-variant endorsement_id returns 422."""
         _seed_admin(db)

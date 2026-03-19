@@ -570,6 +570,13 @@ async def admin_unalias_endorsement(
 ) -> HTMLResponse:
     """Remove an endorsement alias, making the variant standalone."""
     with get_db() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM license_endorsements WHERE id = ?",
+            (endorsement_id,),
+        ).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail="endorsement not found")
+
         alias_row = conn.execute(
             "SELECT canonical_endorsement_id FROM endorsement_aliases WHERE endorsement_id = ?",
             (endorsement_id,),
