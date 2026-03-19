@@ -552,6 +552,11 @@ def export_records_cursor(  # noqa: PLR0913  # all params are distinct filter ax
 _filter_cache: dict = {}  # {"data": ..., "ts": float}
 _FILTER_CACHE_TTL = 300  # seconds (5 minutes)
 
+# Short-TTL cache for dashboard stats (get_stats).  Dashboard is hit on
+# every page load; stats change at most twice daily with the scraper.
+_stats_cache: dict = {}  # {"data": ..., "ts": float}
+_STATS_CACHE_TTL = 60  # seconds (1 minute)
+
 
 def invalidate_all_filter_caches() -> None:
     """Clear all in-process filter caches.
@@ -562,6 +567,7 @@ def invalidate_all_filter_caches() -> None:
     """
     _filter_cache.clear()
     _city_cache.clear()
+    _stats_cache.clear()
 
 
 _LOCATION_IDS_SUBQUERY = (
@@ -639,64 +645,116 @@ def get_cities_for_state(
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:
-    """Get summary statistics.
+    """Get summary statistics (cached, 1-min TTL).
 
-    Cheap aggregates (COUNT, SUM, MIN, MAX) are combined into a single
-    query.  The two COUNT(DISTINCT ...) calls remain separate because
-    combining them forces a slower full-table scan in SQLite.
+    All aggregates are computed in two queries:
+    1. A single SELECT over ``license_records`` that combines section-type
+       counts, date range, COUNT(DISTINCT business_name/license_number), and
+       a scalar subquery for entity count.
+    2. A single pipeline query using ``SUM(CASE WHEN ...)`` over CTEs to
+       replace the previous 6 per-status queries.
+
+    A third query fetches the most-recent scrape_log row.
     """
+    now = time.monotonic()
+    if _stats_cache and now - _stats_cache["ts"] < _STATS_CACHE_TTL:
+        return _stats_cache["data"]
+
     agg = conn.execute("""
         SELECT
             COUNT(*) AS total_records,
             SUM(CASE WHEN section_type = 'new_application'
                 THEN 1 ELSE 0 END) AS new_application_count,
             SUM(CASE WHEN section_type = 'approved' THEN 1 ELSE 0 END) AS approved_count,
-            SUM(CASE WHEN section_type = 'discontinued' THEN 1 ELSE 0 END) AS discontinued_count,
+            SUM(CASE WHEN section_type = 'discontinued'
+                THEN 1 ELSE 0 END) AS discontinued_count,
             MIN(record_date) AS min_date,
-            MAX(record_date) AS max_date
+            MAX(record_date) AS max_date,
+            COUNT(DISTINCT business_name) AS unique_businesses,
+            COUNT(DISTINCT license_number) AS unique_licenses,
+            (SELECT COUNT(*) FROM entities) AS unique_entities
         FROM license_records
     """).fetchone()
 
-    # Application pipeline stats (record_links)
     pipeline = _get_pipeline_stats(conn)
 
-    return {
+    result = {
         "total_records": agg["total_records"],
         "new_application_count": agg["new_application_count"],
         "approved_count": agg["approved_count"],
         "discontinued_count": agg["discontinued_count"],
         "date_range": (agg["min_date"], agg["max_date"]),
-        "unique_businesses": conn.execute(
-            "SELECT COUNT(DISTINCT business_name) FROM license_records"
-        ).fetchone()[0],
-        "unique_licenses": conn.execute(
-            "SELECT COUNT(DISTINCT license_number) FROM license_records"
-        ).fetchone()[0],
-        "unique_entities": conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0],
+        "unique_businesses": agg["unique_businesses"],
+        "unique_licenses": agg["unique_licenses"],
+        "unique_entities": agg["unique_entities"],
         "last_scrape": conn.execute("SELECT * FROM scrape_log ORDER BY id DESC LIMIT 1").fetchone(),
         "pipeline": pipeline,
     }
+    _stats_cache["data"] = result
+    _stats_cache["ts"] = now
+    return result
 
 
 def _get_pipeline_stats(conn: sqlite3.Connection) -> dict:
-    """Compute application pipeline outcome breakdown."""
-    total = conn.execute(f"""
-        SELECT COUNT(*) FROM license_records
-        WHERE section_type = 'new_application'
-          AND application_type IN ({_LINKABLE_TYPES_CSV})
-    """).fetchone()[0]
+    """Compute application pipeline outcome breakdown in a single query.
 
-    counts = {}
-    for status in ("approved", "discontinued", "pending", "data_gap", "unknown"):
-        clauses = outcome_filter_sql(status, record_alias="lr")
-        where = " AND ".join(clauses)
-        counts[status] = conn.execute(
-            f"SELECT COUNT(*) FROM license_records lr WHERE {where}"
-        ).fetchone()[0]
+    Uses CTEs for the linked-record subsets and ``SUM(CASE WHEN ...)``
+    expressions so all five status counts plus the linkable total are
+    computed in one pass over ``license_records``.
+    """
+    row = conn.execute(f"""
+        WITH linked AS (
+            SELECT new_app_id FROM record_links
+        ),
+        approved_linked AS (
+            SELECT rl.new_app_id
+            FROM record_links rl
+            JOIN license_records o ON o.id = rl.outcome_id
+            WHERE o.section_type = 'approved'
+        ),
+        discontinued_linked AS (
+            SELECT rl.new_app_id
+            FROM record_links rl
+            JOIN license_records o ON o.id = rl.outcome_id
+            WHERE o.section_type = 'discontinued'
+        )
+        SELECT
+            SUM(CASE WHEN lr.section_type = 'new_application'
+                AND lr.application_type IN ({_LINKABLE_TYPES_CSV})
+                THEN 1 ELSE 0 END) AS total,
+            SUM(CASE WHEN lr.id IN (SELECT new_app_id FROM approved_linked)
+                THEN 1 ELSE 0 END) AS approved,
+            SUM(CASE WHEN lr.id IN (SELECT new_app_id FROM discontinued_linked)
+                THEN 1 ELSE 0 END) AS discontinued,
+            SUM(CASE WHEN lr.section_type = 'new_application'
+                AND lr.application_type IN ({_LINKABLE_TYPES_CSV})
+                AND lr.id NOT IN (SELECT new_app_id FROM linked)
+                AND lr.record_date >= date('now', '-{PENDING_CUTOFF_DAYS} days')
+                AND NOT (lr.application_type = 'NEW APPLICATION'
+                         AND lr.record_date > '{DATA_GAP_CUTOFF}')
+                THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN lr.section_type = 'new_application'
+                AND lr.application_type = 'NEW APPLICATION'
+                AND lr.record_date > '{DATA_GAP_CUTOFF}'
+                AND lr.id NOT IN (SELECT new_app_id FROM linked)
+                THEN 1 ELSE 0 END) AS data_gap,
+            SUM(CASE WHEN lr.section_type = 'new_application'
+                AND lr.application_type IN ({_LINKABLE_TYPES_CSV})
+                AND lr.id NOT IN (SELECT new_app_id FROM linked)
+                AND lr.record_date < date('now', '-{PENDING_CUTOFF_DAYS} days')
+                AND NOT (lr.application_type = 'NEW APPLICATION'
+                         AND lr.record_date > '{DATA_GAP_CUTOFF}')
+                THEN 1 ELSE 0 END) AS unknown
+        FROM license_records lr
+    """).fetchone()
 
     return {
-        "total": total,
-        **counts,
+        "total": row["total"] or 0,
+        "approved": row["approved"] or 0,
+        "discontinued": row["discontinued"] or 0,
+        "pending": row["pending"] or 0,
+        "data_gap": row["data_gap"] or 0,
+        "unknown": row["unknown"] or 0,
     }
 
 

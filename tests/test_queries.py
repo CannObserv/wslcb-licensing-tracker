@@ -842,6 +842,113 @@ class TestGetEntities:
         assert result_neg["entities"] == result_one["entities"]
 
 
+class TestGetStats:
+    """Tests for get_stats() — batched queries and short-TTL cache."""
+
+    def teardown_method(self):
+        from wslcb_licensing_tracker import queries
+
+        queries._stats_cache.clear()
+
+    def test_returns_expected_keys(self, db, standard_new_application):
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import get_stats
+
+        insert_record(db, standard_new_application)
+        db.commit()
+        stats = get_stats(db)
+        for key in (
+            "total_records", "new_application_count", "approved_count",
+            "discontinued_count", "date_range", "unique_businesses",
+            "unique_licenses", "unique_entities", "last_scrape", "pipeline",
+        ):
+            assert key in stats, f"missing key: {key}"
+
+    def test_unique_businesses_counts_distinct_names(self, db, standard_new_application):
+        import copy
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import get_stats
+
+        r2 = copy.deepcopy(standard_new_application)
+        r2["license_number"] = "STAT001"
+        r2["business_name"] = "OTHER BUSINESS LLC"
+        insert_record(db, standard_new_application)
+        insert_record(db, r2)
+        db.commit()
+        assert get_stats(db)["unique_businesses"] == 2
+
+    def test_unique_businesses_deduplicates_same_name(self, db, standard_new_application):
+        import copy
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import get_stats
+
+        r2 = copy.deepcopy(standard_new_application)
+        r2["license_number"] = "STAT002"
+        r2["record_date"] = "2025-07-01"
+        insert_record(db, standard_new_application)
+        insert_record(db, r2)
+        db.commit()
+        assert get_stats(db)["unique_businesses"] == 1
+
+    def test_unique_licenses_counts_distinct_numbers(self, db, standard_new_application):
+        import copy
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import get_stats
+
+        r2 = copy.deepcopy(standard_new_application)
+        r2["license_number"] = "STAT003"
+        r2["record_date"] = "2025-07-01"
+        insert_record(db, standard_new_application)
+        insert_record(db, r2)
+        db.commit()
+        assert get_stats(db)["unique_licenses"] == 2
+
+    def test_unique_entities_counts_entity_rows(self, db, standard_new_application):
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import get_stats
+
+        # standard_new_application creates 2 entities: JOHN DOE, JANE SMITH
+        insert_record(db, standard_new_application)
+        db.commit()
+        assert get_stats(db)["unique_entities"] == 2
+
+    def test_pipeline_has_expected_keys(self, db):
+        from wslcb_licensing_tracker.queries import get_stats
+
+        pipeline = get_stats(db)["pipeline"]
+        for key in ("total", "approved", "discontinued", "pending", "data_gap", "unknown"):
+            assert key in pipeline, f"missing pipeline key: {key}"
+
+    def test_result_is_cached_within_ttl(self, db, standard_new_application):
+        import copy
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker.queries import get_stats
+
+        insert_record(db, standard_new_application)
+        db.commit()
+        first = get_stats(db)
+
+        # Insert another record; within TTL, get_stats must return stale cache
+        r2 = copy.deepcopy(standard_new_application)
+        r2["license_number"] = "CACHED001"
+        insert_record(db, r2)
+        db.commit()
+        second = get_stats(db)
+
+        assert second["total_records"] == first["total_records"]
+
+    def test_invalidate_clears_stats_cache(self, db, standard_new_application):
+        from wslcb_licensing_tracker.pipeline import insert_record
+        from wslcb_licensing_tracker import queries
+
+        insert_record(db, standard_new_application)
+        db.commit()
+        queries.get_stats(db)
+        assert queries._stats_cache, "cache should be populated after get_stats"
+        queries.invalidate_all_filter_caches()
+        assert not queries._stats_cache, "invalidate should clear _stats_cache"
+
+
 class TestInvalidateAllFilterCaches:
     def teardown_method(self):
         from wslcb_licensing_tracker import queries
