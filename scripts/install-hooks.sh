@@ -31,10 +31,11 @@ if [ -f "$HOOK_FILE" ] && ! grep -qF "$MARKER" "$HOOK_FILE"; then
     echo '          ROOT="$(git rev-parse --show-toplevel)"' >&2
     echo '          "$ROOT/scripts/build-css.sh" || exit 1' >&2
     echo '          git diff --quiet -- static/css/tailwind.css 2>/dev/null || git add static/css/tailwind.css' >&2
-    echo "       2. Re-run this script (it will skip the conflict check once the marker is present)." >&2
+    echo "       That's all — your hook now handles the Tailwind build." >&2
     exit 1
 fi
 
+mkdir -p "$(dirname "$HOOK_FILE")"
 cat > "$HOOK_FILE" << HOOK
 #!/bin/sh
 $MARKER
