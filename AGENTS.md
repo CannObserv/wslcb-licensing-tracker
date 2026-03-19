@@ -102,7 +102,7 @@ uv run pytest tests/ -v   # must pass before committing
 - Sample record fixtures in `conftest.py`: `standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`.
 
 ### Templates
-- Tailwind via CDN + custom `tailwind.config` in `base.html`. No bundler.
+- Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`. Config in `tailwind.config.js`. No bundler.
 - HTMX for partial updates; `/search` detects `HX-Request` header.
 - Custom Jinja2 filters in `app.py`: `section_label`, `phone_format`, `build_qs`.
 - See [`docs/STYLE.md`](STYLE.md) for brand colors and CSS conventions.
@@ -130,6 +130,18 @@ Never use `gh` for git push/pull. Never use SSH key for API calls.
 ```
 
 Common types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`. Put `(closes #N)` in commit **body** (not subject) to auto-close on push.
+
+## Dev Setup (one-time after clone)
+
+```bash
+# Install pre-commit hook (auto-rebuilds Tailwind CSS before each commit)
+scripts/install-hooks.sh
+
+# Manual CSS rebuild (if you change templates or tailwind.config.js without committing)
+scripts/build-css.sh
+```
+
+The hook auto-downloads the Tailwind CLI binary on first run (~26MB, platform-specific, gitignored at `scripts/bin/`).
 
 ## Common Tasks
 
