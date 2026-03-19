@@ -138,14 +138,14 @@ Common types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`. Put `(closes #
 ## Dev Setup (one-time after clone)
 
 ```bash
-# Install pre-commit hook (auto-rebuilds Tailwind CSS before each commit)
-scripts/install-hooks.sh
+# Install pre-commit hooks (runs ruff + auto-rebuilds Tailwind CSS before each commit)
+uv run pre-commit install
 
 # Manual CSS rebuild (if you change templates or tailwind.config.js without committing)
 scripts/build-css.sh
 ```
 
-The hook auto-downloads the Tailwind CLI binary on first run (~26MB, platform-specific, gitignored at `scripts/bin/`).
+The Tailwind CLI binary is auto-downloaded on first `build-css.sh` run (~26MB, platform-specific, gitignored at `scripts/bin/`).
 
 ## Common Tasks
 
