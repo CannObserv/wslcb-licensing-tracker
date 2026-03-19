@@ -7,6 +7,8 @@ registered as an APIRouter and included at startup.
 import html
 import json
 import logging
+import shutil
+import subprocess
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -18,6 +20,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from . import admin_routes, api_routes
 from .admin_auth import AdminRedirectException, get_current_user
@@ -90,10 +94,40 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
+
+
+class _StaticCacheMiddleware(BaseHTTPMiddleware):
+    """Add long-lived Cache-Control headers to all /static/ responses."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]  # noqa: ANN001
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000"
+        return response
+
+
+app.add_middleware(_StaticCacheMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(admin_routes.router)
 app.include_router(api_routes.router)
 templates = Jinja2Templates(directory="templates")
+
+
+def _get_css_version() -> str:
+    """Return short git SHA for cache-busting static assets. Falls back to 'dev'."""
+    git = shutil.which("git")
+    if not git:
+        return "dev"
+    try:
+        return subprocess.run(  # noqa: S603
+            [git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "dev"
+
+
+_CSS_VERSION = _get_css_version()
+templates.env.globals["css_version"] = _CSS_VERSION
 
 PER_PAGE = 50
 
