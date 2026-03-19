@@ -54,7 +54,11 @@ license_records → locations (FK: location_id, previous_location_id)
 | `rebuild.py` | `rebuild_from_sources()`, `compare_databases()`. Four phases: diff archives → HTML snapshots → endorsement discovery → outcome links. |
 | `log_config.py` | `setup_logging()` — auto-detects TTY vs JSON format. Call once per entry point. |
 | `cli.py` | Unified CLI entry point. All operational subcommands. |
-| `templates/` | `base.html` (layout + Tailwind config). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
+| `templates/` | `base.html` (main layout — nav, footer, CSS/JS includes). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
+| `tailwind.config.js` | Tailwind CSS config — content paths, co-green/co-purple palette. Consumed by `scripts/build-css.sh`. |
+| `static/css/input.css` | Tailwind source: `@tailwind` directives + HTMX loading states + badge classes + `.scroll-shadow-right`. |
+| `static/js/search.js` | Client-side logic for search page: section-type toggle, state→city fetch, endorsement multi-select dropdown. |
+| `static/js/admin-endorsements.js` | Admin endorsements page JS: filter, alias panel, rebuild-hiddens, suggestion helpers, code filter. |
 
 ## Frozen vs. Derived Data Contract
 

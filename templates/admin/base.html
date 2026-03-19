@@ -39,19 +39,18 @@
 
     {# Main admin content area #}
     <div class="flex-1 min-w-0">
-        {% block admin_content %}
-        <script>
-        (function () {
-            document.querySelectorAll('.js-flash-banner').forEach(function (el) {
-                setTimeout(function () {
-                    el.style.transition = 'opacity 0.5s';
-                    el.style.opacity = '0';
-                    setTimeout(function () { el.remove(); }, 500);
-                }, 5000);
-            });
-        }());
-        </script>
-        {% endblock %}
+        {% block admin_content %}{% endblock %}
     </div>
 </div>
+<script>
+(function () {
+    document.querySelectorAll('.js-flash-banner').forEach(function (el) {
+        setTimeout(function () {
+            el.style.transition = 'opacity 0.5s';
+            el.style.opacity = '0';
+            setTimeout(function () { el.remove(); }, 500);
+        }, 5000);
+    });
+}());
+</script>
 {% endblock %}
