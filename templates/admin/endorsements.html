@@ -249,16 +249,16 @@
     </div>
 
     {# Endorsement table #}
-    <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+    <div class="bg-white border border-gray-200 rounded-lg overflow-visible">
       <table class="min-w-full text-sm" id="endo-table">
         <thead class="bg-gray-50 border-b border-gray-200">
           <tr>
-            <th class="w-8 px-3 py-2"></th>
+            <th class="w-8 px-3 py-2 rounded-tl-lg"></th>
             <th class="px-4 py-2 text-left font-semibold text-gray-700">Name</th>
             <th class="px-4 py-2 text-left font-semibold text-gray-700">Status</th>
             <th class="px-4 py-2 text-right font-semibold text-gray-700">Records</th>
             <th class="px-4 py-2 text-left font-semibold text-gray-700">Codes</th>
-            <th class="px-4 py-2 text-left font-semibold text-gray-700">Actions</th>
+            <th class="px-4 py-2 text-left font-semibold text-gray-700 rounded-tr-lg">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100" id="endo-tbody">
@@ -296,39 +296,41 @@
               {% endfor %}
             </td>
             <td class="px-4 py-2">
-              {# Rename action — inline form in a popover-style details element #}
-              <details class="inline-block relative group/rename">
-                <summary class="text-xs text-co-purple hover:underline cursor-pointer list-none">Rename</summary>
-                <div class="absolute z-10 left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
-                  <form method="post" action="/admin/endorsements/rename" class="space-y-2">
-                    <input type="hidden" name="endorsement_id" value="{{ e.id }}">
-                    <label class="block text-xs font-medium text-gray-700">New name for <em>{{ e.name }}</em></label>
-                    <input type="text" name="new_name" value="{{ e.name }}"
-                           class="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none"
-                           required>
-                    <button type="submit"
-                            class="px-3 py-1 bg-co-purple text-white text-xs rounded hover:bg-co-purple-700">Save</button>
-                  </form>
-                </div>
-              </details>
-              {# Remove alias action — only shown for variant endorsements #}
-              {% if e.is_variant %}
-              <details class="inline-block relative group/unalias ml-2">
-                <summary class="text-xs text-red-600 hover:underline cursor-pointer list-none">Remove alias</summary>
-                <div class="absolute z-10 left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
-                  <form method="post" action="/admin/endorsements/unalias" class="space-y-2">
-                    <input type="hidden" name="endorsement_id" value="{{ e.id }}">
-                    <p class="text-xs text-gray-700">Remove alias for <em>{{ e.name }}</em>? It will become a standalone endorsement.</p>
-                    <div class="flex gap-2">
+              <div class="flex flex-col items-start gap-1">
+                {# Rename action — inline form in a popover-style details element #}
+                <details class="relative group/rename">
+                  <summary class="text-xs text-co-purple hover:underline cursor-pointer list-none">Rename</summary>
+                  <div class="absolute z-10 left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                    <form method="post" action="/admin/endorsements/rename" class="space-y-2">
+                      <input type="hidden" name="endorsement_id" value="{{ e.id }}">
+                      <label class="block text-xs font-medium text-gray-700">New name for <em>{{ e.name }}</em></label>
+                      <input type="text" name="new_name" value="{{ e.name }}"
+                             class="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:border-co-purple focus:ring-1 focus:ring-co-purple outline-none"
+                             required>
                       <button type="submit"
-                              class="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">Confirm</button>
-                      <button type="button" onclick="this.closest('details').removeAttribute('open')"
-                              class="px-3 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200">Cancel</button>
-                    </div>
-                  </form>
-                </div>
-              </details>
-              {% endif %}
+                              class="px-3 py-1 bg-co-purple text-white text-xs rounded hover:bg-co-purple-700">Save</button>
+                    </form>
+                  </div>
+                </details>
+                {# Remove alias action — only shown for variant endorsements #}
+                {% if e.is_variant %}
+                <details class="relative group/unalias">
+                  <summary class="text-xs text-red-600 hover:underline cursor-pointer list-none">Remove alias</summary>
+                  <div class="absolute z-10 right-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+                    <form method="post" action="/admin/endorsements/unalias" class="space-y-2">
+                      <input type="hidden" name="endorsement_id" value="{{ e.id }}">
+                      <p class="text-xs text-gray-700">Remove alias for <em>{{ e.name }}</em>? It will become a standalone endorsement.</p>
+                      <div class="flex gap-2">
+                        <button type="submit"
+                                class="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">Confirm</button>
+                        <button type="button" onclick="this.closest('details').removeAttribute('open')"
+                                class="px-3 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200">Cancel</button>
+                      </div>
+                    </form>
+                  </div>
+                </details>
+                {% endif %}
+              </div>
             </td>
           </tr>
           {% endfor %}
