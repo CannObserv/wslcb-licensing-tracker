@@ -659,7 +659,12 @@ class TestCodeMappingsFilter:
         always return zero results.  It must also check dataset.names (or
         equivalent) so endorsement-name searches work.
         See issue #38.
+
+        The JS is now in a static file (admin-endorsements.js); verify the page
+        references it and the static file contains the required logic.
         """
+        import os
+
         _seed_admin(db)
         client, patches = _make_client(db)
         try:
@@ -667,5 +672,12 @@ class TestCodeMappingsFilter:
         finally:
             _stop(patches)
         assert resp.status_code == 200
-        # The filterCodes function body must reference dataset.names
-        assert "dataset.names" in resp.text
+        # The page must reference the external JS file (not inline the function)
+        assert "admin-endorsements.js" in resp.text
+        # The static file itself must contain the dataset.names reference
+        static_js = os.path.join(
+            os.path.dirname(__file__), "..", "static", "js", "admin-endorsements.js"
+        )
+        with open(static_js) as f:
+            js_content = f.read()
+        assert "dataset.names" in js_content
