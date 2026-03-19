@@ -66,15 +66,15 @@
                     {% if show_outcome %}
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                         {% if ost.status == 'approved' %}
-                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 hover:bg-green-200" onclick="event.stopPropagation()">✅ Approved</a>
+                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 hover:bg-green-200" onclick="event.stopPropagation()"><span aria-hidden="true">✅</span> Approved</a>
                         {% elif ost.status == 'discontinued' %}
-                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 hover:bg-red-200" onclick="event.stopPropagation()">🚫 Disc.</a>
+                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 hover:bg-red-200" onclick="event.stopPropagation()"><span aria-hidden="true">🚫</span> Disc.</a>
                         {% elif ost.status == 'pending' %}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">⏳ Pending</span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800"><span aria-hidden="true">⏳</span> Pending</span>
                         {% elif ost.status == 'data_gap' %}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600">📁 N/A</span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600"><span aria-hidden="true">📁</span> N/A</span>
                         {% elif ost.status == 'unknown' %}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">❓</span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500"><span aria-hidden="true">❓</span></span>
                         {% else %}
                         <span class="text-gray-300">—</span>
                         {% endif %}

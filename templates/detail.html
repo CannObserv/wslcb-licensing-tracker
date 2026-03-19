@@ -16,7 +16,7 @@
 {% if outcome and outcome.status %}
 <div class="rounded-lg border p-4 mb-4 {{ outcome.css_bg }} {{ outcome.css_border }}">
     <div class="flex items-start gap-3">
-        <span class="text-lg">{{ outcome.icon }}</span>
+        <span class="text-lg" aria-hidden="true">{{ outcome.icon }}</span>
         <div class="flex-1">
             <div class="font-semibold {{ outcome.css_text }}">{{ outcome.label }}
                 {% if outcome.confidence == 'medium' %}
@@ -37,7 +37,7 @@
 {% if reverse_link %}
 <div class="rounded-lg border p-4 mb-4 bg-blue-50 border-blue-200">
     <div class="flex items-start gap-3">
-        <span class="text-lg">📋</span>
+        <span class="text-lg" aria-hidden="true">📋</span>
         <div class="flex-1">
             <div class="font-semibold text-blue-800">Original Application</div>
             <div class="text-sm text-blue-600 mt-0.5">
@@ -215,15 +215,15 @@
                             hx-indicator="#source-viewer-spinner"
                             class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }} cursor-pointer hover:ring-2 hover:ring-current focus:outline-none focus:ring-2 focus:ring-current transition-shadow"
                             title="View original source — {{ group.count }} {{ group.label | lower }}{{ 's' if group.count != 1 }}"
-                        >{{ group.icon }} {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></button>
+                        ><span aria-hidden="true">{{ group.icon }}</span> {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></button>
                         {% else %}
                         <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }}"
-                              title="Confirmed in {{ group.count }} {{ group.label | lower }}{{ 's' if group.count != 1 }}">{{ group.icon }} {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></span>
+                              title="Confirmed in {{ group.count }} {{ group.label | lower }}{{ 's' if group.count != 1 }}"><span aria-hidden="true">{{ group.icon }}</span> {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></span>
                         {% endif %}
                         {% endfor %}
                         {% if provenance.repaired %}
                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-sky-50 text-sky-700 border border-sky-200"
-                              title="Data was repaired from a snapshot source">🔧 Repaired</span>
+                              title="Data was repaired from a snapshot source"><span aria-hidden="true">🔧</span> Repaired</span>
                         {% endif %}
                         {% if provenance.first_date and provenance.last_date %}
                         <span class="text-[11px] text-gray-400 ml-1">{% if provenance.first_date == provenance.last_date %}{{ provenance.first_date }}{% else %}{{ provenance.first_date }} – {{ provenance.last_date }}{% endif %}</span>
@@ -243,11 +243,11 @@
                                 hx-indicator="#source-viewer-spinner"
                                 class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }} cursor-pointer hover:ring-1 hover:ring-current focus:outline-none"
                                 title="{{ s.role }} — view source"
-                            >{{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} 🔧{% endif %}</button>
+                            >{{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}</button>
                             {% else %}
                             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }}"
                                 title="{{ s.role }}">
-                                {{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} 🔧{% endif %}
+                                {{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}
                             </span>
                             {% endif %}
                             {% endfor %}

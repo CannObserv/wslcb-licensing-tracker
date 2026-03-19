@@ -7,7 +7,7 @@
   <div class="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600">
     <div class="flex items-center gap-3 flex-wrap min-w-0">
       <span class="font-medium">
-        {% if source.source_type == 'live_scrape' %}⚡{% elif source.source_type in ('co_archive', 'co_diff_archive') %}📁{% elif source.source_type == 'internet_archive' %}🏛️{% else %}•{% endif %}
+        <span aria-hidden="true">{% if source.source_type == 'live_scrape' %}⚡{% elif source.source_type in ('co_archive', 'co_diff_archive') %}📁{% elif source.source_type == 'internet_archive' %}🏛️{% else %}•{% endif %}</span>
         {{ source.source_label }}
       </span>
       {% if source.captured_at %}
