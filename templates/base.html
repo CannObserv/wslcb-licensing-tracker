@@ -18,18 +18,39 @@
                         <span class="text-lg font-bold text-gray-900">WSLCB Licensing Tracker</span>
                     </a>
                 </div>
-                <div class="flex items-center gap-4">
+                {# Desktop nav links #}
+                <div class="hidden md:flex items-center gap-4">
                     <a href="/" class="text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
                     <a href="/search" class="text-sm text-gray-600 hover:text-co-purple-700">Records</a>
                     {% if current_user %}
                     <a href="/entities" class="text-sm text-gray-600 hover:text-co-purple-700">Entities</a>
-
                     <a href="/admin/" class="text-sm text-co-purple hover:text-co-purple-700 font-medium">Admin</a>
                     <span class="text-xs text-gray-400 font-mono hidden sm:inline">{{ current_user.email }}</span>
                     {% endif %}
                 </div>
+                {# Mobile hamburger button #}
+                <button id="nav-toggle" type="button"
+                        class="md:hidden p-2 rounded-md text-gray-500 hover:text-co-purple hover:bg-gray-100"
+                        aria-expanded="false" aria-controls="mobile-nav" aria-label="Open navigation menu">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path id="nav-icon-open" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        <path id="nav-icon-close" class="hidden" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
             </div>
         </div>
+    {# Mobile nav dropdown #}
+    <div id="mobile-nav" class="hidden md:hidden border-t border-gray-200 bg-white">
+        <div class="px-4 py-3 space-y-1">
+            <a href="/" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
+            <a href="/search" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Records</a>
+            {% if current_user %}
+            <a href="/entities" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Entities</a>
+            <a href="/admin/" class="block py-2 text-sm text-co-purple hover:text-co-purple-700 font-medium">Admin</a>
+            <div class="py-1 text-xs text-gray-400 font-mono">{{ current_user.email }}</div>
+            {% endif %}
+        </div>
+    </div>
     </nav>
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {% block content %}{% endblock %}
@@ -51,5 +72,19 @@
             </p>
         </div>
     </footer>
+<script>
+(function () {
+    const btn = document.getElementById('nav-toggle');
+    const menu = document.getElementById('mobile-nav');
+    const iconOpen = document.getElementById('nav-icon-open');
+    const iconClose = document.getElementById('nav-icon-close');
+    btn.addEventListener('click', function () {
+        const open = menu.classList.toggle('hidden');
+        btn.setAttribute('aria-expanded', String(!open));
+        iconOpen.classList.toggle('hidden', !open);
+        iconClose.classList.toggle('hidden', open);
+    });
+}());
+</script>
 </body>
 </html>
