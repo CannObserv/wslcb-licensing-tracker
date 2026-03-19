@@ -163,6 +163,29 @@ def _process_code(
     return 1
 
 
+def _sync_resolved_endorsements(conn: sqlite3.Connection, record_id: int) -> None:
+    """Write the denormalized resolved_endorsements string for *record_id*.
+
+    Joins current ``record_endorsements`` rows to ``license_endorsements`` and
+    stores the semicolon-joined names in ``license_records.resolved_endorsements``.
+    Called by :func:`process_record` after all endorsement links are inserted.
+    """
+    row = conn.execute(
+        """
+        SELECT group_concat(le.name, '; ')
+          FROM record_endorsements re
+          JOIN license_endorsements le ON le.id = re.endorsement_id
+         WHERE re.record_id = ?
+        """,
+        (record_id,),
+    ).fetchone()
+    resolved = row[0] if row and row[0] is not None else ""
+    conn.execute(
+        "UPDATE license_records SET resolved_endorsements = ? WHERE id = ?",
+        (resolved, record_id),
+    )
+
+
 def process_record(conn: sqlite3.Connection, record_id: int, raw_license_type: str) -> int:
     """Parse a record's raw license_type and create endorsement links.
 
@@ -189,13 +212,17 @@ def process_record(conn: sqlite3.Connection, record_id: int, raw_license_type: s
 
     # Pure numeric code (e.g. "450" after stripping trailing comma)
     if cleaned.isdigit():
-        return _process_code(conn, record_id, cleaned)
+        linked = _process_code(conn, record_id, cleaned)
+        _sync_resolved_endorsements(conn, record_id)
+        return linked
 
     # Historical "CODE, NAME" format (e.g. "450, GROCERY STORE - BEER/WINE")
     m = CODE_NAME_RE.match(cleaned)
     if m:
         code, name = m.group(1), m.group(2).strip()
-        return _process_code(conn, record_id, code, fallback_name=name)
+        linked = _process_code(conn, record_id, code, fallback_name=name)
+        _sync_resolved_endorsements(conn, record_id)
+        return linked
 
     # Text — split on semicolons
     linked = 0
@@ -205,6 +232,7 @@ def process_record(conn: sqlite3.Connection, record_id: int, raw_license_type: s
             eid = ensure_endorsement(conn, name)
             link_endorsement(conn, record_id, eid)
             linked += 1
+    _sync_resolved_endorsements(conn, record_id)
     return linked
 
 

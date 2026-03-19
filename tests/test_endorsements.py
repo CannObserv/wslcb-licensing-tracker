@@ -1327,3 +1327,108 @@ class TestRemoveSubstance:
             "SELECT action FROM admin_audit_log WHERE action = 'substance.remove'"
         ).fetchone()
         assert row is not None
+
+
+# ── process_record: resolved_endorsements maintenance ────────────────
+
+
+class TestProcessRecordResolvedEndorsements:
+    """process_record() must keep license_records.resolved_endorsements in sync."""
+
+    def _insert_bare(self, db, license_number, license_type, section_type="approved"):
+        """Insert a minimal record and return its id."""
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, license_type, scraped_at) VALUES (?, '2025-01-01', ?, "
+            "'NEW APPLICATION', ?, '2025-01-01T00:00:00+00:00')",
+            (section_type, license_number, license_type),
+        )
+        db.commit()
+        return db.execute(
+            "SELECT id FROM license_records WHERE license_number = ?", (license_number,)
+        ).fetchone()[0]
+
+    def test_text_format_sets_resolved_endorsements(self, db):
+        """Text-format license_type populates resolved_endorsements with the name."""
+        rid = self._insert_bare(db, "P001", "CANNABIS RETAILER", "new_application")
+        process_record(db, rid, "CANNABIS RETAILER")
+        db.commit()
+        row = db.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert row[0] == "CANNABIS RETAILER"
+
+    def test_multiple_text_parts_joined_by_semicolon(self, db):
+        """Semicolon-delimited text parts are all stored in resolved_endorsements."""
+        rid = self._insert_bare(db, "P002", "GROCERY STORE - BEER/WINE; SNACK BAR", "new_application")
+        process_record(db, rid, "GROCERY STORE - BEER/WINE; SNACK BAR")
+        db.commit()
+        row = db.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert "GROCERY STORE - BEER/WINE" in row[0]
+        assert "SNACK BAR" in row[0]
+
+    def test_code_name_format_sets_resolved_endorsements(self, db):
+        """CODE, NAME format populates resolved_endorsements with the name."""
+        rid = self._insert_bare(db, "P003", "450, GROCERY STORE - BEER/WINE")
+        process_record(db, rid, "450, GROCERY STORE - BEER/WINE")
+        db.commit()
+        row = db.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert row[0] == "GROCERY STORE - BEER/WINE"
+
+    def test_numeric_code_with_known_mapping_sets_resolved_endorsements(self, db):
+        """Pure numeric code populates resolved_endorsements when a code mapping exists."""
+        # Seed the code mapping
+        db.execute("INSERT INTO license_endorsements (name) VALUES ('SPIRITS RETAILER')")
+        eid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+        db.execute(
+            "INSERT INTO endorsement_codes (code, endorsement_id) VALUES ('349', ?)", (eid,)
+        )
+        db.commit()
+        rid = self._insert_bare(db, "P004", "349,")
+        process_record(db, rid, "349,")
+        db.commit()
+        row = db.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert row[0] == "SPIRITS RETAILER"
+
+    def test_idempotent_updates_resolved_endorsements(self, db):
+        """Calling process_record twice with a different type updates the column."""
+        rid = self._insert_bare(db, "P005", "CANNABIS RETAILER", "new_application")
+        process_record(db, rid, "CANNABIS RETAILER")
+        db.commit()
+        # Now re-process with a different value
+        process_record(db, rid, "SPIRITS RETAILER")
+        db.commit()
+        row = db.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE id = ?", (rid,)
+        ).fetchone()
+        assert row[0] == "SPIRITS RETAILER"
+        assert "CANNABIS RETAILER" not in row[0]
+
+    def test_fts_finds_approved_record_by_endorsement_name(self, db):
+        """FTS search for endorsement text matches an approved record with numeric code."""
+        # Set up code mapping for 450 → GROCERY STORE - BEER/WINE
+        db.execute(
+            "INSERT INTO license_endorsements (name) VALUES ('GROCERY STORE - BEER/WINE')"
+        )
+        eid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+        db.execute(
+            "INSERT INTO endorsement_codes (code, endorsement_id) VALUES ('450', ?)", (eid,)
+        )
+        db.commit()
+        # Insert approved record with numeric code license_type
+        rid = self._insert_bare(db, "P006", "450,")
+        process_record(db, rid, "450,")
+        db.commit()
+        # FTS search for endorsement name should find the record
+        rows = db.execute(
+            "SELECT rowid FROM license_records_fts WHERE license_records_fts MATCH 'GROCERY'",
+        ).fetchall()
+        assert any(r[0] == rid for r in rows), (
+            f"FTS did not find record {rid}; results: {rows}"
+        )

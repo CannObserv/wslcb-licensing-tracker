@@ -1115,3 +1115,81 @@ def test_m014_is_idempotent():
     _m014_address_standardize_pipeline(conn)
     _m014_address_standardize_pipeline(conn)  # should not raise
     conn.close()
+
+
+# ── Migration 015: resolved_endorsements column ────────────────────────
+
+
+class TestMigration015ResolvedEndorsements:
+    """Migration 015 adds resolved_endorsements to license_records and FTS."""
+
+    def test_column_exists_after_init(self, db):
+        cols = [row[1] for row in db.execute("PRAGMA table_info(license_records)").fetchall()]
+        assert "resolved_endorsements" in cols
+
+    def test_column_defaults_to_empty_string(self, db):
+        db.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, scraped_at) VALUES ('approved', '2025-01-01', "
+            "'M015A', 'NEW APPLICATION', '2025-01-01T00:00:00+00:00')"
+        )
+        db.commit()
+        row = db.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE license_number = 'M015A'"
+        ).fetchone()
+        assert row[0] == ""
+
+    def test_column_in_fts_columns(self, db):
+        cur = db.execute("SELECT * FROM license_records_fts LIMIT 0")
+        cols = [desc[0] for desc in cur.description]
+        assert "resolved_endorsements" in cols
+
+    def test_migration_adds_column_to_existing_db(self):
+        """Migration 015 adds resolved_endorsements to a DB at version 14."""
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import _m001_baseline, migrate
+
+        conn = get_connection(":memory:")
+        _m001_baseline(conn)
+        conn.execute("PRAGMA user_version = 14")
+        conn.commit()
+
+        migrate(conn)
+
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(license_records)").fetchall()]
+        assert "resolved_endorsements" in cols
+        conn.close()
+
+    def test_migration_backfills_from_record_endorsements(self):
+        """Existing records get resolved_endorsements backfilled from their linked endorsements."""
+        from wslcb_licensing_tracker.db import get_connection
+        from wslcb_licensing_tracker.schema import _m001_baseline, migrate
+
+        conn = get_connection(":memory:")
+        _m001_baseline(conn)
+        conn.execute("PRAGMA user_version = 14")
+        conn.commit()
+
+        # Insert a record and link two endorsements
+        conn.execute(
+            "INSERT INTO license_records (section_type, record_date, license_number, "
+            "application_type, license_type, scraped_at) VALUES "
+            "('approved', '2025-01-01', 'M015B', 'NEW APPLICATION', '450,', "
+            "'2025-01-01T00:00:00+00:00')"
+        )
+        rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute("INSERT INTO license_endorsements (name) VALUES ('GROCERY STORE - BEER/WINE')")
+        eid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO record_endorsements (record_id, endorsement_id) VALUES (?, ?)",
+            (rid, eid),
+        )
+        conn.commit()
+
+        migrate(conn)
+
+        row = conn.execute(
+            "SELECT resolved_endorsements FROM license_records WHERE license_number = 'M015B'"
+        ).fetchone()
+        assert row[0] == "GROCERY STORE - BEER/WINE"
+        conn.close()

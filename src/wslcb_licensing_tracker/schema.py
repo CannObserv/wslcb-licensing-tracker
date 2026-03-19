@@ -26,6 +26,7 @@ _FTS_COLUMNS = [
     "business_location",
     "applicants",
     "license_type",
+    "resolved_endorsements",
     "application_type",
     "license_number",
     "previous_business_name",
@@ -168,6 +169,7 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
             raw_applicants TEXT,
             raw_previous_applicants TEXT,
             has_additional_names INTEGER NOT NULL DEFAULT 0,
+            resolved_endorsements TEXT NOT NULL DEFAULT '',
             scraped_at TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(section_type, record_date, license_number, application_type)
@@ -741,6 +743,48 @@ def _m013_address_validator_v2(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE locations ADD COLUMN {col} {col_type}")
 
 
+def _m015_resolved_endorsements(conn: sqlite3.Connection) -> None:
+    """Add resolved_endorsements column to license_records and backfill.
+
+    Stores a semicolon-joined string of resolved endorsement names for each
+    record (e.g. "GROCERY STORE - BEER/WINE; SNACK BAR").  ``process_record()``
+    keeps this column in sync after each endorsement pass; this migration
+    backfills existing rows from their current ``record_endorsements`` links.
+
+    Including the column in FTS (see ``_FTS_COLUMNS``) allows text searches
+    for endorsement names to match approved/discontinued records whose raw
+    ``license_type`` column contains only an opaque numeric code.
+    """
+    if not _table_exists(conn, "license_records"):
+        return
+    if not _column_exists(conn, "license_records", "resolved_endorsements"):
+        conn.execute(
+            "ALTER TABLE license_records ADD COLUMN resolved_endorsements TEXT NOT NULL DEFAULT ''"
+        )
+    # Backfill: build semicolon-joined name strings from record_endorsements.
+    # Only update rows that currently have an empty string (leaves any already
+    # populated rows untouched so the migration is safe to re-run).
+    if _table_exists(conn, "record_endorsements") and _table_exists(conn, "license_endorsements"):
+        conn.execute("""
+            UPDATE license_records
+               SET resolved_endorsements = (
+                   SELECT group_concat(le.name, '; ')
+                     FROM record_endorsements re
+                     JOIN license_endorsements le ON le.id = re.endorsement_id
+                    WHERE re.record_id = license_records.id
+               )
+             WHERE resolved_endorsements = ''
+               AND EXISTS (
+                   SELECT 1 FROM record_endorsements WHERE record_id = license_records.id
+               )
+        """)
+        # Replace any NULL from group_concat with '' for records with no links
+        conn.execute(
+            "UPDATE license_records SET resolved_endorsements = ''"
+            " WHERE resolved_endorsements IS NULL"
+        )
+
+
 def _m014_address_standardize_pipeline(conn: sqlite3.Connection) -> None:
     """Introduce the standardize-first address pipeline.
 
@@ -799,6 +843,7 @@ MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (12, "entities_name_index", _m012_entities_name_index),
     (13, "address_validator_v2", _m013_address_validator_v2),
     (14, "address_standardize_pipeline", _m014_address_standardize_pipeline),
+    (15, "resolved_endorsements", _m015_resolved_endorsements),
 ]
 
 
@@ -890,6 +935,7 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
             COALESCE(loc.raw_address, '') AS business_location,
             lr.applicants,
             lr.license_type,
+            COALESCE(lr.resolved_endorsements, '') AS resolved_endorsements,
             lr.application_type,
             lr.license_number,
             COALESCE(lr.previous_business_name, '') AS previous_business_name,
