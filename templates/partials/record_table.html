@@ -24,7 +24,7 @@
                 {% for r in records %}
                 {% set ost = r.outcome_status if r.outcome_status else {} %}
                 <tr class="hover:bg-gray-50 cursor-pointer focus-within:bg-gray-50 focus-within:ring-2 focus-within:ring-co-purple focus-within:ring-offset-1"
-                    tabindex="0" role="link" aria-label="View record {{ r.id }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
+                    tabindex="0" role="link" aria-label="View record: {{ r.business_name }}, {{ r.record_date }}" onclick="window.location='/record/{{ r.id }}'" onkeydown="if(event.key==='Enter')window.location='/record/{{ r.id }}'">
                     <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900
                         {%- if show_outcome and ost.status == 'approved' %} border-l-2 border-green-300
                         {%- elif show_outcome and ost.status == 'discontinued' %} border-l-2 border-red-300
@@ -66,15 +66,15 @@
                     {% if show_outcome %}
                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                         {% if ost.status == 'approved' %}
-                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 hover:bg-green-200" onclick="event.stopPropagation()"><span aria-hidden="true">✅</span> Approved</a>
+                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 hover:bg-green-200" onclick="event.stopPropagation()"><span aria-hidden="true">✅ ●</span> Approved</a>
                         {% elif ost.status == 'discontinued' %}
-                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 hover:bg-red-200" onclick="event.stopPropagation()"><span aria-hidden="true">🚫</span> Disc.</a>
+                        <a href="/record/{{ ost.linked_record_id }}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 hover:bg-red-200" onclick="event.stopPropagation()"><span aria-hidden="true">🚫 ×</span> Disc.</a>
                         {% elif ost.status == 'pending' %}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800"><span aria-hidden="true">⏳</span> Pending</span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800"><span aria-hidden="true">⏳ ◐</span> Pending</span>
                         {% elif ost.status == 'data_gap' %}
                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600"><span aria-hidden="true">📁</span> N/A</span>
                         {% elif ost.status == 'unknown' %}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500"><span aria-hidden="true">❓</span></span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500"><span aria-hidden="true">❓ ○</span></span>
                         {% else %}
                         <span class="text-gray-300">—</span>
                         {% endif %}
