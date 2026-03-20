@@ -1,154 +1,61 @@
-"""Tests for db.py location/source/provenance helpers.
+"""Tests for async database engine and connection management.
 
-Covers get_or_create_location, get_or_create_source, link_record_source,
-get_primary_source, and get_record_sources.  Connection and constant tests
-live in test_db.py; schema/migration tests live in test_schema.py.
-
-All tests use in-memory SQLite via the ``db`` fixture.
+Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
+Tests are skipped automatically when the env var is absent.
 """
-import sqlite3
+
+import os
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from wslcb_licensing_tracker.db import (
-    get_connection,
-    get_or_create_location,
-    get_or_create_source,
-    link_record_source,
-    SOURCE_TYPE_LIVE_SCRAPE,
-    SOURCE_TYPE_CO_ARCHIVE,
-)
-from wslcb_licensing_tracker.schema import init_db
+from wslcb_licensing_tracker.database import create_engine_from_env, get_database_url
 
 
-# ── get_or_create_location ────────────────────────────────────────────────
+@pytest.fixture
+def test_url():
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
+    return url
 
 
-class TestGetOrCreateLocation:
-    def test_creates_new_location(self, db):
-        loc_id = get_or_create_location(
-            db, "123 MAIN ST, SEATTLE, WA 98101",
-            city="SEATTLE", state="WA", zip_code="98101",
-        )
-        assert loc_id is not None
-        assert isinstance(loc_id, int)
-
-    def test_returns_same_id_for_duplicate(self, db):
-        addr = "123 MAIN ST, SEATTLE, WA 98101"
-        id1 = get_or_create_location(db, addr, city="SEATTLE")
-        id2 = get_or_create_location(db, addr, city="SEATTLE")
-        assert id1 == id2
-
-    def test_returns_none_for_empty(self, db):
-        assert get_or_create_location(db, "") is None
-        assert get_or_create_location(db, None) is None
-        assert get_or_create_location(db, "   ") is None
-
-    def test_nbsp_normalization(self, db):
-        """Addresses with NBSP and regular spaces map to the same location."""
-        addr_nbsp = "123 MAIN\xa0ST, SEATTLE, WA 98101"
-        addr_space = "123 MAIN ST, SEATTLE, WA 98101"
-        id1 = get_or_create_location(db, addr_nbsp)
-        id2 = get_or_create_location(db, addr_space)
-        assert id1 == id2
-
-    def test_stores_city_state_zip(self, db):
-        loc_id = get_or_create_location(
-            db, "456 OAK AVE, SPOKANE, WA 99201",
-            city="SPOKANE", state="WA", zip_code="99201",
-        )
-        row = db.execute(
-            "SELECT city, state, zip_code FROM locations WHERE id = ?",
-            (loc_id,),
-        ).fetchone()
-        assert row["city"] == "SPOKANE"
-        assert row["state"] == "WA"
-        assert row["zip_code"] == "99201"
+@pytest.fixture
+async def pg_engine(test_url, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", test_url)
+    engine = create_engine_from_env()
+    yield engine
+    await engine.dispose()
 
 
-# ── get_or_create_source ──────────────────────────────────────────────────
+def test_get_database_url_default(monkeypatch):
+    """Returns fallback URL when DATABASE_URL not set."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    url = get_database_url()
+    assert "postgresql" in url
 
 
-class TestGetOrCreateSource:
-    def test_creates_source(self, db):
-        sid = get_or_create_source(
-            db, SOURCE_TYPE_CO_ARCHIVE,
-            snapshot_path="wslcb/test/snapshot.html",
-        )
-        assert isinstance(sid, int)
-
-    def test_idempotent_with_path(self, db):
-        path = "wslcb/test/snapshot.html"
-        id1 = get_or_create_source(db, SOURCE_TYPE_CO_ARCHIVE, snapshot_path=path)
-        id2 = get_or_create_source(db, SOURCE_TYPE_CO_ARCHIVE, snapshot_path=path)
-        assert id1 == id2
-
-    def test_null_path_with_scrape_log_id(self, db):
-        """Distinct scrape_log_ids with NULL path get separate source rows."""
-        db.execute(
-            "INSERT INTO scrape_log (started_at, status) VALUES ('2025-01-01', 'ok')"
-        )
-        log1 = db.execute("SELECT last_insert_rowid()").fetchone()[0]
-        db.execute(
-            "INSERT INTO scrape_log (started_at, status) VALUES ('2025-01-02', 'ok')"
-        )
-        log2 = db.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-        id1 = get_or_create_source(
-            db, SOURCE_TYPE_LIVE_SCRAPE, scrape_log_id=log1,
-        )
-        id2 = get_or_create_source(
-            db, SOURCE_TYPE_LIVE_SCRAPE, scrape_log_id=log2,
-        )
-        assert id1 != id2
+def test_get_database_url_from_env(monkeypatch):
+    """Returns DATABASE_URL from environment."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@host/db")
+    assert get_database_url() == "postgresql+asyncpg://user:pw@host/db"
 
 
-# ── link_record_source ─────────────────────────────────────────────────────
+async def test_engine_connects(pg_engine):
+    """Engine can open a connection and run a query."""
+    async with pg_engine.connect() as conn:
+        result = await conn.execute(text("SELECT 1 AS val"))
+        row = result.mappings().one()
+        assert row["val"] == 1
 
 
-class TestLinkRecordSource:
-    def test_link_and_idempotent(self, db):
-        """Linking the same record+source twice doesn't raise."""
-        db.execute(
-            """INSERT INTO license_records
-               (section_type, record_date, business_name, applicants,
-                license_type, application_type, license_number,
-                contact_phone, scraped_at)
-               VALUES ('new_application', '2025-01-01', 'TEST', '', '',
-                       'NEW APPLICATION', '999999', '', '2025-01-01')"""
-        )
-        rec_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
-        src_id = get_or_create_source(
-            db, SOURCE_TYPE_CO_ARCHIVE, snapshot_path="test.html",
-        )
-        link_record_source(db, rec_id, src_id, "first_seen")
-        link_record_source(db, rec_id, src_id, "first_seen")  # idempotent
+async def test_get_db_yields_async_connection(pg_engine, monkeypatch):
+    """get_db() yields an AsyncConnection."""
+    from wslcb_licensing_tracker.database import get_db
 
-        count = db.execute(
-            "SELECT count(*) FROM record_sources WHERE record_id = ?",
-            (rec_id,),
-        ).fetchone()[0]
-        assert count == 1
-
-    def test_multiple_roles(self, db):
-        """Same record+source can have different roles."""
-        db.execute(
-            """INSERT INTO license_records
-               (section_type, record_date, business_name, applicants,
-                license_type, application_type, license_number,
-                contact_phone, scraped_at)
-               VALUES ('new_application', '2025-01-01', 'TEST', '', '',
-                       'NEW APPLICATION', '999998', '', '2025-01-01')"""
-        )
-        rec_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
-        src_id = get_or_create_source(
-            db, SOURCE_TYPE_CO_ARCHIVE, snapshot_path="test2.html",
-        )
-        link_record_source(db, rec_id, src_id, "first_seen")
-        link_record_source(db, rec_id, src_id, "confirmed")
-
-        count = db.execute(
-            "SELECT count(*) FROM record_sources WHERE record_id = ?",
-            (rec_id,),
-        ).fetchone()[0]
-        assert count == 2
+    async with get_db(pg_engine) as conn:
+        assert isinstance(conn, AsyncConnection)
+        result = await conn.execute(text("SELECT 42 AS answer"))
+        row = result.mappings().one()
+        assert row["answer"] == 42
