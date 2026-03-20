@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from wslcb_licensing_tracker.database import create_engine_from_env, get_database_url
+from wslcb_licensing_tracker.database import create_engine_from_env, get_database_url, get_db
 
 
 @pytest.fixture
@@ -52,8 +52,6 @@ async def test_engine_connects(pg_engine):
 
 async def test_get_db_yields_async_connection(pg_engine, monkeypatch):
     """get_db() yields an AsyncConnection."""
-    from wslcb_licensing_tracker.database import get_db
-
     async with get_db(pg_engine) as conn:
         assert isinstance(conn, AsyncConnection)
         result = await conn.execute(text("SELECT 42 AS answer"))

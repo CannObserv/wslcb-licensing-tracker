@@ -12,6 +12,7 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 logger = logging.getLogger(__name__)
@@ -34,23 +35,26 @@ def create_engine_from_env(
 
     Call once at application startup; store on ``app.state.engine``.
     """
-    return create_async_engine(
-        get_database_url(),
-        pool_size=pool_size,
-        max_overflow=max_overflow,
-        echo=echo,
-    )
+    url = get_database_url()
+    logger.debug("creating async engine: %s", url)
+    try:
+        return create_async_engine(url, pool_size=pool_size, max_overflow=max_overflow, echo=echo)
+    except ArgumentError as exc:
+        logger.critical("invalid DATABASE_URL %r: %s", url, exc)
+        raise
 
 
 @asynccontextmanager
 async def get_db(engine: AsyncEngine) -> AsyncGenerator[AsyncConnection, None]:
     """Yield an AsyncConnection from the pool.
 
-    Usage as FastAPI dependency::
+    Usage as FastAPI dependency (in app.py)::
 
-        async def get_db_dep(request: Request) -> AsyncGenerator[AsyncConnection, None]:
+        async def get_db_dep(request: Request):
             async with get_db(request.app.state.engine) as conn:
                 yield conn
+
+        # Then use with: conn: AsyncConnection = Depends(get_db_dep)
 
     Usage in non-web code::
 
