@@ -4,6 +4,7 @@ Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
 """
 
 import pytest
+from sqlalchemy import text
 
 from wslcb_licensing_tracker.pg_schema import _column_exists, _table_exists, init_db
 
@@ -16,8 +17,6 @@ async def test_init_db_creates_tables(pg_engine):
     await init_db(pg_engine)
 
     # Verify key tables exist
-    from sqlalchemy import text
-
     async with pg_engine.connect() as conn:
         result = await conn.execute(text(
             "SELECT table_name FROM information_schema.tables "

@@ -27,9 +27,11 @@ async def init_db(engine: AsyncEngine) -> None:
         cfg.attributes["connection"] = connection
         command.upgrade(cfg, "head")
 
+    logger.debug("Running Alembic migrations")
     async with engine.connect() as conn:
         await conn.run_sync(_run_upgrade)
         await conn.commit()
+    logger.info("Database migrations complete")
 
 
 async def _table_exists(conn: AsyncConnection, name: str) -> bool:
