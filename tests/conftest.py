@@ -161,3 +161,63 @@ def discontinued_code_name():
         "previous_zip_code": "",
         "scraped_at": "2025-06-09T12:00:00+00:00",
     }
+
+
+import os
+from collections.abc import AsyncGenerator
+
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+
+
+@pytest.fixture(scope="session")
+def pg_url() -> str | None:
+    """PostgreSQL connection URL from TEST_DATABASE_URL env var."""
+    return os.environ.get("TEST_DATABASE_URL")
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
+    """Session-scoped async engine with Alembic migrations applied.
+
+    Skips all PG tests when TEST_DATABASE_URL is not set.
+    """
+    if not pg_url:
+        pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
+
+    from wslcb_licensing_tracker.database import create_engine_from_env
+
+    os.environ["DATABASE_URL"] = pg_url
+    engine = create_engine_from_env()
+
+    # Run Alembic migrations
+    from alembic import command
+    from alembic.config import Config
+
+    def _run_upgrade(connection):
+        cfg = Config("alembic.ini")
+        cfg.attributes["connection"] = connection
+        command.upgrade(cfg, "head")
+
+    async with engine.connect() as conn:
+        await conn.run_sync(_run_upgrade)
+        await conn.commit()
+
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def pg_conn(pg_engine: AsyncEngine) -> AsyncGenerator[AsyncConnection, None]:
+    """AsyncConnection in a rolled-back transaction for test isolation.
+
+    Each test gets a clean transaction that is rolled back after the test,
+    so tests never see each other's data. Suitable for helpers and
+    insert_record tests that don't commit internally.
+
+    For ingest_batch (which commits), use pg_engine directly.
+    """
+    async with pg_engine.connect() as conn:
+        trans = await conn.begin()
+        yield conn
+        await trans.rollback()

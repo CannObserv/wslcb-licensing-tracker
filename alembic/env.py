@@ -55,7 +55,16 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations against a live database connection."""
+    """Run migrations against a live database connection.
+
+    When ``config.attributes["connection"]`` is set (e.g., from a
+    ``conn.run_sync()`` callback), use it directly.  Otherwise, create a new
+    async engine from the configured URL.
+    """
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        do_run_migrations(connection)
+        return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

@@ -5,29 +5,12 @@ Tests are skipped automatically when the env var is absent.
 """
 
 import asyncio
-import os
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from wslcb_licensing_tracker.database import create_engine_from_env, get_database_url, get_db
-
-
-@pytest.fixture
-def test_url():
-    url = os.environ.get("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
-    return url
-
-
-@pytest.fixture
-async def pg_engine(test_url, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", test_url)
-    engine = create_engine_from_env()
-    yield engine
-    await engine.dispose()
 
 
 def test_get_database_url_default(monkeypatch):
@@ -43,6 +26,7 @@ def test_get_database_url_from_env(monkeypatch):
     assert get_database_url() == "postgresql+asyncpg://user:pw@host/db"
 
 
+@pytest.mark.asyncio(loop_scope="session")
 async def test_engine_connects(pg_engine):
     """Engine can open a connection and run a query."""
     async with pg_engine.connect() as conn:
@@ -51,6 +35,7 @@ async def test_engine_connects(pg_engine):
         assert row["val"] == 1
 
 
+@pytest.mark.asyncio(loop_scope="session")
 async def test_get_db_yields_async_connection(pg_engine, monkeypatch):
     """get_db() yields an AsyncConnection."""
     async with get_db(pg_engine) as conn:
@@ -60,13 +45,14 @@ async def test_get_db_yields_async_connection(pg_engine, monkeypatch):
         assert row["answer"] == 42
 
 
-async def test_alembic_baseline_creates_all_tables(pg_engine, test_url):
+@pytest.mark.asyncio(loop_scope="session")
+async def test_alembic_baseline_creates_all_tables(pg_engine, pg_url):
     """After running the baseline migration, all 20 app tables + alembic_version exist."""
     from alembic import command
     from alembic.config import Config
 
     alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", test_url)
+    alembic_cfg.set_main_option("sqlalchemy.url", pg_url)
 
     # Run in thread to avoid blocking event loop
     await asyncio.get_running_loop().run_in_executor(
