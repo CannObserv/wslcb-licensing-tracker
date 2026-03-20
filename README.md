@@ -122,6 +122,13 @@ wslcb-licensing-tracker/
 │       ├── entities_results.html  # Entities results partial (HTMX)
 │       └── source_viewer.html     # Source viewer partial (HTMX iframe)
 ├── static/                 # Static assets
+│   ├── css/
+│   │   ├── input.css       # Tailwind source (@tailwind directives, badge classes)
+│   │   └── tailwind.css    # Pre-built Tailwind output (committed)
+│   ├── js/
+│   │   ├── search.js       # Search page: section toggle, state→city fetch, endorsement dropdown
+│   │   ├── admin-endorsements.js  # Admin endorsements page
+│   │   └── detail.js       # Record detail page: source viewer toggle
 │   └── images/             # Cannabis Observer brand assets (icon + wordmark SVGs)
 ├── data/                   # Persistent data (gitignored)
 │   ├── wslcb.db            # SQLite database
