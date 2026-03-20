@@ -4,8 +4,6 @@ Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
 Tests are skipped automatically when the env var is absent.
 """
 
-import asyncio
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -46,42 +44,26 @@ async def test_get_db_yields_async_connection(pg_engine, monkeypatch):
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_alembic_baseline_creates_all_tables(pg_engine, pg_url):
+async def test_alembic_baseline_creates_all_tables(pg_engine):
     """After running the baseline migration, all 20 app tables + alembic_version exist."""
-    from alembic import command
-    from alembic.config import Config
+    # Migrations already applied by pg_engine fixture — just verify the tables exist
+    async with pg_engine.connect() as conn:
+        result = await conn.execute(text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+        ))
+        table_names = {row[0] for row in result}
 
-    alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", pg_url)
+    count = len(table_names)
+    # 20 app tables + 1 alembic_version
+    assert count == 21
 
-    # Run in thread to avoid blocking event loop
-    await asyncio.get_running_loop().run_in_executor(
-        None, lambda: command.upgrade(alembic_cfg, "head")
-    )
-
-    try:
-        # Verify table count and names via information_schema
-        async with pg_engine.connect() as conn:
-            result = await conn.execute(text(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
-            ))
-            table_names = {row[0] for row in result}
-
-        count = len(table_names)
-        # 20 app tables + 1 alembic_version
-        assert count == 21
-
-        EXPECTED_TABLES = {
-            "locations", "license_endorsements", "endorsement_codes", "scrape_log",
-            "source_types", "sources", "license_records", "record_endorsements",
-            "entities", "record_entities", "record_links", "record_enrichments",
-            "record_sources", "admin_users", "admin_audit_log", "endorsement_aliases",
-            "endorsement_dismissed_suggestions", "regulated_substances",
-            "regulated_substance_endorsements", "data_migrations", "alembic_version",
-        }
-        assert table_names == EXPECTED_TABLES
-    finally:
-        await asyncio.get_running_loop().run_in_executor(
-            None, lambda: command.downgrade(alembic_cfg, "base")
-        )
+    EXPECTED_TABLES = {
+        "locations", "license_endorsements", "endorsement_codes", "scrape_log",
+        "source_types", "sources", "license_records", "record_endorsements",
+        "entities", "record_entities", "record_links", "record_enrichments",
+        "record_sources", "admin_users", "admin_audit_log", "endorsement_aliases",
+        "endorsement_dismissed_suggestions", "regulated_substances",
+        "regulated_substance_endorsements", "data_migrations", "alembic_version",
+    }
+    assert table_names == EXPECTED_TABLES
