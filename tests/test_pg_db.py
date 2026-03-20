@@ -4,7 +4,9 @@ Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
 """
 
 import pytest
+from sqlalchemy import select
 
+from wslcb_licensing_tracker.models import locations
 from wslcb_licensing_tracker.pg_db import get_or_create_location
 
 
@@ -40,9 +42,6 @@ class TestPgGetOrCreateLocation:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_stores_city_state_zip(self, pg_conn):
         """City, state, and zip_code are stored correctly."""
-        from sqlalchemy import select
-        from wslcb_licensing_tracker.models import locations
-
         loc_id = await get_or_create_location(
             pg_conn, "789 OAK DR, OLYMPIA, WA 98501",
             city="OLYMPIA", state="WA", zip_code="98501",
