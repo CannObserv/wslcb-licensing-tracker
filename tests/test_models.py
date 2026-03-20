@@ -61,3 +61,25 @@ def test_data_migrations_columns():
     """data_migrations table has id, name, applied_at."""
     cols = {c.name for c in models.data_migrations.c}
     assert cols == {"id", "name", "applied_at"}
+
+
+def test_record_endorsements_fk_cascade():
+    """record_endorsements FKs have ON DELETE CASCADE."""
+    for col_name in ("record_id", "endorsement_id"):
+        col = models.record_endorsements.c[col_name]
+        fk = list(col.foreign_keys)[0]
+        assert fk.ondelete.upper() == "CASCADE", f"{col_name} FK missing CASCADE"
+
+
+def test_record_sources_fk_cascade():
+    """record_sources FKs have ON DELETE CASCADE."""
+    for col_name in ("record_id", "source_id"):
+        col = models.record_sources.c[col_name]
+        fk = list(col.foreign_keys)[0]
+        assert fk.ondelete.upper() == "CASCADE", f"{col_name} FK missing CASCADE"
+
+
+def test_license_records_unique_constraint_name():
+    """license_records natural key unique constraint has the expected name."""
+    constraint_names = {c.name for c in models.license_records.constraints}
+    assert "uq_license_records_natural_key" in constraint_names

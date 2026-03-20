@@ -302,6 +302,9 @@ admin_users = Table(
     Column("role", Text, nullable=False, server_default="'admin'"),
     Column("created_at", Text, nullable=False, server_default="now()::text"),
     Column("created_by", Text, nullable=False, server_default="'system'"),
+    # SQLite used COLLATE NOCASE. PostgreSQL equivalent: functional unique index
+    # on lower(email) — defined in the Alembic baseline migration DDL, not here.
+    # SQLAlchemy Core cannot express functional constraints inline on Table objects.
     UniqueConstraint("email", name="uq_admin_users_email"),
 )
 
@@ -369,6 +372,8 @@ regulated_substances = Table(
     Column("id", Integer, Identity(), primary_key=True),
     Column("name", Text, nullable=False),
     Column("display_order", Integer, nullable=False, server_default="0"),
+    # SQLite used COLLATE NOCASE. PostgreSQL equivalent: functional unique index
+    # on lower(name) — defined in the Alembic baseline migration DDL, not here.
     UniqueConstraint("name", name="uq_regulated_substances_name"),
 )
 
