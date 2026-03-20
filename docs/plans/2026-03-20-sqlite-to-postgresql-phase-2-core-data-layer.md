@@ -20,6 +20,7 @@
 
 | File | Action | Purpose |
 |---|---|---|
+| `alembic/env.py` | Modify | Add pre-existing connection check in `run_migrations_online()` |
 | `tests/conftest.py` | Modify | Add `pg_url`, `pg_engine`, `pg_conn` fixtures |
 | `tests/test_pg_database.py` | Modify | Remove local `pg_engine`/`test_url` fixtures (now in conftest) |
 | `tests/test_pg_schema.py` | Create | Tests for `pg_schema.init_db`, `_table_exists`, `_column_exists` |
@@ -31,13 +32,58 @@
 
 ---
 
-## Task 1: Promote PG test fixtures to conftest.py
+## Task 1: Fix alembic/env.py and promote PG test fixtures to conftest.py
 
 **Files:**
+- Modify: `.worktrees/feat-postgresql/alembic/env.py`
 - Modify: `.worktrees/feat-postgresql/tests/conftest.py`
 - Modify: `.worktrees/feat-postgresql/tests/test_pg_database.py`
 
-### Step 1: Add PG fixtures to conftest.py
+### Step 1: Fix alembic/env.py to use pre-existing connection when provided
+
+The current `run_migrations_online()` always creates a new async engine. It needs to check
+`config.attributes.get("connection")` first — the standard Alembic pattern for passing a
+pre-existing sync connection (e.g., from `conn.run_sync()`). Without this fix, `pg_schema.init_db()`
+sets `cfg.attributes["connection"]` but the attribute is silently ignored.
+
+In `alembic/env.py`, replace `run_migrations_online()`:
+
+```python
+def run_migrations_online() -> None:
+    """Run migrations against a live database connection.
+
+    When ``config.attributes["connection"]`` is set (e.g., from a
+    ``conn.run_sync()`` callback), use it directly.  Otherwise, create a new
+    async engine from the configured URL.
+    """
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        do_run_migrations(connection)
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(run_async_migrations())
+    else:
+        loop.run_until_complete(run_async_migrations())
+```
+
+- [ ] **Step 1a: Apply the fix**
+
+Edit `alembic/env.py`: replace the `run_migrations_online` function body as shown above.
+
+- [ ] **Step 1b: Verify existing Alembic migration still works**
+
+```bash
+cd .worktrees/feat-postgresql
+TEST_DATABASE_URL="postgresql+asyncpg://wslcb:wslcb@localhost/wslcb_test" \
+  uv run alembic -x database_url="$TEST_DATABASE_URL" upgrade head
+```
+
+Expected: `INFO  [alembic.runtime.migration] Running upgrade  -> 0001, baseline_postgresql_schema`
+(or `INFO  [alembic.runtime.migration] No new upgrade operations to perform` if already applied)
+
+### Step 2: Add PG fixtures to conftest.py
 
 Append to the end of `tests/conftest.py`:
 
@@ -103,7 +149,7 @@ async def pg_conn(pg_engine: AsyncEngine) -> AsyncGenerator[AsyncConnection, Non
         await trans.rollback()
 ```
 
-### Step 2: Remove local fixtures from test_pg_database.py
+### Step 3: Remove local fixtures from test_pg_database.py
 
 In `tests/test_pg_database.py`, remove:
 - The `test_url` fixture (lines 18-22)
@@ -119,7 +165,7 @@ async def test_alembic_baseline_creates_all_tables(pg_engine, pg_url):
 
 Replace the `test_url` reference inside the function with `pg_url`.
 
-### Step 3: Verify existing PG tests still pass
+### Step 4: Verify existing PG tests still pass
 
 ```bash
 cd .worktrees/feat-postgresql
@@ -128,7 +174,7 @@ TEST_DATABASE_URL="postgresql+asyncpg://wslcb:wslcb@localhost/wslcb_test" uv run
 
 Expected: all 4 tests pass (2 unit, 2 integration requiring PG).
 
-### Step 4: Verify SQLite tests still pass
+### Step 5: Verify SQLite tests still pass
 
 ```bash
 cd .worktrees/feat-postgresql
@@ -140,7 +186,7 @@ Expected: all 632 existing tests pass.
 ### Commit
 
 ```
-#94 chore: promote pg_engine/pg_conn fixtures to conftest.py
+#94 chore: fix alembic env.py; promote pg_engine/pg_conn fixtures to conftest.py
 ```
 
 ---
