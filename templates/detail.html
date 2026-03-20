@@ -213,6 +213,7 @@
                             hx-target="#source-viewer"
                             hx-swap="innerHTML"
                             hx-indicator="#source-viewer-spinner"
+                            hx-on::before-request="var v=document.getElementById('source-viewer');var sid='{{ group.primary_source_id }}';if(v.dataset.activeSource===sid){v.innerHTML='';delete v.dataset.activeSource;event.preventDefault();}else{v.dataset.activeSource=sid;}"
                             class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium {{ group.css_bg }} {{ group.css_text }} border {{ group.css_border }} cursor-pointer hover:ring-2 hover:ring-current focus:outline-none focus:ring-2 focus:ring-current transition-shadow"
                         ><span aria-hidden="true">{{ group.icon }}</span> {{ group.label }} <span class="opacity-70">×{{ group.count }}</span></button>
                         {% else %}
@@ -238,6 +239,7 @@
                                 hx-target="#source-viewer"
                                 hx-swap="innerHTML"
                                 hx-indicator="#source-viewer-spinner"
+                                hx-on::before-request="var v=document.getElementById('source-viewer');var sid='{{ s.id }}';if(v.dataset.activeSource===sid){v.innerHTML='';delete v.dataset.activeSource;event.preventDefault();}else{v.dataset.activeSource=sid;}"
                                 class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }} cursor-pointer hover:ring-1 hover:ring-current focus:outline-none"
                             >{{ s.source_label }}{% if s.captured_at %} {{ s.captured_at[:10] }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}</button>
                             {% else %}
