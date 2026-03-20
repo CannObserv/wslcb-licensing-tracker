@@ -24,10 +24,15 @@ def get_url() -> str:
     )
 
 
+def _sync_url(url: str) -> str:
+    """Strip +asyncpg suffix for offline SQL generation mode."""
+    return url.replace("+asyncpg", "", 1)
+
+
 def run_migrations_offline() -> None:
     """Run migrations without a live DB connection (generates SQL)."""
     context.configure(
-        url=get_url(),
+        url=_sync_url(get_url()),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -36,7 +41,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection) -> None:  # noqa: ANN001
+def do_run_migrations(connection) -> None:  # noqa: ANN001  # connection: sqlalchemy.engine.Connection passed via run_sync callback
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
@@ -50,7 +55,13 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    """Run migrations against a live database connection."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(run_async_migrations())
+    else:
+        loop.run_until_complete(run_async_migrations())
 
 
 if context.is_offline_mode():
