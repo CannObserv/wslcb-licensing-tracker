@@ -1367,4 +1367,4 @@ Check that CI passes (if configured). The branch is ready for Phase 2 review.
 
 Phase 2 ports `db.py` helpers and `pipeline.py` to async SQLAlchemy Core. It depends on this foundation being complete and all tests green.
 
-Plan file: `docs/superpowers/plans/2026-03-20-sqlite-to-postgresql-phase-2-core-data-layer.md` (written when Phase 1 is done)
+Plan file: `docs/plans/2026-03-20-sqlite-to-postgresql-phase-2-core-data-layer.md` (written when Phase 1 is done)
