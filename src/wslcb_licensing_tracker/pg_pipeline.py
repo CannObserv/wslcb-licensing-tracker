@@ -11,9 +11,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import insert, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .db import clean_applicants_string, clean_entity_name
@@ -106,21 +105,6 @@ async def insert_record(
 
     Entity linking is STUBBED — Phase 3 adds parse_and_link_entities.
     """
-    # Check for existing (dedup by natural key)
-    existing = await conn.execute(
-        select(license_records.c.id)
-        .where(
-            license_records.c.section_type == record["section_type"],
-            license_records.c.record_date == record["record_date"],
-            license_records.c.license_number == record["license_number"],
-            license_records.c.application_type == record["application_type"],
-        )
-        .limit(1)
-    )
-    row = existing.first()
-    if row:
-        return (row[0], False)
-
     # Resolve locations
     location_id = await get_or_create_location(
         conn,
@@ -153,39 +137,59 @@ async def insert_record(
         _applicants_have_additional_names(cleaned_applicants, cleaned_prev_applicants)
     )
 
-    try:
-        stmt = (
-            insert(license_records)
-            .values(
-                section_type=record["section_type"],
-                record_date=record["record_date"],
-                business_name=cleaned_biz,
-                location_id=location_id,
-                applicants=cleaned_applicants,
-                license_type=record.get("license_type", ""),
-                application_type=record["application_type"],
-                license_number=record.get("license_number", ""),
-                contact_phone=record.get("contact_phone", ""),
-                previous_business_name=cleaned_prev_biz,
-                previous_applicants=cleaned_prev_applicants,
-                previous_location_id=previous_location_id,
-                raw_business_name=raw_biz,
-                raw_previous_business_name=raw_prev_biz,
-                raw_applicants=raw_applicants,
-                raw_previous_applicants=raw_prev_applicants,
-                has_additional_names=has_additional_names,
-                scraped_at=record["scraped_at"],
-            )
-            .returning(license_records.c.id)
+    # Try insert atomically; ON CONFLICT DO NOTHING returns no row on duplicate
+    stmt = (
+        pg_insert(license_records)
+        .values(
+            section_type=record["section_type"],
+            record_date=record["record_date"],
+            business_name=cleaned_biz,
+            location_id=location_id,
+            applicants=cleaned_applicants,
+            license_type=record.get("license_type", ""),
+            application_type=record["application_type"],
+            license_number=record.get("license_number", ""),
+            contact_phone=record.get("contact_phone", ""),
+            previous_business_name=cleaned_prev_biz,
+            previous_applicants=cleaned_prev_applicants,
+            previous_location_id=previous_location_id,
+            raw_business_name=raw_biz,
+            raw_previous_business_name=raw_prev_biz,
+            raw_applicants=raw_applicants,
+            raw_previous_applicants=raw_prev_applicants,
+            has_additional_names=has_additional_names,
+            scraped_at=record["scraped_at"],
         )
-        result = await conn.execute(stmt)
-        record_id = result.scalar_one()
+        .on_conflict_do_nothing(constraint="uq_license_records_natural_key")
+        .returning(license_records.c.id)
+    )
+    result = await conn.execute(stmt)
+    row = result.first()
+    if row:
         # Phase 3: parse_and_link_entities for applicants goes here
+        return (row[0], True)
 
-    except IntegrityError:
+    # Conflict — fetch existing ID
+    existing = await conn.execute(
+        select(license_records.c.id)
+        .where(
+            license_records.c.section_type == record["section_type"],
+            license_records.c.record_date == record["record_date"],
+            license_records.c.license_number == record["license_number"],
+            license_records.c.application_type == record["application_type"],
+        )
+        .limit(1)
+    )
+    row = existing.first()
+    if row is None:
+        logger.error(
+            "insert_record: row vanished after conflict for %s/%s/#%s",
+            record.get("section_type"),
+            record.get("record_date"),
+            record.get("license_number"),
+        )
         return None
-    else:
-        return (record_id, True)
+    return (row[0], False)
 
 
 async def ingest_record(
