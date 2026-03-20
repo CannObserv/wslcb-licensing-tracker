@@ -59,6 +59,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `static/css/input.css` | Tailwind source: `@tailwind` directives + HTMX loading states + badge classes + `.scroll-shadow-right`. |
 | `static/js/search.js` | Client-side logic for search page: section-type toggle, state→city fetch, endorsement multi-select dropdown. |
 | `static/js/admin-endorsements.js` | Admin endorsements page JS: filter, alias panel, rebuild-hiddens, suggestion helpers, code filter. |
+| `static/js/detail.js` | Record detail page JS: source viewer toggle (`toggleSourceViewer`, `closeSourceViewer`). |
 
 ## Frozen vs. Derived Data Contract
 
