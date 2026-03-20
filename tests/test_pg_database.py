@@ -57,3 +57,29 @@ async def test_get_db_yields_async_connection(pg_engine, monkeypatch):
         result = await conn.execute(text("SELECT 42 AS answer"))
         row = result.mappings().one()
         assert row["answer"] == 42
+
+
+async def test_alembic_baseline_creates_all_tables(pg_engine):
+    """After running the baseline migration, all 20 app tables + alembic_version exist."""
+    import asyncio
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_cfg = Config("alembic.ini")
+    test_url = os.environ.get("TEST_DATABASE_URL")
+    alembic_cfg.set_main_option("sqlalchemy.url", test_url)
+
+    # Run in thread to avoid blocking event loop
+    await asyncio.get_running_loop().run_in_executor(
+        None, lambda: command.upgrade(alembic_cfg, "head")
+    )
+
+    # Verify table count via information_schema
+    async with pg_engine.connect() as conn:
+        result = await conn.execute(text(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+        ))
+        count = result.scalar()
+    # 20 app tables + 1 alembic_version
+    assert count == 21
