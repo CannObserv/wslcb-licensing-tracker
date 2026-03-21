@@ -187,14 +187,13 @@ async def _build_where_clause(  # noqa: C901, PLR0912, PLR0913
     needs_location_join = False
 
     if query:
-        q_like = f"%{query}%"
-        # Phase 5: replace with tsvector @@ plainto_tsquery() for full-text search
         conditions.append(
-            "(lr.business_name ILIKE :q_like"
-            " OR lr.applicants ILIKE :q_like"
-            " OR lr.resolved_endorsements ILIKE :q_like)"
+            "(lr.search_vector @@ plainto_tsquery('english', :q_fts)"
+            " OR lr.business_name % :q_trgm"
+            " OR lr.applicants % :q_trgm)"
         )
-        params["q_like"] = q_like
+        params["q_fts"] = query
+        params["q_trgm"] = query
 
     if section_type:
         conditions.append("lr.section_type = :section_type")
@@ -307,12 +306,14 @@ async def search_records(  # noqa: PLR0913
     total = count_result.scalar_one()
 
     offset = (page - 1) * per_page
+    order_by = (
+        "ts_rank(lr.search_vector, plainto_tsquery('english', :q_fts)) DESC,"
+        " lr.record_date DESC, lr.id DESC"
+        if query
+        else "lr.record_date DESC, lr.id DESC"
+    )
     rows_result = await conn.execute(
-        text(
-            f"{_RECORD_SELECT} {where}"
-            " ORDER BY lr.record_date DESC, lr.id DESC"
-            " LIMIT :limit OFFSET :offset"
-        ),
+        text(f"{_RECORD_SELECT} {where} ORDER BY {order_by} LIMIT :limit OFFSET :offset"),
         {**params, "limit": per_page, "offset": offset},
     )
     rows = [dict(r) for r in rows_result.mappings().all()]
@@ -338,8 +339,6 @@ _LINKABLE_TYPES_CSV = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
 # Inlines endorsements via STRING_AGG, outcome links via correlated subqueries,
 # and display-city fallbacks — all in one query.
 # Skips entity hydration entirely (unused in CSV output).
-#
-# Phase 5: replace endorsement subquery with tsvector search for full-text queries
 _EXPORT_SELECT = f"""
     SELECT
         lr.id, lr.section_type, lr.record_date, lr.business_name,
