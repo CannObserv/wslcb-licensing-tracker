@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.12, SQLAlchemy 2.0 Core async, asyncpg, pytest-asyncio session-scoped
 
+**Test isolation:** `pg_conn` is function-scoped (rolled-back per test). Every test must be fully self-contained — insert its own records. Tests within a class cannot rely on data inserted by a sibling test; each call to `pg_conn` starts with a clean slate. Tests that commit internally (e.g. `ingest_batch`) use `pg_engine` directly.
+
 ---
 
 ## Quick-reference: SQL translation patterns
@@ -551,9 +553,8 @@ async def ensure_endorsement(conn: AsyncConnection, name: str) -> int:
     if row_id is None:
         # Row already existed; fetch it
         row_id = (await conn.execute(
-            select(license_endorsements.c.id).where(license_endorsements.c.id == name)
+            select(license_endorsements.c.id).where(license_endorsements.c.name == name)
         )).scalar_one()
-        # Correction: use .where(license_endorsements.c.name == name)
     return row_id
 ```
 
@@ -631,10 +632,16 @@ git commit -m "#94 feat: add pg_endorsements — async endorsement pipeline"
 # tests/test_pg_endorsements_seed.py
 """Tests for pg_endorsements_seed.py — async endorsement seeding."""
 import pytest
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from wslcb_licensing_tracker.models import license_endorsements
 from wslcb_licensing_tracker.pg_endorsements_seed import (
     seed_endorsements,
     merge_mixed_case_endorsements,
+    repair_code_name_endorsements,
+    backfill,
+    discover_code_mappings,
 )
+from wslcb_licensing_tracker.pg_pipeline import insert_record
 
 
 class TestSeedEndorsements:
@@ -653,9 +660,50 @@ class TestSeedEndorsements:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_merge_mixed_case(self, pg_conn):
-        # Seed creates uppercase endorsements; merge_mixed_case should return int
+        # Insert duplicate mixed-case endorsements
+        await conn.execute(pg_insert(license_endorsements).values(name="Cannabis Retailer").on_conflict_do_nothing())
+        await conn.execute(pg_insert(license_endorsements).values(name="CANNABIS RETAILER").on_conflict_do_nothing())
         count = await merge_mixed_case_endorsements(pg_conn)
         assert isinstance(count, int)
+
+
+class TestRepairCodeNameEndorsements:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_nonnegative_int(self, pg_conn):
+        # Insert an endorsement in legacy "CODE, NAME" format
+        await pg_conn.execute(
+            pg_insert(license_endorsements).values(name="394, Cannabis Retailer").on_conflict_do_nothing()
+        )
+        count = await repair_code_name_endorsements(pg_conn)
+        assert isinstance(count, int)
+
+
+class TestBackfill:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_backfill_processes_unlinked_records(self, pg_conn, standard_new_application):
+        """Records with license_type but no record_endorsements get processed."""
+        standard_new_application["license_number"] = "seed_backfill_001"
+        standard_new_application["license_type"] = "Cannabis Retailer"
+        await insert_record(pg_conn, standard_new_application)
+        count = await backfill(pg_conn)
+        assert isinstance(count, int)
+        assert count >= 0
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_backfill_idempotent(self, pg_conn, standard_new_application):
+        standard_new_application["license_number"] = "seed_backfill_002"
+        standard_new_application["license_type"] = "Cannabis Retailer"
+        await insert_record(pg_conn, standard_new_application)
+        first = await backfill(pg_conn)
+        second = await backfill(pg_conn)
+        assert second == 0  # Nothing new to process
+
+
+class TestDiscoverCodeMappings:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_dict(self, pg_conn):
+        result = await discover_code_mappings(pg_conn)
+        assert isinstance(result, dict)
 ```
 
 - [ ] Run `uv run pytest tests/test_pg_endorsements_seed.py -v` — confirm `ImportError`
@@ -987,6 +1035,7 @@ from wslcb_licensing_tracker.pg_link_records import (
     build_all_links,
     link_new_record,
     get_outcome_status,
+    get_record_links_bulk,
     get_reverse_link_info,
     outcome_filter_sql,
 )
@@ -1015,6 +1064,30 @@ class TestOutcomeFilterSql:
 
     def test_unknown_status_returns_empty(self):
         assert outcome_filter_sql("nonexistent") == []
+
+
+class TestGetRecordLinksBulk:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_dict_keyed_by_new_app_id(self, pg_conn):
+        result = await get_record_links_bulk(pg_conn, [])
+        assert result == {}
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_link_for_known_ids(self, pg_conn, standard_new_application):
+        standard_new_application["license_number"] = "bulk_link_001"
+        standard_new_application["record_date"] = "2025-01-10"
+        new_app = dict(standard_new_application)
+        new_app_id, _ = await insert_record(pg_conn, new_app)
+
+        approved = dict(standard_new_application)
+        approved["section_type"] = "approved"
+        approved["record_date"] = "2025-01-15"
+        approved["license_number"] = "bulk_link_001"
+        await insert_record(pg_conn, approved)
+        await build_all_links(pg_conn)
+
+        result = await get_record_links_bulk(pg_conn, [new_app_id])
+        assert new_app_id in result
 
 
 class TestBuildAllLinks:
@@ -1049,7 +1122,8 @@ class TestBuildAllLinks:
 
 Key notes:
 - `get_outcome_status` — pure Python, copy verbatim from `link_records.py`.
-- `outcome_filter_sql` — pure Python, copy verbatim. The returned SQL fragments are used in `pg_queries.py` as raw SQL strings inside `text()` clauses.
+- `outcome_filter_sql` — **do NOT copy verbatim**. The SQLite version emits `date('now', '-N days')` which is invalid PostgreSQL. Rewrite to emit PG-native expressions: `CURRENT_DATE - interval 'N days'`. Same function signature and return type (`list[str]`), same status names, just different date SQL. This allows `pg_queries.py` to use the fragments directly without patching.
+- `get_record_links_bulk(conn, new_app_ids: list[int]) -> dict[int, dict]` — new function needed by `pg_queries.py`. Batch fetch `record_links` with JOIN to `license_records` (for outcome section_type, record_date, application_type). Returns `{new_app_id: {"outcome_id": ..., "confidence": ..., "days_gap": ..., "outcome_section_type": ..., ...}}`.
 - `build_all_links`: replace `DELETE FROM record_links` with `text("TRUNCATE record_links")` for performance (or `delete(record_links)`).
 - `_link_section`: translate the correlated subquery from SQLite to PostgreSQL. The key date arithmetic:
   ```python
@@ -1115,6 +1189,7 @@ from wslcb_licensing_tracker.pg_queries import (
     enrich_record,
     get_record_by_id,
     get_related_records,
+    get_entity_records,
     get_entities,
     invalidate_filter_cache,
 )
@@ -1203,6 +1278,25 @@ class TestGetRecordById:
     async def test_returns_none_for_missing(self, pg_conn):
         record = await get_record_by_id(pg_conn, 999999999)
         assert record is None
+
+
+class TestGetRelatedRecords:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_list(self, pg_conn, standard_new_application):
+        standard_new_application["license_number"] = "query_008"
+        result = await insert_record(pg_conn, standard_new_application)
+        record = await get_record_by_id(pg_conn, result[0])
+        related = await get_related_records(pg_conn, record)
+        assert isinstance(related, list)
+
+
+class TestGetEntityRecords:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_list(self, pg_conn):
+        # entity_id 999999999 simply returns empty list
+        records = await get_entity_records(pg_conn, 999999999)
+        assert isinstance(records, list)
+        assert records == []
 ```
 
 - [ ] Run `uv run pytest tests/test_pg_queries.py -v` — confirm `ImportError`
@@ -1239,18 +1333,20 @@ if query:
 
 **`_build_where_clause`** — switch from positional `?` params to named `:name` params for SQLAlchemy `text()` compatibility. Build the final `text(where_sql)` with a `params` dict.
 
-**`outcome_filter_sql` fragments** — the returned strings from `pg_link_records.outcome_filter_sql` contain SQLite-style `date('now', ...)` calls. These need PG-compatible equivalents. Override in `pg_queries._build_where_clause`:
+**`outcome_filter_sql` fragments** — `pg_link_records.outcome_filter_sql` emits PG-native SQL (Task 8 ported it to use `CURRENT_DATE - interval 'N days'`). Use fragments directly:
 ```python
 if outcome_status:
-    # outcome_filter_sql returns SQLite SQL fragments; rewrite date() calls for PG
     frags = outcome_filter_sql(outcome_status, record_alias="lr")
-    for frag in frags:
-        frag_pg = frag.replace(
-            f"date('now', '-{PENDING_CUTOFF_DAYS} days')",
-            f"CURRENT_DATE - interval '{PENDING_CUTOFF_DAYS} days'",
-        )
-        conditions.append(frag_pg)
+    conditions.extend(frags)
 ```
+
+**`hydrate_records(conn, rows) -> list[dict]`** — private async helper called by `search_records`, `get_record_by_id`, and `get_entity_records`. Enriches a list of raw row dicts with:
+1. Endorsements: `endorsements = await get_record_endorsements(conn, [r["id"] for r in rows])`
+2. Entities: `entities = await get_record_entities(conn, [r["id"] for r in rows])`
+3. Outcome status: `link = links_bulk.get(r["id"])` + `get_outcome_status(r, link)` per row
+4. `enrich_record(r)` for display fields
+
+Port the same logic from SQLite `hydrate_records` — just make it async.
 
 **`RECORD_COLUMNS` and `RECORD_JOINS`** — copy verbatim from `queries.py` (uses standard SQL compatible with PostgreSQL).
 
