@@ -12,8 +12,7 @@ import json
 import logging
 from typing import Any
 
-from sqlalchemy import text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import insert, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .models import admin_audit_log
@@ -50,7 +49,7 @@ async def log_action(  # noqa: PLR0913
     """
     details_json: str | None = json.dumps(details) if details is not None else None
     stmt = (
-        pg_insert(admin_audit_log)
+        insert(admin_audit_log)
         .values(
             admin_email=email,
             action=action,
@@ -101,6 +100,8 @@ async def get_audit_log(
         *total_count* is the number of rows matching the filters (ignoring
         pagination).
     """
+    page = max(1, page)
+    per_page = max(1, per_page)
     filters = filters or {}
     where_parts: list[str] = []
     params: dict[str, Any] = {}
