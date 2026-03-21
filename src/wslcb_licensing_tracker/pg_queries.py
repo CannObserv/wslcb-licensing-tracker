@@ -876,3 +876,7 @@ async def get_record_link(
         .one_or_none()
     )
     return dict(row) if row else None
+
+
+# Public alias for external callers (e.g. app.py record_detail route).
+hydrate_records = _hydrate_records
