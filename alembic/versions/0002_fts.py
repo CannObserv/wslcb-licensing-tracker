@@ -76,7 +76,34 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION license_records_search_vector_update()
     """)
 
-    # 7. Backfill all existing rows — correlated subqueries pull city (B) and
+    # 7. Locations sync trigger — when city or raw_address changes on a location
+    #    row, touch location_id on all linked license_records to re-fire the
+    #    license_records_search_vector_trigger (keeps weight logic in one place).
+    op.execute("""
+        CREATE OR REPLACE FUNCTION locations_search_vector_sync()
+        RETURNS trigger AS $$
+        BEGIN
+            UPDATE license_records
+            SET location_id = location_id
+            WHERE location_id = NEW.id;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+
+    op.execute("""
+        CREATE OR REPLACE TRIGGER locations_search_vector_sync_trigger
+        AFTER UPDATE OF city, raw_address
+        ON locations
+        FOR EACH ROW
+        WHEN (
+            OLD.city IS DISTINCT FROM NEW.city
+            OR OLD.raw_address IS DISTINCT FROM NEW.raw_address
+        )
+        EXECUTE FUNCTION locations_search_vector_sync()
+    """)
+
+    # 8. Backfill all existing rows — correlated subqueries pull city (B) and
     #    raw_address (D) separately so weights match the design doc spec.
     #    NULL location_id → subquery returns NULL → coalesce → empty string.
     op.execute("""
@@ -97,6 +124,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP TRIGGER IF EXISTS locations_search_vector_sync_trigger"
+        " ON locations"
+    )
+    op.execute(
+        "DROP FUNCTION IF EXISTS locations_search_vector_sync()"
+    )
     op.execute(
         "DROP TRIGGER IF EXISTS license_records_search_vector_trigger"
         " ON license_records"

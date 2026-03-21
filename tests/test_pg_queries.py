@@ -57,8 +57,10 @@ class TestSearchRecords:
         standard_new_application["license_number"] = "query_002b"
         standard_new_application["business_name"] = "XYZNOTAWORD HOLDINGS LLC"
         await insert_record(pg_conn, standard_new_application)
-        # tsvector stopwords won't help here — trgm handles it
-        records, total = await search_records(pg_conn, query="XYZNOTAWORD")
+        # Partial query: plainto_tsquery('english', 'XYZNOTAWO') produces lexeme
+        # 'xyznotawo', which won't match the stored 'xyznotaword' lexeme in
+        # search_vector — so only the pg_trgm % path can hit this record.
+        records, total = await search_records(pg_conn, query="XYZNOTAWO")
         assert total >= 1
         assert any("XYZNOTAWORD" in r["business_name"] for r in records)
 
