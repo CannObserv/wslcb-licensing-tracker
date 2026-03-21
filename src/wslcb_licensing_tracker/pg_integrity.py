@@ -53,7 +53,7 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
           )
     """)
     )
-    no_endorsements = result.scalar()
+    no_endorsements = result.scalar_one()
 
     result = await conn.execute(
         text("""
@@ -64,7 +64,7 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
           )
     """)
     )
-    no_entities = result.scalar()
+    no_entities = result.scalar_one()
 
     result = await conn.execute(
         text("""
@@ -74,7 +74,7 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
         )
     """)
     )
-    no_provenance = result.scalar()
+    no_provenance = result.scalar_one()
 
     result = await conn.execute(
         text("""
@@ -85,7 +85,7 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
         )
     """)
     )
-    no_enrichment = result.scalar()
+    no_enrichment = result.scalar_one()
 
     return {
         "no_endorsements": no_endorsements,
@@ -109,7 +109,7 @@ async def check_endorsement_anomalies(conn: AsyncConnection) -> dict:
           AND lr.id NOT IN (SELECT record_id FROM record_endorsements)
     """)
     )
-    unresolved = result.scalar()
+    unresolved = result.scalar_one()
 
     result = await conn.execute(
         text(r"""
@@ -117,7 +117,7 @@ async def check_endorsement_anomalies(conn: AsyncConnection) -> dict:
         WHERE name ~ '^\d+$'
     """)
     )
-    placeholders = result.scalar()
+    placeholders = result.scalar_one()
 
     return {
         "unresolved_codes": unresolved,

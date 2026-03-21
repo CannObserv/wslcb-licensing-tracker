@@ -3,42 +3,47 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+def _make_conn_always_applied():
+    """Return a fake connection where the SELECT check returns a row (already applied)."""
+    conn = AsyncMock()
+    select_result = MagicMock()
+    select_result.scalar_one_or_none.return_value = "applied"  # truthy → skip
+    conn.execute.return_value = select_result
+    conn.commit = AsyncMock()
+    return conn
+
+
+def _make_conn_not_applied():
+    """Return a fake connection where the SELECT check returns None (not yet applied)."""
+    conn = AsyncMock()
+    select_result = MagicMock()
+    select_result.scalar_one_or_none.return_value = None  # not applied → run
+    conn.execute.return_value = select_result
+    conn.commit = AsyncMock()
+    return conn
+
+
+def _fake_engine_from_conns(conns: list):
+    """Return a MagicMock engine whose connect() yields connections in order."""
+    conn_iter = iter(conns)
+
+    class _CM:
+        def __init__(self):
+            self._c = next(conn_iter)
+
+        async def __aenter__(self):
+            return self._c
+
+        async def __aexit__(self, *args):
+            return False
+
+    engine = MagicMock()
+    engine.connect.side_effect = lambda: _CM()
+    return engine
+
+
 async def test_run_pending_migrations_all_applied():
     """When all 6 migrations are already in data_migrations, no fn is called."""
-    all_names = [
-        "0001_seed_endorsements",
-        "0002_repair_code_name_endorsements",
-        "0003_merge_mixed_case_endorsements",
-        "0004_backfill_endorsements",
-        "0005_backfill_entities",
-        "0006_build_record_links",
-    ]
-
-    # Build a fake connection that returns all names from the SELECT
-    fake_conn = AsyncMock()
-    select_result = MagicMock()
-    select_result.fetchall.return_value = [(n,) for n in all_names]
-    fake_conn.execute.return_value = select_result
-
-    # engine.connect() is an async context manager
-    fake_engine = MagicMock()
-    fake_engine.connect.return_value.__aenter__ = AsyncMock(return_value=fake_conn)
-    fake_engine.connect.return_value.__aexit__ = AsyncMock(return_value=False)
-
-    mock_fns = [MagicMock() for _ in range(6)]
-    patched_migrations = list(zip(all_names, mock_fns))
-
-    from wslcb_licensing_tracker import data_migration
-
-    with patch.object(data_migration, "_MIGRATIONS", patched_migrations):
-        await data_migration.run_pending_migrations(fake_engine)
-
-    for fn in mock_fns:
-        fn.assert_not_called()
-
-
-async def test_run_pending_migrations_applies_pending():
-    """When data_migrations is empty, all 6 fns are called and 6 rows are inserted."""
     all_names = [
         "0001_seed_endorsements",
         "0002_repair_code_name_endorsements",
@@ -51,51 +56,38 @@ async def test_run_pending_migrations_applies_pending():
     mock_fns = [AsyncMock() for _ in range(6)]
     patched_migrations = list(zip(all_names, mock_fns))
 
-    call_count = 0
-    insert_calls = []
+    # One connection per migration, all reporting "already applied"
+    conns = [_make_conn_always_applied() for _ in range(6)]
+    fake_engine = _fake_engine_from_conns(conns)
 
-    def make_conn():
-        """Return a fresh AsyncMock connection each time engine.connect() is entered."""
-        conn = AsyncMock()
+    from wslcb_licensing_tracker import data_migration
 
-        async def execute_side_effect(stmt, *args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            result = MagicMock()
-            # First call per outer context is the SELECT (returns empty list)
-            result.fetchall.return_value = []
-            # Track insert stmt objects
-            insert_calls.append(stmt)
-            return result
+    with patch.object(data_migration, "_MIGRATIONS", patched_migrations):
+        await data_migration.run_pending_migrations(fake_engine)
 
-        conn.execute.side_effect = execute_side_effect
-        conn.commit = AsyncMock()
-        return conn
+    for fn in mock_fns:
+        fn.assert_not_called()
+    for conn in conns:
+        conn.commit.assert_not_called()
 
-    # The first engine.connect() call (for SELECT) returns empty applied set.
-    # Subsequent calls (one per migration) each get their own conn.
-    connections = [make_conn() for _ in range(7)]  # 1 initial + 6 migrations
-    conn_iter = iter(connections)
 
-    class FakeContextManager:
-        def __init__(self):
-            self._conn = next(conn_iter)
+async def test_run_pending_migrations_applies_pending():
+    """When data_migrations is empty, all 6 fns are called and each conn committed."""
+    all_names = [
+        "0001_seed_endorsements",
+        "0002_repair_code_name_endorsements",
+        "0003_merge_mixed_case_endorsements",
+        "0004_backfill_endorsements",
+        "0005_backfill_entities",
+        "0006_build_record_links",
+    ]
 
-        async def __aenter__(self):
-            return self._conn
+    mock_fns = [AsyncMock() for _ in range(6)]
+    patched_migrations = list(zip(all_names, mock_fns))
 
-        async def __aexit__(self, *args):
-            return False
-
-    fake_engine = MagicMock()
-    fake_engine.connect.side_effect = lambda: FakeContextManager()
-
-    # Patch SELECT to return empty on first conn, and patch pg_insert to track inserts
-    first_conn = connections[0]
-    select_result = MagicMock()
-    select_result.fetchall.return_value = []
-    first_conn.execute.side_effect = None
-    first_conn.execute.return_value = select_result
+    # One connection per migration, all reporting "not yet applied"
+    conns = [_make_conn_not_applied() for _ in range(6)]
+    fake_engine = _fake_engine_from_conns(conns)
 
     from wslcb_licensing_tracker import data_migration
 
@@ -105,8 +97,8 @@ async def test_run_pending_migrations_applies_pending():
     for fn in mock_fns:
         fn.assert_called_once()
 
-    # Each of the 6 migration connections should have called commit
-    for conn in connections[1:7]:
+    # Each connection must have been committed after the fn ran
+    for conn in conns:
         conn.commit.assert_called_once()
 
 

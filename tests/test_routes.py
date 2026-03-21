@@ -5,9 +5,8 @@ and dashboard section ordering.
 Uses FastAPI TestClient with async pg_queries functions mocked; no disk DB.
 """
 import copy
-import sqlite3
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,22 +16,6 @@ from wslcb_licensing_tracker.app import app
 
 # The canonical placeholder that both search inputs must display.
 SEARCH_PLACEHOLDER = "Search business name, license #, location, applicant..."
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def db():
-    """In-memory SQLite DB used only for seeding data; not injected into routes."""
-    from wslcb_licensing_tracker.schema import init_db
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    init_db(conn)
-    yield conn
-    conn.close()
 
 
 # ---------------------------------------------------------------------------

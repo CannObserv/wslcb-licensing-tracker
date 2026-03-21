@@ -76,6 +76,159 @@ class TestAdminDashboardRequiresAuth:
 # ---------------------------------------------------------------------------
 
 
+class TestAdminDashboard:
+    """GET /admin/ renders the dashboard page with mocked DB and integrity checks."""
+
+    def test_dashboard_200(self):
+        """GET /admin/ returns 200 with mocked record counts and integrity results."""
+        mock_conn = AsyncMock()
+
+        # Build mock results for each execute call in order:
+        # 1. aggregate counts, 2. recent counts, 3. scrape log, 4. user count
+        def _mapping_result(row_dict):
+            result = MagicMock()
+            mapping = MagicMock()
+            mapping.one.return_value = row_dict
+            result.mappings.return_value = mapping
+            return result
+
+        def _all_result(rows):
+            result = MagicMock()
+            mapping = MagicMock()
+            mapping.all.return_value = rows
+            result.mappings.return_value = mapping
+            return result
+
+        def _scalar_result(value):
+            result = MagicMock()
+            result.scalar_one.return_value = value
+            return result
+
+        mock_conn.execute.side_effect = [
+            _mapping_result(
+                {"total": 100, "new_apps": 50, "approved": 30, "discontinued": 20}
+            ),
+            _mapping_result({"last_24h": 5, "last_7d": 20}),
+            _all_result([]),
+            _scalar_result(1),
+        ]
+
+        @asynccontextmanager
+        async def _fake_get_db_ctx(engine):
+            yield mock_conn
+
+        with (
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_orphaned_locations",
+                new_callable=AsyncMock,
+                return_value={"count": 0, "details": []},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_unenriched_records",
+                new_callable=AsyncMock,
+                return_value={
+                    "no_endorsements": 0,
+                    "no_entities": 0,
+                    "no_provenance": 0,
+                    "no_enrichment_tracking": 0,
+                },
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies",
+                new_callable=AsyncMock,
+                return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
+            ),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches = _make_admin_client(mock_conn)
+            try:
+                resp = client.get("/admin/")
+            finally:
+                _stop(client, patches)
+                del app.state.engine
+
+        assert resp.status_code == 200
+
+    def test_dashboard_shows_record_counts(self):
+        """Dashboard HTML includes the total record count from the DB."""
+        mock_conn = AsyncMock()
+
+        def _mapping_result(row_dict):
+            result = MagicMock()
+            mapping = MagicMock()
+            mapping.one.return_value = row_dict
+            result.mappings.return_value = mapping
+            return result
+
+        def _all_result(rows):
+            result = MagicMock()
+            mapping = MagicMock()
+            mapping.all.return_value = rows
+            result.mappings.return_value = mapping
+            return result
+
+        def _scalar_result(value):
+            result = MagicMock()
+            result.scalar_one.return_value = value
+            return result
+
+        mock_conn.execute.side_effect = [
+            _mapping_result(
+                {"total": 9999, "new_apps": 1000, "approved": 5000, "discontinued": 3999}
+            ),
+            _mapping_result({"last_24h": 12, "last_7d": 88}),
+            _all_result([]),
+            _scalar_result(2),
+        ]
+
+        @asynccontextmanager
+        async def _fake_get_db_ctx(engine):
+            yield mock_conn
+
+        with (
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_orphaned_locations",
+                new_callable=AsyncMock,
+                return_value={"count": 0, "details": []},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_unenriched_records",
+                new_callable=AsyncMock,
+                return_value={
+                    "no_endorsements": 0,
+                    "no_entities": 0,
+                    "no_provenance": 0,
+                    "no_enrichment_tracking": 0,
+                },
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies",
+                new_callable=AsyncMock,
+                return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
+            ),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches = _make_admin_client(mock_conn)
+            try:
+                resp = client.get("/admin/")
+            finally:
+                _stop(client, patches)
+                del app.state.engine
+
+        assert resp.status_code == 200
+        assert "9999" in resp.text
+
+
 class TestAdminEndorsementsPageLoads:
     """GET /admin/endorsements renders successfully with mocked DB."""
 

@@ -13,7 +13,7 @@ Usage::
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -44,7 +44,7 @@ async def _run_build_all_links(conn: AsyncConnection) -> None:
         )
 
 
-_MIGRATIONS: list[tuple[str, Callable]] = [
+_MIGRATIONS: list[tuple[str, Callable[[AsyncConnection], Awaitable[None]]]] = [
     ("0001_seed_endorsements", seed_endorsements),
     ("0002_repair_code_name_endorsements", repair_code_name_endorsements),
     ("0003_merge_mixed_case_endorsements", merge_mixed_case_endorsements),
@@ -57,23 +57,29 @@ _MIGRATIONS: list[tuple[str, Callable]] = [
 async def run_pending_migrations(engine: AsyncEngine) -> None:
     """Run any data migrations that have not yet been applied.
 
-    Each migration runs exactly once per database. Already-applied
-    migrations are skipped. Runs migrations in registration order.
+    Each migration runs exactly once per database. The applied-check and
+    the migration execution happen inside the **same** connection so the
+    window where two concurrent processes can both observe an empty table
+    and both run the same fn is minimised. ``ON CONFLICT DO NOTHING`` on
+    the insert is the final guard — migration functions must therefore be
+    idempotent (all registered migrations satisfy this requirement).
 
-    Raises on the first migration failure (does not suppress).
+    Runs migrations in registration order. Raises on the first failure
+    (does not suppress).
     """
-    async with engine.connect() as conn:
-        applied_rows = (await conn.execute(select(data_migrations.c.name))).fetchall()
-        applied = {row[0] for row in applied_rows}
-
     for name, fn in _MIGRATIONS:
-        if name in applied:
-            logger.debug("Data migration %r already applied — skipping", name)
-            continue
+        async with engine.connect() as conn:
+            already = (
+                await conn.execute(
+                    select(data_migrations.c.name).where(data_migrations.c.name == name)
+                )
+            ).scalar_one_or_none()
+            if already:
+                logger.debug("Data migration %r already applied — skipping", name)
+                continue
 
-        logger.info("Running data migration: %r", name)
-        try:
-            async with engine.connect() as conn:
+            logger.info("Running data migration: %r", name)
+            try:
                 await fn(conn)
                 await conn.execute(
                     pg_insert(data_migrations)
@@ -81,8 +87,8 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
                     .on_conflict_do_nothing(index_elements=["name"])
                 )
                 await conn.commit()
-        except Exception:
-            logger.exception("Data migration %r failed", name)
-            raise
+            except Exception:
+                logger.exception("Data migration %r failed", name)
+                raise
 
         logger.info("%r complete", name)

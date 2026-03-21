@@ -51,7 +51,7 @@ def _ok(data: object, message: str = "OK") -> JSONResponse:
 @router.get("/cities")
 async def api_cities(
     state: str = "",
-    conn: Conn = None,  # type: ignore[assignment]
+    conn: Conn = ...,  # injected by FastAPI
 ) -> JSONResponse:
     """Return cities for a given US state code.
 
@@ -77,7 +77,7 @@ async def api_cities(
 
 @router.get("/stats")
 async def api_stats(
-    conn: Conn = None,  # type: ignore[assignment]
+    conn: Conn = ...,  # injected by FastAPI
 ) -> JSONResponse:
     """Return aggregate statistics about the licensing record database."""
     stats = await get_stats(conn)
