@@ -137,7 +137,14 @@ async def get_or_create_source(  # noqa: PLR0913
                     sources.c.scrape_log_id.is_(None),
                 )
             )
-        return r.scalar_one()
+        row = r.scalar_one_or_none()
+        if row is None:
+            msg = (
+                f"Source row vanished for type={source_type_id},"
+                f" scrape_log_id={scrape_log_id!r} (NULL snapshot_path)"
+            )
+            raise RuntimeError(msg)
+        return row
 
     await conn.execute(text("SAVEPOINT get_or_create_source_null"))
     try:

@@ -38,10 +38,8 @@ class IngestOptions:
 class IngestResult:
     """Result of ingesting a single record.
 
-    record_id is always set when an IngestResult is returned; it is only
-    absent at the type level because dataclass fields need a default when
-    is_new follows. The None case is an error path — ingest_record returns
-    None (not IngestResult) on failure.
+    ingest_record returns None (not IngestResult) on failure, so record_id
+    is always a valid integer when this object is returned.
     """
 
     record_id: int
