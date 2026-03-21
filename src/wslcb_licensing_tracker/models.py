@@ -3,8 +3,7 @@
 All table metadata lives here. Modules that need table objects import them
 directly: ``from wslcb_licensing_tracker.models import license_records``.
 
-No ORM mappers — all Table objects, no declarative_base(). FTS columns
-(search_vector) are added in Phase 5.
+No ORM mappers — all Table objects, no declarative_base().
 """
 
 from sqlalchemy import (
@@ -20,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 
 metadata = MetaData()
 
@@ -145,6 +145,7 @@ license_records = Table(
     Column("resolved_endorsements", Text, nullable=False, server_default="''"),
     Column("scraped_at", Text, nullable=False),
     Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("search_vector", TSVECTOR),
     UniqueConstraint(
         "section_type",
         "record_date",
