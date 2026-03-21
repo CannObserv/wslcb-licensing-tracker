@@ -372,3 +372,64 @@ async def reprocess_entities(
         )
 
     return {"records_processed": records_processed, "entities_linked": entities_linked}
+
+
+async def get_entity_by_id(
+    conn: AsyncConnection,
+    entity_id: int,
+) -> dict | None:
+    """Fetch a single entity by id."""
+    row = (
+        (
+            await conn.execute(
+                select(
+                    entities.c.id,
+                    entities.c.name,
+                    entities.c.entity_type,
+                    entities.c.created_at,
+                ).where(entities.c.id == entity_id)
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return dict(row) if row else None
+
+
+async def backfill_entities(conn: AsyncConnection) -> int:
+    """Backfill record_entities for records missing entity rows but having semicolons in applicants.
+
+    Async port of entities.backfill_entities. Returns number of records processed.
+    Caller must commit.
+    """
+    stmt = (
+        select(
+            license_records.c.id,
+            license_records.c.applicants,
+            license_records.c.previous_applicants,
+        )
+        .outerjoin(
+            record_entities,
+            record_entities.c.record_id == license_records.c.id,
+        )
+        .where(record_entities.c.record_id.is_(None))
+        .where(
+            (license_records.c.applicants.contains(";"))
+            | (license_records.c.previous_applicants.contains(";"))
+        )
+    )
+
+    rows = (await conn.execute(stmt)).fetchall()
+    processed = 0
+    for row in rows:
+        r_id, r_applicants, r_prev = row[0], row[1] or "", row[2] or ""
+        await parse_and_link_entities(conn, r_id, r_applicants, "applicant")
+        if r_prev:
+            await parse_and_link_entities(conn, r_id, r_prev, "previous_applicant")
+        processed += 1
+
+    if processed:
+        await merge_duplicate_entities(conn)
+
+    logger.info("backfill_entities: processed %d record(s)", processed)
+    return processed

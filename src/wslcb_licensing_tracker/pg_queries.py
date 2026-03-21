@@ -845,3 +845,34 @@ async def get_entities(  # noqa: PLR0913
         {**params, "limit": per_page, "offset": offset},
     )
     return {"entities": [dict(r) for r in rows_result.mappings().all()], "total": total}
+
+
+async def get_record_link(
+    conn: AsyncConnection,
+    record_id: int,
+) -> dict | None:
+    """Fetch the best outcome link for a new_application record.
+
+    Returns a dict with outcome_id, confidence, days_gap,
+    outcome_date, outcome_section_type, or None.
+    """
+    row = (
+        (
+            await conn.execute(
+                text("""
+                SELECT rl.outcome_id, rl.confidence, rl.days_gap,
+                       lr.record_date AS outcome_date,
+                       lr.section_type AS outcome_section_type
+                FROM record_links rl
+                JOIN license_records lr ON lr.id = rl.outcome_id
+                WHERE rl.new_app_id = :record_id
+                ORDER BY (rl.confidence = 'high') DESC
+                LIMIT 1
+            """),
+                {"record_id": record_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return dict(row) if row else None
