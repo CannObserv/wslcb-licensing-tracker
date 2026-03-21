@@ -12,21 +12,30 @@ The CSV export endpoint (/api/v1/export) is exempt from the envelope
 import csv
 import io
 import logging
+from collections.abc import AsyncGenerator
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .db import US_STATES, get_db
-from .queries import (
-    export_records_cursor,
-    get_cities_for_state,
-    get_stats,
-)
+from .database import get_db
+from .db import US_STATES
+from .pg_queries import export_records_cursor, get_cities_for_state, get_stats
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
+
+
+async def _get_db(request: Request) -> AsyncGenerator[AsyncConnection, None]:
+    """FastAPI dependency yielding an AsyncConnection from the shared engine pool."""
+    async with get_db(request.app.state.engine) as conn:
+        yield conn
+
+
+Conn = Annotated[AsyncConnection, Depends(_get_db)]
 
 
 def _ok(data: object, message: str = "OK") -> JSONResponse:
@@ -40,7 +49,10 @@ def _ok(data: object, message: str = "OK") -> JSONResponse:
 
 
 @router.get("/cities")
-async def api_cities(state: str = "") -> JSONResponse:
+async def api_cities(
+    state: str = "",
+    conn: Conn = None,  # type: ignore[assignment]
+) -> JSONResponse:
     """Return cities for a given US state code.
 
     Used by the search form to populate the city dropdown dynamically.
@@ -51,8 +63,7 @@ async def api_cities(state: str = "") -> JSONResponse:
             {"ok": True, "message": "No cities for state", "data": []},
             headers={"Cache-Control": "public, max-age=300"},
         )
-    with get_db() as conn:
-        cities = get_cities_for_state(conn, state)
+    cities = await get_cities_for_state(conn, state)
     return JSONResponse(
         {"ok": True, "message": f"Cities for {state}", "data": cities},
         headers={"Cache-Control": "public, max-age=300"},
@@ -65,10 +76,11 @@ async def api_cities(state: str = "") -> JSONResponse:
 
 
 @router.get("/stats")
-async def api_stats() -> JSONResponse:
+async def api_stats(
+    conn: Conn = None,  # type: ignore[assignment]
+) -> JSONResponse:
     """Return aggregate statistics about the licensing record database."""
-    with get_db() as conn:
-        stats = get_stats(conn)
+    stats = await get_stats(conn)
     if stats.get("date_range"):
         stats["date_range"] = list(stats["date_range"])
     else:
@@ -84,7 +96,7 @@ async def api_stats() -> JSONResponse:
 
 
 @router.get("/health")
-async def api_health() -> JSONResponse:
+async def api_health(request: Request) -> JSONResponse:
     """Lightweight health check: verifies the process is alive and the DB is reachable.
 
     Returns HTTP 200 when healthy, HTTP 503 when the database cannot be
@@ -92,8 +104,8 @@ async def api_health() -> JSONResponse:
     by systemd and external uptime monitors.
     """
     try:
-        with get_db() as conn:
-            conn.execute("SELECT 1")
+        async with get_db(request.app.state.engine) as conn:
+            await conn.execute(text("SELECT 1"))
         return JSONResponse(
             {"ok": True, "message": "Healthy", "data": {"db": "ok"}},
             status_code=200,
@@ -150,6 +162,7 @@ _EXPORT_FIELDNAMES = [
 
 @router.get("/export")
 async def export_csv(  # noqa: PLR0913
+    request: Request,
     q: str = "",
     section_type: str = "",
     application_type: str = "",
@@ -163,21 +176,21 @@ async def export_csv(  # noqa: PLR0913
     """Stream search results as a CSV file.
 
     Accepts the same filter parameters as the search form.  Rows are
-    yielded directly from the SQLite cursor to keep memory usage flat
+    yielded directly from the PostgreSQL cursor to keep memory usage flat
     regardless of result set size.
     """
     if not state:
         city = ""
 
-    def _csv_generator() -> None:
+    async def _async_csv_generator() -> AsyncGenerator[str, None]:
         """Yield CSV rows incrementally from the database cursor."""
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=_EXPORT_FIELDNAMES, extrasaction="ignore")
         writer.writeheader()
         yield buf.getvalue()
 
-        with get_db() as conn:
-            for record in export_records_cursor(
+        async with get_db(request.app.state.engine) as conn:
+            async for record in export_records_cursor(
                 conn,
                 query=q,
                 section_type=section_type,
@@ -195,7 +208,7 @@ async def export_csv(  # noqa: PLR0913
                 yield buf.getvalue()
 
     return StreamingResponse(
-        _csv_generator(),
+        _async_csv_generator(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=wslcb_records.csv"},
     )

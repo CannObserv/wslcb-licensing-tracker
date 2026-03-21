@@ -6,6 +6,7 @@ Uses FastAPI TestClient with async pg_queries functions mocked; no disk DB.
 """
 import copy
 import sqlite3
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -72,6 +73,12 @@ def _async_db_ctx(mock_conn: AsyncMock):
     return _ctx
 
 
+async def _async_empty_gen() -> AsyncGenerator[dict, None]:
+    """Async generator that yields nothing (empty export cursor)."""
+    return
+    yield  # make it a generator
+
+
 def _make_client(stats: dict | None = None, entity_result: dict | None = None):
     """Return a (client, patches) pair with async query functions mocked.
 
@@ -88,11 +95,6 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
     mock_conn = AsyncMock()
     engine = MagicMock()
     engine.dispose = AsyncMock()
-
-    # Sync context manager for api_routes (not yet ported to async)
-    sync_ctx = MagicMock()
-    sync_ctx.__enter__ = MagicMock(return_value=MagicMock())
-    sync_ctx.__exit__ = MagicMock(return_value=False)
 
     async def _get_stats(conn):
         return stats
@@ -119,7 +121,10 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
         patch("wslcb_licensing_tracker.app.get_filter_options", new=_get_filter_options),
         patch("wslcb_licensing_tracker.app.get_cities_for_state", new=_get_cities_for_state),
         patch("wslcb_licensing_tracker.app.get_entities", new=_get_entities),
-        patch("wslcb_licensing_tracker.api_routes.get_db", return_value=sync_ctx),
+        patch("wslcb_licensing_tracker.api_routes.get_db", side_effect=_async_db_ctx(mock_conn)),
+        patch("wslcb_licensing_tracker.api_routes.export_records_cursor", return_value=_async_empty_gen()),
+        patch("wslcb_licensing_tracker.api_routes.get_cities_for_state", new=_get_cities_for_state),
+        patch("wslcb_licensing_tracker.api_routes.get_stats", new=_get_stats),
     )
     for p in patches:
         p.start()
