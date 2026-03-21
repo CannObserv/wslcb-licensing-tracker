@@ -40,13 +40,27 @@ class TestSearchRecords:
         assert total >= 1
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_query_filter_ilike(self, pg_conn, standard_new_application):
+    async def test_query_filter_fts(self, pg_conn, standard_new_application):
+        """Text query finds records via tsvector full-text search."""
         standard_new_application["license_number"] = "query_002"
-        standard_new_application["business_name"] = "UNIQUE ILIKE SEARCH CORP"
+        standard_new_application["business_name"] = "UNIQUE FTS SEARCH CORP"
         await insert_record(pg_conn, standard_new_application)
-        records, total = await search_records(pg_conn, query="UNIQUE ILIKE SEARCH")
+        records, total = await search_records(pg_conn, query="UNIQUE FTS SEARCH")
         assert total >= 1
-        assert any("UNIQUE ILIKE SEARCH" in r["business_name"] for r in records)
+        assert any("UNIQUE FTS SEARCH" in r["business_name"] for r in records)
+        # FTS result should appear first (ts_rank ordering)
+        assert "UNIQUE FTS SEARCH" in records[0]["business_name"]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_query_filter_trgm_fuzzy(self, pg_conn, standard_new_application):
+        """Partial/non-English business names are found via pg_trgm similarity."""
+        standard_new_application["license_number"] = "query_002b"
+        standard_new_application["business_name"] = "XYZNOTAWORD HOLDINGS LLC"
+        await insert_record(pg_conn, standard_new_application)
+        # tsvector stopwords won't help here — trgm handles it
+        records, total = await search_records(pg_conn, query="XYZNOTAWORD")
+        assert total >= 1
+        assert any("XYZNOTAWORD" in r["business_name"] for r in records)
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_section_type_filter(self, pg_conn, standard_new_application):
