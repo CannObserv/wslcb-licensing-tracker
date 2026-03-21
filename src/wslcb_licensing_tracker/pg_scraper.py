@@ -10,13 +10,13 @@ from datetime import UTC, datetime
 
 import httpx
 from bs4 import BeautifulSoup
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from .database import get_db
 from .db import DATA_DIR, SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL
-from .models import scrape_log
+from .models import scrape_log, sources
 from .parser import SECTION_MAP, parse_records_from_table
 from .pg_db import get_or_create_source
 from .pg_pipeline import IngestOptions, ingest_batch
@@ -60,7 +60,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                 resp = await client.get(WSLCB_SOURCE_URL)
             resp.raise_for_status()
             html = resp.text
-            logger.debug("Fetched %s bytes", f"{len(html):,}")
+            logger.debug("Fetched %d bytes", len(html))
 
             content_hash = compute_content_hash(html)
             last_hash = await get_last_content_hash(conn)
@@ -134,7 +134,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                     counts["discontinued"] = batch_result.inserted
                 counts["skipped"] += batch_result.skipped
 
-            await conn.commit()
+            await conn.commit()  # commit records first; log update follows in a second commit
 
             await conn.execute(
                 update(scrape_log)
@@ -181,7 +181,7 @@ async def cleanup_redundant_scrapes(
     engine: AsyncEngine,
     *,
     delete_files: bool = True,
-) -> dict:
+) -> dict[str, int]:
     """Remove scrape_log rows (and associated sources/files) for unchanged scrapes.
 
     Returns a dict with counts of removed rows: ``scrape_logs``, ``sources``,
@@ -192,14 +192,9 @@ async def cleanup_redundant_scrapes(
     async with get_db(engine) as conn:
         # Find scrape_log rows with status='unchanged' that have no sources linked
         unchanged = await conn.execute(
-            text("""
-            SELECT sl.id, sl.snapshot_path
-            FROM scrape_log sl
-            WHERE sl.status = 'unchanged'
-              AND NOT EXISTS (
-                  SELECT 1 FROM sources s WHERE s.scrape_log_id = sl.id
-              )
-            """)
+            select(scrape_log.c.id, scrape_log.c.snapshot_path)
+            .where(scrape_log.c.status == "unchanged")
+            .where(~exists(select(sources.c.id).where(sources.c.scrape_log_id == scrape_log.c.id)))
         )
         rows = unchanged.mappings().all()
 
@@ -212,10 +207,7 @@ async def cleanup_redundant_scrapes(
 
         if rows:
             ids = [r["id"] for r in rows]
-            await conn.execute(
-                text("DELETE FROM scrape_log WHERE id = ANY(:ids)"),
-                {"ids": ids},
-            )
+            await conn.execute(delete(scrape_log).where(scrape_log.c.id.in_(ids)))
             await conn.commit()
             result["scrape_logs"] = len(ids)
 

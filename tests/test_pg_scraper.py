@@ -5,8 +5,8 @@ from wslcb_licensing_tracker.pg_scraper import get_last_content_hash
 from wslcb_licensing_tracker.scraper import compute_content_hash
 
 
-def test_compute_content_hash_re_exported():
-    """compute_content_hash is re-used from scraper.py without duplication."""
+def test_compute_content_hash_is_deterministic():
+    """compute_content_hash returns the same hash for the same input."""
     assert compute_content_hash("<html>test</html>") == compute_content_hash("<html>test</html>")
 
 
