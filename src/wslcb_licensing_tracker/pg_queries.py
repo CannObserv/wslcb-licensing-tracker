@@ -496,12 +496,12 @@ async def export_records_cursor(  # noqa: PLR0913
         date_to=date_to,
         outcome_status=outcome_status,
     )
-    result = await conn.execute(
+    async with await conn.stream(
         text(f"{_EXPORT_SELECT} {where} ORDER BY lr.record_date DESC, lr.id DESC LIMIT :limit"),
         {**params, "limit": limit},
-    )
-    for row in result.mappings().all():
-        yield dict(row)
+    ) as stream:
+        async for row in stream.mappings():
+            yield dict(row)
 
 
 # ------------------------------------------------------------------
@@ -752,7 +752,7 @@ async def get_record_by_id(conn: AsyncConnection, record_id: int) -> dict | None
         return None
     rows = [dict(row)]
     hydrated = await _hydrate_records(conn, rows)
-    return hydrated[0] if hydrated else None
+    return hydrated[0]
 
 
 async def get_related_records(conn: AsyncConnection, record: dict) -> list[dict]:

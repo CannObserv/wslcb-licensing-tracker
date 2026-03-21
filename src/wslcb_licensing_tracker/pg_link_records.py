@@ -622,4 +622,9 @@ async def get_record_links_bulk(
         .where(record_links.c.new_app_id.in_(new_app_ids))
     )
     rows = (await conn.execute(stmt)).mappings().all()
-    return {r["new_app_id"]: dict(r) for r in rows}
+    result: dict[int, dict] = {}
+    for r in rows:
+        nid = r["new_app_id"]
+        if nid not in result or r["confidence"] == "high":
+            result[nid] = dict(r)
+    return result

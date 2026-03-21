@@ -25,7 +25,7 @@ from .models import (
     license_endorsements,
     record_endorsements,
 )
-from .pg_endorsements import CODE_NAME_RE, ensure_endorsement, process_record
+from .pg_endorsements import CODE_NAME_RE, _link_endorsement, ensure_endorsement, process_record
 
 logger = logging.getLogger(__name__)
 
@@ -124,16 +124,6 @@ async def _merge_seeded_placeholders(conn: AsyncConnection) -> int:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-async def _link_endorsement(conn: AsyncConnection, record_id: int, endorsement_id: int) -> None:
-    """Insert a record↔endorsement link, ignoring duplicates."""
-    stmt = (
-        pg_insert(record_endorsements)
-        .values(record_id=record_id, endorsement_id=endorsement_id)
-        .on_conflict_do_nothing()
-    )
-    await conn.execute(stmt)
 
 
 async def _merge_endorsement(conn: AsyncConnection, src_id: int, dst_id: int) -> int:
