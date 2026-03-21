@@ -68,6 +68,7 @@ ignore = [
 # print() is legitimate CLI output per project convention
 "src/wslcb_licensing_tracker/cli.py" = ["T201"]
 "src/wslcb_licensing_tracker/integrity.py" = ["T201"]
+"src/wslcb_licensing_tracker/pg_integrity.py" = ["T201"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
