@@ -5,10 +5,12 @@ migration framework in schema.py.
 """
 
 import logging
+from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 logger = logging.getLogger(__name__)
@@ -22,8 +24,8 @@ async def init_db(engine: AsyncEngine) -> None:
     migrations.
     """
 
-    def _run_upgrade(connection: object) -> None:
-        cfg = Config("alembic.ini")
+    def _run_upgrade(connection: Connection) -> None:
+        cfg = Config(str(Path(__file__).parent.parent.parent / "alembic.ini"))
         cfg.attributes["connection"] = connection
         command.upgrade(cfg, "head")
 

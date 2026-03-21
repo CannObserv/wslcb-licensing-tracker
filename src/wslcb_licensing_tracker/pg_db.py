@@ -12,6 +12,7 @@ import logging
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .db import SOURCE_ROLE_PRIORITY, _normalize_raw_address
@@ -115,42 +116,49 @@ async def get_or_create_source(  # noqa: PLR0913
             raise RuntimeError(msg)
         return row[0]
 
-    # NULL snapshot_path — manual lookup
-    if scrape_log_id is not None:
-        result = await conn.execute(
-            select(sources.c.id).where(
-                sources.c.source_type_id == source_type_id,
-                sources.c.snapshot_path.is_(None),
-                sources.c.scrape_log_id == scrape_log_id,
+    # NULL snapshot_path — PostgreSQL NULLs are distinct in UNIQUE constraints,
+    # so ON CONFLICT DO NOTHING won't fire. Use SAVEPOINT to make the insert
+    # atomic: attempt insert; on IntegrityError roll back to the savepoint and
+    # fetch the row that won the race.
+    async def _select_null_path() -> int:
+        if scrape_log_id is not None:
+            r = await conn.execute(
+                select(sources.c.id).where(
+                    sources.c.source_type_id == source_type_id,
+                    sources.c.snapshot_path.is_(None),
+                    sources.c.scrape_log_id == scrape_log_id,
+                )
             )
-        )
-    else:
-        result = await conn.execute(
-            select(sources.c.id).where(
-                sources.c.source_type_id == source_type_id,
-                sources.c.snapshot_path.is_(None),
-                sources.c.scrape_log_id.is_(None),
+        else:
+            r = await conn.execute(
+                select(sources.c.id).where(
+                    sources.c.source_type_id == source_type_id,
+                    sources.c.snapshot_path.is_(None),
+                    sources.c.scrape_log_id.is_(None),
+                )
             )
-        )
-    row = result.first()
-    if row:
-        return row[0]
+        return r.scalar_one()
 
-    # Insert new
-    stmt = (
-        sources.insert()
-        .values(
-            source_type_id=source_type_id,
-            snapshot_path=None,
-            url=url,
-            captured_at=captured_at,
-            scrape_log_id=scrape_log_id,
-            metadata=meta_json,
+    await conn.execute(text("SAVEPOINT get_or_create_source_null"))
+    try:
+        stmt = (
+            pg_insert(sources)
+            .values(
+                source_type_id=source_type_id,
+                snapshot_path=None,
+                url=url,
+                captured_at=captured_at,
+                scrape_log_id=scrape_log_id,
+                metadata=meta_json,
+            )
+            .returning(sources.c.id)
         )
-        .returning(sources.c.id)
-    )
-    result = await conn.execute(stmt)
-    return result.scalar_one()
+        result = await conn.execute(stmt)
+        await conn.execute(text("RELEASE SAVEPOINT get_or_create_source_null"))
+        return result.scalar_one()
+    except IntegrityError:
+        await conn.execute(text("ROLLBACK TO SAVEPOINT get_or_create_source_null"))
+        return await _select_null_path()
 
 
 async def link_record_source(

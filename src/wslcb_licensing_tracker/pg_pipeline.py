@@ -36,9 +36,15 @@ class IngestOptions:
 
 @dataclass
 class IngestResult:
-    """Result of ingesting a single record."""
+    """Result of ingesting a single record.
 
-    record_id: int | None = None
+    record_id is always set when an IngestResult is returned; it is only
+    absent at the type level because dataclass fields need a default when
+    is_new follows. The None case is an error path — ingest_record returns
+    None (not IngestResult) on failure.
+    """
+
+    record_id: int
     is_new: bool = False
 
 
@@ -223,9 +229,9 @@ async def ingest_record(
     record_id, is_new = result
 
     if is_new:
-        # Endorsements and entity linking are STUBBED (Phase 3 implementation)
-        # Entity enrichment is tracked now so the step appears as completed
-        await _record_enrichment(conn, record_id, STEP_ENTITIES)
+        # Endorsements, entity linking, address validation, and outcome linking
+        # are STUBBED — Phase 3 ports these steps. Enrichment rows are NOT
+        # recorded here so Phase 3 can detect which records need backfill.
 
         # Step 3: Link provenance (first_seen)
         if options.source_id is not None:

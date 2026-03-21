@@ -204,8 +204,8 @@ class TestPgIngestRecord:
         assert result.first() is not None
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_enrichment_tracked(self, pg_conn, standard_new_application):
-        """Entity enrichment step is tracked for new records."""
+    async def test_no_enrichment_recorded_before_phase3(self, pg_conn, standard_new_application):
+        """No enrichment rows are written in Phase 2 — Phase 3 detects missing rows for backfill."""
         options = IngestOptions(validate_addresses=False, link_outcomes=False)
         r = await ingest_record(pg_conn, standard_new_application, options)
         assert r.is_new is True
@@ -216,7 +216,7 @@ class TestPgIngestRecord:
             )
         )
         steps = [row[0] for row in result]
-        assert "entities" in steps
+        assert steps == []
 
 
 @pytest.mark.asyncio(loop_scope="session")

@@ -211,7 +211,7 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
         await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def pg_conn(pg_engine: AsyncEngine) -> AsyncGenerator[AsyncConnection, None]:
     """AsyncConnection in a rolled-back transaction for test isolation.
 
