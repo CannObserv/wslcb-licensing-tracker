@@ -9,7 +9,7 @@ Contains:
 - export_records() / export_records_cursor() — flat export queries
 - get_filter_options() / get_cities_for_state() — dropdown helpers
 - get_stats() — dashboard statistics (cached)
-- get_record_by_id() / get_related_records() — single-record lookups
+- get_record_by_id() / get_related_records() / get_source_by_id() — single-row lookups
 - get_entity_records() / get_entities() — entity-centric queries
 - invalidate_filter_cache() — cache invalidation
 """
@@ -844,6 +844,36 @@ async def get_entities(  # noqa: PLR0913
         {**params, "limit": per_page, "offset": offset},
     )
     return {"entities": [dict(r) for r in rows_result.mappings().all()], "total": total}
+
+
+async def get_source_by_id(conn: AsyncConnection, source_id: int) -> dict | None:
+    """Fetch a single source row joined with its source_type slug and label.
+
+    Returns a dict with keys: id, source_type (slug), source_label, snapshot_path,
+    url, captured_at, metadata.  Returns None if not found.
+    """
+    row = (
+        (
+            await conn.execute(
+                text("""
+                    SELECT s.id,
+                           st.slug  AS source_type,
+                           st.label AS source_label,
+                           s.snapshot_path,
+                           s.url,
+                           s.captured_at,
+                           s.metadata
+                    FROM sources s
+                    JOIN source_types st ON st.id = s.source_type_id
+                    WHERE s.id = :source_id
+                """),
+                {"source_id": source_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return dict(row) if row is not None else None
 
 
 async def get_record_link(

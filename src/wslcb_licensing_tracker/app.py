@@ -33,8 +33,6 @@ from .database import create_engine_from_env, get_db
 from .display import format_outcome, summarize_provenance
 from .log_config import setup_logging
 from .models import record_sources as record_sources_table
-from .models import source_types
-from .models import sources as sources_table
 from .parser import extract_tbody_from_diff, extract_tbody_from_snapshot, strip_anchor_tags
 from .pg_db import DATA_DIR, get_record_sources
 from .pg_entities import get_entity_by_id
@@ -47,6 +45,7 @@ from .pg_queries import (
     get_record_by_id,
     get_record_link,
     get_related_records,
+    get_source_by_id,
     get_stats,
     hydrate_records,
     search_records,
@@ -374,30 +373,7 @@ async def source_viewer(
     """
     async with get_db(request.app.state.engine) as conn:
         # 1. Look up source row with JOIN to source_types
-        source_row = (
-            (
-                await conn.execute(
-                    select(
-                        sources_table.c.id,
-                        source_types.c.slug.label("source_type"),
-                        source_types.c.label.label("source_label"),
-                        sources_table.c.snapshot_path,
-                        sources_table.c.url,
-                        sources_table.c.captured_at,
-                        sources_table.c.metadata,
-                    )
-                    .select_from(
-                        sources_table.join(
-                            source_types,
-                            source_types.c.id == sources_table.c.source_type_id,
-                        )
-                    )
-                    .where(sources_table.c.id == source_id)
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
+        source_row = await get_source_by_id(conn, source_id)
         if source_row is None:
             raise HTTPException(status_code=404, detail="Source not found")
 
@@ -418,7 +394,7 @@ async def source_viewer(
         if link_row is None:
             raise HTTPException(status_code=404, detail="Source not linked to record")
 
-    source = dict(source_row)
+    source = source_row
     raw_meta = source.get("metadata")
     source["metadata"] = json.loads(raw_meta) if raw_meta else {}
 
