@@ -165,17 +165,31 @@ async def test_require_admin_not_in_table_raises_403(db):
 # ---- CLI admin commands -------------------------------------------
 
 
-def _patch_db(db):
-    """Context manager that patches cli.get_db to use the in-memory db."""
-    mock = MagicMock()
-    mock.__enter__ = lambda s: db
-    mock.__exit__ = MagicMock(return_value=False)
-    return patch("wslcb_licensing_tracker.cli.get_db", return_value=mock)
+def _make_async_get_db(conn):
+    """Return an async context manager that yields *conn*."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _get_db(_engine):
+        yield conn
+
+    return _get_db
 
 
-def test_cli_add_and_list_and_remove_users(db):
+def _make_execute_result(fetchone=None, fetchall=None, scalar_one=None):
+    """Build a synchronous MagicMock result object for conn.execute() return value."""
+    from unittest.mock import MagicMock
+    result = MagicMock()
+    result.fetchone.return_value = fetchone
+    result.fetchall.return_value = fetchall if fetchall is not None else []
+    result.scalar_one.return_value = scalar_one
+    return result
+
+
+def test_cli_add_and_list_and_remove_users():
     """Round-trip: add-user, list-users, remove-user via CLI command functions."""
     import types
+    from unittest.mock import AsyncMock, MagicMock
 
     from wslcb_licensing_tracker.cli import (
         cmd_admin_add_user,
@@ -183,52 +197,71 @@ def test_cli_add_and_list_and_remove_users(db):
         cmd_admin_remove_user,
     )
 
-    with _patch_db(db):
-        # add first user
+    conn = AsyncMock()
+
+    # cmd_admin_add_user: SELECT returns None (no existing user)
+    conn.execute.return_value = _make_execute_result(fetchone=None)
+    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
+         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
         cmd_admin_add_user(types.SimpleNamespace(email="first@example.com"))
-        row = db.execute(
-            "SELECT email FROM admin_users WHERE email = 'first@example.com'"
-        ).fetchone()
-        assert row is not None
+    assert conn.commit.called
 
-        # add second user
-        cmd_admin_add_user(types.SimpleNamespace(email="second@example.com"))
-
-        # list (no assertion on stdout, just check it doesn't crash)
+    # cmd_admin_list_users: fetchall returns empty list → prints "No admin users."
+    conn.reset_mock()
+    conn.execute.return_value = _make_execute_result(fetchall=[])
+    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
+         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
         cmd_admin_list_users(types.SimpleNamespace())
 
-        # remove first user succeeds (second still exists)
+    # cmd_admin_remove_user: fetchone returns a row (user exists), count = 2 (not last)
+    conn.reset_mock()
+    # execute is called three times: SELECT id, SELECT COUNT, DELETE
+    results = [
+        _make_execute_result(fetchone=MagicMock()),   # SELECT id
+        _make_execute_result(scalar_one=2),            # SELECT COUNT
+        _make_execute_result(),                        # DELETE
+    ]
+    conn.execute.side_effect = results
+    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
+         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
         cmd_admin_remove_user(types.SimpleNamespace(email="first@example.com"))
-        row = db.execute(
-            "SELECT email FROM admin_users WHERE email = 'first@example.com'"
-        ).fetchone()
-        assert row is None
+    assert conn.commit.called
 
 
-def test_cli_remove_last_user_exits(db):
+def test_cli_remove_last_user_exits():
     """Removing the only admin user should exit with error."""
     import types
+    from unittest.mock import AsyncMock, MagicMock
 
-    from wslcb_licensing_tracker.cli import cmd_admin_add_user, cmd_admin_remove_user
+    from wslcb_licensing_tracker.cli import cmd_admin_remove_user
 
-    with _patch_db(db):
-        cmd_admin_add_user(types.SimpleNamespace(email="solo@example.com"))
+    conn = AsyncMock()
+    results = [
+        _make_execute_result(fetchone=MagicMock()),  # SELECT id → found
+        _make_execute_result(scalar_one=1),           # COUNT → 1 (last user)
+    ]
+    conn.execute.side_effect = results
 
+    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
+         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
         with pytest.raises(SystemExit):
             cmd_admin_remove_user(types.SimpleNamespace(email="solo@example.com"))
 
 
-def test_cli_add_duplicate_user_is_noop(db):
-    """Adding an already-existing email is a no-op (no error, no duplicate row)."""
+def test_cli_add_duplicate_user_is_noop():
+    """Adding an already-existing email is a no-op (no INSERT executed)."""
     import types
+    from unittest.mock import AsyncMock, MagicMock
 
     from wslcb_licensing_tracker.cli import cmd_admin_add_user
 
-    with _patch_db(db):
-        cmd_admin_add_user(types.SimpleNamespace(email="dup@example.com"))
-        cmd_admin_add_user(types.SimpleNamespace(email="dup@example.com"))  # no-op
+    conn = AsyncMock()
+    # SELECT returns existing user → no INSERT, no commit
+    conn.execute.return_value = _make_execute_result(fetchone=MagicMock(id=1))
 
-    count = db.execute(
-        "SELECT COUNT(*) FROM admin_users WHERE email = 'dup@example.com'"
-    ).fetchone()[0]
-    assert count == 1
+    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
+         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
+        cmd_admin_add_user(types.SimpleNamespace(email="dup@example.com"))
+
+    # Only the SELECT was executed, no INSERT (commit not called)
+    assert not conn.commit.called

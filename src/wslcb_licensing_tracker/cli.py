@@ -15,64 +15,96 @@ Usage::
     python cli.py rebuild-links           # rebuild application→outcome links
     python cli.py check                   # run integrity checks
     python cli.py check --fix             # run checks and auto-fix safe issues
-    python cli.py rebuild --output data/wslcb-rebuilt.db           # rebuild from sources
-    python cli.py rebuild --output data/wslcb-rebuilt.db --verify  # rebuild and compare
 
-Extracted from ``scraper.py`` as part of the Phase 1 architecture
-refactor (#17).
+Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 """
 
 import argparse
-import logging
+import asyncio
 import sys
 from pathlib import Path
 
-from .address_validator import backfill_addresses, refresh_addresses, refresh_specific_addresses
-from .backfill_diffs import backfill_diffs
-from .backfill_provenance import backfill_provenance
-from .backfill_snapshots import backfill_from_snapshots
-from .db import DATA_DIR, DB_PATH, get_db
-from .endorsements import reprocess_endorsements
-from .entities import reprocess_entities
-from .integrity import print_report, run_all_checks
-from .link_records import build_all_links
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from .database import create_engine_from_env, get_db
 from .log_config import setup_logging
+from .models import admin_users
 from .parser import SECTION_DIR_MAP
-from .rebuild import compare_databases, rebuild_from_sources
-from .schema import init_db
-from .scraper import cleanup_redundant_scrapes, scrape
+from .pg_address_validator import backfill_addresses as pg_backfill_addresses
+from .pg_address_validator import refresh_addresses as pg_refresh_addresses
+from .pg_address_validator import refresh_specific_addresses as pg_refresh_specific_addresses
+from .pg_backfill_diffs import backfill_diffs as pg_backfill_diffs
+from .pg_backfill_snapshots import backfill_from_snapshots as pg_backfill_snapshots
+from .pg_endorsements import reprocess_endorsements as pg_reprocess_endorsements
+from .pg_entities import reprocess_entities as pg_reprocess_entities
+from .pg_integrity import print_report
+from .pg_integrity import run_all_checks as pg_run_all_checks
+from .pg_link_records import build_all_links as pg_build_all_links
+from .pg_scraper import cleanup_redundant_scrapes as pg_cleanup_redundant
+from .pg_scraper import scrape as pg_scrape
 
 
 def cmd_scrape(_args: argparse.Namespace) -> None:
     """Run a live scrape of the WSLCB licensing page."""
-    scrape()
+    engine = create_engine_from_env()
+    asyncio.run(pg_scrape(engine))
+    engine.dispose()
 
 
 def cmd_backfill_snapshots(_args: argparse.Namespace) -> None:
     """Ingest records from archived HTML snapshots."""
-    backfill_from_snapshots()
+    engine = create_engine_from_env()
+    asyncio.run(pg_backfill_snapshots(engine))
+    engine.dispose()
 
 
 def cmd_backfill_diffs(args: argparse.Namespace) -> None:
     """Ingest records from unified-diff archives."""
-    backfill_diffs(
-        section=args.section,
-        single_file=args.file,
-        limit=args.limit,
-        dry_run=args.dry_run,
+    engine = create_engine_from_env()
+    result = asyncio.run(
+        pg_backfill_diffs(
+            engine,
+            section=args.section,
+            single_file=args.file,
+            limit=args.limit,
+            dry_run=args.dry_run,
+        )
     )
+    engine.dispose()
+    if args.dry_run:
+        print(
+            f"[dry-run] Would insert {result['inserted']:,} record(s)"
+            f" from {result['files_processed']:,} file(s)."
+        )
+    else:
+        print(
+            f"Processed {result['files_processed']:,} file(s): "
+            f"{result['inserted']:,} inserted, {result['skipped']:,} skipped, "
+            f"{result['errors']:,} errors."
+        )
 
 
 def cmd_backfill_provenance(_args: argparse.Namespace) -> None:
-    """Populate source provenance for existing records."""
-    backfill_provenance()
+    """Populate source provenance for existing records.
+
+    Note: provenance is populated at ingest time via pg_pipeline. This command
+    is a no-op in the PostgreSQL version — kept for CLI compatibility.
+    """
+    print("Provenance is populated at ingest time in the PostgreSQL version. No action needed.")
 
 
 def cmd_backfill_addresses(args: argparse.Namespace) -> None:
     """Validate un-validated locations via the address API."""
-    init_db()
-    with get_db() as conn:
-        backfill_addresses(conn, rate_limit=args.rate_limit)
+    engine = create_engine_from_env()
+
+    async def _run() -> None:
+        async with get_db(engine) as conn:
+            await pg_backfill_addresses(conn, rate_limit=args.rate_limit)
+            await conn.commit()
+
+    asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_refresh_addresses(args: argparse.Namespace) -> None:
@@ -81,66 +113,86 @@ def cmd_refresh_addresses(args: argparse.Namespace) -> None:
     By default re-validates all locations.  Pass --location-ids to target only
     a specific set (e.g. IDs extracted from a prior run's lock-failure log).
     """
-    init_db()
-    with get_db() as conn:
-        if args.location_ids:
-            with Path(args.location_ids).open() as fh:
-                ids = [int(line.strip()) for line in fh if line.strip()]
-            refresh_specific_addresses(conn, ids, rate_limit=args.rate_limit)
-        else:
-            refresh_addresses(conn, rate_limit=args.rate_limit)
+    engine = create_engine_from_env()
+
+    # Read the IDs file synchronously before entering the async context.
+    ids: list[int] | None = None
+    if args.location_ids:
+        with Path(args.location_ids).open() as fh:
+            ids = [int(line.strip()) for line in fh if line.strip()]
+
+    async def _run() -> None:
+        async with get_db(engine) as conn:
+            if ids is not None:
+                await pg_refresh_specific_addresses(conn, ids, rate_limit=args.rate_limit)
+            else:
+                await pg_refresh_addresses(conn, rate_limit=args.rate_limit)
+            await conn.commit()
+
+    asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_rebuild_links(_args: argparse.Namespace) -> None:
     """Rebuild all application→outcome links from scratch."""
-    init_db()
-    with get_db() as conn:
-        build_all_links(conn)
-        conn.commit()
+    engine = create_engine_from_env()
+
+    async def _run() -> None:
+        async with get_db(engine) as conn:
+            await pg_build_all_links(conn)
+            await conn.commit()
+
+    asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_check(args: argparse.Namespace) -> None:
     """Run database integrity checks."""
-    init_db()
-    with get_db() as conn:
-        report = run_all_checks(conn, fix=args.fix)
-        issues = print_report(report)
+    engine = create_engine_from_env()
+
+    async def _run() -> dict:
+        async with get_db(engine) as conn:
+            return await pg_run_all_checks(conn, fix=args.fix)
+
+    report = asyncio.run(_run())
+    engine.dispose()
+    issues = print_report(report)
     if issues:
         sys.exit(1)
 
 
 def cmd_cleanup_redundant(args: argparse.Namespace) -> None:
     """Remove data from scrapes that found no new records."""
-    init_db()
-    with get_db() as conn:
-        result = cleanup_redundant_scrapes(
-            conn,
-            delete_files=not args.keep_files,
-        )
+    engine = create_engine_from_env()
+    result = asyncio.run(pg_cleanup_redundant(engine, delete_files=not args.keep_files))
+    engine.dispose()
     if result["scrape_logs"] == 0:
         print("Nothing to clean up.")
     else:
         print(
             f"Cleaned {result['scrape_logs']} redundant scrape(s): "
-            f"{result['record_sources']} record_sources rows, "
-            f"{result['sources']} source rows, "
             f"{result['files']} snapshot files removed."
         )
 
 
 def cmd_reprocess_endorsements(args: argparse.Namespace) -> None:
     """Regenerate record_endorsements from current code mappings."""
-    init_db()
-    with get_db() as conn:
-        result = reprocess_endorsements(
-            conn,
-            record_id=args.record_id,
-            code=args.code,
-            dry_run=args.dry_run,
-        )
-        if not args.dry_run:
-            conn.commit()
+    engine = create_engine_from_env()
 
+    async def _run() -> dict:
+        async with get_db(engine) as conn:
+            result = await pg_reprocess_endorsements(
+                conn,
+                record_id=args.record_id,
+                code=args.code,
+                dry_run=args.dry_run,
+            )
+            if not args.dry_run:
+                await conn.commit()
+            return result
+
+    result = asyncio.run(_run())
+    engine.dispose()
     if args.dry_run:
         print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
@@ -152,16 +204,21 @@ def cmd_reprocess_endorsements(args: argparse.Namespace) -> None:
 
 def cmd_reprocess_entities(args: argparse.Namespace) -> None:
     """Regenerate record_entities from current applicants data."""
-    init_db()
-    with get_db() as conn:
-        result = reprocess_entities(
-            conn,
-            record_id=args.record_id,
-            dry_run=args.dry_run,
-        )
-        if not args.dry_run:
-            conn.commit()
+    engine = create_engine_from_env()
 
+    async def _run() -> dict:
+        async with get_db(engine) as conn:
+            result = await pg_reprocess_entities(
+                conn,
+                record_id=args.record_id,
+                dry_run=args.dry_run,
+            )
+            if not args.dry_run:
+                await conn.commit()
+            return result
+
+    result = asyncio.run(_run())
+    engine.dispose()
     if args.dry_run:
         print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
@@ -171,58 +228,17 @@ def cmd_reprocess_entities(args: argparse.Namespace) -> None:
         )
 
 
-def cmd_rebuild(args: argparse.Namespace) -> None:
-    """Rebuild the database from archived sources."""
-    logger = logging.getLogger(__name__)
-    output = Path(args.output)
+def cmd_rebuild(args: argparse.Namespace) -> None:  # noqa: ARG001
+    """Rebuild database from archived sources.
 
-    result = rebuild_from_sources(
-        output_path=output,
-        data_dir=DATA_DIR,
-        force=args.force,
+    Note: rebuild.py targets SQLite. This command is not yet ported to PostgreSQL.
+    Use ``wslcb backfill-snapshots`` + ``wslcb backfill-diffs`` for PostgreSQL recovery.
+    """
+    print(
+        "ERROR: 'rebuild' is not yet ported to PostgreSQL.\n"
+        "Use 'wslcb backfill-snapshots' and 'wslcb backfill-diffs' to repopulate from archives."
     )
-
-    print(f"\nRebuilt database: {output}")
-    print(f"  Records:      {result.records:,}")
-    print(f"  From diffs:   {result.from_diffs:,}")
-    print(f"  From snaps:   {result.from_snapshots:,}")
-    print(f"  Locations:    {result.locations:,}")
-    print(f"  Entities:     {result.entities:,}")
-    print(f"  Outcome links: {result.outcome_links:,}")
-    print(f"  Endorsements: {result.endorsement_mappings_discovered} new mappings")
-    print(f"  Elapsed:      {result.elapsed_seconds:.1f}s")
-
-    if args.verify:
-        print(f"\nVerifying against production database: {DB_PATH}")
-        if not DB_PATH.exists():
-            logger.error("Production database not found: %s", DB_PATH)
-            sys.exit(1)
-        cmp = compare_databases(DB_PATH, output)
-        print(f"  Production records:  {cmp.prod_count:,}")
-        print(f"  Rebuilt records:     {cmp.rebuilt_count:,}")
-        print(f"  Missing from rebuilt: {cmp.missing_from_rebuilt:,}")
-        print(f"  Extra in rebuilt:    {cmp.extra_in_rebuilt:,}")
-        if cmp.section_counts:
-            print("  Per-section breakdown:")
-            for sec, counts in sorted(cmp.section_counts.items()):
-                diff = counts["rebuilt"] - counts["prod"]
-                sign = "+" if diff > 0 else ""
-                print(
-                    f"    {sec:<20} prod={counts['prod']:,}"
-                    f"  rebuilt={counts['rebuilt']:,}  ({sign}{diff:,})"
-                )
-        if cmp.sample_missing:
-            print("  Sample missing records (in prod, not rebuilt):")
-            for key in cmp.sample_missing[:5]:
-                print(f"    {key}")
-        if cmp.sample_extra:
-            print("  Sample extra records (in rebuilt, not prod):")
-            for key in cmp.sample_extra[:5]:
-                print(f"    {key}")
-        if cmp.missing_from_rebuilt > 0 or cmp.extra_in_rebuilt > 0:
-            sys.exit(1)
-        else:
-            print("  \u2705 Databases match!")
+    sys.exit(1)
 
 
 # -- Admin subcommands -----------------------------------------------
@@ -231,27 +247,46 @@ def cmd_rebuild(args: argparse.Namespace) -> None:
 def cmd_admin_add_user(args: argparse.Namespace) -> None:
     """Add an admin user by email."""
     email = args.email.strip()
-    with get_db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
-        ).fetchone()
-        if existing:
-            print(f"User already exists: {email}")
-            return
-        conn.execute(
-            "INSERT INTO admin_users (email, created_by) VALUES (?, 'cli')",
-            (email,),
-        )
-        conn.commit()
-    print(f"Added admin user: {email}")
+    engine = create_engine_from_env()
+
+    async def _run() -> None:
+        async with get_db(engine) as conn:
+            existing = (
+                await conn.execute(
+                    select(admin_users.c.id).where(
+                        text("lower(email) = lower(:email)").bindparams(email=email)
+                    )
+                )
+            ).fetchone()
+            if existing:
+                print(f"User already exists: {email}")
+                return
+            await conn.execute(pg_insert(admin_users).values(email=email, created_by="cli"))
+            await conn.commit()
+        print(f"Added admin user: {email}")
+
+    asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_admin_list_users(_args: argparse.Namespace) -> None:
     """List all admin users."""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT email, role, created_at, created_by FROM admin_users ORDER BY created_at"
-        ).fetchall()
+    engine = create_engine_from_env()
+
+    async def _run() -> list:
+        async with get_db(engine) as conn:
+            result = await conn.execute(
+                select(
+                    admin_users.c.email,
+                    admin_users.c.role,
+                    admin_users.c.created_at,
+                    admin_users.c.created_by,
+                ).order_by(admin_users.c.created_at)
+            )
+            return result.fetchall()
+
+    rows = asyncio.run(_run())
+    engine.dispose()
     if not rows:
         print("No admin users.")
         return
@@ -264,19 +299,36 @@ def cmd_admin_list_users(_args: argparse.Namespace) -> None:
 def cmd_admin_remove_user(args: argparse.Namespace) -> None:
     """Remove an admin user by email."""
     email = args.email.strip()
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
-        ).fetchone()
-        if not row:
-            print(f"User not found: {email}")
-            sys.exit(1)
-        count: int = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
-        if count <= 1:
-            print("Cannot remove the last admin user.")
-            sys.exit(1)
-        conn.execute("DELETE FROM admin_users WHERE email = ? COLLATE NOCASE", (email,))
-        conn.commit()
+    engine = create_engine_from_env()
+
+    async def _run() -> str | None:
+        """Return error message string on failure, None on success."""
+        async with get_db(engine) as conn:
+            row = (
+                await conn.execute(
+                    select(admin_users.c.id).where(
+                        text("lower(email) = lower(:email)").bindparams(email=email)
+                    )
+                )
+            ).fetchone()
+            if not row:
+                return f"User not found: {email}"
+            count = (await conn.execute(select(func.count()).select_from(admin_users))).scalar_one()
+            if count <= 1:
+                return "Cannot remove the last admin user."
+            await conn.execute(
+                delete(admin_users).where(
+                    text("lower(email) = lower(:email)").bindparams(email=email)
+                )
+            )
+            await conn.commit()
+            return None
+
+    error = asyncio.run(_run())
+    engine.dispose()
+    if error:
+        print(error)
+        sys.exit(1)
     print(f"Removed admin user: {email}")
 
 
@@ -322,7 +374,7 @@ def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statemen
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Parse and export CSV without writing to the database.",
+        help="Parse and count, no writes to the database.",
     )
     p.set_defaults(func=cmd_backfill_diffs)
 

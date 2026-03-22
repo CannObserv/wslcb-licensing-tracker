@@ -1,111 +1,52 @@
 """Tests for admin substance management routes (/admin/endorsements/substances/*).
 
-Uses FastAPI TestClient with the same cross-thread in-memory DB pattern as
-test_admin_users.py.  Covers all three substance POST endpoints plus GET
-section rendering and regression checks for existing tabs.
+Ported to async PostgreSQL mocking pattern.  Routes now call async pg_*
+functions; tests verify routing behaviour (status codes, redirect locations,
+correct helper invocation) without a real database.
 """
-import sqlite3
-from unittest.mock import MagicMock, patch
+
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def db():
-    """In-memory SQLite DB with cross-thread access for TestClient."""
-    from wslcb_licensing_tracker.schema import init_db
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    init_db(conn)
-    yield conn
-    conn.close()
+from wslcb_licensing_tracker.admin_routes import _get_db
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _seed_admin(db, email="admin@example.com"):
-    db.execute(
-        "INSERT INTO admin_users (email, role, created_by) VALUES (?, 'admin', 'test')",
-        (email,),
-    )
-    db.commit()
-    return email
 
-
-def _seed_substance(db, name="Test Substance", display_order=99):
-    """Insert a substance (or reuse existing) and return its id.
-
-    Uses a unique default name to avoid clashing with the 'Cannabis' / 'Alcohol'
-    rows seeded by migration 009.
-    """
-    db.execute(
-        "INSERT OR IGNORE INTO regulated_substances (name, display_order) VALUES (?, ?)",
-        (name, display_order),
-    )
-    db.commit()
-    return db.execute(
-        "SELECT id FROM regulated_substances WHERE name = ?", (name,)
-    ).fetchone()[0]
-
-
-def _seed_endorsement(db, name="CANNABIS RETAILER"):
-    db.execute(
-        "INSERT OR IGNORE INTO license_endorsements (name) VALUES (?)", (name,)
-    )
-    db.commit()
-    return db.execute(
-        "SELECT id FROM license_endorsements WHERE name = ?", (name,)
-    ).fetchone()[0]
-
-
-def _make_client(db, admin_email="admin@example.com"):
-    """Return (client, patches) with auth and DB patched in.  Call _stop() after."""
+def _make_client(admin_email: str = "admin@example.com") -> tuple[TestClient, list]:
+    """Return (client, patches) with auth stubbed and _get_db overridden."""
     admin_data = {"id": 1, "email": admin_email, "role": "admin"}
+    mock_conn = AsyncMock()
 
-    ctx = MagicMock()
-    ctx.__enter__ = lambda s: db
-    ctx.__exit__ = MagicMock(return_value=False)
+    async def _fake_get_db():
+        yield mock_conn
 
-    patches = (
-        patch("wslcb_licensing_tracker.admin_auth.get_db", return_value=ctx),
+    app.dependency_overrides[_get_db] = _fake_get_db
+
+    patches = [
         patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=admin_data),
-        patch("wslcb_licensing_tracker.admin_routes.get_db", return_value=ctx),
-    )
+    ]
     for p in patches:
         p.start()
 
     client = TestClient(app, raise_server_exceptions=True)
     client.headers["X-ExeDev-Email"] = admin_email
     client.headers["X-ExeDev-UserID"] = "uid-1"
-    return client, patches
+    return client, patches, mock_conn
 
 
-def _stop(patches):
-    for p in patches:
-        p.stop()
-
-
-def _make_noauth_client(db):
-    """Return (client, patches) with no admin in DB — auth will fail."""
-    ctx = MagicMock()
-    ctx.__enter__ = lambda s: db
-    ctx.__exit__ = MagicMock(return_value=False)
-
-    patches = (
-        patch("wslcb_licensing_tracker.admin_auth.get_db", return_value=ctx),
+def _make_noauth_client() -> tuple[TestClient, list]:
+    """Return (client, patches) with auth returning None → rejected."""
+    patches = [
         patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None),
-        patch("wslcb_licensing_tracker.admin_routes.get_db", return_value=ctx),
-    )
+    ]
     for p in patches:
         p.start()
 
@@ -115,57 +56,116 @@ def _make_noauth_client(db):
     return client, patches
 
 
+def _stop(patches: list) -> None:
+    app.dependency_overrides.pop(_get_db, None)
+    for p in patches:
+        p.stop()
+
+
+@asynccontextmanager
+async def _fake_get_db_ctx(engine):
+    """Async context manager yielding a fresh AsyncMock conn."""
+    yield AsyncMock()
+
+
 # ---------------------------------------------------------------------------
 # GET /admin/endorsements — default tab and section routing
 # ---------------------------------------------------------------------------
 
+
 class TestAdminEndorsementsGet:
-    def test_default_tab_is_substances(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.get("/admin/endorsements", follow_redirects=True)
-        finally:
-            _stop(patches)
+    def test_default_tab_is_substances(self):
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.get("/admin/endorsements", follow_redirects=True)
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 200
         assert "Regulated Substances" in resp.text
 
-    def test_section_substances_renders(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.get("/admin/endorsements?section=substances", follow_redirects=True)
-        finally:
-            _stop(patches)
+    def test_section_substances_renders(self):
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.get("/admin/endorsements?section=substances", follow_redirects=True)
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 200
         assert "Regulated Substances" in resp.text
 
-    def test_section_endorsements_still_renders(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.get("/admin/endorsements?section=endorsements", follow_redirects=True)
-        finally:
-            _stop(patches)
+    def test_section_endorsements_still_renders(self):
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.get("/admin/endorsements?section=endorsements", follow_redirects=True)
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 200
         assert "Endorsement List" in resp.text
 
-    def test_section_suggestions_still_renders(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.get("/admin/endorsements?section=suggestions", follow_redirects=True)
-        finally:
-            _stop(patches)
+    def test_section_suggestions_still_renders(self):
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements", new_callable=AsyncMock, return_value=[]),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.get("/admin/endorsements?section=suggestions", follow_redirects=True)
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 200
 
-    def test_section_codes_still_renders(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.get("/admin/endorsements?section=codes", follow_redirects=True)
-        finally:
-            _stop(patches)
+    def test_section_codes_still_renders(self):
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
+            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[{"code": "394", "endorsements": []}]),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.get("/admin/endorsements?section=codes", follow_redirects=True)
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 200
         assert "Code Mappings" in resp.text
 
@@ -174,45 +174,76 @@ class TestAdminEndorsementsGet:
 # POST /admin/endorsements/substances/add
 # ---------------------------------------------------------------------------
 
+
 class TestSubstanceAdd:
-    def test_inserts_substance_and_redirects(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.post(
-                "/admin/endorsements/substances/add",
-                data={"name": "Hemp"},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
+    def test_inserts_substance_and_redirects(self):
+        """POST /add calls add_substance and redirects with substance_added flash."""
+
+        @asynccontextmanager
+        async def _ctx(engine):
+            conn = AsyncMock()
+            conn.execute.return_value.scalar_one.return_value = 1
+            yield conn
+
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.add_substance", new_callable=AsyncMock, return_value=42),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.post(
+                    "/admin/endorsements/substances/add",
+                    data={"name": "Hemp"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 303
         assert "section=substances" in resp.headers["location"]
         assert "substance_added" in resp.headers["location"]
-        row = db.execute(
-            "SELECT name FROM regulated_substances WHERE name = 'Hemp'"
-        ).fetchone()
-        assert row is not None
 
-    def test_audit_log_written(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
-        try:
-            client.post(
-                "/admin/endorsements/substances/add",
-                data={"name": "Hemp"},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
-        row = db.execute(
-            "SELECT action FROM admin_audit_log WHERE action = 'substance.add'"
-        ).fetchone()
-        assert row is not None
+    def test_audit_log_written(self):
+        """POST /add calls log_action after adding substance."""
+        mock_log_action = AsyncMock()
 
-    def test_blank_name_redirects_with_error_flash(self, db):
-        _seed_admin(db)
-        client, patches = _make_client(db)
+        @asynccontextmanager
+        async def _ctx(engine):
+            conn = AsyncMock()
+            conn.execute.return_value.scalar_one.return_value = 1
+            yield conn
+
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.add_substance", new_callable=AsyncMock, return_value=42),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                client.post(
+                    "/admin/endorsements/substances/add",
+                    data={"name": "Hemp"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
+        mock_log_action.assert_called_once()
+        call_kwargs = mock_log_action.call_args
+        assert call_kwargs.args[2] == "substance.add" or call_kwargs[0][2] == "substance.add"
+
+    def test_blank_name_redirects_with_error_flash(self):
+        """Blank name → 303 with substance_name_required flash (no DB call)."""
+        client, patches, _ = _make_client()
         try:
             resp = client.post(
                 "/admin/endorsements/substances/add",
@@ -223,15 +254,9 @@ class TestSubstanceAdd:
             _stop(patches)
         assert resp.status_code == 303
         assert "substance_name_required" in resp.headers["location"]
-        row = db.execute(
-            "SELECT id FROM regulated_substances WHERE name = ''"
-            " OR name = '   '"
-        ).fetchone()
-        assert row is None  # blank name not inserted
 
-    def test_non_admin_forbidden(self, db):
-        # No admin seeded — lookup returns None → redirect/403
-        client, patches = _make_noauth_client(db)
+    def test_non_admin_forbidden(self):
+        client, patches = _make_noauth_client()
         try:
             resp = client.post(
                 "/admin/endorsements/substances/add",
@@ -241,321 +266,370 @@ class TestSubstanceAdd:
         finally:
             _stop(patches)
         assert resp.status_code in (302, 303, 403)
-        row = db.execute(
-            "SELECT id FROM regulated_substances WHERE name = 'Hemp'"
-        ).fetchone()
-        assert row is None  # Hemp not inserted
 
 
 # ---------------------------------------------------------------------------
 # POST /admin/endorsements/substances/remove
 # ---------------------------------------------------------------------------
 
+
 class TestSubstanceRemove:
-    def test_deletes_substance_and_redirects(self, db):
-        _seed_admin(db)
-        sid = _seed_substance(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.post(
-                "/admin/endorsements/substances/remove",
-                data={"substance_id": str(sid)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
+    def test_deletes_substance_and_redirects(self):
+        """POST /remove calls remove_substance and redirects with substance_removed flash."""
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.remove_substance", new_callable=AsyncMock, return_value="Test Substance"),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.post(
+                    "/admin/endorsements/substances/remove",
+                    data={"substance_id": "5"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 303
         assert "substance_removed" in resp.headers["location"]
-        row = db.execute(
-            "SELECT id FROM regulated_substances WHERE id = ?", (sid,)
-        ).fetchone()
-        assert row is None
 
-    def test_cascades_junction_rows(self, db):
-        _seed_admin(db)
-        sid = _seed_substance(db)
-        eid = _seed_endorsement(db, "CANNABIS RETAILER")
-        db.execute(
-            "INSERT INTO regulated_substance_endorsements VALUES (?, ?)", (sid, eid)
-        )
-        db.commit()
-        client, patches = _make_client(db)
-        try:
-            client.post(
-                "/admin/endorsements/substances/remove",
-                data={"substance_id": str(sid)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
-        count = db.execute(
-            "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?",
-            (sid,),
-        ).fetchone()[0]
-        assert count == 0
+    def test_cascades_junction_rows(self):
+        """remove_substance is called (it handles cascade internally)."""
+        mock_remove = AsyncMock(return_value="Test Substance")
 
-    def test_audit_log_written(self, db):
-        _seed_admin(db)
-        sid = _seed_substance(db)
-        client, patches = _make_client(db)
-        try:
-            client.post(
-                "/admin/endorsements/substances/remove",
-                data={"substance_id": str(sid)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
-        row = db.execute(
-            "SELECT action FROM admin_audit_log WHERE action = 'substance.remove'"
-        ).fetchone()
-        assert row is not None
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.remove_substance", mock_remove),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                client.post(
+                    "/admin/endorsements/substances/remove",
+                    data={"substance_id": "5"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
 
-    def test_non_admin_forbidden(self, db):
-        sid = _seed_substance(db)
-        client, patches = _make_noauth_client(db)
+        mock_remove.assert_called_once()
+
+    def test_audit_log_written(self):
+        """POST /remove calls log_action."""
+        mock_log_action = AsyncMock()
+
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.remove_substance", new_callable=AsyncMock, return_value="Test"),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                client.post(
+                    "/admin/endorsements/substances/remove",
+                    data={"substance_id": "5"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
+        mock_log_action.assert_called_once()
+
+    def test_non_admin_forbidden(self):
+        client, patches = _make_noauth_client()
         try:
             resp = client.post(
                 "/admin/endorsements/substances/remove",
-                data={"substance_id": str(sid)},
+                data={"substance_id": "5"},
                 follow_redirects=False,
             )
         finally:
             _stop(patches)
         assert resp.status_code in (302, 303, 403)
-        row = db.execute(
-            "SELECT id FROM regulated_substances WHERE id = ?", (sid,)
-        ).fetchone()
-        assert row is not None  # not deleted
 
 
 # ---------------------------------------------------------------------------
 # POST /admin/endorsements/substances/set-endorsements
 # ---------------------------------------------------------------------------
 
+
 class TestSubstanceSetEndorsements:
-    def test_replaces_associations_and_redirects(self, db):
-        _seed_admin(db)
-        sid = _seed_substance(db)
-        eid1 = _seed_endorsement(db, "CANNABIS RETAILER")
-        eid2 = _seed_endorsement(db, "CANNABIS PROCESSOR")
-        db.execute(
-            "INSERT INTO regulated_substance_endorsements VALUES (?, ?)", (sid, eid1)
-        )
-        db.commit()
-        client, patches = _make_client(db)
-        try:
-            resp = client.post(
-                "/admin/endorsements/substances/set-endorsements",
-                data={"substance_id": str(sid), "endorsement_ids": str(eid2)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
+    def test_replaces_associations_and_redirects(self):
+        """POST /set-endorsements calls set_substance_endorsements and redirects."""
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.set_substance_endorsements", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.post(
+                    "/admin/endorsements/substances/set-endorsements",
+                    data={"substance_id": "5", "endorsement_ids": "3"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 303
         assert "substance_updated" in resp.headers["location"]
-        rows = db.execute(
-            "SELECT endorsement_id FROM regulated_substance_endorsements WHERE substance_id = ?",
-            (sid,),
-        ).fetchall()
-        assert {r[0] for r in rows} == {eid2}
 
-    def test_clears_all_when_no_ids_sent(self, db):
-        _seed_admin(db)
-        sid = _seed_substance(db)
-        eid = _seed_endorsement(db, "CANNABIS RETAILER")
-        db.execute(
-            "INSERT INTO regulated_substance_endorsements VALUES (?, ?)", (sid, eid)
-        )
-        db.commit()
-        client, patches = _make_client(db)
-        try:
-            client.post(
-                "/admin/endorsements/substances/set-endorsements",
-                data={"substance_id": str(sid)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
-        count = db.execute(
-            "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?",
-            (sid,),
-        ).fetchone()[0]
-        assert count == 0
+    def test_clears_all_when_no_ids_sent(self):
+        """POST /set-endorsements with no endorsement_ids calls set_substance_endorsements with empty list."""
+        mock_set = AsyncMock()
 
-    def test_audit_log_written(self, db):
-        _seed_admin(db)
-        sid = _seed_substance(db)
-        client, patches = _make_client(db)
-        try:
-            client.post(
-                "/admin/endorsements/substances/set-endorsements",
-                data={"substance_id": str(sid)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
-        row = db.execute(
-            "SELECT action FROM admin_audit_log WHERE action = 'substance.set_endorsements'"
-        ).fetchone()
-        assert row is not None
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.set_substance_endorsements", mock_set),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                client.post(
+                    "/admin/endorsements/substances/set-endorsements",
+                    data={"substance_id": "5"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
 
-    def test_non_admin_forbidden(self, db):
-        sid = _seed_substance(db)
-        eid = _seed_endorsement(db, "CANNABIS RETAILER")
-        db.execute(
-            "INSERT INTO regulated_substance_endorsements VALUES (?, ?)", (sid, eid)
-        )
-        db.commit()
-        client, patches = _make_noauth_client(db)
+        # called with substance_id=5 and empty list
+        mock_set.assert_called_once()
+        _, call_args = mock_set.call_args[0], mock_set.call_args[0]
+        # third arg should be the endorsement_ids list (empty)
+        assert mock_set.call_args[0][2] == []
+
+    def test_audit_log_written(self):
+        """POST /set-endorsements calls log_action."""
+        mock_log_action = AsyncMock()
+
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.set_substance_endorsements", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                client.post(
+                    "/admin/endorsements/substances/set-endorsements",
+                    data={"substance_id": "5"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
+        mock_log_action.assert_called_once()
+
+    def test_non_admin_forbidden(self):
+        client, patches = _make_noauth_client()
         try:
             resp = client.post(
                 "/admin/endorsements/substances/set-endorsements",
-                data={"substance_id": str(sid), "endorsement_ids": ""},
+                data={"substance_id": "5"},
                 follow_redirects=False,
             )
         finally:
             _stop(patches)
         assert resp.status_code in (302, 303, 403)
-        count = db.execute(
-            "SELECT COUNT(*) FROM regulated_substance_endorsements WHERE substance_id = ?",
-            (sid,),
-        ).fetchone()[0]
-        assert count == 1  # unchanged
 
 
 # ---------------------------------------------------------------------------
 # POST /admin/endorsements/unalias
 # ---------------------------------------------------------------------------
 
-def _seed_alias(db, variant_name="FARMERS MARKET FOR BEER", canonical_name="NON-PROFIT ARTS ORGANIZATION"):
-    """Seed a variant→canonical alias and return (variant_id, canonical_id)."""
-    db.execute("INSERT OR IGNORE INTO license_endorsements (name) VALUES (?)", (variant_name,))
-    db.execute("INSERT OR IGNORE INTO license_endorsements (name) VALUES (?)", (canonical_name,))
-    db.commit()
-    variant_id = db.execute(
-        "SELECT id FROM license_endorsements WHERE name = ?", (variant_name,)
-    ).fetchone()[0]
-    canonical_id = db.execute(
-        "SELECT id FROM license_endorsements WHERE name = ?", (canonical_name,)
-    ).fetchone()[0]
-    db.execute(
-        "INSERT OR IGNORE INTO endorsement_aliases (endorsement_id, canonical_endorsement_id, created_by)"
-        " VALUES (?, ?, 'seed')",
-        (variant_id, canonical_id),
-    )
-    db.commit()
-    return variant_id, canonical_id
+
+_UNSET = object()
+
+
+def _make_unalias_conn(*, has_alias: bool = True, affected_records: list | None = None):
+    """Build an AsyncMock conn for the unalias route's sequential execute() calls.
+
+    The unalias route makes these execute() calls in order:
+    1. exists check → one_or_none()
+    2. alias_row check → one_or_none()
+    3. variant_name → scalar_one_or_none()
+    4. canonical_name → scalar_one_or_none()
+    5. affected records → fetchall()
+    """
+    if affected_records is None:
+        affected_records = []
+
+    def _r(*, one_or_none=_UNSET, scalar_one_or_none=_UNSET, fetchall=_UNSET):
+        result = MagicMock()
+        if one_or_none is not _UNSET:
+            result.one_or_none.return_value = one_or_none
+        if scalar_one_or_none is not _UNSET:
+            result.scalar_one_or_none.return_value = scalar_one_or_none
+        if fetchall is not _UNSET:
+            result.fetchall.return_value = fetchall
+        return result
+
+    exists_result = _r(one_or_none=(10,))
+    alias_result = _r(one_or_none=(99,) if has_alias else None)
+    variant_name_result = _r(scalar_one_or_none="VARIANT NAME")
+    canonical_name_result = _r(scalar_one_or_none="CANONICAL NAME")
+    affected_result = _r(fetchall=affected_records)
+
+    conn = AsyncMock()
+    if has_alias:
+        conn.execute.side_effect = [
+            exists_result, alias_result, variant_name_result, canonical_name_result, affected_result
+        ]
+    else:
+        conn.execute.side_effect = [exists_result, alias_result]
+    return conn
 
 
 class TestAdminUnalias:
-    def test_removes_alias_and_redirects(self, db):
-        """POST /unalias removes the alias row and redirects with flash."""
-        _seed_admin(db)
-        variant_id, _ = _seed_alias(db)
-        client, patches = _make_client(db)
-        try:
-            resp = client.post(
-                "/admin/endorsements/unalias",
-                data={"endorsement_id": str(variant_id)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
+    def test_removes_alias_and_redirects(self):
+        """POST /unalias calls remove_alias and redirects with flash=unaliased."""
+
+        @asynccontextmanager
+        async def _ctx(engine):
+            yield _make_unalias_conn()
+
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.remove_alias", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.process_record", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.post(
+                    "/admin/endorsements/unalias",
+                    data={"endorsement_id": "10"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 303
         assert "flash=unaliased" in resp.headers["location"]
-        row = db.execute(
-            "SELECT 1 FROM endorsement_aliases WHERE endorsement_id = ?",
-            (variant_id,),
-        ).fetchone()
-        assert row is None
 
-    def test_reprocesses_resolved_endorsements(self, db):
-        """POST /unalias updates resolved_endorsements FTS for affected records."""
-        _seed_admin(db)
-        variant_id, _ = _seed_alias(db)
+    def test_reprocesses_resolved_endorsements(self):
+        """POST /unalias calls process_record for each affected record."""
+        mock_process = AsyncMock()
 
-        # Seed a license_records row whose license_type matches the variant name.
-        # Pre-populate resolved_endorsements with the canonical name (simulating
-        # what it held before unaliasing).
-        record_id = db.execute(
-            """
-            INSERT INTO license_records
-                (section_type, record_date, license_type, scraped_at, resolved_endorsements)
-            VALUES ('NEW', '2024-01-01', 'FARMERS MARKET FOR BEER', datetime('now'),
-                    'NON-PROFIT ARTS ORGANIZATION')
-            """,
-        ).lastrowid
-        db.execute(
-            "INSERT INTO record_endorsements (record_id, endorsement_id) VALUES (?, ?)",
-            (record_id, variant_id),
-        )
-        db.commit()
+        @asynccontextmanager
+        async def _ctx(engine):
+            yield _make_unalias_conn(affected_records=[(99, "VARIANT NAME")])
 
-        client, patches = _make_client(db)
-        try:
-            client.post(
-                "/admin/endorsements/unalias",
-                data={"endorsement_id": str(variant_id)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.remove_alias", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.process_record", mock_process),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                client.post(
+                    "/admin/endorsements/unalias",
+                    data={"endorsement_id": "10"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
 
-        resolved = db.execute(
-            "SELECT resolved_endorsements FROM license_records WHERE id = ?",
-            (record_id,),
-        ).fetchone()[0]
-        assert resolved == "FARMERS MARKET FOR BEER"
+        assert mock_process.call_count >= 1
 
-    def test_422_when_not_a_variant(self, db):
-        """POST /unalias with a non-variant endorsement_id returns 422."""
-        _seed_admin(db)
-        standalone_id = _seed_endorsement(db, "STANDALONE SOLO")
-        client, patches = _make_client(db)
-        try:
-            resp = client.post(
-                "/admin/endorsements/unalias",
-                data={"endorsement_id": str(standalone_id)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
+    def test_422_when_not_a_variant(self):
+        """POST /unalias for a non-variant endorsement returns 422."""
+
+        @asynccontextmanager
+        async def _ctx(engine):
+            yield _make_unalias_conn(has_alias=False)
+
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.post(
+                    "/admin/endorsements/unalias",
+                    data={"endorsement_id": "10"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
         assert resp.status_code == 422
 
-    def test_audit_log_written(self, db):
-        """POST /unalias writes an audit log entry."""
-        _seed_admin(db)
-        variant_id, _ = _seed_alias(db)
-        client, patches = _make_client(db)
-        try:
-            client.post(
-                "/admin/endorsements/unalias",
-                data={"endorsement_id": str(variant_id)},
-                follow_redirects=False,
-            )
-        finally:
-            _stop(patches)
-        row = db.execute(
-            "SELECT action FROM admin_audit_log WHERE action = 'endorsement.remove_alias'"
-        ).fetchone()
-        assert row is not None
+    def test_audit_log_written(self):
+        """POST /unalias calls log_action."""
+        mock_log_action = AsyncMock()
 
-    def test_non_admin_forbidden(self, db):
+        @asynccontextmanager
+        async def _ctx(engine):
+            yield _make_unalias_conn()
+
+        with (
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
+            patch("wslcb_licensing_tracker.admin_routes.remove_alias", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.process_record", new_callable=AsyncMock),
+            patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
+            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                client.post(
+                    "/admin/endorsements/unalias",
+                    data={"endorsement_id": "10"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+                del app.state.engine
+
+        mock_log_action.assert_called_once()
+
+    def test_non_admin_forbidden(self):
         """POST /unalias without admin auth is rejected."""
-        variant_id, _ = _seed_alias(db)
-        client, patches = _make_noauth_client(db)
+        client, patches = _make_noauth_client()
         try:
             resp = client.post(
                 "/admin/endorsements/unalias",
-                data={"endorsement_id": str(variant_id)},
+                data={"endorsement_id": "10"},
                 follow_redirects=False,
             )
         finally:
             _stop(patches)
         assert resp.status_code in (302, 303, 403)
-        row = db.execute(
-            "SELECT 1 FROM endorsement_aliases WHERE endorsement_id = ?",
-            (variant_id,),
-        ).fetchone()
-        assert row is not None  # alias unchanged

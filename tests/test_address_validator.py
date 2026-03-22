@@ -494,9 +494,10 @@ def test_validate_batch_commits_after_each_record(db, monkeypatch):
 def test_cmd_refresh_addresses_dispatches_to_refresh_specific_when_file_given(
     tmp_path, monkeypatch
 ):
-    """cmd_refresh_addresses() calls refresh_specific_addresses() when --location-ids is set."""
+    """cmd_refresh_addresses() calls pg_refresh_specific_addresses() when --location-ids is set."""
     import types
-    from unittest.mock import patch, MagicMock
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock, patch
     from wslcb_licensing_tracker import cli
 
     ids_file = tmp_path / "ids.txt"
@@ -504,22 +505,23 @@ def test_cmd_refresh_addresses_dispatches_to_refresh_specific_when_file_given(
 
     called_with = {}
 
-    def fake_specific(conn, location_ids, rate_limit=0.1):
+    async def fake_specific(conn, location_ids, rate_limit=0.1):
         called_with["ids"] = location_ids
-        return len(location_ids)
 
-    def fake_refresh(conn, rate_limit=0.1):
+    async def fake_refresh(conn, rate_limit=0.1):
         called_with["all"] = True
-        return 0
+
+    mock_conn = AsyncMock()
+
+    @asynccontextmanager
+    async def fake_get_db(_engine):
+        yield mock_conn
 
     args = types.SimpleNamespace(location_ids=str(ids_file), rate_limit=0.1)
-    mock_conn = MagicMock()
-    with patch("wslcb_licensing_tracker.cli.get_db") as mock_get_db, \
-         patch("wslcb_licensing_tracker.cli.init_db"), \
-         patch("wslcb_licensing_tracker.cli.refresh_specific_addresses", fake_specific), \
-         patch("wslcb_licensing_tracker.cli.refresh_addresses", fake_refresh):
-        mock_get_db.return_value.__enter__ = lambda s: mock_conn
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
+         patch("wslcb_licensing_tracker.cli.pg_refresh_specific_addresses", fake_specific), \
+         patch("wslcb_licensing_tracker.cli.pg_refresh_addresses", fake_refresh), \
+         patch("wslcb_licensing_tracker.cli.get_db", fake_get_db):
         cli.cmd_refresh_addresses(args)
 
     assert called_with.get("ids") == [101, 202, 303]
@@ -527,29 +529,31 @@ def test_cmd_refresh_addresses_dispatches_to_refresh_specific_when_file_given(
 
 
 def test_cmd_refresh_addresses_dispatches_to_refresh_all_without_file(monkeypatch):
-    """cmd_refresh_addresses() calls refresh_addresses() when no --location-ids flag."""
+    """cmd_refresh_addresses() calls pg_refresh_addresses() when no --location-ids flag."""
     import types
-    from unittest.mock import patch, MagicMock
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock, patch
     from wslcb_licensing_tracker import cli
 
     called_with = {}
 
-    def fake_specific(conn, location_ids, rate_limit=0.1):
+    async def fake_specific(conn, location_ids, rate_limit=0.1):
         called_with["specific"] = True
-        return 0
 
-    def fake_refresh(conn, rate_limit=0.1):
+    async def fake_refresh(conn, rate_limit=0.1):
         called_with["all"] = True
-        return 0
+
+    mock_conn = AsyncMock()
+
+    @asynccontextmanager
+    async def fake_get_db(_engine):
+        yield mock_conn
 
     args = types.SimpleNamespace(location_ids=None, rate_limit=0.1)
-    mock_conn = MagicMock()
-    with patch("wslcb_licensing_tracker.cli.get_db") as mock_get_db, \
-         patch("wslcb_licensing_tracker.cli.init_db"), \
-         patch("wslcb_licensing_tracker.cli.refresh_addresses", fake_refresh), \
-         patch("wslcb_licensing_tracker.cli.refresh_specific_addresses", fake_specific):
-        mock_get_db.return_value.__enter__ = lambda s: mock_conn
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
+         patch("wslcb_licensing_tracker.cli.pg_refresh_specific_addresses", fake_specific), \
+         patch("wslcb_licensing_tracker.cli.pg_refresh_addresses", fake_refresh), \
+         patch("wslcb_licensing_tracker.cli.get_db", fake_get_db):
         cli.cmd_refresh_addresses(args)
 
     assert called_with.get("all") is True

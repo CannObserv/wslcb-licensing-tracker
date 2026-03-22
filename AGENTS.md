@@ -10,10 +10,10 @@ Guidance for AI agents working on this project.
 ## Architecture
 
 ```
-scraper.py ─┐
-backfill_snapshots.py ─┼─→ pipeline.py ─→ data/wslcb.db (SQLite + FTS5) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
-backfill_diffs.py ──────┘                                                  ←─ display.py (presentation)
-                          ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html
+pg_scraper.py ─┐
+pg_backfill_snapshots.py ─┼─→ pg_pipeline.py ─→ PostgreSQL (tsvector + pg_trgm) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
+pg_backfill_diffs.py ──────┘                                                       ←─ display.py (presentation)
+                             ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html
 
 license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
@@ -21,7 +21,7 @@ license_records → locations (FK: location_id, previous_location_id)
 
 - No build step. Tailwind via CDN, HTMX. No node_modules.
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
-- SQLite only. WAL mode for concurrent reads.
+- PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
 
 ## Key Files
 
@@ -30,6 +30,20 @@ license_records → locations (FK: location_id, previous_location_id)
 | `db.py` | Connections, constants, core helpers. `get_connection()`, `get_db()`, `DATA_DIR`, `DB_PATH`. `get_or_create_location()`, `get_or_create_source()`, `link_record_source()`. `get_primary_source()` / `get_record_sources()` — provenance queries. `SOURCE_ROLE_PRIORITY` shared with `display.py` (avoids circular import). `US_STATES` dict for state filter dropdown. `_normalize_raw_address()`. Text normalization utilities: `clean_entity_name()`, `strip_duplicate_marker()`, `clean_applicants_string()` — live here so `schema.py` migrations can import them without a layering violation. |
 | `schema.py` | DDL, migrations, FTS. `init_db()`, `migrate()`, `MIGRATIONS` list. `PRAGMA user_version` migration framework. `_table_exists()` / `_column_exists()` exported for testability. |
 | `pipeline.py` | **All ingestion flows through here.** `insert_record()` — canonical insertion (dedup, location resolution, name cleaning, entity linking). `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult`. Step constants: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`. |
+| `database.py` | *(PostgreSQL migration — Phase 1)* Async engine factory. `create_engine_from_env()` — reads `DATABASE_URL` env var. `get_db()` FastAPI dependency yielding `AsyncConnection`. |
+| `models.py` | *(PostgreSQL migration — Phase 1)* SQLAlchemy Core `Table` objects for all 20 tables. Single shared `metadata`. Import table objects from here for all PG queries. |
+| `pg_schema.py` | *(PostgreSQL migration — Phase 2)* Alembic-based init. `init_db(engine)` — runs all pending migrations (idempotent). `_table_exists(conn, name)` / `_column_exists(conn, table, column)` — introspection helpers. |
+| `pg_db.py` | *(PostgreSQL migration — Phase 2)* Async equivalents of `db.py` helpers. `get_or_create_location()`, `get_or_create_source()`, `link_record_source()`, `get_primary_source()`, `get_record_sources()`. Re-imports pure-string utilities from `db.py`. |
+| `pg_pipeline.py` | *(PostgreSQL migration — Phase 2)* Async equivalent of `pipeline.py`. `insert_record()`, `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult`. Entity linking / address validation / outcome linking are STUBBED — ported in Phase 3. |
+| `pg_admin_audit.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `admin_audit.py`. `log_action()` uses `pg_insert(...).returning(id)`. `get_audit_log()` uses named `text()` params; `admin_email` filter uses `lower()` instead of `COLLATE NOCASE`. |
+| `pg_substances.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `substances.py`. `get_regulated_substances()` runs two queries (substances + per-substance endorsements). `remove_substance()` manually deletes junction rows before the parent (no CASCADE assumption). |
+| `pg_endorsements.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `endorsements.py`. `ensure_endorsement()` uses ON CONFLICT DO NOTHING + RETURNING with fallback SELECT. `_sync_resolved_endorsements()` uses a single `text()` UPDATE with `STRING_AGG(...ORDER BY)`. Alias self-join uses aliased table objects. Numeric code detection uses `.isdigit()` on the stripped Python value (no SQL GLOB needed). |
+| `pg_endorsements_seed.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `endorsements_seed.py`. Imports static `SEED_CODE_MAP` from `endorsements_seed` (no DB at import time). Placeholder detection uses `col.op('~')(r'^\d+$')` instead of `GLOB '[0-9]*'`. |
+| `pg_endorsements_admin.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `endorsements_admin.py`. `endorsement_similarity()` is pure Python — copied verbatim, not async. `dismiss_suggestion()` swaps `id_a/id_b` if `id_a > id_b` to enforce the `id_a < id_b` constraint. `get_endorsement_list()` uses `STRING_AGG` for code aggregation. |
+| `pg_entities.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `entities.py`. `get_or_create_entity()` uses ON CONFLICT DO NOTHING + RETURNING + fallback SELECT. `_ENTITY_REPROCESS_VERSION = 2` constant preserved. Also includes `get_entity_by_id()` and `backfill_entities()` (added Phase 4). |
+| `pg_address_validator.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `address_validator.py`. Pure HTTP functions (`_load_api_key`, `standardize`, `validate`) copied verbatim. HTTP calls wrapped in `asyncio.to_thread()`. DB writes use `update(locations).where(...).values(...)`. |
+| `pg_link_records.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `link_records.py`. `get_outcome_status()` and `outcome_filter_sql()` are pure Python — not async. Bidirectional linking queries use `text()` with PG date arithmetic (`record_date::date - interval 'N days'`). `build_all_links()` truncates `record_links` before rebuilding. `get_record_links_bulk()` is a NEW function (not in SQLite version) — batch SELECT JOIN returning `dict[int, dict]`. |
+| `pg_queries.py` | *(PostgreSQL migration — Phase 3)* Async equivalent of `queries.py`. Text search uses `search_vector @@ plainto_tsquery('english', ...)` (tsvector GIN) OR `business_name % query` / `applicants % query` (pg_trgm similarity). `search_records` orders by `ts_rank` when a text query is present; export remains date-ordered. `export_records_cursor()` is `AsyncGenerator[dict, None]` (true server-side streaming via `conn.stream()`). `outcome_filter_sql` fragments emit `CURRENT_DATE - interval '...'` (PG-native). In-memory TTL caches (`_filter_cache`, `_city_cache`, `_stats_cache`) preserved unchanged. **API difference from SQLite:** `get_related_records(conn, record: dict)` takes a full record dict, not `(license_number, exclude_id)`. Also includes `get_record_link()` (added Phase 4). |
 | `queries.py` | Search and read queries. `search_records()`, `export_records()`, `export_records_cursor()` (streaming generator for `/export`), `get_filter_options()`, `get_cities_for_state()`, `get_stats()`, `enrich_record()`, `hydrate_records()`, `get_record_by_id()`, `get_related_records()`, `get_entity_records()`, `get_entities()`. `invalidate_filter_cache()` — call after any admin mutation. Re-exports `insert_record` (from `pipeline`), `get_primary_source` / `get_record_sources` / `US_STATES` (from `db`) for backward compat. |
 | `endorsements.py` | Core endorsement pipeline. `process_record()` (idempotent — deletes existing rows before inserting, then calls `_sync_resolved_endorsements()` to keep `license_records.resolved_endorsements` in sync for FTS), `reprocess_endorsements()`, `get_record_endorsements()`, `get_endorsement_options()`, alias management (`set_canonical_endorsement`, `rename_endorsement`, `resolve_endorsement`, `remove_alias`), `get_endorsement_groups()`. |
 | `endorsements_seed.py` | Seeding, repair, and backfill. `seed_endorsements()` loads `SEED_CODE_MAP` from `seed_code_map.json`. `merge_mixed_case_endorsements()`, `repair_code_name_endorsements()`, `backfill()`, `discover_code_mappings()`. All follow caller-commits convention. |
@@ -40,9 +54,14 @@ license_records → locations (FK: location_id, previous_location_id)
 | `parser.py` | Pure HTML/diff parsing — no DB, no side effects. `extract_tbody_from_snapshot()`, `extract_tbody_from_diff()`. Only depends on stdlib + bs4/lxml + `db.DATA_DIR`. |
 | `display.py` | Presentation formatting. `format_outcome()`, `summarize_provenance()`, `OUTCOME_STYLES`. `_ROLE_PRIORITY` alias for `db.SOURCE_ROLE_PRIORITY`. |
 | `link_records.py` | Application→outcome linking. Bidirectional nearest-neighbor, ±7-day tolerance. `build_all_links()`, `link_new_record()`, `get_outcome_status()`, `get_reverse_link_info()`, `outcome_filter_sql()`. |
-| `app.py` | FastAPI app, port 8000. Admin routes via `app.include_router()`; `admin_routes.init_router(_tpl)` must be called before first request. Public routes only — admin routes in `admin_routes.py`. |
-| `api_routes.py` | `APIRouter(prefix="/api/v1")`. JSON envelope `{"ok": bool, "message": str, "data": ...}`. Endpoints: `GET /api/v1/cities`, `/stats`, `/export` (StreamingResponse), `/health`. Tests patch `api_routes.get_db`. |
-| `admin_routes.py` | `APIRouter` for `/admin/*`. `init_router(tpl_fn)` receives shared `_tpl()` at startup. **Tests must patch `admin_routes.get_db`**, not `app.get_db`. |
+| `data_migration.py` | *(PostgreSQL migration — Phase 4)* Run-once data migration framework. `run_pending_migrations(engine)` — checks `data_migrations` table, runs any pending migrations in order, marks each complete. Called from lifespan. Replaces unconditional startup repair calls (resolves #85). Registered migrations: seed endorsements, repair code-name, merge mixed-case, backfill endorsements, backfill entities, build record links. |
+| `pg_integrity.py` | *(PostgreSQL migration — Phase 6)* Async integrity checks. `check_orphaned_locations()`, `check_unenriched_records()`, `check_endorsement_anomalies()`, `check_broken_fks()`, `check_entity_duplicates()`, `fix_orphaned_locations()` (caller-commits). `run_all_checks(conn, *, fix=False)` — runs all checks, auto-commits after fix. `print_report(report)` — pure Python, returns issue count. |
+| `pg_scraper.py` | *(PostgreSQL migration — Phase 6)* Async port of `scraper.py`. `scrape(engine)` — fetch, hash-check, archive, ingest via `pg_pipeline.ingest_batch()`. `get_last_content_hash(conn)` — SQLAlchemy query against `scrape_log`. `cleanup_redundant_scrapes(engine)` — removes unchanged scrape rows. Pure helpers `compute_content_hash` and `save_html_snapshot` are re-imported from `scraper.py`. |
+| `pg_backfill_snapshots.py` | *(PostgreSQL migration — Phase 6)* Async port of `backfill_snapshots.py`. Two-phase: ingest from snapshot files, then repair ASSUMPTION and CHANGE OF LOCATION records. `backfill_from_snapshots(engine)`. |
+| `pg_backfill_diffs.py` | *(PostgreSQL migration — Phase 6)* Async port of `backfill_diffs.py`. `backfill_diffs(engine, section, single_file, limit, dry_run)`. Pure diff parsing re-imported from `parser.py`. |
+| `app.py` | FastAPI app, port 8000. *(Phase 4: async PG)* Lifespan creates `AsyncEngine` on `app.state.engine`, calls `run_pending_migrations()`, disposes on shutdown. All routes use `async with get_db(request.app.state.engine) as conn:`. Admin routes via `app.include_router()`; `admin_routes.init_router(_tpl)` must be called before first request. Public routes only — admin routes in `admin_routes.py`. |
+| `api_routes.py` | `APIRouter(prefix="/api/v1")`. *(Phase 4: async PG)* All routes async; `_get_db` dependency yields `AsyncConnection`. CSV export uses async generator with `export_records_cursor()`. JSON envelope `{"ok": bool, "message": str, "data": ...}`. Endpoints: `GET /api/v1/cities`, `/stats`, `/export` (StreamingResponse), `/health`. |
+| `admin_routes.py` | `APIRouter` for `/admin/*`. *(Phase 4: async PG)* All routes async; `_get_db` dependency yields `AsyncConnection`; all imports from `pg_*` equivalents. `init_router(tpl_fn)` receives shared `_tpl()` at startup. |
 | `admin_auth.py` | `require_admin()` FastAPI dependency. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. |
 | `admin_audit.py` | `log_action(conn, email, action, target_type, target_id, details)` — caller commits. `get_audit_log(conn, page, per_page, filters)` → `(rows, total_count)`. |
 | `address_validator.py` | Two-phase pipeline. Phase 1 (always): `standardize_location()` → `std_*` columns + `address_standardized_at`. Phase 2 (optional, `ENABLE_ADDRESS_VALIDATION=1`): `validate_location()` → DPV fields + `address_validated_at`. API key from `/etc/wslcb-licensing-tracker/env`, falls back to `<project-root>/env`. |
@@ -53,7 +72,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `integrity.py` | `run_all_checks()`, `fix_orphaned_locations()`. CLI: `wslcb check [--fix]`. Exits 1 when issues found. |
 | `rebuild.py` | `rebuild_from_sources()`, `compare_databases()`. Four phases: diff archives → HTML snapshots → endorsement discovery → outcome links. |
 | `log_config.py` | `setup_logging()` — auto-detects TTY vs JSON format. Call once per entry point. |
-| `cli.py` | Unified CLI entry point. All operational subcommands. |
+| `cli.py` | *(Phase 6: updated)* All commands use PG modules with `asyncio.run()` wrappers. Engine from `create_engine_from_env()` (reads `DATABASE_URL`). Admin user commands use inline SQLAlchemy queries. |
 | `templates/` | `base.html` (main layout — nav, footer, CSS/JS includes). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
 | `tailwind.config.js` | Tailwind CSS config — content paths, co-green/co-purple palette. Consumed by `scripts/build-css.sh`. |
 | `static/css/input.css` | Tailwind source: `@tailwind` directives + HTMX loading states + badge classes + `.scroll-shadow-right`. |
@@ -72,12 +91,12 @@ license_records → locations (FK: location_id, previous_location_id)
 
 | Table / Column | Regenerated by | Command |
 |---|---|---|
-| `record_endorsements` | `endorsements.process_record()` | `wslcb reprocess-endorsements` |
-| `license_records.resolved_endorsements` | `endorsements.process_record()` | `wslcb reprocess-endorsements` |
-| `record_entities` | `entities.parse_and_link_entities()` | `wslcb reprocess-entities` |
-| `record_links` | `link_records.build_all_links()` | `wslcb rebuild-links` |
+| `record_endorsements` | `pg_endorsements.reprocess_endorsements()` | `wslcb reprocess-endorsements` |
+| `license_records.resolved_endorsements` | `pg_endorsements.reprocess_endorsements()` | `wslcb reprocess-endorsements` |
+| `record_entities` | `pg_entities.reprocess_entities()` | `wslcb reprocess-entities` |
+| `record_links` | `pg_link_records.build_all_links()` | `wslcb rebuild-links` |
 
-`process_record()` is idempotent — deletes existing rows before inserting fresh ones.
+`reprocess_endorsements()` is idempotent — deletes existing rows before inserting fresh ones.
 
 `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL (sourced from the matched new-application record). Run `wslcb rebuild-links` to repair existing rows.
 
@@ -180,11 +199,12 @@ wslcb admin remove-user you@example.com
 
 # Backfill / repair
 uv run wslcb backfill-snapshots
+uv run wslcb backfill-diffs [--section notifications] [--limit 100] [--dry-run]
 uv run wslcb backfill-addresses
 uv run wslcb cleanup-redundant
 
-# Rebuild DB from archived sources (long — run in tmux)
-uv run wslcb rebuild --output data/wslcb-rebuilt.db [--force] [--verify]
+# Rebuild DB from PostgreSQL archives (use instead of 'rebuild' which targets SQLite)
+DATABASE_URL=postgresql+asyncpg://... python scripts/sqlite_to_pg.py  # one-time SQLite→PG
 ```
 
 See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) for systemd services, address validation, and ops commands.

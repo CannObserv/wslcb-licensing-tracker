@@ -19,25 +19,27 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncConnection
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from . import admin_routes, api_routes
 from .admin_auth import AdminRedirectException, get_current_user
-from .db import DATA_DIR, get_db, get_record_sources
+from .data_migration import run_pending_migrations
+from .database import create_engine_from_env, get_db
+from .db import DATA_DIR
 from .display import format_outcome, summarize_provenance
-from .endorsements_seed import (
-    backfill,
-    merge_mixed_case_endorsements,
-    repair_code_name_endorsements,
-    seed_endorsements,
-)
-from .entities import backfill_entities, get_entity_by_id
-from .link_records import build_all_links, get_outcome_status, get_reverse_link_info
 from .log_config import setup_logging
+from .models import record_sources as record_sources_table
+from .models import source_types
+from .models import sources as sources_table
 from .parser import extract_tbody_from_diff, extract_tbody_from_snapshot, strip_anchor_tags
-from .queries import (
+from .pg_db import get_record_sources
+from .pg_entities import get_entity_by_id
+from .pg_link_records import get_outcome_status, get_reverse_link_info
+from .pg_queries import (
     get_cities_for_state,
     get_entities,
     get_entity_records,
@@ -49,7 +51,6 @@ from .queries import (
     hydrate_records,
     search_records,
 )
-from .schema import init_db
 
 logger = logging.getLogger(__name__)
 
@@ -59,41 +60,22 @@ _HTTP_404 = 404
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    """Initialize database and endorsement tables on startup."""
+    """Initialize async engine and run pending data migrations on startup."""
     setup_logging()
-    init_db()
-    with get_db() as conn:
-        n = seed_endorsements(conn)
-        if n:
-            logger.info("Seeded %d endorsement code mapping(s)", n)
-        repair_code_name_endorsements(conn)
-        merged = merge_mixed_case_endorsements(conn)
-        if merged:
-            logger.info("Merged %d mixed-case endorsement duplicate(s)", merged)
-        processed = backfill(conn)
-        if processed:
-            logger.info("Backfilled endorsements for %d record(s)", processed)
-        entity_count = backfill_entities(conn)
-        if entity_count:
-            logger.info("Backfilled entities for %d record(s)", entity_count)
-        conn.commit()
-        # Build application→outcome links if table is empty (first run).
-        # Subsequent updates are handled incrementally by the scraper.
-        existing_links = conn.execute("SELECT COUNT(*) FROM record_links").fetchone()[0]
-        if not existing_links:
-            link_stats = build_all_links(conn)
-            conn.commit()
-            if link_stats["total"]:
-                logger.info(
-                    "Record linking: %d links (%d high, %d medium)",
-                    link_stats["total"],
-                    link_stats["high"],
-                    link_stats["medium"],
-                )
+    engine = create_engine_from_env()
+    _app.state.engine = engine
+    await run_pending_migrations(engine)
     yield
+    await engine.dispose()
 
 
 app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
+
+
+async def get_db_dep(request: Request) -> AsyncGenerator[AsyncConnection, None]:
+    """FastAPI dependency yielding an AsyncConnection from the shared engine pool."""
+    async with get_db(request.app.state.engine) as conn:
+        yield conn
 
 
 class _StaticCacheMiddleware(BaseHTTPMiddleware):
@@ -236,8 +218,8 @@ async def validation_exception_handler(
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     """Render the dashboard index page."""
-    with get_db() as conn:
-        stats = get_stats(conn)
+    async with get_db(request.app.state.engine) as conn:
+        stats = await get_stats(conn)
     return await _tpl(request, "index.html", {"request": request, "stats": stats})
 
 
@@ -260,8 +242,8 @@ async def search(  # noqa: PLR0913
     if not state:
         city = ""
 
-    with get_db() as conn:
-        records, total = search_records(
+    async with get_db(request.app.state.engine) as conn:
+        records, total = await search_records(
             conn,
             query=q,
             section_type=section_type,
@@ -274,8 +256,8 @@ async def search(  # noqa: PLR0913
             outcome_status=outcome_status,
             page=page,
         )
-        filters = get_filter_options(conn)
-        cities = get_cities_for_state(conn, state) if state else []
+        filters = await get_filter_options(conn)
+        cities = await get_cities_for_state(conn, state) if state else []
 
     total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
 
@@ -321,8 +303,8 @@ async def search(  # noqa: PLR0913
 @app.get("/record/{record_id}", response_class=HTMLResponse)
 async def record_detail(request: Request, record_id: int) -> HTMLResponse:
     """Render the detail page for a single license record."""
-    with get_db() as conn:
-        record = get_record_by_id(conn, record_id)
+    async with get_db(request.app.state.engine) as conn:
+        record = await get_record_by_id(conn, record_id)
         if not record:
             return await _tpl(
                 request,
@@ -331,20 +313,20 @@ async def record_detail(request: Request, record_id: int) -> HTMLResponse:
                 status_code=_HTTP_404,
             )
 
-        related_rows = get_related_records(conn, record["license_number"], record_id)
+        # API difference: pg_queries.get_related_records takes (conn, record: dict)
+        related_rows = await get_related_records(conn, record)
 
         # Hydrate record + related in a single batch
-        hydrated = hydrate_records(conn, [record, *related_rows])
+        hydrated = await hydrate_records(conn, [record, *related_rows])
         record = hydrated[0]
         related = hydrated[1:]
 
-        sources = get_record_sources(conn, record_id)
+        sources = await get_record_sources(conn, record_id)
         provenance = summarize_provenance(sources)
 
-        # Outcome link info for the detail page
-        link = get_record_link(conn, record_id)
+        link = await get_record_link(conn, record_id)
         outcome = format_outcome(get_outcome_status(record, link))
-        reverse_link = get_reverse_link_info(conn, record)
+        reverse_link = await get_reverse_link_info(conn, record)
 
     return await _tpl(
         request,
@@ -373,27 +355,49 @@ async def source_viewer(
     file (full HTML snapshot or unified diff) and renders it inside an iframe
     with the original WSLCB inline styles.  Public endpoint — no auth required.
     """
-    with get_db() as conn:
-        # Verify both IDs exist and are linked.
-        source_row = conn.execute(
-            """SELECT s.id, st.slug AS source_type, st.label AS source_label,
-                      s.snapshot_path, s.url, s.captured_at, s.metadata
-               FROM sources s
-               JOIN source_types st ON st.id = s.source_type_id
-               WHERE s.id = ?""",
-            (source_id,),
-        ).fetchone()
+    async with get_db(request.app.state.engine) as conn:
+        # 1. Look up source row with JOIN to source_types
+        source_row = (
+            (
+                await conn.execute(
+                    select(
+                        sources_table.c.id,
+                        source_types.c.slug.label("source_type"),
+                        source_types.c.label.label("source_label"),
+                        sources_table.c.snapshot_path,
+                        sources_table.c.url,
+                        sources_table.c.captured_at,
+                        sources_table.c.metadata,
+                    )
+                    .select_from(
+                        sources_table.join(
+                            source_types,
+                            source_types.c.id == sources_table.c.source_type_id,
+                        )
+                    )
+                    .where(sources_table.c.id == source_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
         if source_row is None:
             raise HTTPException(status_code=404, detail="Source not found")
 
-        record = get_record_by_id(conn, record_id)
+        # 2. Look up record
+        record = await get_record_by_id(conn, record_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Record not found")
 
-        link_row = conn.execute(
-            "SELECT 1 FROM record_sources WHERE record_id = ? AND source_id = ?",
-            (record_id, source_id),
-        ).fetchone()
+        # 3. Verify record_sources link
+        link_row = (
+            await conn.execute(
+                select(record_sources_table.c.record_id).where(
+                    record_sources_table.c.record_id == record_id,
+                    record_sources_table.c.source_id == source_id,
+                )
+            )
+        ).one_or_none()
         if link_row is None:
             raise HTTPException(status_code=404, detail="Source not linked to record")
 
@@ -464,8 +468,8 @@ async def entities_list(
     page: int = 1,
 ) -> HTMLResponse:
     """Searchable, paginated list of all applicant entities."""
-    with get_db() as conn:
-        result = get_entities(
+    async with get_db(request.app.state.engine) as conn:
+        result = await get_entities(
             conn,
             q=q.strip() or None,
             entity_type=entity_type.strip() or None,
@@ -493,8 +497,8 @@ async def entities_list(
 @app.get("/entity/{entity_id}", response_class=HTMLResponse)
 async def entity_detail(request: Request, entity_id: int) -> HTMLResponse:
     """Render the detail page for a single entity."""
-    with get_db() as conn:
-        entity = get_entity_by_id(conn, entity_id)
+    async with get_db(request.app.state.engine) as conn:
+        entity = await get_entity_by_id(conn, entity_id)
         if not entity:
             return await _tpl(
                 request,
@@ -502,7 +506,7 @@ async def entity_detail(request: Request, entity_id: int) -> HTMLResponse:
                 {"request": request, "message": "Entity not found."},
                 status_code=_HTTP_404,
             )
-        records = get_entity_records(conn, entity_id)
+        records = await get_entity_records(conn, entity_id)
         # Count distinct license numbers
         license_numbers = {r["license_number"] for r in records}
     return await _tpl(

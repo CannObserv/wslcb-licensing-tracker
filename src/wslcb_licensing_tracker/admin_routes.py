@@ -6,25 +6,37 @@ All /admin/* handlers live here and are included into the main app via
 """
 
 import logging
-import sqlite3
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .admin_audit import get_audit_log, log_action
 from .admin_auth import require_admin
-from .db import get_db
-from .endorsements import (
+from .database import get_db
+from .models import (
+    admin_users as admin_users_table,
+)
+from .models import (
+    endorsement_aliases,
+    license_endorsements,
+    license_records,
+    record_endorsements,
+    regulated_substances,
+)
+from .pg_admin_audit import get_audit_log, log_action
+from .pg_endorsements import (
     process_record,
     remove_alias,
     rename_endorsement,
     reprocess_endorsements,
     set_canonical_endorsement,
 )
-from .endorsements_admin import (
+from .pg_endorsements_admin import (
     add_code_mapping,
     create_code,
     dismiss_suggestion,
@@ -33,13 +45,13 @@ from .endorsements_admin import (
     remove_code_mapping,
     suggest_duplicate_endorsements,
 )
-from .integrity import (
+from .pg_integrity import (
     check_endorsement_anomalies,
     check_orphaned_locations,
     check_unenriched_records,
 )
-from .queries import invalidate_all_filter_caches
-from .substances import (
+from .pg_queries import invalidate_filter_cache as invalidate_all_filter_caches
+from .pg_substances import (
     add_substance,
     get_regulated_substances,
     remove_substance,
@@ -83,6 +95,15 @@ async def _render(
     return await _tpl(request, template, ctx, status_code)
 
 
+async def _get_db(request: Request) -> AsyncGenerator[AsyncConnection, None]:
+    """Yield an AsyncConnection for use as a FastAPI dependency."""
+    async with get_db(request.app.state.engine) as conn:
+        yield conn
+
+
+Conn = Annotated[AsyncConnection, Depends(_get_db)]
+
+
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
@@ -94,37 +115,67 @@ async def admin_dashboard(
     admin: Annotated[dict[str, Any], Depends(require_admin)],
 ) -> HTMLResponse:
     """Admin dashboard — record counts, scrape status, data quality metrics."""
-    with get_db() as conn:
-        agg = conn.execute("""
+    async with get_db(request.app.state.engine) as conn:
+        agg = (
+            (
+                await conn.execute(
+                    text("""
             SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN section_type = 'new_application' THEN 1 ELSE 0 END) AS new_apps,
                 SUM(CASE WHEN section_type = 'approved' THEN 1 ELSE 0 END) AS approved,
                 SUM(CASE WHEN section_type = 'discontinued' THEN 1 ELSE 0 END) AS discontinued
             FROM license_records
-        """).fetchone()
-        recent = conn.execute("""
+        """)
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+        recent = (
+            (
+                await conn.execute(
+                    text("""
             SELECT
-                SUM(CASE WHEN created_at >= datetime('now', '-1 day') THEN 1 ELSE 0 END)
-                    AS last_24h,
-                SUM(CASE WHEN created_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END)
-                    AS last_7d
+                SUM(CASE WHEN created_at::timestamptz >= NOW()
+                    - INTERVAL '1 day' THEN 1 ELSE 0 END) AS last_24h,
+                SUM(CASE WHEN created_at::timestamptz >= NOW()
+                    - INTERVAL '7 days' THEN 1 ELSE 0 END) AS last_7d
             FROM license_records
-        """).fetchone()
-        scrapes_raw = conn.execute("""
+        """)
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+        scrapes_raw = (
+            (
+                await conn.execute(
+                    text("""
             SELECT id, status, records_new, records_approved, records_discontinued,
                    records_skipped, started_at, finished_at,
-                   ROUND(
-                       (julianday(finished_at) - julianday(started_at)) * 86400
-                   ) AS duration_secs
+                   ROUND(EXTRACT(EPOCH FROM (
+                       finished_at::timestamptz - started_at::timestamptz
+                   ))) AS duration_secs
             FROM scrape_log
             ORDER BY id DESC LIMIT 5
-        """).fetchall()
+        """)
+                )
+            )
+            .mappings()
+            .all()
+        )
         scrapes = [dict(r) for r in scrapes_raw]
-        orphans = check_orphaned_locations(conn)
-        unenriched = check_unenriched_records(conn)
-        endorsement_issues = check_endorsement_anomalies(conn)
-        user_count = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
+
+        orphans = await check_orphaned_locations(conn)
+        unenriched = await check_unenriched_records(conn)
+        endorsement_issues = await check_endorsement_anomalies(conn)
+
+        user_count = (
+            await conn.execute(select(func.count()).select_from(admin_users_table))
+        ).scalar_one()
 
     return await _render(
         request,
@@ -165,10 +216,22 @@ async def admin_users(
     admin: Annotated[dict[str, Any], Depends(require_admin)],
 ) -> HTMLResponse:
     """List all admin users."""
-    with get_db() as conn:
-        users = conn.execute(
-            "SELECT id, email, role, created_at, created_by FROM admin_users ORDER BY created_at"
-        ).fetchall()
+    async with get_db(request.app.state.engine) as conn:
+        users = (
+            (
+                await conn.execute(
+                    select(
+                        admin_users_table.c.id,
+                        admin_users_table.c.email,
+                        admin_users_table.c.role,
+                        admin_users_table.c.created_at,
+                        admin_users_table.c.created_by,
+                    ).order_by(admin_users_table.c.created_at)
+                )
+            )
+            .mappings()
+            .all()
+        )
     return await _render(
         request,
         "admin/users.html",
@@ -184,7 +247,7 @@ async def admin_users(
 
 @router.post("/users/add", response_class=HTMLResponse)
 async def admin_users_add(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     email: Annotated[str, Form()],
 ) -> HTMLResponse:
@@ -194,21 +257,26 @@ async def admin_users_add(
         return RedirectResponse(
             "/admin/users?" + urlencode({"error": "Email is required"}), status_code=303
         )
-    with get_db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
-        ).fetchone()
+    async with get_db(request.app.state.engine) as conn:
+        existing = (
+            await conn.execute(
+                select(admin_users_table.c.id).where(
+                    func.lower(admin_users_table.c.email) == email.lower()
+                )
+            )
+        ).one_or_none()
         if existing:
             return RedirectResponse(
                 "/admin/users?" + urlencode({"error": f"User {email} already exists"}),
                 status_code=303,
             )
-        conn.execute(
-            "INSERT INTO admin_users (email, role, created_by) VALUES (?, 'admin', ?)",
-            (email, admin["email"]),
+        result = await conn.execute(
+            pg_insert(admin_users_table)
+            .values(email=email, role="admin", created_by=admin["email"])
+            .returning(admin_users_table.c.id)
         )
-        new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        log_action(
+        new_id = result.scalar_one()
+        await log_action(
             conn,
             email=admin["email"],
             action="admin_user.add",
@@ -216,13 +284,13 @@ async def admin_users_add(
             target_id=new_id,
             details={"added_email": email},
         )
-        conn.commit()
+        await conn.commit()
     return RedirectResponse("/admin/users", status_code=303)
 
 
 @router.post("/users/remove", response_class=HTMLResponse)
 async def admin_users_remove(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     email: Annotated[str, Form()],
 ) -> HTMLResponse:
@@ -232,25 +300,31 @@ async def admin_users_remove(
         return RedirectResponse(
             "/admin/users?" + urlencode({"error": "Cannot remove yourself"}), status_code=303
         )
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id FROM admin_users WHERE email = ? COLLATE NOCASE", (email,)
-        ).fetchone()
+    async with get_db(request.app.state.engine) as conn:
+        row = (
+            await conn.execute(
+                select(admin_users_table.c.id).where(
+                    func.lower(admin_users_table.c.email) == email.lower()
+                )
+            )
+        ).one_or_none()
         if not row:
             return RedirectResponse(
                 "/admin/users?" + urlencode({"error": f"User {email} not found"}),
                 status_code=303,
             )
-        conn.execute("DELETE FROM admin_users WHERE email = ? COLLATE NOCASE", (email,))
-        log_action(
+        await conn.execute(
+            admin_users_table.delete().where(func.lower(admin_users_table.c.email) == email.lower())
+        )
+        await log_action(
             conn,
             email=admin["email"],
             action="admin_user.remove",
             target_type="admin_user",
-            target_id=row["id"],
+            target_id=row[0],
             details={"removed_email": email},
         )
-        conn.commit()
+        await conn.commit()
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -283,8 +357,8 @@ async def admin_audit_log(  # noqa: PLR0913
         }.items()
         if v
     }
-    with get_db() as conn:
-        rows, total_count = get_audit_log(conn, page=page, per_page=per_page, filters=filters)
+    async with get_db(request.app.state.engine) as conn:
+        rows, total_count = await get_audit_log(conn, page=page, per_page=per_page, filters=filters)
     total_pages = max(1, (total_count + per_page - 1) // per_page)
 
     def _page_url(p: int) -> str:
@@ -328,11 +402,13 @@ async def admin_endorsements(
 ) -> HTMLResponse:
     """Endorsement admin — tabs: substances, endorsement list, suggestions, codes."""
     active_tab = section if section in _VALID_ENDORSEMENT_SECTIONS else "substances"
-    with get_db() as conn:
-        substances = get_regulated_substances(conn)
-        endorsements = get_endorsement_list(conn)
-        suggestions = suggest_duplicate_endorsements(conn) if active_tab == "suggestions" else []
-        code_mappings = get_code_mappings(conn)
+    async with get_db(request.app.state.engine) as conn:
+        substances = await get_regulated_substances(conn)
+        endorsements = await get_endorsement_list(conn)
+        suggestions = (
+            await suggest_duplicate_endorsements(conn) if active_tab == "suggestions" else []
+        )
+        code_mappings = await get_code_mappings(conn)
         all_endorsements_for_select = sorted(
             [
                 {"id": e["id"], "name": e["name"], "record_count": e.get("record_count", 0)}
@@ -361,7 +437,7 @@ async def admin_endorsements(
 
 @router.post("/endorsements/substances/add", response_class=HTMLResponse)
 async def admin_substance_add(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     name: Annotated[str, Form()],
 ) -> HTMLResponse:
@@ -372,13 +448,14 @@ async def admin_substance_add(
             "/admin/endorsements?section=substances&flash=substance_name_required",
             status_code=303,
         )
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT COALESCE(MAX(display_order), 0) + 1 FROM regulated_substances"
-        ).fetchone()
-        display_order = row[0] if row else 1
-        sid = add_substance(conn, name, display_order)
-        log_action(
+    async with get_db(request.app.state.engine) as conn:
+        display_order = (
+            await conn.execute(
+                select(func.coalesce(func.max(regulated_substances.c.display_order), 0) + 1)
+            )
+        ).scalar_one()
+        sid = await add_substance(conn, name, display_order)
+        await log_action(
             conn,
             admin["email"],
             "substance.add",
@@ -386,7 +463,7 @@ async def admin_substance_add(
             target_id=sid,
             details={"name": name},
         )
-        conn.commit()
+        await conn.commit()
     invalidate_all_filter_caches()
     return RedirectResponse(
         "/admin/endorsements?section=substances&flash=substance_added", status_code=303
@@ -395,14 +472,14 @@ async def admin_substance_add(
 
 @router.post("/endorsements/substances/remove", response_class=HTMLResponse)
 async def admin_substance_remove(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     substance_id: Annotated[int, Form()],
 ) -> HTMLResponse:
     """Delete a regulated substance and its endorsement associations."""
-    with get_db() as conn:
-        substance_name = remove_substance(conn, substance_id) or str(substance_id)
-        log_action(
+    async with get_db(request.app.state.engine) as conn:
+        substance_name = await remove_substance(conn, substance_id) or str(substance_id)
+        await log_action(
             conn,
             admin["email"],
             "substance.remove",
@@ -410,7 +487,7 @@ async def admin_substance_remove(
             target_id=substance_id,
             details={"name": substance_name},
         )
-        conn.commit()
+        await conn.commit()
     invalidate_all_filter_caches()
     return RedirectResponse(
         "/admin/endorsements?section=substances&flash=substance_removed", status_code=303
@@ -419,15 +496,15 @@ async def admin_substance_remove(
 
 @router.post("/endorsements/substances/set-endorsements", response_class=HTMLResponse)
 async def admin_substance_set_endorsements(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     substance_id: Annotated[int, Form()],
     endorsement_ids: Annotated[list[int], Form()] = [],  # noqa: B006
 ) -> HTMLResponse:
     """Replace the endorsement associations for a regulated substance."""
-    with get_db() as conn:
-        set_substance_endorsements(conn, substance_id, endorsement_ids)
-        log_action(
+    async with get_db(request.app.state.engine) as conn:
+        await set_substance_endorsements(conn, substance_id, endorsement_ids)
+        await log_action(
             conn,
             admin["email"],
             "substance.set_endorsements",
@@ -435,7 +512,7 @@ async def admin_substance_set_endorsements(
             target_id=substance_id,
             details={"endorsement_count": len(endorsement_ids)},
         )
-        conn.commit()
+        await conn.commit()
     invalidate_all_filter_caches()
     return RedirectResponse(
         f"/admin/endorsements?section=substances&selected={substance_id}&flash=substance_updated",
@@ -445,7 +522,7 @@ async def admin_substance_set_endorsements(
 
 @router.post("/endorsements/alias", response_class=HTMLResponse)
 async def admin_alias_endorsement(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     canonical_id: Annotated[int, Form()],
     variant_ids: Annotated[list[int], Form()] = [],  # noqa: B006
@@ -459,29 +536,30 @@ async def admin_alias_endorsement(
         raise HTTPException(
             status_code=422, detail="At least one variant must differ from the canonical"
         )
-    with get_db() as conn:
-        canonical_name = conn.execute(
-            "SELECT name FROM license_endorsements WHERE id = ?",
-            (canonical_id,),
-        ).fetchone()
-        canonical_name = canonical_name[0] if canonical_name else str(canonical_id)
+    async with get_db(request.app.state.engine) as conn:
+        canonical_name = (
+            await conn.execute(
+                select(license_endorsements.c.name).where(license_endorsements.c.id == canonical_id)
+            )
+        ).scalar_one_or_none() or str(canonical_id)
 
         variant_names = []
         for vid in variant_ids:
-            row = conn.execute(
-                "SELECT name FROM license_endorsements WHERE id = ?",
-                (vid,),
-            ).fetchone()
-            if row:
-                variant_names.append(row[0])
+            name_val = (
+                await conn.execute(
+                    select(license_endorsements.c.name).where(license_endorsements.c.id == vid)
+                )
+            ).scalar_one_or_none()
+            if name_val:
+                variant_names.append(name_val)
 
-        written = set_canonical_endorsement(
+        written = await set_canonical_endorsement(
             conn,
             canonical_id=canonical_id,
             variant_ids=variant_ids,
             created_by=admin["email"],
         )
-        log_action(
+        await log_action(
             conn,
             email=admin["email"],
             action="endorsement.set_canonical",
@@ -494,7 +572,7 @@ async def admin_alias_endorsement(
                 "aliases_written": written,
             },
         )
-        conn.commit()
+        await conn.commit()
 
     safe_section = (
         return_section if return_section in _VALID_ENDORSEMENT_SECTIONS else "endorsements"
@@ -507,20 +585,20 @@ async def admin_alias_endorsement(
 
 @router.post("/endorsements/set-canonical", response_class=HTMLResponse)
 async def admin_set_canonical(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     canonical_id: Annotated[int, Form()],
     variant_ids: Annotated[list[int], Form()] = [],  # noqa: B006
 ) -> HTMLResponse:
     """Legacy alias for /admin/endorsements/alias (backward compat)."""
     return await admin_alias_endorsement(
-        _request, admin, canonical_id=canonical_id, variant_ids=variant_ids
+        request, admin, canonical_id=canonical_id, variant_ids=variant_ids
     )
 
 
 @router.post("/endorsements/rename", response_class=HTMLResponse)
 async def admin_rename_endorsement(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     endorsement_id: Annotated[int, Form()],
     new_name: Annotated[str, Form()],
@@ -529,20 +607,22 @@ async def admin_rename_endorsement(
     new_name = new_name.strip()
     if not new_name:
         raise HTTPException(status_code=422, detail="new_name must not be empty")
-    with get_db() as conn:
-        old_name = conn.execute(
-            "SELECT name FROM license_endorsements WHERE id = ?",
-            (endorsement_id,),
-        ).fetchone()
-        old_name = old_name[0] if old_name else str(endorsement_id)
+    async with get_db(request.app.state.engine) as conn:
+        old_name = (
+            await conn.execute(
+                select(license_endorsements.c.name).where(
+                    license_endorsements.c.id == endorsement_id
+                )
+            )
+        ).scalar_one_or_none() or str(endorsement_id)
 
-        canonical_id = rename_endorsement(
+        canonical_id = await rename_endorsement(
             conn,
             endorsement_id=endorsement_id,
             new_name=new_name,
             created_by=admin["email"],
         )
-        log_action(
+        await log_action(
             conn,
             email=admin["email"],
             action="endorsement.rename",
@@ -554,7 +634,7 @@ async def admin_rename_endorsement(
                 "canonical_id": canonical_id,
             },
         )
-        conn.commit()
+        await conn.commit()
 
     invalidate_all_filter_caches()
     return RedirectResponse(
@@ -564,57 +644,66 @@ async def admin_rename_endorsement(
 
 @router.post("/endorsements/unalias", response_class=HTMLResponse)
 async def admin_unalias_endorsement(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     endorsement_id: Annotated[int, Form()],
 ) -> HTMLResponse:
     """Remove an endorsement alias, making the variant standalone."""
-    with get_db() as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM license_endorsements WHERE id = ?",
-            (endorsement_id,),
-        ).fetchone()
+    async with get_db(request.app.state.engine) as conn:
+        exists = (
+            await conn.execute(
+                select(license_endorsements.c.id).where(license_endorsements.c.id == endorsement_id)
+            )
+        ).one_or_none()
         if not exists:
             raise HTTPException(status_code=404, detail="endorsement not found")
 
-        alias_row = conn.execute(
-            "SELECT canonical_endorsement_id FROM endorsement_aliases WHERE endorsement_id = ?",
-            (endorsement_id,),
-        ).fetchone()
+        alias_row = (
+            await conn.execute(
+                select(endorsement_aliases.c.canonical_endorsement_id).where(
+                    endorsement_aliases.c.endorsement_id == endorsement_id
+                )
+            )
+        ).one_or_none()
         if not alias_row:
             raise HTTPException(
                 status_code=422, detail="endorsement is not a variant — no alias to remove"
             )
         canonical_id = alias_row[0]
 
-        variant_name = conn.execute(
-            "SELECT name FROM license_endorsements WHERE id = ?",
-            (endorsement_id,),
-        ).fetchone()
-        variant_name = variant_name[0] if variant_name else str(endorsement_id)
+        variant_name = (
+            await conn.execute(
+                select(license_endorsements.c.name).where(
+                    license_endorsements.c.id == endorsement_id
+                )
+            )
+        ).scalar_one_or_none() or str(endorsement_id)
 
-        canonical_name = conn.execute(
-            "SELECT name FROM license_endorsements WHERE id = ?",
-            (canonical_id,),
-        ).fetchone()
-        canonical_name = canonical_name[0] if canonical_name else str(canonical_id)
+        canonical_name = (
+            await conn.execute(
+                select(license_endorsements.c.name).where(license_endorsements.c.id == canonical_id)
+            )
+        ).scalar_one_or_none() or str(canonical_id)
 
-        remove_alias(conn, endorsement_id=endorsement_id, removed_by=admin["email"])
+        await remove_alias(conn, endorsement_id=endorsement_id, removed_by=admin["email"])
 
         # Reprocess resolved_endorsements FTS for all affected records.
-        affected = conn.execute(
-            """
-            SELECT lr.id, lr.license_type
-            FROM license_records lr
-            JOIN record_endorsements re ON re.record_id = lr.id
-            WHERE re.endorsement_id = ?
-            """,
-            (endorsement_id,),
+        affected = (
+            await conn.execute(
+                select(license_records.c.id, license_records.c.license_type)
+                .select_from(
+                    license_records.join(
+                        record_endorsements,
+                        record_endorsements.c.record_id == license_records.c.id,
+                    )
+                )
+                .where(record_endorsements.c.endorsement_id == endorsement_id)
+            )
         ).fetchall()
         for record_id, raw_license_type in affected:
-            process_record(conn, record_id, raw_license_type or "")
+            await process_record(conn, record_id, raw_license_type or "")
 
-        log_action(
+        await log_action(
             conn,
             email=admin["email"],
             action="endorsement.remove_alias",
@@ -627,7 +716,7 @@ async def admin_unalias_endorsement(
                 "records_reprocessed": len(affected),
             },
         )
-        conn.commit()
+        await conn.commit()
 
     invalidate_all_filter_caches()
     return RedirectResponse(
@@ -637,23 +726,23 @@ async def admin_unalias_endorsement(
 
 @router.post("/endorsements/dismiss-suggestion", response_class=HTMLResponse)
 async def admin_dismiss_suggestion(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     id_a: Annotated[int, Form()],
     id_b: Annotated[int, Form()],
     return_section: Annotated[str, Form()] = "endorsements",
 ) -> HTMLResponse:
     """Permanently suppress a suggested duplicate pair."""
-    with get_db() as conn:
-        dismiss_suggestion(conn, id_a, id_b, admin["email"])
-        log_action(
+    async with get_db(request.app.state.engine) as conn:
+        await dismiss_suggestion(conn, id_a, id_b, admin["email"])
+        await log_action(
             conn,
             email=admin["email"],
             action="endorsement.dismiss_suggestion",
             target_type="endorsement",
             details={"id_a": id_a, "id_b": id_b},
         )
-        conn.commit()
+        await conn.commit()
     safe_section = (
         return_section if return_section in _VALID_ENDORSEMENT_SECTIONS else "endorsements"
     )
@@ -665,7 +754,7 @@ async def admin_dismiss_suggestion(
 
 @router.post("/endorsements/code/add", response_class=HTMLResponse)
 async def admin_code_add_endorsement(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     code: Annotated[str, Form()],
     endorsement_id: Annotated[int, Form()],
@@ -674,11 +763,11 @@ async def admin_code_add_endorsement(
     code = code.strip()
     if not code:
         raise HTTPException(status_code=422, detail="code must not be empty")
-    with get_db() as conn:
-        added = add_code_mapping(conn, code, endorsement_id)
+    async with get_db(request.app.state.engine) as conn:
+        added = await add_code_mapping(conn, code, endorsement_id)
         if added:
-            reprocessed = reprocess_endorsements(conn, code=code)
-            log_action(
+            reprocessed = await reprocess_endorsements(conn, code=code)
+            await log_action(
                 conn,
                 email=admin["email"],
                 action="endorsement.code_add",
@@ -686,25 +775,25 @@ async def admin_code_add_endorsement(
                 target_id=endorsement_id,
                 details={"code": code, "reprocessed_records": reprocessed},
             )
-        conn.commit()
+        await conn.commit()
     invalidate_all_filter_caches()
     return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
 
 
 @router.post("/endorsements/code/remove", response_class=HTMLResponse)
 async def admin_code_remove_endorsement(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     code: Annotated[str, Form()],
     endorsement_id: Annotated[int, Form()],
 ) -> HTMLResponse:
     """Remove an endorsement from a code's expansion and retroactively reprocess."""
     code = code.strip()
-    with get_db() as conn:
-        removed = remove_code_mapping(conn, code, endorsement_id)
+    async with get_db(request.app.state.engine) as conn:
+        removed = await remove_code_mapping(conn, code, endorsement_id)
         if removed:
-            reprocessed = reprocess_endorsements(conn, code=code)
-            log_action(
+            reprocessed = await reprocess_endorsements(conn, code=code)
+            await log_action(
                 conn,
                 email=admin["email"],
                 action="endorsement.code_remove",
@@ -712,14 +801,14 @@ async def admin_code_remove_endorsement(
                 target_id=endorsement_id,
                 details={"code": code, "reprocessed_records": reprocessed},
             )
-        conn.commit()
+        await conn.commit()
     invalidate_all_filter_caches()
     return RedirectResponse("/admin/endorsements?flash=code_updated&section=codes", status_code=303)
 
 
 @router.post("/endorsements/code/create", response_class=HTMLResponse)
 async def admin_code_create(
-    _request: Request,
+    request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
     code: Annotated[str, Form()],
     endorsement_ids: Annotated[list[int], Form()] = [],  # noqa: B006
@@ -728,11 +817,11 @@ async def admin_code_create(
     code = code.strip()
     if not code:
         raise HTTPException(status_code=422, detail="code must not be empty")
-    with get_db() as conn:
-        inserted = create_code(conn, code, endorsement_ids)
+    async with get_db(request.app.state.engine) as conn:
+        inserted = await create_code(conn, code, endorsement_ids)
         if inserted:
-            reprocessed = reprocess_endorsements(conn, code=code)
-            log_action(
+            reprocessed = await reprocess_endorsements(conn, code=code)
+            await log_action(
                 conn,
                 email=admin["email"],
                 action="endorsement.code_create",
@@ -743,11 +832,6 @@ async def admin_code_create(
                     "reprocessed_records": reprocessed,
                 },
             )
-        conn.commit()
+        await conn.commit()
     invalidate_all_filter_caches()
     return RedirectResponse("/admin/endorsements?flash=code_created&section=codes", status_code=303)
-
-
-def _get_db_conn() -> sqlite3.Connection:
-    """Yield a DB connection for use as a FastAPI dependency."""
-    return get_db()
