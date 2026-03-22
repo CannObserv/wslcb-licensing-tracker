@@ -76,7 +76,7 @@ class TestPgGetOrCreateSource:
         for sl_id in (10, 20):
             await pg_conn.execute(
                 pg_insert(scrape_log)
-                .values(id=sl_id, started_at="2025-06-15T10:00:00")
+                .values(id=sl_id, started_at=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC))
                 .on_conflict_do_nothing()
             )
 
@@ -245,14 +245,14 @@ class TestPgGetPrimarySource:
 
         r1 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=1, snapshot_path="test/pri-first.html", captured_at="2025-06-15T10:00:00")
+            .values(source_type_id=1, snapshot_path="test/pri-first.html", captured_at=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC))
             .returning(sources.c.id)
         )
         first_id = r1.scalar_one()
 
         r2 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=2, snapshot_path="test/pri-confirmed.html", captured_at="2025-06-15T11:00:00")
+            .values(source_type_id=2, snapshot_path="test/pri-confirmed.html", captured_at=datetime(2025, 6, 15, 11, 0, 0, tzinfo=UTC))
             .returning(sources.c.id)
         )
         confirmed_id = r2.scalar_one()
@@ -312,14 +312,14 @@ class TestPgGetRecordSources:
 
         r1 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=1, snapshot_path="test/rs-old.html", captured_at="2025-06-14T10:00:00")
+            .values(source_type_id=1, snapshot_path="test/rs-old.html", captured_at=datetime(2025, 6, 14, 10, 0, 0, tzinfo=UTC))
             .returning(sources.c.id)
         )
         old_id = r1.scalar_one()
 
         r2 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=1, snapshot_path="test/rs-new.html", captured_at="2025-06-15T10:00:00")
+            .values(source_type_id=1, snapshot_path="test/rs-new.html", captured_at=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC))
             .returning(sources.c.id)
         )
         new_id = r2.scalar_one()

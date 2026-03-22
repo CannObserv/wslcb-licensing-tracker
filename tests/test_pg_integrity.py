@@ -3,7 +3,7 @@
 import os
 
 import pytest
-import pytest_asyncio
+import pytest_asyncio  # noqa: F401 — needed for @pytest_asyncio.fixture
 
 from wslcb_licensing_tracker.pg_integrity import (
     check_broken_fks,
@@ -22,20 +22,15 @@ _needs_db = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-async def conn():
-    """Async DB connection from TEST_DATABASE_URL."""
-    from sqlalchemy.ext.asyncio import create_async_engine
-
-    url = os.environ["TEST_DATABASE_URL"]
-    engine = create_async_engine(url)
-    async with engine.connect() as c:
+@pytest_asyncio.fixture(loop_scope="session")
+async def conn(pg_engine):
+    """Async DB connection from the shared session-scoped pg_engine."""
+    async with pg_engine.connect() as c:
         yield c
-    await engine.dispose()
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_check_orphaned_locations_returns_dict(conn):
     result = await check_orphaned_locations(conn)
     assert "count" in result
@@ -45,7 +40,7 @@ async def test_check_orphaned_locations_returns_dict(conn):
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_check_unenriched_records_returns_dict(conn):
     result = await check_unenriched_records(conn)
     for key in ("no_endorsements", "no_entities", "no_provenance", "no_enrichment_tracking"):
@@ -54,7 +49,7 @@ async def test_check_unenriched_records_returns_dict(conn):
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_check_endorsement_anomalies_returns_dict(conn):
     result = await check_endorsement_anomalies(conn)
     for key in ("unresolved_codes", "placeholder_endorsements"):
@@ -63,7 +58,7 @@ async def test_check_endorsement_anomalies_returns_dict(conn):
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_run_all_checks_returns_complete_report(conn):
     report = await run_all_checks(conn)
     for key in ("orphaned_locations", "broken_fks", "unenriched",
@@ -72,28 +67,28 @@ async def test_run_all_checks_returns_complete_report(conn):
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_check_broken_fks_returns_list(conn):
     result = await check_broken_fks(conn)
     assert isinstance(result, list)
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_check_entity_duplicates_returns_list(conn):
     result = await check_entity_duplicates(conn)
     assert isinstance(result, list)
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_fix_orphaned_locations_returns_int(conn):
     removed = await fix_orphaned_locations(conn)
     assert isinstance(removed, int)
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_fix_orphaned_locations_removes_orphan(conn):
     """An orphaned location (no license_records reference) is deleted when fix=True."""
     from sqlalchemy import text

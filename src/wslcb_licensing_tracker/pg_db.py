@@ -283,10 +283,9 @@ async def get_or_create_source(  # noqa: PLR0913
         return row[0]
 
     # NULL snapshot_path — PostgreSQL NULLs are distinct in UNIQUE constraints,
-    # so ON CONFLICT DO NOTHING won't fire. Use SAVEPOINT to make the insert
-    # atomic: attempt insert; on IntegrityError roll back to the savepoint and
-    # fetch the row that won the race.
-    async def _select_null_path() -> int:
+    # so ON CONFLICT DO NOTHING won't fire. Check for an existing row first, then
+    # use SAVEPOINT to guard against concurrent races.
+    async def _lookup_null_path() -> int | None:
         if scrape_log_id is not None:
             r = await conn.execute(
                 select(sources.c.id).where(
@@ -303,14 +302,11 @@ async def get_or_create_source(  # noqa: PLR0913
                     sources.c.scrape_log_id.is_(None),
                 )
             )
-        row = r.scalar_one_or_none()
-        if row is None:
-            msg = (
-                f"Source row vanished for type={source_type_id},"
-                f" scrape_log_id={scrape_log_id!r} (NULL snapshot_path)"
-            )
-            raise RuntimeError(msg)
-        return row
+        return r.scalar_one_or_none()
+
+    existing = await _lookup_null_path()
+    if existing is not None:
+        return existing
 
     await conn.execute(text("SAVEPOINT get_or_create_source_null"))
     try:
@@ -331,7 +327,14 @@ async def get_or_create_source(  # noqa: PLR0913
         return result.scalar_one()
     except IntegrityError:
         await conn.execute(text("ROLLBACK TO SAVEPOINT get_or_create_source_null"))
-        return await _select_null_path()
+        row = await _lookup_null_path()
+        if row is None:
+            msg = (
+                f"Source row vanished for type={source_type_id},"
+                f" scrape_log_id={scrape_log_id!r} (NULL snapshot_path)"
+            )
+            raise RuntimeError(msg) from None
+        return row
 
 
 async def link_record_source(

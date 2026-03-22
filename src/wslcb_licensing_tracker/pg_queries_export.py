@@ -175,7 +175,7 @@ async def export_records_cursor(  # noqa: PLR0913
         date_to=date_to,
         outcome_status=outcome_status,
     )
-    async with await conn.stream(
+    async with conn.stream(
         text(f"{_EXPORT_SELECT} {where} ORDER BY lr.record_date DESC, lr.id DESC LIMIT :limit"),
         {**params, "limit": limit},
     ) as stream:

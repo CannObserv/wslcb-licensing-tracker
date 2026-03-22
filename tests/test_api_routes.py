@@ -65,14 +65,19 @@ def client(mock_conn, mock_engine):
         conn = AsyncMock()
         yield conn
 
-    # Patch pg_queries functions used by the routes
+    # Patch pg_queries functions used by the routes.
+    # app.get_current_user must also be patched: ADMIN_DEV_EMAIL in the environment
+    # causes _lookup_admin() to be called from the 404 exception handler (_tpl)
+    # via get_current_user, which hits the mock engine and produces a coroutine error.
     patches = (
         patch("wslcb_licensing_tracker.api_routes.get_cities_for_state", new_callable=AsyncMock),
         patch("wslcb_licensing_tracker.api_routes.get_stats", new_callable=AsyncMock),
         patch("wslcb_licensing_tracker.api_routes.export_records_cursor"),
         patch("wslcb_licensing_tracker.api_routes.get_db"),
+        patch("wslcb_licensing_tracker.app.get_current_user", new_callable=AsyncMock),
     )
-    mock_cities, mock_stats, mock_export, mock_get_db = [p.start() for p in patches]
+    mock_cities, mock_stats, mock_export, mock_get_db, mock_get_current_user = [p.start() for p in patches]
+    mock_get_current_user.return_value = None
 
     mock_cities.return_value = ["SEATTLE", "TACOMA"]
     mock_stats.return_value = {

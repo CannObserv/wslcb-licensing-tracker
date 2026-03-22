@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -51,7 +52,7 @@ def standard_new_application():
         "applicants": "ACME CANNABIS CO; JOHN DOE; JANE SMITH",
         "license_type": "CANNABIS RETAILER",
         "application_type": "NEW APPLICATION",
-        "license_number": "078001",
+        "license_number": "TST001",
         "contact_phone": "(206) 555-0100",
         "city": "SEATTLE",
         "state": "WA",
@@ -202,9 +203,35 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
         cfg.attributes["connection"] = connection
         command.upgrade(cfg, "head")
 
+    # Tables to wipe before each test session, in FK-safe order.
+    # source_types is reference data seeded by migration 0001 — do NOT truncate it.
+    _TRUNCATE_TABLES = [
+        "record_links", "record_enrichments", "record_sources", "record_endorsements",
+        "record_entities", "scrape_log", "sources", "license_records", "locations",
+    ]
+
     try:
         async with engine.connect() as conn:
             await conn.run_sync(_run_upgrade)
+            await conn.commit()
+
+        # Truncate all test-writable tables for a clean slate each session.
+        # Prevents stale committed data from previous runs causing false failures.
+        async with engine.connect() as conn:
+            for table in _TRUNCATE_TABLES:
+                await conn.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"))
+            # Reseed source_types reference data — the migration INSERT has no ON CONFLICT
+            # guard, so if the table was previously wiped it won't be repopulated by
+            # alembic upgrade (which skips already-applied migrations).
+            await conn.execute(text("""
+                INSERT INTO source_types (id, slug, label, description) VALUES
+                    (1, 'live_scrape',      'Live Scrape',       'Direct scrape of the WSLCB licensing page'),
+                    (2, 'co_archive',       'CO Page Archive',   'Cannabis Observer archived HTML snapshots'),
+                    (3, 'internet_archive', 'Internet Archive',  'Wayback Machine snapshots'),
+                    (4, 'co_diff_archive',  'CO Diff Archive',   'Cannabis Observer diff-detected change snapshots'),
+                    (5, 'manual',           'Manual Entry',      'Manually entered or corrected records')
+                ON CONFLICT (id) DO NOTHING
+            """))
             await conn.commit()
 
         yield engine

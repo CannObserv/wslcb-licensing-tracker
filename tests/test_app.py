@@ -75,6 +75,7 @@ def test_index_returns_200():
     with patch("wslcb_licensing_tracker.app.create_engine_from_env", return_value=engine), \
          patch("wslcb_licensing_tracker.app.run_pending_migrations", new_callable=AsyncMock), \
          patch("wslcb_licensing_tracker.app.get_db", side_effect=_make_async_db_ctx(mock_conn)), \
+         patch("wslcb_licensing_tracker.app.get_current_user", new_callable=AsyncMock, return_value=None), \
          patch("wslcb_licensing_tracker.app.get_stats", new=mock_get_stats):
         with TestClient(app) as client:
             resp = client.get("/")
@@ -93,6 +94,7 @@ def test_record_not_found_returns_404():
     with patch("wslcb_licensing_tracker.app.create_engine_from_env", return_value=engine), \
          patch("wslcb_licensing_tracker.app.run_pending_migrations", new_callable=AsyncMock), \
          patch("wslcb_licensing_tracker.app.get_db", side_effect=_make_async_db_ctx(mock_conn)), \
+         patch("wslcb_licensing_tracker.app.get_current_user", new_callable=AsyncMock, return_value=None), \
          patch("wslcb_licensing_tracker.app.get_record_by_id", new=mock_get_record_by_id):
         with TestClient(app) as client:
             resp = client.get("/record/999999")

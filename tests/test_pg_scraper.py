@@ -41,7 +41,7 @@ async def test_get_last_content_hash_returns_none_when_no_eligible_rows():
 
 
 @_needs_db
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_cleanup_redundant_scrapes_removes_unchanged_rows(pg_engine):
     """cleanup_redundant_scrapes deletes unchanged scrape_log rows with no linked sources."""
     async with pg_engine.connect() as conn:
