@@ -97,7 +97,12 @@ wslcb-licensing-tracker/
 ├── pg_entities.py          # Async entity normalization
 ├── pg_address_validator.py # Async address validation DB layer
 ├── pg_link_records.py      # Async application→outcome record linking
-├── pg_queries.py           # Async search, filters, stats (tsvector + pg_trgm)
+├── pg_queries_hydrate.py   # Integration layer: enrich_record, hydrate_records
+├── pg_queries_search.py    # Core search + single-record lookups (imports pg_db only)
+├── pg_queries_filter.py    # Filter dropdowns + TTL caches
+├── pg_queries_stats.py     # Dashboard statistics + stats cache
+├── pg_queries_export.py    # Flat CSV export (streaming + batch)
+├── pg_queries_entity.py    # Entity-centric record queries
 ├── pg_admin_audit.py       # Async admin audit log
 ├── pg_substances.py        # Async regulated substance CRUD
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
@@ -496,7 +501,7 @@ Test structure:
 | `tests/test_pg_db.py` | Location/source/provenance helper functions |
 | `tests/test_pg_schema.py` | Alembic migration tests (require `TEST_DATABASE_URL`) |
 | `tests/test_pg_pipeline.py` | Ingestion pipeline — insert, dedup, endorsements, entities (require `TEST_DATABASE_URL`) |
-| `tests/test_pg_queries.py` | Search, filters, stats (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_queries.py` | Search, filters, stats, export, entity queries (require `TEST_DATABASE_URL`) |
 | `tests/test_pg_link_records.py` | Record linking — bulk, incremental, outcome status (require `TEST_DATABASE_URL`) |
 | `tests/test_pg_endorsements.py` | Endorsement pipeline — processing, repair, alias system (require `TEST_DATABASE_URL`) |
 | `tests/test_pg_endorsements_seed.py` | Endorsement seeding and code-map repair (require `TEST_DATABASE_URL`) |
