@@ -199,11 +199,12 @@ wslcb admin remove-user you@example.com
 
 # Backfill / repair
 uv run wslcb backfill-snapshots
+uv run wslcb backfill-diffs [--section notifications] [--limit 100] [--dry-run]
 uv run wslcb backfill-addresses
 uv run wslcb cleanup-redundant
 
-# Rebuild DB from archived sources (long — run in tmux)
-uv run wslcb rebuild --output data/wslcb-rebuilt.db [--force] [--verify]
+# Rebuild DB from PostgreSQL archives (use instead of 'rebuild' which targets SQLite)
+DATABASE_URL=postgresql+asyncpg://... python scripts/sqlite_to_pg.py  # one-time SQLite→PG
 ```
 
 See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) for systemd services, address validation, and ops commands.
