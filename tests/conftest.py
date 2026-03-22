@@ -166,6 +166,11 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
     Skips all PG tests when TEST_DATABASE_URL is not set.
     """
     if not pg_url:
+        if os.environ.get("REQUIRE_PG_TESTS"):
+            pytest.fail(
+                "TEST_DATABASE_URL is not set but REQUIRE_PG_TESTS=1 — "
+                "PostgreSQL integration tests are required in this environment"
+            )
         pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
 
     from alembic import command

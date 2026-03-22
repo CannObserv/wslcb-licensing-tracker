@@ -72,6 +72,27 @@ journalctl -u 'wslcb-task@refresh-addresses.service' -f
 uv run wslcb refresh-addresses
 ```
 
+## Testing
+
+### PostgreSQL integration tests
+
+PG integration tests require `TEST_DATABASE_URL` pointing at a test database.
+
+```bash
+TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb uv run pytest tests/ -v
+```
+
+Without `TEST_DATABASE_URL` the PG test suite is **skipped** (not failed) — safe for local dev without a DB.
+
+**In CI**, set both env vars to make skipped PG tests a hard failure:
+
+```bash
+REQUIRE_PG_TESTS=1
+TEST_DATABASE_URL=postgresql+asyncpg://...
+```
+
+With `REQUIRE_PG_TESTS=1`, if `TEST_DATABASE_URL` is missing, the fixture calls `pytest.fail()` immediately rather than skipping.
+
 ## Environment
 
 - Virtualenv at `.venv/` (managed by `uv sync`). If project directory moves, recreate.
