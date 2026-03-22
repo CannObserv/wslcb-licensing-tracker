@@ -5,6 +5,10 @@ Uses SQLAlchemy Core expressions against the table objects in models.py.
 
 Also re-exports shared constants (DATA_DIR, source type IDs, SOURCE_ROLE_PRIORITY,
 US_STATES) that were previously defined in db.py.
+
+Also contains pipeline constants (DATA_GAP_CUTOFF, LINKABLE_TYPES,
+PENDING_CUTOFF_DAYS) and outcome_filter_sql() shared by pg_link_records
+and the pg_queries_* modules.
 """
 
 import json
@@ -20,6 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .models import locations, record_sources, sources
 from .text_utils import _normalize_raw_address
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared constants (previously in db.py)
@@ -179,9 +185,6 @@ def outcome_filter_sql(
             not_data_gap,
         ]
     return []
-
-
-logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
