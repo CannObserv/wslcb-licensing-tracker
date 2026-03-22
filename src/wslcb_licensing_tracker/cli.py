@@ -49,12 +49,14 @@ def cmd_scrape(_args: argparse.Namespace) -> None:
     """Run a live scrape of the WSLCB licensing page."""
     engine = create_engine_from_env()
     asyncio.run(pg_scrape(engine))
+    engine.dispose()
 
 
 def cmd_backfill_snapshots(_args: argparse.Namespace) -> None:
     """Ingest records from archived HTML snapshots."""
     engine = create_engine_from_env()
     asyncio.run(pg_backfill_snapshots(engine))
+    engine.dispose()
 
 
 def cmd_backfill_diffs(args: argparse.Namespace) -> None:
@@ -69,6 +71,7 @@ def cmd_backfill_diffs(args: argparse.Namespace) -> None:
             dry_run=args.dry_run,
         )
     )
+    engine.dispose()
     if args.dry_run:
         print(
             f"[dry-run] Would insert {result['inserted']:,} record(s)"
@@ -98,8 +101,10 @@ def cmd_backfill_addresses(args: argparse.Namespace) -> None:
     async def _run() -> None:
         async with get_db(engine) as conn:
             await pg_backfill_addresses(conn, rate_limit=args.rate_limit)
+            await conn.commit()
 
     asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_refresh_addresses(args: argparse.Namespace) -> None:
@@ -122,8 +127,10 @@ def cmd_refresh_addresses(args: argparse.Namespace) -> None:
                 await pg_refresh_specific_addresses(conn, ids, rate_limit=args.rate_limit)
             else:
                 await pg_refresh_addresses(conn, rate_limit=args.rate_limit)
+            await conn.commit()
 
     asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_rebuild_links(_args: argparse.Namespace) -> None:
@@ -136,6 +143,7 @@ def cmd_rebuild_links(_args: argparse.Namespace) -> None:
             await conn.commit()
 
     asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_check(args: argparse.Namespace) -> None:
@@ -147,6 +155,7 @@ def cmd_check(args: argparse.Namespace) -> None:
             return await pg_run_all_checks(conn, fix=args.fix)
 
     report = asyncio.run(_run())
+    engine.dispose()
     issues = print_report(report)
     if issues:
         sys.exit(1)
@@ -156,6 +165,7 @@ def cmd_cleanup_redundant(args: argparse.Namespace) -> None:
     """Remove data from scrapes that found no new records."""
     engine = create_engine_from_env()
     result = asyncio.run(pg_cleanup_redundant(engine, delete_files=not args.keep_files))
+    engine.dispose()
     if result["scrape_logs"] == 0:
         print("Nothing to clean up.")
     else:
@@ -182,6 +192,7 @@ def cmd_reprocess_endorsements(args: argparse.Namespace) -> None:
             return result
 
     result = asyncio.run(_run())
+    engine.dispose()
     if args.dry_run:
         print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
@@ -207,6 +218,7 @@ def cmd_reprocess_entities(args: argparse.Namespace) -> None:
             return result
 
     result = asyncio.run(_run())
+    engine.dispose()
     if args.dry_run:
         print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
@@ -254,6 +266,7 @@ def cmd_admin_add_user(args: argparse.Namespace) -> None:
         print(f"Added admin user: {email}")
 
     asyncio.run(_run())
+    engine.dispose()
 
 
 def cmd_admin_list_users(_args: argparse.Namespace) -> None:
@@ -273,6 +286,7 @@ def cmd_admin_list_users(_args: argparse.Namespace) -> None:
             return result.fetchall()
 
     rows = asyncio.run(_run())
+    engine.dispose()
     if not rows:
         print("No admin users.")
         return
@@ -311,6 +325,7 @@ def cmd_admin_remove_user(args: argparse.Namespace) -> None:
             return None
 
     error = asyncio.run(_run())
+    engine.dispose()
     if error:
         print(error)
         sys.exit(1)
@@ -359,7 +374,7 @@ def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statemen
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Parse and export CSV without writing to the database.",
+        help="Parse and count, no writes to the database.",
     )
     p.set_defaults(func=cmd_backfill_diffs)
 

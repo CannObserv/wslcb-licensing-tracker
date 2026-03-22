@@ -219,7 +219,10 @@ async def main(dry_run: bool = False) -> None:
             count = await copy_table(pg, table, cols, rows, dry_run=dry_run)
             total_inserted += count
             if not dry_run:
-                print(f"  ✅ {table}: {count:,} rows")
+                # count = rows submitted; ON CONFLICT DO NOTHING skips are not
+                # counted separately (asyncpg executemany has no per-row result).
+                # verify_counts() below gives the authoritative inserted total.
+                print(f"  \u2705 {table}: {count:,} rows submitted")
 
         if not dry_run:
             print("\nResetting identity sequences...")
