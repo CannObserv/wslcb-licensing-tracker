@@ -40,6 +40,11 @@ ISO_ALPHA2_LEN = 2
 
 _cached_api_key: str | None = None
 
+# Shared connection pool for all address validation HTTP calls.
+# httpx.AsyncClient binds to the event loop lazily (on first request), so
+# module-level construction is safe before any event loop exists.
+_shared_client: httpx.AsyncClient = httpx.AsyncClient(timeout=TIMEOUT)
+
 # Candidate env file paths, checked in order:
 # 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
 # 2. <project-root>/env                — local dev fallback
@@ -107,12 +112,9 @@ async def standardize(address: str, client: httpx.AsyncClient | None = None) -> 
     headers = {"X-API-Key": api_key}
     payload = {"address": address}
 
+    _client = client if client is not None else _shared_client
     try:
-        if client is not None:
-            response = await client.post(url, json=payload, headers=headers, timeout=TIMEOUT)
-        else:
-            async with httpx.AsyncClient() as c:
-                response = await c.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+        response = await _client.post(url, json=payload, headers=headers)
 
         if response.status_code != HTTP_OK:
             logger.warning(
@@ -156,12 +158,9 @@ async def validate(address: str, client: httpx.AsyncClient | None = None) -> dic
     headers = {"X-API-Key": api_key}
     payload = {"address": address}
 
+    _client = client if client is not None else _shared_client
     try:
-        if client is not None:
-            response = await client.post(url, json=payload, headers=headers, timeout=TIMEOUT)
-        else:
-            async with httpx.AsyncClient() as c:
-                response = await c.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+        response = await _client.post(url, json=payload, headers=headers)
 
         if response.status_code != HTTP_OK:
             logger.warning(
@@ -432,23 +431,20 @@ async def _validate_batch(
 
     logger.info("%s for %d locations", label, total)
     succeeded = 0
-    attempted = 0
 
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        for row in rows:
-            location_id = row["id"]
-            address = row["raw_address"]
-            ok = await standardize_location(conn, location_id, address, client=client)
-            await validate_location(conn, location_id, address, client=client)
-            attempted += 1
-            if ok:
-                succeeded += 1
+    for attempted, row in enumerate(rows, start=1):
+        location_id = row["id"]
+        address = row["raw_address"]
+        ok = await standardize_location(conn, location_id, address)
+        await validate_location(conn, location_id, address)
+        if ok:
+            succeeded += 1
 
-            if attempted % batch_size == 0:
-                logger.debug("Progress: %d/%d (%d succeeded)", attempted, total, succeeded)
+        if attempted % batch_size == 0:
+            logger.debug("Progress: %d/%d (%d succeeded)", attempted, total, succeeded)
 
-            if rate_limit:
-                await asyncio.sleep(rate_limit)
+        if rate_limit:
+            await asyncio.sleep(rate_limit)
 
     logger.info("Done: %d/%d succeeded (%d failed)", succeeded, total, total - succeeded)
     return succeeded
