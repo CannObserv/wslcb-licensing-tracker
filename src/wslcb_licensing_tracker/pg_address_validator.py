@@ -1,8 +1,8 @@
 """Async PostgreSQL address validation DB layer for the WSLCB licensing tracker.
 
 Ports all DB-facing functions from address_validator.py to async SQLAlchemy Core.
-Pure HTTP functions (standardize, validate) are synchronous and wrapped in
-asyncio.to_thread() at the call site to avoid blocking the event loop.
+HTTP functions (standardize, validate) use httpx.AsyncClient natively — no thread
+wrappers needed.
 
 Pipeline
 --------
@@ -90,7 +90,7 @@ def _is_validation_enabled() -> bool:
     return os.environ.get("ENABLE_ADDRESS_VALIDATION", "").lower() in ("1", "true", "yes")
 
 
-def standardize(address: str, client: httpx.Client | None = None) -> dict | None:
+async def standardize(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
     """Standardize an address via POST /api/v1/standardize.
 
     Sends the full raw address string.  The server parses and standardizes
@@ -109,9 +109,10 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
 
     try:
         if client is not None:
-            response = client.post(url, json=payload, headers=headers)
+            response = await client.post(url, json=payload, headers=headers, timeout=TIMEOUT)
         else:
-            response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+            async with httpx.AsyncClient() as c:
+                response = await c.post(url, json=payload, headers=headers, timeout=TIMEOUT)
 
         if response.status_code != HTTP_OK:
             logger.warning(
@@ -137,7 +138,7 @@ def standardize(address: str, client: httpx.Client | None = None) -> dict | None
         return data
 
 
-def validate(address: str, client: httpx.Client | None = None) -> dict | None:
+async def validate(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
     """Validate an address via POST /api/v1/validate.
 
     Sends the full raw address string. The server runs parse → standardize
@@ -157,9 +158,10 @@ def validate(address: str, client: httpx.Client | None = None) -> dict | None:
 
     try:
         if client is not None:
-            response = client.post(url, json=payload, headers=headers)
+            response = await client.post(url, json=payload, headers=headers, timeout=TIMEOUT)
         else:
-            response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+            async with httpx.AsyncClient() as c:
+                response = await c.post(url, json=payload, headers=headers, timeout=TIMEOUT)
 
         if response.status_code != HTTP_OK:
             logger.warning(
@@ -189,7 +191,7 @@ async def standardize_location(
     conn: AsyncConnection,
     location_id: int,
     raw_address: str,
-    client: httpx.Client | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     """Standardize and update a single location row via POST /api/v1/standardize.
 
@@ -206,7 +208,7 @@ async def standardize_location(
         conn: Async SQLAlchemy connection.
         location_id: The ID of the location row to update.
         raw_address: The raw business address to standardize.
-        client: Optional httpx.Client for connection reuse.
+        client: Optional httpx.AsyncClient for connection reuse.
 
     Returns:
         True if address_standardized_at was set, False otherwise.
@@ -215,7 +217,7 @@ async def standardize_location(
         return False
 
     try:
-        result = await asyncio.to_thread(standardize, raw_address, client)
+        result = await standardize(raw_address, client)
     except Exception:
         logger.exception("Standardize failed for location %d", location_id)
         return False
@@ -250,7 +252,7 @@ async def validate_location(
     conn: AsyncConnection,
     location_id: int,
     raw_address: str,
-    client: httpx.Client | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     """Optionally validate a location row via POST /api/v1/validate.
 
@@ -268,7 +270,7 @@ async def validate_location(
         conn: Async SQLAlchemy connection.
         location_id: The ID of the location row to update.
         raw_address: The raw business address to validate.
-        client: Optional httpx.Client for connection reuse.
+        client: Optional httpx.AsyncClient for connection reuse.
 
     Returns:
         True if address_validated_at was set (confirmed/corrected), False otherwise.
@@ -280,7 +282,7 @@ async def validate_location(
         return False
 
     try:
-        result = await asyncio.to_thread(validate, raw_address, client)
+        result = await validate(raw_address, client)
     except Exception:
         logger.exception("Validate failed for location %d", location_id)
         return False
@@ -342,7 +344,7 @@ async def _validate_record_location(
     conn: AsyncConnection,
     record_id: int,
     fk_column: str,
-    client: httpx.Client | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     """Standardize (and optionally validate) a location FK on a license record.
 
@@ -390,7 +392,7 @@ async def _validate_record_location(
 async def validate_record(
     conn: AsyncConnection,
     record_id: int,
-    client: httpx.Client | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     """Standardize (and optionally validate) the primary location for a license record."""
     return await _validate_record_location(conn, record_id, "location_id", client)
@@ -399,7 +401,7 @@ async def validate_record(
 async def validate_previous_location(
     conn: AsyncConnection,
     record_id: int,
-    client: httpx.Client | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     """Standardize (and optionally validate) the previous location for a CHANGE OF LOCATION record."""  # noqa: E501
     return await _validate_record_location(conn, record_id, "previous_location_id", client)
@@ -432,7 +434,7 @@ async def _validate_batch(
     succeeded = 0
     attempted = 0
 
-    with httpx.Client(timeout=TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         for row in rows:
             location_id = row["id"]
             address = row["raw_address"]
