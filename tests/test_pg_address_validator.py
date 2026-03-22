@@ -84,3 +84,25 @@ class TestValidateLocation:
         ):
             result = await validate_location(pg_conn, loc_id, "UNVALIDATABLE ADDRESS")
         assert result is False
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_not_confirmed_writes_status_but_not_validated_at(self, pg_conn):
+        # API responds but cannot confirm the address (no address_line_1 in response).
+        # Should write validation_status/dpv_match_code, leave address_validated_at NULL,
+        # and return False.
+        loc_id = await get_or_create_location(pg_conn, "AMBIGUOUS RD, NOWHERE, WA 99999")
+        mock_result = {
+            "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
+        }
+        with (
+            patch("wslcb_licensing_tracker.pg_address_validator._is_validation_enabled", return_value=True),
+            patch("wslcb_licensing_tracker.pg_address_validator.validate", return_value=mock_result),
+        ):
+            result = await validate_location(pg_conn, loc_id, "AMBIGUOUS RD, NOWHERE, WA 99999")
+        assert result is False
+        row = (await pg_conn.execute(
+            select(locations.c.validation_status, locations.c.address_validated_at)
+            .where(locations.c.id == loc_id)
+        )).mappings().one()
+        assert row["validation_status"] == "not_confirmed"
+        assert row["address_validated_at"] is None
