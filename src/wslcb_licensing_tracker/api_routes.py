@@ -22,7 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .database import get_db
 from .pg_db import US_STATES
-from .pg_queries import export_records_cursor, get_cities_for_state, get_stats
+from .pg_queries_export import export_records_cursor
+from .pg_queries_filter import get_cities_for_state
+from .pg_queries_stats import get_stats
 
 logger = logging.getLogger(__name__)
 

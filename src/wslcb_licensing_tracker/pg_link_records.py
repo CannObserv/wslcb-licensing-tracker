@@ -16,6 +16,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .models import license_records, record_links
+from .pg_db import (
+    DATA_GAP_CUTOFF,
+    PENDING_CUTOFF_DAYS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,73 +39,6 @@ _APPROVAL_LINK_TYPES = {
 
 # DISC. LIQUOR SALES links to discontinued/DISCONTINUED
 _DISC_LINK_TYPE = "DISC. LIQUOR SALES"
-
-# Cutoff: applications older than this with no outcome -> 'unknown'
-PENDING_CUTOFF_DAYS = 180
-
-# Date after which NEW APPLICATION approvals stopped being published
-DATA_GAP_CUTOFF = "2025-05-12"
-
-# All application types eligible for outcome linking
-LINKABLE_TYPES = _APPROVAL_LINK_TYPES | {_DISC_LINK_TYPE}
-
-
-def outcome_filter_sql(
-    status: str,
-    record_alias: str = "lr",
-) -> list[str]:
-    """Return SQL WHERE-clause fragments for an outcome_status filter.
-
-    Each element is a standalone condition to be ANDed into the query.
-    The *record_alias* must be the table alias for ``license_records``.
-
-    Valid *status* values: ``'approved'``, ``'discontinued'``,
-    ``'pending'``, ``'data_gap'``, ``'unknown'``.
-    Returns an empty list for unrecognised values.
-    """
-    r = record_alias
-    linkable = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
-    not_linked = f"NOT EXISTS (SELECT 1 FROM record_links rl WHERE rl.new_app_id = {r}.id)"
-    not_data_gap = (
-        f"NOT ({r}.application_type = 'NEW APPLICATION' AND {r}.record_date > '{DATA_GAP_CUTOFF}')"
-    )
-
-    if status == "approved":
-        return [
-            f"{r}.id IN (SELECT rl.new_app_id FROM record_links rl "
-            "JOIN license_records o ON o.id = rl.outcome_id "
-            "WHERE o.section_type = 'approved')",
-        ]
-    if status == "discontinued":
-        return [
-            f"{r}.id IN (SELECT rl.new_app_id FROM record_links rl "
-            "JOIN license_records o ON o.id = rl.outcome_id "
-            "WHERE o.section_type = 'discontinued')",
-        ]
-    if status == "pending":
-        return [
-            f"{r}.section_type = 'new_application'",
-            f"{r}.application_type IN ({linkable})",
-            not_linked,
-            f"{r}.record_date::date >= CURRENT_DATE - interval '{PENDING_CUTOFF_DAYS} days'",
-            not_data_gap,
-        ]
-    if status == "data_gap":
-        return [
-            f"{r}.section_type = 'new_application'",
-            f"{r}.application_type = 'NEW APPLICATION'",
-            f"{r}.record_date > '{DATA_GAP_CUTOFF}'",
-            not_linked,
-        ]
-    if status == "unknown":
-        return [
-            f"{r}.section_type = 'new_application'",
-            f"{r}.application_type IN ({linkable})",
-            not_linked,
-            f"{r}.record_date::date < CURRENT_DATE - interval '{PENDING_CUTOFF_DAYS} days'",
-            not_data_gap,
-        ]
-    return []
 
 
 def get_outcome_status(record: dict, link: dict | None) -> dict:  # noqa: C901, PLR0911

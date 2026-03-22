@@ -1,21 +1,21 @@
-"""Tests for pg_queries.py — async search and read queries."""
+"""Tests for pg_queries_* modules — async search and read queries."""
 import pytest
-from wslcb_licensing_tracker.pg_queries import (
-    search_records,
-    export_records,
-    export_records_cursor,
-    get_filter_options,
+from wslcb_licensing_tracker.pg_queries_export import export_records, export_records_cursor
+from wslcb_licensing_tracker.pg_queries_entity import get_entity_records, get_entities
+from wslcb_licensing_tracker.pg_queries_filter import (
     get_cities_for_state,
-    get_stats,
-    enrich_record,
-    get_record_by_id,
-    get_related_records,
-    get_entity_records,
-    get_entities,
-    get_source_by_id,
-    get_record_source_link,
+    get_filter_options,
     invalidate_filter_cache,
 )
+from wslcb_licensing_tracker.pg_queries_hydrate import enrich_record
+from wslcb_licensing_tracker.pg_queries_search import (
+    get_record_by_id,
+    get_record_source_link,
+    get_related_records,
+    get_source_by_id,
+    search_records,
+)
+from wslcb_licensing_tracker.pg_queries_stats import get_stats
 from wslcb_licensing_tracker.pg_db import (
     SOURCE_TYPE_LIVE_SCRAPE,
     get_or_create_source,
