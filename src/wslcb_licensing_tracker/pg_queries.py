@@ -10,6 +10,7 @@ Contains:
 - get_filter_options() / get_cities_for_state() — dropdown helpers
 - get_stats() — dashboard statistics (cached)
 - get_record_by_id() / get_related_records() / get_source_by_id() — single-row lookups
+- get_record_source_link() — record↔source existence check
 - get_entity_records() / get_entities() — entity-centric queries
 - invalidate_filter_cache() — cache invalidation
 """

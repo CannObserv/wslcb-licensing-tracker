@@ -157,7 +157,7 @@ class TestGetSourceById:
         assert row["source_type"] == "live_scrape"
         assert "source_label" in row
         assert "snapshot_path" in row
-        assert "url" in row
+        assert row["url"] == "https://example.com/test-source-by-id"
         assert "captured_at" in row
         assert "metadata" in row
 
