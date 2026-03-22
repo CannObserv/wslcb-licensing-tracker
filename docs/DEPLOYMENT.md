@@ -84,14 +84,13 @@ TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb uv run pytest tests
 
 Without `TEST_DATABASE_URL` the PG test suite is **skipped** (not failed) — safe for local dev without a DB.
 
-**In CI**, set both env vars to make skipped PG tests a hard failure:
+**In CI**, set both env vars to make missing `TEST_DATABASE_URL` a hard failure that aborts the session:
 
 ```bash
-REQUIRE_PG_TESTS=1
-TEST_DATABASE_URL=postgresql+asyncpg://...
+REQUIRE_PG_TESTS=1 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb uv run pytest tests/ -v
 ```
 
-With `REQUIRE_PG_TESTS=1`, if `TEST_DATABASE_URL` is missing, the fixture calls `pytest.fail()` immediately rather than skipping.
+With `REQUIRE_PG_TESTS=1`, if `TEST_DATABASE_URL` is missing, `pytest_sessionstart` calls `pytest.exit(returncode=1)` before any collection or test execution — catching all skip paths including `@pytest.mark.skipif` and standalone connection fixtures.
 
 ## Environment
 

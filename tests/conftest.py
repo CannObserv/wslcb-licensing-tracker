@@ -19,6 +19,23 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
+# ── CI enforcement ───────────────────────────────────────────────────
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Abort the session immediately if REQUIRE_PG_TESTS=1 but TEST_DATABASE_URL is unset.
+
+    Catches all PG test skip paths (fixture-based, @pytest.mark.skipif, standalone
+    connection fixtures) before any collection or test execution occurs.
+    """
+    if os.environ.get("REQUIRE_PG_TESTS") and not os.environ.get("TEST_DATABASE_URL"):
+        pytest.exit(
+            "TEST_DATABASE_URL is not set but REQUIRE_PG_TESTS=1 — "
+            "PostgreSQL integration tests are required in this environment",
+            returncode=1,
+        )
+
+
 # ── Sample record dicts ──────────────────────────────────────────────
 # These mirror the dict shape produced by parser.parse_records_from_table.
 
@@ -163,14 +180,11 @@ def pg_url() -> str | None:
 async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
     """Session-scoped async engine with Alembic migrations applied.
 
-    Skips all PG tests when TEST_DATABASE_URL is not set.
+    Skips PG tests when TEST_DATABASE_URL is not set. In CI, set
+    REQUIRE_PG_TESTS=1 to turn missing TEST_DATABASE_URL into a hard
+    failure (enforced by pytest_sessionstart before this fixture runs).
     """
     if not pg_url:
-        if os.environ.get("REQUIRE_PG_TESTS"):
-            pytest.fail(
-                "TEST_DATABASE_URL is not set but REQUIRE_PG_TESTS=1 — "
-                "PostgreSQL integration tests are required in this environment"
-            )
         pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
 
     from alembic import command
