@@ -56,7 +56,7 @@ Each record includes:
 |---|---|
 | Scraper | Python, [httpx](https://www.python-httpx.org/), [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) + lxml |
 | Address validation | External API ([address-validator](https://address-validator.exe.xyz:8000/docs)) for USPS-standardized parsing |
-| Database | SQLite with [FTS5](https://www.sqlite.org/fts5.html) full-text search |
+| Database | [PostgreSQL](https://www.postgresql.org/) with [tsvector](https://www.postgresql.org/docs/current/datatype-textsearch.html) + [pg_trgm](https://www.postgresql.org/docs/current/pgtrgm.html) full-text search |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
 | Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (pre-built CLI, custom brand palette) |
 | Scheduling | systemd timer (twice-daily) |
@@ -85,6 +85,25 @@ wslcb-licensing-tracker/
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
 ├── db.py                   # Connection management, constants, location/source/provenance helpers
 ├── schema.py               # DDL, PRAGMA user_version migrations, FTS5, seeding
+├── database.py             # Async SQLAlchemy engine factory (DATABASE_URL env var)
+├── models.py               # SQLAlchemy Core Table definitions (all 20 tables)
+├── pg_schema.py            # Alembic-based schema init (alembic upgrade head)
+├── pg_db.py                # Async equivalents of db.py helpers
+├── pg_pipeline.py          # Async ingestion pipeline (insert_record, ingest_batch)
+├── pg_scraper.py           # Async scraper (WSLCB page fetch, archive, ingest)
+├── pg_backfill_snapshots.py # Async backfill from archived HTML snapshots
+├── pg_backfill_diffs.py    # Async backfill from CO diff archives
+├── pg_integrity.py         # Async integrity checks (run_all_checks, fix_orphaned_locations)
+├── pg_endorsements.py      # Async endorsement pipeline
+├── pg_endorsements_seed.py # Async endorsement seeding and repair
+├── pg_endorsements_admin.py # Async admin helpers for endorsement management
+├── pg_entities.py          # Async entity normalization
+├── pg_address_validator.py # Async address validation DB layer
+├── pg_link_records.py      # Async application→outcome record linking
+├── pg_queries.py           # Async search, filters, stats (tsvector + pg_trgm)
+├── pg_admin_audit.py       # Async admin audit log
+├── pg_substances.py        # Async regulated substance CRUD
+├── data_migration.py       # Run-once data migration framework (resolves #85)
 ├── queries.py              # Record search, filters, stats, CRUD
 ├── entities.py             # Entity (applicant) normalization
 ├── endorsements.py         # Core endorsement pipeline (process_record, query helpers, alias management)
@@ -139,6 +158,13 @@ wslcb-licensing-tracker/
 │           ├── notifications/  # Unified diffs of the notifications section
 │           ├── approvals/      # Unified diffs of the approvals section
 │           └── discontinued/   # Unified diffs of the discontinued section
+├── scripts/
+│   └── sqlite_to_pg.py     # One-time SQLite→PostgreSQL data migration script
+├── alembic/                # Alembic schema migrations
+│   ├── alembic.ini
+│   └── versions/
+│       ├── 0001_baseline_postgresql_schema.py
+│       └── 0002_fts.py
 ├── requirements.txt        # Python dependencies (runtime + dev)
 ├── pytest.ini              # Pytest configuration
 ├── tests/                  # Test suite
@@ -177,6 +203,7 @@ wslcb-licensing-tracker/
 ### Prerequisites
 
 - Python 3.12+
+- PostgreSQL 14+
 - systemd (for scheduling; optional if running manually)
 
 ### Installation
@@ -188,6 +215,20 @@ cd wslcb-licensing-tracker
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
+
+### Configure the database
+
+Copy the template and set your PostgreSQL connection URL:
+
+```bash
+cp env.example env
+# Edit env: set DATABASE_URL=postgresql+asyncpg://user:password@localhost/wslcb
+```
+
+Apply the schema:
+```bash
+alembic upgrade head
 ```
 
 ### Run the initial scrape
