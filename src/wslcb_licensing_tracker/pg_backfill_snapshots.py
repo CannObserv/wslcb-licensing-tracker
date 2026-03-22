@@ -13,17 +13,18 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from .database import get_db
-from .db import (
+from .models import license_records
+from .parser import extract_snapshot_date, parse_snapshot, snapshot_paths
+from .pg_db import (
     DATA_DIR,
     SOURCE_TYPE_CO_ARCHIVE,
     WSLCB_SOURCE_URL,
-    clean_applicants_string,
-    clean_entity_name,
+    get_or_create_location,
+    get_or_create_source,
+    link_record_source,
 )
-from .models import license_records
-from .parser import extract_snapshot_date, parse_snapshot, snapshot_paths
-from .pg_db import get_or_create_location, get_or_create_source, link_record_source
 from .pg_pipeline import IngestOptions, ingest_batch
+from .text_utils import clean_applicants_string, clean_entity_name
 
 logger = logging.getLogger(__name__)
 

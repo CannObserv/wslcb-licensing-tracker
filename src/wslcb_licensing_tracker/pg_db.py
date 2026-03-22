@@ -3,20 +3,98 @@
 Async equivalents of the location, source, and provenance helpers in db.py.
 Uses SQLAlchemy Core expressions against the table objects in models.py.
 
-Pure-string helpers (_normalize_raw_address, clean_entity_name, etc.) are
-re-imported from db.py — they have no DB dependency.
+Also re-exports shared constants (DATA_DIR, source type IDs, SOURCE_ROLE_PRIORITY,
+US_STATES) that were previously defined in db.py.
 """
 
 import json
 import logging
+import os
+from pathlib import Path
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .db import SOURCE_ROLE_PRIORITY, _normalize_raw_address
 from .models import locations, record_sources, sources
+from .text_utils import _normalize_raw_address
+
+# ---------------------------------------------------------------------------
+# Shared constants (previously in db.py)
+# ---------------------------------------------------------------------------
+
+# Source type constants (fixed IDs — must match seed data in pg_schema.py)
+SOURCE_TYPE_LIVE_SCRAPE = 1
+SOURCE_TYPE_CO_ARCHIVE = 2
+SOURCE_TYPE_INTERNET_ARCHIVE = 3
+SOURCE_TYPE_CO_DIFF_ARCHIVE = 4
+SOURCE_TYPE_MANUAL = 5
+
+WSLCB_SOURCE_URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
+
+# All persistent data (HTML snapshots etc.) lives under DATA_DIR.
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
+
+# Source-role priority used when selecting the "best" source for display.
+# Lower value = higher priority.  Imported by display.py to avoid circular imports.
+SOURCE_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirmed": 2}
+
+# US state code → full name mapping.  Used by the state filter dropdown and
+# the address validation layer.
+US_STATES: dict[str, str] = {
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DC": "District of Columbia",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+}
 
 logger = logging.getLogger(__name__)
 

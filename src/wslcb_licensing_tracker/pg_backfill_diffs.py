@@ -13,9 +13,8 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .database import get_db
-from .db import DATA_DIR, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL
 from .parser import SECTION_DIR_MAP, extract_records_from_diff
-from .pg_db import get_or_create_source
+from .pg_db import DATA_DIR, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL, get_or_create_source
 from .pg_pipeline import IngestOptions, ingest_batch
 
 logger = logging.getLogger(__name__)

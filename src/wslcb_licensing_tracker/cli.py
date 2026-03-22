@@ -9,7 +9,6 @@ Usage::
     python cli.py scrape                  # live scrape
     python cli.py backfill-snapshots      # replay archived HTML
     python cli.py backfill-diffs          # replay diff archives
-    python cli.py backfill-provenance     # populate source provenance
     python cli.py backfill-addresses      # validate un-validated locations
     python cli.py refresh-addresses       # re-validate all locations
     python cli.py rebuild-links           # rebuild application→outcome links
@@ -83,15 +82,6 @@ def cmd_backfill_diffs(args: argparse.Namespace) -> None:
             f"{result['inserted']:,} inserted, {result['skipped']:,} skipped, "
             f"{result['errors']:,} errors."
         )
-
-
-def cmd_backfill_provenance(_args: argparse.Namespace) -> None:
-    """Populate source provenance for existing records.
-
-    Note: provenance is populated at ingest time via pg_pipeline. This command
-    is a no-op in the PostgreSQL version — kept for CLI compatibility.
-    """
-    print("Provenance is populated at ingest time in the PostgreSQL version. No action needed.")
 
 
 def cmd_backfill_addresses(args: argparse.Namespace) -> None:
@@ -226,19 +216,6 @@ def cmd_reprocess_entities(args: argparse.Namespace) -> None:
             f"Reprocessed {result['records_processed']:,} record(s); "
             f"{result['entities_linked']:,} entity link(s) written."
         )
-
-
-def cmd_rebuild(args: argparse.Namespace) -> None:  # noqa: ARG001
-    """Rebuild database from archived sources.
-
-    Note: rebuild.py targets SQLite. This command is not yet ported to PostgreSQL.
-    Use ``wslcb backfill-snapshots`` + ``wslcb backfill-diffs`` for PostgreSQL recovery.
-    """
-    print(
-        "ERROR: 'rebuild' is not yet ported to PostgreSQL.\n"
-        "Use 'wslcb backfill-snapshots' and 'wslcb backfill-diffs' to repopulate from archives."
-    )
-    sys.exit(1)
 
 
 # -- Admin subcommands -----------------------------------------------
@@ -378,13 +355,6 @@ def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statemen
     )
     p.set_defaults(func=cmd_backfill_diffs)
 
-    # backfill-provenance
-    p = sub.add_parser(
-        "backfill-provenance",
-        help="Populate source provenance for existing records",
-    )
-    p.set_defaults(func=cmd_backfill_provenance)
-
     # backfill-addresses
     p = sub.add_parser(
         "backfill-addresses",
@@ -493,28 +463,6 @@ def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statemen
         help="Report what would change without writing to the database",
     )
     p.set_defaults(func=cmd_reprocess_entities)
-
-    # rebuild
-    p = sub.add_parser(
-        "rebuild",
-        help="Rebuild database from archived sources",
-    )
-    p.add_argument(
-        "--output",
-        required=True,
-        help="Path for the rebuilt database file",
-    )
-    p.add_argument(
-        "--verify",
-        action="store_true",
-        help="Compare rebuilt DB against production and report differences",
-    )
-    p.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite existing output file",
-    )
-    p.set_defaults(func=cmd_rebuild)
 
     # admin subcommand group
     p_admin = sub.add_parser("admin", help="Admin user management")

@@ -1,9 +1,11 @@
 """Shared pytest fixtures for the WSLCB licensing tracker test suite.
 
-Provides an in-memory SQLite database with full schema, sample record
-dicts representing the main record variants, and path helpers for HTML
-fixtures.  All fixtures are designed for speed — no network calls, no
-disk I/O for the database.
+Provides sample record dicts representing the main record variants, and
+path helpers for HTML fixtures.  All fixtures are designed for speed —
+no network calls, no disk I/O for the database.
+
+PostgreSQL tests use the pg_engine / pg_conn fixtures defined below,
+which require TEST_DATABASE_URL to be set in the environment.
 """
 import os
 from collections.abc import AsyncGenerator
@@ -14,23 +16,6 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
-
-
-@pytest.fixture
-def db():
-    """In-memory SQLite database with full schema initialized.
-
-    The connection is returned directly (not via context manager) and
-    closed after the test.  WAL mode is silently downgraded to
-    ``memory`` journal by SQLite — this is expected and harmless.
-    """
-    from wslcb_licensing_tracker.db import get_connection
-    from wslcb_licensing_tracker.schema import init_db
-
-    conn = get_connection(":memory:")
-    init_db(conn)
-    yield conn
-    conn.close()
 
 
 # ── Sample record dicts ──────────────────────────────────────────────

@@ -13,13 +13,14 @@ All functions follow the caller-commits convention: they do not call
 ``await conn.commit()`` themselves.
 """
 
+import json
 import logging
+from pathlib import Path
 
 from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .endorsements_seed import SEED_CODE_MAP
 from .models import (
     endorsement_codes,
     license_endorsements,
@@ -28,6 +29,11 @@ from .models import (
 from .pg_endorsements import CODE_NAME_RE, _link_endorsement, ensure_endorsement, process_record
 
 logger = logging.getLogger(__name__)
+
+# Seed data: loaded from seed_code_map.json at module init.
+# Edit seed_code_map.json (not this module) when adding/correcting seed mappings.
+_SEED_CODE_MAP_PATH = Path(__file__).parent / "seed_code_map.json"
+SEED_CODE_MAP: dict[str, list[str]] = json.loads(_SEED_CODE_MAP_PATH.read_text())
 
 
 # ---------------------------------------------------------------------------

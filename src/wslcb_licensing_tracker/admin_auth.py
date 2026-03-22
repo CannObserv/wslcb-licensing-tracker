@@ -17,8 +17,9 @@ import logging
 import os
 
 from fastapi import HTTPException, Request
+from sqlalchemy import text
 
-from .db import get_db
+from .database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +45,14 @@ def _extract_user(request: Request) -> tuple[str | None, str | None]:
     return email, user_id
 
 
-def _lookup_admin(email: str) -> dict | None:
+async def _lookup_admin(request: Request, email: str) -> dict | None:
     """Return the admin row for *email* (case-insensitive), or ``None``."""
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id, email, role FROM admin_users WHERE email = ? COLLATE NOCASE",
-            (email,),
-        ).fetchone()
+    async with get_db(request.app.state.engine) as conn:
+        result = await conn.execute(
+            text("SELECT id, email, role FROM admin_users WHERE lower(email) = lower(:email)"),
+            {"email": email},
+        )
+        row = result.fetchone()
     if row is None:
         return None
     return {"id": row[0], "email": row[1], "role": row[2]}
@@ -73,7 +75,7 @@ async def get_current_user(request: Request) -> dict | None:
         request.state.current_user = None
         return None
 
-    admin = _lookup_admin(email)
+    admin = await _lookup_admin(request, email)
     if admin:
         admin["user_id"] = user_id
 

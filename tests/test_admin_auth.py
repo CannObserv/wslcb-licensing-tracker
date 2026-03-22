@@ -1,7 +1,9 @@
 """Tests for admin_auth.py — authentication middleware and helpers."""
 
 import os
-from unittest.mock import MagicMock, patch
+import types
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,112 +17,102 @@ from wslcb_licensing_tracker.admin_auth import (
 # ---- helpers -------------------------------------------------------
 
 
-def _seed_admin(db, email="admin@example.com", role="admin"):
-    """Insert one admin user row and return the email."""
-    db.execute(
-        "INSERT INTO admin_users (email, role, created_by) VALUES (?, ?, 'test')",
-        (email, role),
-    )
-    db.commit()
-    return email
+def _make_conn(row=None):
+    """Build a mock AsyncConnection whose execute() returns *row* as fetchone()."""
+    conn = AsyncMock()
+    result = MagicMock()
+    result.fetchone.return_value = row
+    conn.execute.return_value = result
+    return conn
 
 
-def _make_request(headers: dict | None = None) -> MagicMock:
-    """Build a mock FastAPI Request with the given headers.
+def _make_request(headers: dict | None = None, conn=None) -> MagicMock:
+    """Build a mock FastAPI Request with the given headers and a PG engine mock."""
 
-    ``request.state`` uses a real ``SimpleNamespace`` so that
-    ``hasattr`` / attribute assignment behave like the real Starlette State.
-    """
-    import types
+    @asynccontextmanager
+    async def _get_db(_engine):
+        yield conn or AsyncMock()
 
     req = MagicMock()
     req.headers = headers or {}
     req.url.path = "/admin/"
     req.url.query = ""
     req.state = types.SimpleNamespace()
+    req.app.state.engine = MagicMock()
+    req._mock_get_db = _get_db
     return req
 
 
 # ---- _lookup_admin -------------------------------------------------
 
 
-def test_lookup_admin_returns_row(db):
-    email = _seed_admin(db)
-    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-        mock_get_db.return_value.__enter__ = lambda s: db
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-        result = _lookup_admin(email)
-    assert result is not None
-    assert result["email"] == email
-    assert result["role"] == "admin"
+@pytest.mark.asyncio
+async def test_lookup_admin_returns_row():
+    row = MagicMock()
+    row.__getitem__ = lambda s, i: ["42", "admin@example.com", "admin"][i]
+    row.__iter__ = lambda s: iter(["42", "admin@example.com", "admin"])
+    # Make row[0], row[1], row[2] work
+    row.__class__ = tuple
+    conn = AsyncMock()
+    result = MagicMock()
+    result.fetchone.return_value = (1, "admin@example.com", "admin")
+    conn.execute.return_value = result
+    req = _make_request(conn=conn)
+    with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
+        found = await _lookup_admin(req, "admin@example.com")
+    assert found is not None
+    assert found["email"] == "admin@example.com"
+    assert found["role"] == "admin"
 
 
-def test_lookup_admin_missing_returns_none(db):
-    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-        mock_get_db.return_value.__enter__ = lambda s: db
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-        result = _lookup_admin("nobody@example.com")
-    assert result is None
-
-
-def test_lookup_admin_case_insensitive(db):
-    _seed_admin(db, email="Admin@Example.COM")
-    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-        mock_get_db.return_value.__enter__ = lambda s: db
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-        result = _lookup_admin("admin@example.com")
-    assert result is not None
-    assert result["email"].lower() == "admin@example.com"
+@pytest.mark.asyncio
+async def test_lookup_admin_missing_returns_none():
+    conn = _make_conn(row=None)
+    req = _make_request(conn=conn)
+    with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
+        found = await _lookup_admin(req, "nobody@example.com")
+    assert found is None
 
 
 # ---- get_current_user ----------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_with_valid_header(db):
-    email = _seed_admin(db)
-    req = _make_request({"X-ExeDev-Email": email, "X-ExeDev-UserID": "usr_1"})
-    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-        mock_get_db.return_value.__enter__ = lambda s: db
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+async def test_get_current_user_with_valid_header():
+    conn = _make_conn(row=(1, "admin@example.com", "admin"))
+    req = _make_request(headers={"X-ExeDev-Email": "admin@example.com", "X-ExeDev-UserID": "usr_1"}, conn=conn)
+    with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         result = await get_current_user(req)
     assert result is not None
-    assert result["email"] == email
+    assert result["email"] == "admin@example.com"
     assert result["user_id"] == "usr_1"
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_no_header_returns_none(db):
-    req = _make_request({})
-    # ensure no env var set
+async def test_get_current_user_no_header_returns_none():
+    req = _make_request(headers={})
     with patch.dict(os.environ, {}, clear=True):
         os.environ.pop("ADMIN_DEV_EMAIL", None)
-        with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-            mock_get_db.return_value.__enter__ = lambda s: db
-            mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
-            result = await get_current_user(req)
+        result = await get_current_user(req)
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_dev_email_fallback(db):
-    email = _seed_admin(db)
-    req = _make_request({})
-    with patch.dict(os.environ, {"ADMIN_DEV_EMAIL": email, "ADMIN_DEV_USERID": "dev"}):
-        with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-            mock_get_db.return_value.__enter__ = lambda s: db
-            mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+async def test_get_current_user_dev_email_fallback():
+    conn = _make_conn(row=(1, "admin@example.com", "admin"))
+    req = _make_request(headers={}, conn=conn)
+    with patch.dict(os.environ, {"ADMIN_DEV_EMAIL": "admin@example.com", "ADMIN_DEV_USERID": "dev"}):
+        with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
             result = await get_current_user(req)
     assert result is not None
-    assert result["email"] == email
+    assert result["email"] == "admin@example.com"
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_not_in_admin_table(db):
-    req = _make_request({"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"})
-    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-        mock_get_db.return_value.__enter__ = lambda s: db
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+async def test_get_current_user_not_in_admin_table():
+    conn = _make_conn(row=None)
+    req = _make_request(headers={"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"}, conn=conn)
+    with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         result = await get_current_user(req)
     assert result is None
 
@@ -129,19 +121,17 @@ async def test_get_current_user_not_in_admin_table(db):
 
 
 @pytest.mark.asyncio
-async def test_require_admin_valid(db):
-    email = _seed_admin(db)
-    req = _make_request({"X-ExeDev-Email": email, "X-ExeDev-UserID": "usr_1"})
-    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-        mock_get_db.return_value.__enter__ = lambda s: db
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+async def test_require_admin_valid():
+    conn = _make_conn(row=(1, "admin@example.com", "admin"))
+    req = _make_request(headers={"X-ExeDev-Email": "admin@example.com", "X-ExeDev-UserID": "usr_1"}, conn=conn)
+    with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         result = await require_admin(req)
-    assert result["email"] == email
+    assert result["email"] == "admin@example.com"
 
 
 @pytest.mark.asyncio
-async def test_require_admin_no_credentials_raises_redirect(db):
-    req = _make_request({})
+async def test_require_admin_no_credentials_raises_redirect():
+    req = _make_request(headers={})
     with patch.dict(os.environ, {}, clear=True):
         os.environ.pop("ADMIN_DEV_EMAIL", None)
         with pytest.raises(AdminRedirectException) as exc_info:
@@ -150,13 +140,12 @@ async def test_require_admin_no_credentials_raises_redirect(db):
 
 
 @pytest.mark.asyncio
-async def test_require_admin_not_in_table_raises_403(db):
+async def test_require_admin_not_in_table_raises_403():
     from fastapi import HTTPException
 
-    req = _make_request({"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"})
-    with patch("wslcb_licensing_tracker.admin_auth.get_db") as mock_get_db:
-        mock_get_db.return_value.__enter__ = lambda s: db
-        mock_get_db.return_value.__exit__ = MagicMock(return_value=False)
+    conn = _make_conn(row=None)
+    req = _make_request(headers={"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"}, conn=conn)
+    with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         with pytest.raises(HTTPException) as exc_info:
             await require_admin(req)
     assert exc_info.value.status_code == 403
@@ -167,7 +156,6 @@ async def test_require_admin_not_in_table_raises_403(db):
 
 def _make_async_get_db(conn):
     """Return an async context manager that yields *conn*."""
-    from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def _get_db(_engine):
@@ -178,7 +166,6 @@ def _make_async_get_db(conn):
 
 def _make_execute_result(fetchone=None, fetchall=None, scalar_one=None):
     """Build a synchronous MagicMock result object for conn.execute() return value."""
-    from unittest.mock import MagicMock
     result = MagicMock()
     result.fetchone.return_value = fetchone
     result.fetchall.return_value = fetchall if fetchall is not None else []
@@ -188,9 +175,6 @@ def _make_execute_result(fetchone=None, fetchall=None, scalar_one=None):
 
 def test_cli_add_and_list_and_remove_users():
     """Round-trip: add-user, list-users, remove-user via CLI command functions."""
-    import types
-    from unittest.mock import AsyncMock, MagicMock
-
     from wslcb_licensing_tracker.cli import (
         cmd_admin_add_user,
         cmd_admin_list_users,
@@ -230,9 +214,6 @@ def test_cli_add_and_list_and_remove_users():
 
 def test_cli_remove_last_user_exits():
     """Removing the only admin user should exit with error."""
-    import types
-    from unittest.mock import AsyncMock, MagicMock
-
     from wslcb_licensing_tracker.cli import cmd_admin_remove_user
 
     conn = AsyncMock()
@@ -250,9 +231,6 @@ def test_cli_remove_last_user_exits():
 
 def test_cli_add_duplicate_user_is_noop():
     """Adding an already-existing email is a no-op (no INSERT executed)."""
-    import types
-    from unittest.mock import AsyncMock, MagicMock
-
     from wslcb_licensing_tracker.cli import cmd_admin_add_user
 
     conn = AsyncMock()

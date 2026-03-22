@@ -29,14 +29,13 @@ from . import admin_routes, api_routes
 from .admin_auth import AdminRedirectException, get_current_user
 from .data_migration import run_pending_migrations
 from .database import create_engine_from_env, get_db
-from .db import DATA_DIR
 from .display import format_outcome, summarize_provenance
 from .log_config import setup_logging
 from .models import record_sources as record_sources_table
 from .models import source_types
 from .models import sources as sources_table
 from .parser import extract_tbody_from_diff, extract_tbody_from_snapshot, strip_anchor_tags
-from .pg_db import get_record_sources
+from .pg_db import DATA_DIR, get_record_sources
 from .pg_entities import get_entity_by_id
 from .pg_link_records import get_outcome_status, get_reverse_link_info
 from .pg_queries import (

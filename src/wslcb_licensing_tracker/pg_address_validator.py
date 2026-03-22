@@ -1,9 +1,8 @@
 """Async PostgreSQL address validation DB layer for the WSLCB licensing tracker.
 
 Ports all DB-facing functions from address_validator.py to async SQLAlchemy Core.
-Pure HTTP functions (standardize, validate) are copied verbatim from
-address_validator.py — they are synchronous and wrapped in asyncio.to_thread()
-at the call site to avoid blocking the event loop.
+Pure HTTP functions (standardize, validate) are synchronous and wrapped in
+asyncio.to_thread() at the call site to avoid blocking the event loop.
 
 Pipeline
 --------
@@ -18,25 +17,172 @@ Caller-commits convention: no ``await conn.commit()`` inside these functions.
 
 import asyncio
 import logging
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-# Re-use pure HTTP helpers from the original module.
-from .address_validator import (
-    ISO_ALPHA2_LEN,
-    TIMEOUT,
-    _env_candidates,  # noqa: F401 — exported for monkeypatching in tests
-    _is_validation_enabled,
-    _load_api_key,
-    standardize,
-    validate,
-)
 from .models import license_records, locations
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Pure HTTP helpers (no DB dependency)
+# ---------------------------------------------------------------------------
+
+BASE_URL = "https://address-validator.exe.xyz:8000"
+TIMEOUT = 5.0
+HTTP_OK = 200
+ISO_ALPHA2_LEN = 2
+
+_cached_api_key: str | None = None
+
+# Candidate env file paths, checked in order:
+# 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
+# 2. <project-root>/env                — local dev fallback
+# Exposed as a module-level list so tests can monkeypatch it.
+_env_candidates: list[Path] = [
+    Path("/etc/wslcb-licensing-tracker/env"),
+    Path(__file__).resolve().parent.parent.parent / "env",
+]
+
+
+def _load_api_key() -> str:
+    """Load the API key from the ./env file or environment variable.
+
+    Reads from the ./env file first (looking for ADDRESS_VALIDATOR_API_KEY=...),
+    falls back to os.environ, and returns an empty string if neither is found.
+    The result is cached in a module-level variable after the first call.
+    """
+    global _cached_api_key  # noqa: PLW0603  # module-level cache is the intended pattern
+    if _cached_api_key is not None:
+        return _cached_api_key
+
+    for env_path in _env_candidates:
+        try:
+            with env_path.open() as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if line.startswith("#") or not line:
+                        continue
+                    if line.startswith("ADDRESS_VALIDATOR_API_KEY="):
+                        _cached_api_key = line.split("=", 1)[1].strip()
+                        return _cached_api_key
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            logger.warning("Error reading env file %s: %s", env_path, e)
+
+    # Fallback to environment variable
+    _cached_api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
+    return _cached_api_key
+
+
+def _is_validation_enabled() -> bool:
+    """Return True if ENABLE_ADDRESS_VALIDATION is set to a truthy value.
+
+    Checks the environment variable at call time (not cached) so that tests
+    and runtime overrides take effect immediately.
+    """
+    return os.environ.get("ENABLE_ADDRESS_VALIDATION", "").lower() in ("1", "true", "yes")
+
+
+def standardize(address: str, client: httpx.Client | None = None) -> dict | None:
+    """Standardize an address via POST /api/v1/standardize.
+
+    Sends the full raw address string.  The server parses and standardizes
+    the address according to USPS Publication 28 rules.
+
+    Returns a dict on success, or None on any failure (network error,
+    non-200 status, timeout).
+    """
+    api_key = _load_api_key()
+    if not api_key:
+        return None
+
+    url = f"{BASE_URL}/api/v1/standardize"
+    headers = {"X-API-Key": api_key}
+    payload = {"address": address}
+
+    try:
+        if client is not None:
+            response = client.post(url, json=payload, headers=headers)
+        else:
+            response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+
+        if response.status_code != HTTP_OK:
+            logger.warning(
+                "Address standardize API returned status %d for: %s",
+                response.status_code,
+                address,
+            )
+            return None
+
+        data = response.json()
+        for warn in data.get("warnings") or []:
+            logger.warning("Address API warning for %r: %s", address, warn)
+    except httpx.TimeoutException:
+        logger.warning("Timeout calling address standardize API for: %s", address)
+        return None
+    except httpx.HTTPError as e:
+        logger.warning("HTTP error calling address standardize API: %s", e)
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Unexpected error calling address standardize API: %s", e)
+        return None
+    else:
+        return data
+
+
+def validate(address: str, client: httpx.Client | None = None) -> dict | None:
+    """Validate an address via POST /api/v1/validate.
+
+    Sends the full raw address string. The server runs parse → standardize
+    internally before calling the USPS DPV provider.
+
+    Returns a dict on success, or None on any failure.
+    A 200 response with validation.status='not_confirmed' or 'unavailable'
+    is returned as a dict (not None) — the caller decides how to handle it.
+    """
+    api_key = _load_api_key()
+    if not api_key:
+        return None
+
+    url = f"{BASE_URL}/api/v1/validate"
+    headers = {"X-API-Key": api_key}
+    payload = {"address": address}
+
+    try:
+        if client is not None:
+            response = client.post(url, json=payload, headers=headers)
+        else:
+            response = httpx.post(url, json=payload, headers=headers, timeout=TIMEOUT)
+
+        if response.status_code != HTTP_OK:
+            logger.warning(
+                "Address validation API returned status %d for: %s",
+                response.status_code,
+                address,
+            )
+            return None
+
+        data = response.json()
+        for warn in data.get("warnings") or []:
+            logger.warning("Address API warning for %r: %s", address, warn)
+    except httpx.TimeoutException:
+        logger.warning("Timeout calling address validation API for: %s", address)
+        return None
+    except httpx.HTTPError as e:
+        logger.warning("HTTP error calling address validation API: %s", e)
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Unexpected error calling address validation API: %s", e)
+        return None
+    else:
+        return data
 
 
 async def standardize_location(

@@ -8,7 +8,8 @@ return semantic data; this module adds the visual presentation.
 Keeping presentation separate from domain logic ensures that adding a
 JSON API or different frontend doesn't require touching the domain layer.
 """
-from .db import SOURCE_ROLE_PRIORITY as _ROLE_PRIORITY
+
+from .pg_db import SOURCE_ROLE_PRIORITY as _ROLE_PRIORITY
 
 # -- Outcome status display ------------------------------------------------
 
@@ -115,7 +116,6 @@ _DEFAULT_SOURCE_DISPLAY: dict[str, str] = {
 }
 
 
-
 def summarize_provenance(sources: list[dict]) -> dict:
     """Aggregate provenance sources into a display-ready summary.
 
@@ -159,8 +159,11 @@ def summarize_provenance(sources: list[dict]) -> dict:
         new_better = (
             role_rank < current_best[0]
             or (role_rank == current_best[0] and no_snap < current_best[1])
-            or (role_rank == current_best[0] and no_snap == current_best[1]
-                and captured > current_best[2])
+            or (
+                role_rank == current_best[0]
+                and no_snap == current_best[1]
+                and captured > current_best[2]
+            )
         )
         if groups[st]["primary_source_id"] is None or new_better:
             groups[st]["primary_source_id"] = s.get("id")

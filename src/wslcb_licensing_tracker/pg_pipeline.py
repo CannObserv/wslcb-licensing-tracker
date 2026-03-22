@@ -15,10 +15,10 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .db import clean_applicants_string, clean_entity_name
-from .entities import ADDITIONAL_NAMES_MARKERS
 from .models import license_records, record_enrichments
 from .pg_db import get_or_create_location, link_record_source
+from .pg_entities import ADDITIONAL_NAMES_MARKERS
+from .text_utils import clean_applicants_string, clean_entity_name
 
 logger = logging.getLogger(__name__)
 

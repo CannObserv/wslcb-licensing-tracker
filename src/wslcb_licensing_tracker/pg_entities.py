@@ -16,15 +16,23 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .db import clean_entity_name, strip_duplicate_marker
-from .entities import ADDITIONAL_NAMES_MARKERS
 from .models import entities, license_records, record_enrichments, record_entities
+from .text_utils import clean_entity_name, strip_duplicate_marker
 
 logger = logging.getLogger(__name__)
 
 # Enrichment version written by reprocess_entities.
 # Bump this integer when entity processing logic changes.
 _ENTITY_REPROCESS_VERSION = 2
+
+# Meta-labels that WSLCB embeds in applicant lists as truncation notices.
+# These are not real people or organizations and must be excluded from entity creation.
+ADDITIONAL_NAMES_MARKERS: frozenset[str] = frozenset(
+    {
+        "ADDITIONAL NAMES ON FILE",
+        "ADDTIONAL NAMES ON FILE",  # typo variant present in WSLCB source
+    }
+)
 
 # Patterns that indicate an organization rather than a person.
 _ORG_PATTERNS = re.compile(

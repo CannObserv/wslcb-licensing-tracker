@@ -1,12 +1,12 @@
 """Async scraper for WSLCB licensing activity page.
 
-Async PostgreSQL port of scraper.py. Pure helper functions
-(compute_content_hash, save_html_snapshot) are re-exported from
-scraper.py — do not duplicate them here.
+Async PostgreSQL port of scraper.py.
 """
 
+import hashlib
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 from bs4 import BeautifulSoup
@@ -15,14 +15,48 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from .database import get_db
-from .db import DATA_DIR, SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL
 from .models import scrape_log, sources
 from .parser import SECTION_MAP, parse_records_from_table
-from .pg_db import get_or_create_source
+from .pg_db import DATA_DIR, SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL, get_or_create_source
 from .pg_pipeline import IngestOptions, ingest_batch
-from .scraper import compute_content_hash, save_html_snapshot  # pure helpers
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (no DB dependency)
+# ---------------------------------------------------------------------------
+
+
+def compute_content_hash(html: str) -> str:
+    """Return the SHA-256 hex digest of *html* (UTF-8 encoded)."""
+    return hashlib.sha256(html.encode("utf-8")).hexdigest()
+
+
+def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
+    """Save raw HTML to the per-date snapshot directory.
+
+    Path pattern:
+    ``data/wslcb/licensinginfo/[yyyy]/[yyyy_mm_dd]/[yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html``
+
+    Saves the HTML exactly as received from the server (no transformation).
+    Increments the version number if a snapshot for the same date already exists.
+    Returns the path to the saved file.
+    """
+    date_str = scrape_date.strftime("%Y_%m_%d")
+    year_str = scrape_date.strftime("%Y")
+    date_dir = DATA_DIR / "wslcb" / "licensinginfo" / year_str / date_str
+
+    version = 1
+    while list(date_dir.glob(f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html")):
+        version += 1
+
+    date_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html"
+    filepath = date_dir / filename
+    filepath.write_text(html, encoding="utf-8")
+    return filepath
 
 
 async def get_last_content_hash(conn: AsyncConnection) -> str | None:

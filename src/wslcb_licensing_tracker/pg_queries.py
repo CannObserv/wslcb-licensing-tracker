@@ -21,8 +21,8 @@ from collections.abc import AsyncGenerator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .db import US_STATES
 from .display import format_outcome
+from .pg_db import US_STATES
 from .pg_endorsements import get_endorsement_options, get_record_endorsements
 from .pg_entities import get_record_entities
 from .pg_link_records import (

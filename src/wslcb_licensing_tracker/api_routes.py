@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .database import get_db
-from .db import US_STATES
+from .pg_db import US_STATES
 from .pg_queries import export_records_cursor, get_cities_for_state, get_stats
 
 logger = logging.getLogger(__name__)

@@ -1,8 +1,7 @@
 """Tests for pg_scraper.py — pure helper logic."""
 
 import pytest
-from wslcb_licensing_tracker.pg_scraper import get_last_content_hash
-from wslcb_licensing_tracker.scraper import compute_content_hash
+from wslcb_licensing_tracker.pg_scraper import compute_content_hash, get_last_content_hash
 
 
 def test_compute_content_hash_is_deterministic():
