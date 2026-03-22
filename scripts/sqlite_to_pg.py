@@ -44,7 +44,6 @@ IDENTITY_TABLES = [
     "record_links",
     "admin_users",
     "admin_audit_log",
-    "data_migrations",
 ]
 
 # Insertion order: FK parents before FK children
@@ -68,7 +67,6 @@ TABLE_ORDER = [
     "record_links",
     "admin_users",
     "admin_audit_log",
-    "data_migrations",
 ]
 
 
