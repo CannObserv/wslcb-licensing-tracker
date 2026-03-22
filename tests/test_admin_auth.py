@@ -48,15 +48,7 @@ def _make_request(headers: dict | None = None, conn=None) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_lookup_admin_returns_row():
-    row = MagicMock()
-    row.__getitem__ = lambda s, i: ["42", "admin@example.com", "admin"][i]
-    row.__iter__ = lambda s: iter(["42", "admin@example.com", "admin"])
-    # Make row[0], row[1], row[2] work
-    row.__class__ = tuple
-    conn = AsyncMock()
-    result = MagicMock()
-    result.fetchone.return_value = (1, "admin@example.com", "admin")
-    conn.execute.return_value = result
+    conn = _make_conn(row=(1, "admin@example.com", "admin"))
     req = _make_request(conn=conn)
     with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         found = await _lookup_admin(req, "admin@example.com")

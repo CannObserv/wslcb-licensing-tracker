@@ -186,8 +186,8 @@ uv run wslcb backfill-diffs [--section notifications] [--limit 100] [--dry-run]
 uv run wslcb backfill-addresses
 uv run wslcb cleanup-redundant
 
-# Rebuild DB from PostgreSQL archives (use instead of 'rebuild' which targets SQLite)
-DATABASE_URL=postgresql+asyncpg://... python scripts/sqlite_to_pg.py  # one-time SQLite→PG
+# One-time SQLite → PostgreSQL data migration
+DATABASE_URL=postgresql+asyncpg://... python scripts/sqlite_to_pg.py
 ```
 
 See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) for systemd services, address validation, and ops commands.
