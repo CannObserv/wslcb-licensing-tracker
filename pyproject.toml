@@ -15,7 +15,6 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0,<3",
     "alembic>=1.13,<2",
     "asyncpg>=0.30,<1",
-    "psycopg[binary]>=3.2,<4",
 ]
 
 [project.scripts]
