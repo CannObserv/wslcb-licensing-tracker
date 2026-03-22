@@ -78,17 +78,14 @@ wslcb-licensing-tracker/
 ├── api_routes.py           # Versioned API router (/api/v1/*)
 ├── admin_routes.py         # Admin router (/admin/*)
 ├── admin_auth.py           # Admin authentication (exe.dev proxy headers)
-├── admin_audit.py          # Admin audit log helpers
 ├── cli.py                  # Unified CLI entry point (argparse subcommands)
-├── pipeline.py             # Unified ingestion pipeline (ingest_record, ingest_batch)
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
-├── db.py                   # Connection management, constants, location/source/provenance helpers
-├── schema.py               # DDL, PRAGMA user_version migrations, FTS5, seeding
+├── text_utils.py           # Pure-string text normalization (clean_entity_name, strip_duplicate_marker, …)
 ├── database.py             # Async SQLAlchemy engine factory (DATABASE_URL env var)
 ├── models.py               # SQLAlchemy Core Table definitions (all 20 tables)
 ├── pg_schema.py            # Alembic-based schema init (alembic upgrade head)
-├── pg_db.py                # Async equivalents of db.py helpers
+├── pg_db.py                # Async location/source/provenance helpers + shared constants
 ├── pg_pipeline.py          # Async ingestion pipeline (insert_record, ingest_batch)
 ├── pg_scraper.py           # Async scraper (WSLCB page fetch, archive, ingest)
 ├── pg_backfill_snapshots.py # Async backfill from archived HTML snapshots
@@ -104,21 +101,7 @@ wslcb-licensing-tracker/
 ├── pg_admin_audit.py       # Async admin audit log
 ├── pg_substances.py        # Async regulated substance CRUD
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
-├── queries.py              # Record search, filters, stats, CRUD
-├── entities.py             # Entity (applicant) normalization
-├── endorsements.py         # Core endorsement pipeline (process_record, query helpers, alias management)
-├── endorsements_seed.py    # Seeding, repair, and backfill (seed_endorsements, discover_code_mappings, …)
-├── endorsements_admin.py   # Admin helpers for endorsement management
-├── substances.py           # Regulated substance CRUD
-├── link_records.py         # Application→outcome record linking
 ├── log_config.py           # Centralized logging configuration
-├── address_validator.py    # Address validation API client
-├── scraper.py              # WSLCB page scraper — fetch, archive, ingest via pipeline
-├── backfill_snapshots.py   # Ingest + repair from archived HTML snapshots via pipeline
-├── backfill_diffs.py       # Ingest from CO diff archives via pipeline
-├── backfill_provenance.py  # One-time backfill of source provenance links
-├── integrity.py            # Database integrity checks (used by cli.py check)
-├── rebuild.py              # Rebuild database from archived sources (used by cli.py rebuild)
 ├── seed_code_map.json      # Seed data: WSLCB numeric code → endorsement name(s)
 ├── env                     # API keys (gitignored, 640 root:exedev)
 ├── templates/
@@ -150,7 +133,6 @@ wslcb-licensing-tracker/
 │   │   └── detail.js       # Record detail page: source viewer toggle
 │   └── images/             # Cannabis Observer brand assets (icon + wordmark SVGs)
 ├── data/                   # Persistent data (gitignored)
-│   ├── wslcb.db            # SQLite database
 │   └── wslcb/                  # Archived data by source
 │       ├── licensinginfo/      # HTML snapshots from licensinginfo.lcb.wa.gov
 │       │   └── [yyyy]/         # Archived HTML snapshots by year
@@ -168,28 +150,35 @@ wslcb-licensing-tracker/
 ├── requirements.txt        # Python dependencies (runtime + dev)
 ├── pytest.ini              # Pytest configuration
 ├── tests/                  # Test suite
-│   ├── conftest.py              # Shared fixtures (in-memory DB, sample records)
+│   ├── conftest.py              # Shared fixtures (sample record dicts)
 │   ├── test_parser.py           # Parser function tests
-│   ├── test_db.py               # Connection management and constant tests
-│   ├── test_schema.py           # Migration framework tests
-│   ├── test_database.py         # db.py helper tests (location/source/provenance)
-│   ├── test_pipeline.py         # Ingestion pipeline tests
+│   ├── test_text_utils.py       # Pure-string normalization tests
 │   ├── test_display.py          # Presentation formatting tests
-│   ├── test_queries.py          # Record insert/query tests
-│   ├── test_link_records.py     # Record linking tests (bulk + incremental)
-│   ├── test_endorsements.py     # Endorsement normalization tests
-│   ├── test_integrity.py        # Integrity check tests
-│   ├── test_rebuild.py          # Rebuild from sources tests
-│   ├── test_scraper.py          # Scraper hash deduplication tests
-│   ├── test_address_validator.py # Address validation client tests
+│   ├── test_models.py           # SQLAlchemy Table definition tests
+│   ├── test_app.py              # App lifespan and startup tests
 │   ├── test_routes.py           # Public route tests
 │   ├── test_api_routes.py       # Versioned API route tests
-│   ├── test_entities.py         # Entity normalization tests
 │   ├── test_source_viewer.py    # Source viewer route tests
 │   ├── test_admin_auth.py       # Admin authentication tests
-│   ├── test_admin_audit.py      # Admin audit log tests
+│   ├── test_admin_routes.py     # Admin route tests
 │   ├── test_admin_users.py      # Admin user management route tests
 │   ├── test_admin_endorsements.py # Admin endorsement/substance route tests
+│   ├── test_data_migration.py   # Run-once data migration framework tests
+│   ├── test_pg_database.py      # Async engine factory tests
+│   ├── test_pg_db.py            # Location/source/provenance helper tests
+│   ├── test_pg_schema.py        # Alembic migration tests (require TEST_DATABASE_URL)
+│   ├── test_pg_pipeline.py      # Ingestion pipeline tests (require TEST_DATABASE_URL)
+│   ├── test_pg_queries.py       # Search, filter, stats tests (require TEST_DATABASE_URL)
+│   ├── test_pg_link_records.py  # Record linking tests (require TEST_DATABASE_URL)
+│   ├── test_pg_endorsements.py  # Endorsement pipeline tests (require TEST_DATABASE_URL)
+│   ├── test_pg_endorsements_seed.py # Endorsement seeding tests (require TEST_DATABASE_URL)
+│   ├── test_pg_endorsements_admin.py # Admin endorsement helper tests
+│   ├── test_pg_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
+│   ├── test_pg_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
+│   ├── test_pg_scraper.py       # Scraper hash deduplication tests
+│   ├── test_pg_address_validator.py # Address validation DB layer tests
+│   ├── test_pg_admin_audit.py   # Admin audit log tests
+│   ├── test_pg_substances.py    # Regulated substance CRUD tests
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 ├── wslcb-web.service            # systemd service for the web app
 ├── wslcb-task@.service          # systemd template for oneshot tasks
@@ -477,11 +466,10 @@ Safe to re-run at any time. Address validation is deferred; run `python cli.py b
 
 ## Testing
 
-The project uses pytest with in-memory SQLite databases and static HTML fixtures. Tests run in under 1 second with no network calls.
+The project uses pytest with async PostgreSQL mocks and static HTML fixtures. Tests that require a live database are skipped unless `TEST_DATABASE_URL` is set. Non-PG tests run in under 2 seconds with no network calls.
 
 ```bash
-source venv/bin/activate
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 The project follows **red/green TDD**: every new feature and bug fix starts with a failing test, then the minimum code to make it pass, then refactoring.
@@ -491,27 +479,34 @@ Test structure:
 | File | Scope |
 |---|---|
 | `tests/test_parser.py` | Pure HTML parsing functions — all record types, edge cases |
-| `tests/test_db.py` | Connection management, constants, raw address normalization |
-| `tests/test_schema.py` | Migration framework, user_version, existing DB detection |
-| `tests/test_database.py` | Location/source/provenance helper functions |
-| `tests/test_pipeline.py` | Unified ingestion pipeline — insert, endorsements, provenance, outcome linking |
+| `tests/test_text_utils.py` | Pure-string normalization — clean_entity_name, strip_duplicate_marker, clean_applicants_string |
 | `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
-| `tests/test_link_records.py` | Record linking — bulk, incremental, outcome status, reverse links |
-| `tests/test_endorsements.py` | Endorsement normalization — merge helper, processing, repair, alias system |
-| `tests/test_integrity.py` | Integrity checks — all check and fix functions |
-| `tests/test_rebuild.py` | Rebuild from sources — empty data, snapshot ingestion, overwrite/force, DB comparison |
-| `tests/test_scraper.py` | Scraper logic — content hash deduplication, redundant data cleanup |
-| `tests/test_queries.py` | Record insertion, deduplication, entity creation |
-| `tests/test_address_validator.py` | Address validation client — request building, response parsing, error handling |
+| `tests/test_models.py` | SQLAlchemy Table definition smoke tests |
+| `tests/test_app.py` | App lifespan and startup |
 | `tests/test_routes.py` | Public route tests — dashboard layout, search, stat cards |
 | `tests/test_api_routes.py` | Versioned API routes — cities, stats, export, health check |
-| `tests/test_entities.py` | Entity normalization — extraction, cleaning, type classification |
 | `tests/test_source_viewer.py` | Source viewer route — snapshot dispatch, iframe rendering, not-found cases |
 | `tests/test_admin_auth.py` | Admin authentication — header extraction, env-var fallback, redirect/403 |
-| `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
+| `tests/test_admin_routes.py` | Admin route rendering and redirects |
 | `tests/test_admin_users.py` | Admin user management routes — add, remove, list, self-removal guard |
 | `tests/test_admin_endorsements.py` | Admin endorsement/substance routes — add, remove, set-endorsements |
-| `tests/conftest.py` | Shared fixtures: in-memory DB, sample record dicts |
+| `tests/test_data_migration.py` | Run-once migration framework — idempotency, ordering |
+| `tests/test_pg_database.py` | Async engine factory |
+| `tests/test_pg_db.py` | Location/source/provenance helper functions |
+| `tests/test_pg_schema.py` | Alembic migration tests (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_pipeline.py` | Ingestion pipeline — insert, dedup, endorsements, entities (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_queries.py` | Search, filters, stats (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_link_records.py` | Record linking — bulk, incremental, outcome status (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_endorsements.py` | Endorsement pipeline — processing, repair, alias system (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_endorsements_seed.py` | Endorsement seeding and code-map repair (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
+| `tests/test_pg_entities.py` | Entity normalization — extraction, dedup, reprocessing (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_integrity.py` | Integrity checks — all check and fix functions (require `TEST_DATABASE_URL`) |
+| `tests/test_pg_scraper.py` | Scraper — content hash deduplication, redundant data cleanup |
+| `tests/test_pg_address_validator.py` | Address validation DB layer — standardize, validate, backfill |
+| `tests/test_pg_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
+| `tests/test_pg_substances.py` | Regulated substance CRUD — get, add, remove, set-endorsements |
+| `tests/conftest.py` | Shared fixtures: sample record dicts, pg_conn/pg_engine (skipped without TEST_DATABASE_URL) |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |
 
 ## Data Source
