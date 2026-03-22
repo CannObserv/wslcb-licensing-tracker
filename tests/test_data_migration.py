@@ -109,7 +109,7 @@ async def test_get_record_link_returns_none_when_no_row():
     result.mappings.return_value.one_or_none.return_value = None
     conn.execute.return_value = result
 
-    from wslcb_licensing_tracker.pg_queries import get_record_link
+    from wslcb_licensing_tracker.pg_queries_search import get_record_link
 
     assert await get_record_link(conn, 999) is None
 

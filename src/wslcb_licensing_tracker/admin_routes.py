@@ -50,7 +50,7 @@ from .pg_integrity import (
     check_orphaned_locations,
     check_unenriched_records,
 )
-from .pg_queries import invalidate_filter_cache as invalidate_all_filter_caches
+from .pg_queries_filter import invalidate_filter_cache as invalidate_all_filter_caches
 from .pg_substances import (
     add_substance,
     get_regulated_substances,

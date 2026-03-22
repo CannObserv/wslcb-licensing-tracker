@@ -35,20 +35,18 @@ from .parser import extract_tbody_from_diff, extract_tbody_from_snapshot, strip_
 from .pg_db import DATA_DIR, get_record_sources
 from .pg_entities import get_entity_by_id
 from .pg_link_records import get_outcome_status, get_reverse_link_info
-from .pg_queries import (
-    get_cities_for_state,
-    get_entities,
-    get_entity_records,
-    get_filter_options,
+from .pg_queries_entity import get_entities, get_entity_records
+from .pg_queries_filter import get_cities_for_state, get_filter_options
+from .pg_queries_hydrate import hydrate_records
+from .pg_queries_search import (
     get_record_by_id,
     get_record_link,
     get_record_source_link,
     get_related_records,
     get_source_by_id,
-    get_stats,
-    hydrate_records,
     search_records,
 )
+from .pg_queries_stats import get_stats
 
 logger = logging.getLogger(__name__)
 
