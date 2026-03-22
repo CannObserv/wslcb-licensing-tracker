@@ -10,10 +10,10 @@ Guidance for AI agents working on this project.
 ## Architecture
 
 ```
-scraper.py ─┐
-backfill_snapshots.py ─┼─→ pipeline.py ─→ data/wslcb.db (SQLite + FTS5) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
-backfill_diffs.py ──────┘                                                  ←─ display.py (presentation)
-                          ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html
+pg_scraper.py ─┐
+pg_backfill_snapshots.py ─┼─→ pg_pipeline.py ─→ PostgreSQL (tsvector + pg_trgm) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
+pg_backfill_diffs.py ──────┘                                                       ←─ display.py (presentation)
+                             ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html
 
 license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
@@ -21,7 +21,7 @@ license_records → locations (FK: location_id, previous_location_id)
 
 - No build step. Tailwind via CDN, HTMX. No node_modules.
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
-- SQLite only. WAL mode for concurrent reads.
+- PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
 
 ## Key Files
 
