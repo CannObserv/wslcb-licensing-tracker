@@ -21,6 +21,13 @@ fi
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
+if [[ -f "$PROJECT_ROOT/env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$PROJECT_ROOT/env"
+  set +a
+fi
+
 echo "=== Tests ==="
 uv run pytest tests/ -v
 
