@@ -96,7 +96,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `record_entities` | `pg_entities.reprocess_entities()` | `wslcb reprocess-entities` |
 | `record_links` | `pg_link_records.build_all_links()` | `wslcb rebuild-links` |
 
-`process_record()` is idempotent — deletes existing rows before inserting fresh ones.
+`reprocess_endorsements()` is idempotent — deletes existing rows before inserting fresh ones.
 
 `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL (sourced from the matched new-application record). Run `wslcb rebuild-links` to repair existing rows.
 
