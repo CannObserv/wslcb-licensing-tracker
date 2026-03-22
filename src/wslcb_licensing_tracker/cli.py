@@ -287,7 +287,8 @@ def cmd_admin_remove_user(args: argparse.Namespace) -> None:
     email = args.email.strip()
     engine = create_engine_from_env()
 
-    async def _run() -> None:
+    async def _run() -> str | None:
+        """Return error message string on failure, None on success."""
         async with get_db(engine) as conn:
             row = (
                 await conn.execute(
@@ -297,21 +298,23 @@ def cmd_admin_remove_user(args: argparse.Namespace) -> None:
                 )
             ).fetchone()
             if not row:
-                print(f"User not found: {email}")
-                sys.exit(1)
+                return f"User not found: {email}"
             count = (await conn.execute(select(func.count()).select_from(admin_users))).scalar_one()
             if count <= 1:
-                print("Cannot remove the last admin user.")
-                sys.exit(1)
+                return "Cannot remove the last admin user."
             await conn.execute(
                 delete(admin_users).where(
                     text("lower(email) = lower(:email)").bindparams(email=email)
                 )
             )
             await conn.commit()
-        print(f"Removed admin user: {email}")
+            return None
 
-    asyncio.run(_run())
+    error = asyncio.run(_run())
+    if error:
+        print(error)
+        sys.exit(1)
+    print(f"Removed admin user: {email}")
 
 
 def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statements; genuine refactoring not worthwhile
