@@ -22,7 +22,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `dpv_match_code` — USPS DPV match code (e.g., `Y` = confirmed, `S` = correctable, `D` = missing secondary, `N` = not confirmed); NULL if not yet validated
 - `latitude` — WGS84 latitude from the address validator; NULL if not confirmed
 - `longitude` — WGS84 longitude from the address validator; NULL if not confirmed
-- `address_validated_at` — ISO 8601 timestamp of when the address was confirmed (i.e., provider returned `address_line_1`); NULL = not yet confirmed (includes `not_confirmed` and `unavailable` responses)
+- `address_validated_at` — TIMESTAMPTZ of when the address was confirmed (i.e., provider returned `address_line_1`); NULL = not yet confirmed (includes `not_confirmed` and `unavailable` responses)
 - All `std_*` columns default to empty string (not NULL) for new rows; `validated_address`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are nullable
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
 - `get_or_create_location()` in `db.py` handles the upsert logic (uses `_normalize_raw_address()` from `db.py`)
@@ -68,7 +68,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 ### `endorsement_dismissed_suggestions` (duplicate-suggestion suppression table)
 - One row per admin-dismissed near-duplicate pair; prevents the pair from being re-surfaced by `suggest_duplicate_endorsements()`
 - `endorsement_id_a`, `endorsement_id_b` — always stored with smaller ID first (enforced by `CHECK (endorsement_id_a < endorsement_id_b)`)
-- `dismissed_by` — admin email; `dismissed_at` — ISO 8601 timestamp
+- `dismissed_by` — admin email; `dismissed_at` — TIMESTAMPTZ
 - Dismissal is permanent but does not prevent explicit aliasing through the main alias action
 - `dismiss_suggestion(conn, id_a, id_b, dismissed_by)` in `endorsements.py` handles normalisation and idempotent insert
 - Added by migration 008 (`endorsement_dismissed_suggestions`)
@@ -120,7 +120,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `outcome_id` — FK to `license_records(id)`, the approved or discontinued record
 - `confidence` — `'high'` (mutual match) or `'medium'` (forward-only match); CHECK constraint also allows `'low'` (reserved for future use, not currently produced)
 - `days_gap` — `outcome_date - new_app_date` in days (can be negative when outcome precedes notification)
-- `linked_at` — ISO 8601 timestamp of when the link was created
+- `linked_at` — TIMESTAMPTZ of when the link was created
 - UNIQUE on `(new_app_id, outcome_id)` — prevents duplicate links
 - Indexed on both `new_app_id` and `outcome_id` for fast lookups from either direction
 - Rebuilt from scratch by `build_all_links()` in `link_records.py`; incrementally updated by `link_new_record()` during scraping
@@ -135,7 +135,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - Tracks which enrichment steps have been applied to each record
 - `record_id` — FK to `license_records(id)`, `ON DELETE CASCADE`
 - `step` — enrichment step name: `'endorsements'`, `'entities'`, `'address'`, `'outcome_link'`
-- `completed_at` — ISO 8601 timestamp of when the step finished
+- `completed_at` — TIMESTAMPTZ of when the step finished
 - `version` — schema/logic version of the step (default `'1'`); allows re-processing when step logic changes
 - Composite PK `(record_id, step)`
 - Written by `_record_enrichment()` in `pipeline.py` after each enrichment step succeeds; uses `INSERT OR REPLACE` so re-runs update the timestamp

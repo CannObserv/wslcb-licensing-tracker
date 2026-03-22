@@ -2,13 +2,16 @@
 
 All tests use static HTML fixtures; no network calls, no database.
 """
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from bs4 import BeautifulSoup
 
 from wslcb_licensing_tracker.parser import (
+    extract_snapshot_date,
     normalize_date,
+    parse_diff_timestamp,
     parse_location,
     parse_records_from_table,
     parse_snapshot,
@@ -127,6 +130,12 @@ class TestParseNewApplications:
         assert r["license_number"] == "412345"
         assert r["application_type"] == "RENEWAL"
         assert r["city"] == "SPOKANE"
+
+    def test_scraped_at_is_timezone_aware_datetime(self):
+        """scraped_at must be a timezone-aware datetime, not an ISO string."""
+        for r in self.records:
+            assert isinstance(r["scraped_at"], datetime)
+            assert r["scraped_at"].tzinfo is not None
 
     def test_previous_fields_empty(self):
         """Standard records should have empty previous_* fields."""
@@ -459,3 +468,57 @@ class TestStripAnchorTags:
         result = strip_anchor_tags(html)
         assert "<a" not in result
         assert "Anchor text" in result
+
+
+# ── parse_diff_timestamp ─────────────────────────────────────────────
+
+
+class TestParseDiffTimestamp:
+    def test_returns_datetime(self):
+        result = parse_diff_timestamp("--- @\tWed, 07 Sep 2022 06:15:05 -0700")
+        assert isinstance(result, datetime)
+
+    def test_parsed_value_is_correct(self):
+        result = parse_diff_timestamp("--- @\tWed, 07 Sep 2022 06:15:05 -0700")
+        assert result.year == 2022
+        assert result.month == 9
+        assert result.day == 7
+
+    def test_result_is_timezone_aware(self):
+        result = parse_diff_timestamp("--- @\tWed, 07 Sep 2022 06:15:05 -0700")
+        assert result.tzinfo is not None
+
+    def test_malformed_header_returns_utc_datetime(self):
+        result = parse_diff_timestamp("--- malformed line with no tab")
+        assert isinstance(result, datetime)
+        assert result.tzinfo is not None
+
+    def test_empty_string_returns_datetime(self):
+        result = parse_diff_timestamp("")
+        assert isinstance(result, datetime)
+
+
+# ── extract_snapshot_date ─────────────────────────────────────────────
+
+
+class TestExtractSnapshotDate:
+    def test_returns_datetime_for_valid_filename(self, tmp_path):
+        p = tmp_path / "2025_12_16-licensinginfo.lcb.wa.gov-v1.html"
+        result = extract_snapshot_date(p)
+        assert result == datetime(2025, 12, 16, 0, 0, 0, tzinfo=UTC)
+
+    def test_result_is_utc_midnight(self, tmp_path):
+        p = tmp_path / "2024_01_05-licensinginfo.html"
+        result = extract_snapshot_date(p)
+        assert result is not None
+        assert result.hour == 0
+        assert result.minute == 0
+        assert result.tzinfo == UTC
+
+    def test_no_date_in_filename_returns_none(self, tmp_path):
+        p = tmp_path / "no_date_here.html"
+        assert extract_snapshot_date(p) is None
+
+    def test_partial_date_returns_none(self, tmp_path):
+        p = tmp_path / "2025_12.html"
+        assert extract_snapshot_date(p) is None

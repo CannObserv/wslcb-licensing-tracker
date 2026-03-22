@@ -138,9 +138,9 @@ async def admin_dashboard(
                 await conn.execute(
                     text("""
             SELECT
-                SUM(CASE WHEN created_at::timestamptz >= NOW()
+                SUM(CASE WHEN created_at >= NOW()
                     - INTERVAL '1 day' THEN 1 ELSE 0 END) AS last_24h,
-                SUM(CASE WHEN created_at::timestamptz >= NOW()
+                SUM(CASE WHEN created_at >= NOW()
                     - INTERVAL '7 days' THEN 1 ELSE 0 END) AS last_7d
             FROM license_records
         """)
@@ -157,7 +157,7 @@ async def admin_dashboard(
             SELECT id, status, records_new, records_approved, records_discontinued,
                    records_skipped, started_at, finished_at,
                    ROUND(EXTRACT(EPOCH FROM (
-                       finished_at::timestamptz - started_at::timestamptz
+                       finished_at - started_at
                    ))) AS duration_secs
             FROM scrape_log
             ORDER BY id DESC LIMIT 5
