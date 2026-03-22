@@ -149,10 +149,14 @@ def summarize_provenance(sources: list[dict]) -> dict:
         # Compute priority tuple for this source within the group.
         role_rank = _ROLE_PRIORITY.get(s.get("role", ""), 2)
         no_snap = 0 if s.get("snapshot_path") else 1
-        captured = s.get("captured_at") or ""
-        # Negate captured_at for descending sort (newer = smaller string with negation trick
-        # not needed since we invert: we want newest = lowest priority value,
-        # so use a negated comparison via reverse string sort: larger date = better)
+        captured_raw = s.get("captured_at")
+        # Normalise to ISO string for comparison/slicing (DB returns datetime objects).
+        if captured_raw is None:
+            captured = ""
+        elif hasattr(captured_raw, "isoformat"):
+            captured = captured_raw.isoformat()
+        else:
+            captured = str(captured_raw)
         # Store as (role_rank, no_snap, captured_at) — compare captured_at descending.
         current_best = _group_best[st]
         # Compare: lower role_rank and no_snap is better; higher captured_at is better.

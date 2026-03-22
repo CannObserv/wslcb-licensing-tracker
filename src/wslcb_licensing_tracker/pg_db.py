@@ -10,6 +10,7 @@ US_STATES) that were previously defined in db.py.
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select, text
@@ -148,7 +149,7 @@ async def get_or_create_source(  # noqa: PLR0913
     source_type_id: int,
     snapshot_path: str | None = None,
     url: str | None = None,
-    captured_at: str | None = None,
+    captured_at: datetime | None = None,
     scrape_log_id: int | None = None,
     metadata: dict | None = None,
 ) -> int:

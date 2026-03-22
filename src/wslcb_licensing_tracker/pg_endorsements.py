@@ -270,7 +270,7 @@ async def reprocess_endorsements(
 
     records_processed = 0
     endorsements_linked = 0
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC)
 
     for row in rows:
         rid, license_type = row[0], row[1]
@@ -444,7 +444,7 @@ async def set_canonical_endorsement(
     int
         Number of alias rows written (created or updated).
     """
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC)
     written = 0
     for eid in endorsement_ids:
         if eid == canonical_id:

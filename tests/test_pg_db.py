@@ -4,6 +4,7 @@ Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
 """
 
 import pytest
+from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -153,7 +154,7 @@ class TestPgLinkRecordSource:
                 record_date="2025-06-15",
                 license_number="999991",
                 application_type="NEW APPLICATION",
-                scraped_at="2025-06-15T12:00:00+00:00",
+                scraped_at=datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
             )
             .on_conflict_do_nothing()
             .returning(license_records.c.id)
@@ -217,7 +218,7 @@ class TestPgGetPrimarySource:
                 record_date="2025-06-15",
                 license_number="888881",
                 application_type="NEW APPLICATION",
-                scraped_at="2025-06-15T12:00:00+00:00",
+                scraped_at=datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
             )
             .on_conflict_do_nothing()
             .returning(license_records.c.id)
@@ -280,7 +281,7 @@ class TestPgGetRecordSources:
                 record_date="2025-06-15",
                 license_number="777771",
                 application_type="NEW APPLICATION",
-                scraped_at="2025-06-15T12:00:00+00:00",
+                scraped_at=datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
             )
             .returning(license_records.c.id)
         )
@@ -303,7 +304,7 @@ class TestPgGetRecordSources:
                 record_date="2025-06-15",
                 license_number="666661",
                 application_type="NEW APPLICATION",
-                scraped_at="2025-06-15T12:00:00+00:00",
+                scraped_at=datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
             )
             .returning(license_records.c.id)
         )

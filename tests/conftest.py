@@ -9,6 +9,7 @@ which require TEST_DATABASE_URL to be set in the environment.
 """
 import os
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,7 @@ def standard_new_application():
         "previous_city": "",
         "previous_state": "",
         "previous_zip_code": "",
-        "scraped_at": "2025-06-15T12:00:00+00:00",
+        "scraped_at": datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
     }
 
 
@@ -70,7 +71,7 @@ def assumption_record():
         "previous_city": "",
         "previous_state": "",
         "previous_zip_code": "",
-        "scraped_at": "2025-06-10T12:00:00+00:00",
+        "scraped_at": datetime(2025, 6, 10, 12, 0, 0, tzinfo=UTC),
     }
 
 
@@ -96,7 +97,7 @@ def change_of_location_record():
         "previous_city": "OLYMPIA",
         "previous_state": "WA",
         "previous_zip_code": "98501",
-        "scraped_at": "2025-06-12T12:00:00+00:00",
+        "scraped_at": datetime(2025, 6, 12, 12, 0, 0, tzinfo=UTC),
     }
 
 
@@ -122,7 +123,7 @@ def approved_numeric_code():
         "previous_city": "",
         "previous_state": "",
         "previous_zip_code": "",
-        "scraped_at": "2025-06-11T12:00:00+00:00",
+        "scraped_at": datetime(2025, 6, 11, 12, 0, 0, tzinfo=UTC),
     }
 
 
@@ -148,7 +149,7 @@ def discontinued_code_name():
         "previous_city": "",
         "previous_state": "",
         "previous_zip_code": "",
-        "scraped_at": "2025-06-09T12:00:00+00:00",
+        "scraped_at": datetime(2025, 6, 9, 12, 0, 0, tzinfo=UTC),
     }
 
 

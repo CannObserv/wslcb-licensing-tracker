@@ -329,7 +329,7 @@ async def reprocess_entities(
 
     records_processed = 0
     entities_linked = 0
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC)
 
     for row in rows:
         rid = row[0]

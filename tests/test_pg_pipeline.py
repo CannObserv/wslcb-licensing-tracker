@@ -4,6 +4,7 @@ Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
 """
 
 import pytest
+from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -115,7 +116,7 @@ class TestPgInsertRecord:
             "previous_city": "",
             "previous_state": "",
             "previous_zip_code": "",
-            "scraped_at": "2025-07-01T12:00:00+00:00",
+            "scraped_at": datetime(2025, 7, 1, 12, 0, 0, tzinfo=UTC),
         }
         result = await insert_record(pg_conn, record)
         assert result is not None

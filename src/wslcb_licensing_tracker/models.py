@@ -9,6 +9,7 @@ No ORM mappers — all Table objects, no declarative_base().
 from sqlalchemy import (
     CheckConstraint,
     Column,
+    DateTime,
     Float,
     ForeignKey,
     Identity,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import TSVECTOR
 
@@ -42,9 +44,9 @@ locations = Table(
     Column("dpv_match_code", Text),
     Column("latitude", Float),
     Column("longitude", Float),
-    Column("address_standardized_at", Text),
-    Column("address_validated_at", Text),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("address_standardized_at", DateTime(timezone=True)),
+    Column("address_validated_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint("raw_address", name="uq_locations_raw_address"),
     Index("idx_locations_city", "city"),
     Index("idx_locations_zip", "zip_code"),
@@ -57,7 +59,7 @@ license_endorsements = Table(
     metadata,
     Column("id", Integer, Identity(), primary_key=True),
     Column("name", Text, nullable=False),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint("name", name="uq_license_endorsements_name"),
 )
 
@@ -72,15 +74,15 @@ endorsement_codes = Table(
         nullable=False,
         primary_key=True,
     ),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
 )
 
 scrape_log = Table(
     "scrape_log",
     metadata,
     Column("id", Integer, Identity(), primary_key=True),
-    Column("started_at", Text, nullable=False),
-    Column("finished_at", Text),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("finished_at", DateTime(timezone=True)),
     Column("status", Text, nullable=False, server_default="'running'"),
     Column("records_new", Integer, server_default="0"),
     Column("records_approved", Integer, server_default="0"),
@@ -89,7 +91,7 @@ scrape_log = Table(
     Column("error_message", Text),
     Column("snapshot_path", Text),
     Column("content_hash", Text),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
 )
 
 source_types = Table(
@@ -114,8 +116,8 @@ sources = Table(
     ),
     Column("snapshot_path", Text),
     Column("url", Text),
-    Column("captured_at", Text),
-    Column("ingested_at", Text, nullable=False, server_default="now()::text"),
+    Column("captured_at", DateTime(timezone=True)),
+    Column("ingested_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("scrape_log_id", Integer, ForeignKey("scrape_log.id")),
     Column("metadata", Text, nullable=False, server_default="'{}'"),
     UniqueConstraint("source_type_id", "snapshot_path", name="uq_sources_type_path"),
@@ -143,8 +145,8 @@ license_records = Table(
     Column("raw_previous_applicants", Text),
     Column("has_additional_names", Integer, nullable=False, server_default="0"),
     Column("resolved_endorsements", Text, nullable=False, server_default="''"),
-    Column("scraped_at", Text, nullable=False),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("scraped_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("search_vector", TSVECTOR),
     UniqueConstraint(
         "section_type",
@@ -188,7 +190,7 @@ entities = Table(
     Column("id", Integer, Identity(), primary_key=True),
     Column("name", Text, nullable=False),
     Column("entity_type", Text, nullable=False, server_default="''"),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint("name", name="uq_entities_name"),
     # NOTE: migration creates this as a functional index: lower(name).
     # SQLAlchemy Core can't express functional indexes inline on Table objects,
@@ -243,7 +245,7 @@ record_links = Table(
         nullable=False,
     ),
     Column("days_gap", Integer),
-    Column("linked_at", Text, nullable=False, server_default="now()::text"),
+    Column("linked_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint("new_app_id", "outcome_id", name="uq_record_links"),
     CheckConstraint("confidence IN ('high', 'medium', 'low')", name="ck_record_links_confidence"),
     Index("idx_record_links_new", "new_app_id"),
@@ -261,7 +263,7 @@ record_enrichments = Table(
         primary_key=True,
     ),
     Column("step", Text, nullable=False, primary_key=True),
-    Column("completed_at", Text, nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=False),
     Column("version", Text, nullable=False, server_default="'1'"),
 )
 
@@ -301,7 +303,7 @@ admin_users = Table(
     Column("id", Integer, Identity(), primary_key=True),
     Column("email", Text, nullable=False),
     Column("role", Text, nullable=False, server_default="'admin'"),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("created_by", Text, nullable=False, server_default="'system'"),
     # SQLite used COLLATE NOCASE. PostgreSQL equivalent: functional unique index
     # on lower(email) — defined in the Alembic baseline migration DDL, not here.
@@ -318,7 +320,7 @@ admin_audit_log = Table(
     Column("target_type", Text, nullable=False),
     Column("target_id", Integer),
     Column("details", Text),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
 )
 
 endorsement_aliases = Table(
@@ -337,7 +339,7 @@ endorsement_aliases = Table(
         ForeignKey("license_endorsements.id", ondelete="CASCADE"),
         nullable=False,
     ),
-    Column("created_at", Text, nullable=False, server_default="now()::text"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("created_by", Text),
     UniqueConstraint("endorsement_id", name="uq_endorsement_aliases_endorsement"),
 )
@@ -360,7 +362,7 @@ endorsement_dismissed_suggestions = Table(
         primary_key=True,
     ),
     Column("dismissed_by", Text, nullable=False),
-    Column("dismissed_at", Text, nullable=False, server_default="now()::text"),
+    Column("dismissed_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     CheckConstraint(
         "endorsement_id_a < endorsement_id_b",
         name="ck_dismissed_suggestions_order",
@@ -405,6 +407,6 @@ data_migrations = Table(
     metadata,
     Column("id", Integer, Identity(), primary_key=True),
     Column("name", Text, nullable=False),
-    Column("applied_at", Text, nullable=False, server_default="now()::text"),
+    Column("applied_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint("name", name="uq_data_migrations_name"),
 )

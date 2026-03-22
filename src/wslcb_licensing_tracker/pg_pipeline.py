@@ -86,7 +86,7 @@ async def _record_enrichment(
 
     Uses ON CONFLICT DO UPDATE so re-running a step updates the timestamp.
     """
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC)
     stmt = (
         pg_insert(record_enrichments)
         .values(record_id=record_id, step=step, completed_at=now, version=version)

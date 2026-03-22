@@ -81,7 +81,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
         result = await conn.execute(
             pg_insert(scrape_log)
             .values(
-                started_at=datetime.now(UTC).isoformat(),
+                started_at=datetime.now(UTC),
                 status="running",
             )
             .returning(scrape_log.c.id)
@@ -108,7 +108,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                     update(scrape_log)
                     .where(scrape_log.c.id == log_id)
                     .values(
-                        finished_at=datetime.now(UTC).isoformat(),
+                        finished_at=datetime.now(UTC),
                         status="unchanged",
                         content_hash=content_hash,
                     )
@@ -130,7 +130,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                 SOURCE_TYPE_LIVE_SCRAPE,
                 snapshot_path=rel_path,
                 url=WSLCB_SOURCE_URL,
-                captured_at=scrape_time.isoformat(),
+                captured_at=scrape_time,
                 scrape_log_id=log_id,
             )
 
@@ -174,7 +174,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                 update(scrape_log)
                 .where(scrape_log.c.id == log_id)
                 .values(
-                    finished_at=datetime.now(UTC).isoformat(),
+                    finished_at=datetime.now(UTC),
                     status="success",
                     content_hash=content_hash,
                     records_new=counts["new"],
@@ -200,7 +200,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                     update(scrape_log)
                     .where(scrape_log.c.id == log_id)
                     .values(
-                        finished_at=datetime.now(UTC).isoformat(),
+                        finished_at=datetime.now(UTC),
                         status="error",
                         error_message=str(exc),
                     )

@@ -11,7 +11,7 @@
         {{ source.source_label }}
       </span>
       {% if source.captured_at %}
-      <span class="text-gray-400">captured {{ source.captured_at[:10] }}</span>
+      <span class="text-gray-400">captured {{ (source.captured_at | ts)[:10] }}</span>
       {% endif %}
       {% if source.snapshot_path %}
       <span class="text-gray-400 truncate max-w-xs" title="{{ source.snapshot_path }}">{{ source.snapshot_path }}</span>

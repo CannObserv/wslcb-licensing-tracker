@@ -236,7 +236,7 @@ async def standardize_location(
                 std_country=result.get("std_country", ""),
                 std_address_string=result.get("std_address_string"),
                 validation_status=result.get("validation_status", "standardized"),
-                address_standardized_at=datetime.now(UTC).isoformat(),
+                address_standardized_at=datetime.now(UTC),
             )
         )
     except Exception:
@@ -321,7 +321,7 @@ async def validate_location(
                     dpv_match_code=dpv,
                     latitude=result.get("latitude"),
                     longitude=result.get("longitude"),
-                    address_validated_at=datetime.now(UTC).isoformat(),
+                    address_validated_at=datetime.now(UTC),
                 )
             )
             return True

@@ -50,7 +50,7 @@ async def test_cleanup_redundant_scrapes_removes_unchanged_rows(pg_engine):
                 "INSERT INTO scrape_log (started_at, status) "
                 "VALUES (:started_at, 'unchanged') RETURNING id"
             ),
-            {"started_at": datetime.now(UTC).isoformat()},
+            {"started_at": datetime.now(UTC)},
         )
         inserted_id = row.scalar_one()
         await conn.commit()

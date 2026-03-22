@@ -90,7 +90,7 @@ def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dis
     rows = table.find_all("tr")
     current = {}
     date_field = DATE_FIELD_MAP[section_type]
-    scraped_at = datetime.now(UTC).isoformat()
+    scraped_at = datetime.now(UTC)
 
     for row in rows:
         cells = row.find_all("td")
@@ -186,10 +186,12 @@ def snapshot_paths(data_dir: Path) -> list[Path]:
     return sorted(data_dir.glob("wslcb/licensinginfo/**/*.html"))
 
 
-def extract_snapshot_date(path: Path) -> str | None:
-    """Extract date string from snapshot filename (e.g. '2025_12_16')."""
-    m = re.search(r"(\d{4}_\d{2}_\d{2})", path.name)
-    return m.group(1) if m else None
+def extract_snapshot_date(path: Path) -> datetime | None:
+    """Extract a UTC midnight datetime from a snapshot filename (e.g. '2025_12_16')."""
+    m = re.search(r"(\d{4})_(\d{2})_(\d{2})", path.name)
+    if not m:
+        return None
+    return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=UTC)
 
 
 def parse_snapshot(path: Path) -> list[dict]:
@@ -212,8 +214,8 @@ def parse_snapshot(path: Path) -> list[dict]:
 # ── Diff parsing ─────────────────────────────────────────────────────
 
 
-def parse_diff_timestamp(header_line: str) -> str:
-    r"""Extract an ISO 8601 timestamp from a ``---`` or ``+++`` diff header.
+def parse_diff_timestamp(header_line: str) -> datetime:
+    r"""Extract a timestamp from a ``---`` or ``+++`` diff header.
 
     Expected format: ``--- @\tWed, 07 Sep 2022 06:15:05 -0700``
     Returns the current UTC time as fallback if parsing fails.
@@ -221,14 +223,14 @@ def parse_diff_timestamp(header_line: str) -> str:
     try:
         # Strip the "--- @\t" / "+++ @\t" prefix.
         raw = header_line.split("\t", 1)[1]
-        return parsedate_to_datetime(raw).isoformat()
+        return parsedate_to_datetime(raw)
     except Exception:  # noqa: BLE001  # malformed diff headers vary widely; fall back to current time
-        return datetime.now(UTC).isoformat()
+        return datetime.now(UTC)
 
 
 def split_diff_lines(
     content: str,
-) -> tuple[list[str], list[str], list[str], list[str], str, str]:
+) -> tuple[list[str], list[str], list[str], list[str], datetime, datetime]:
     """Split a unified diff into added, removed, and context line lists.
 
     Returns ``(added, removed, new_with_ctx, old_with_ctx, old_ts, new_ts)``
@@ -236,14 +238,14 @@ def split_diff_lines(
 
     - *added* / *removed* contain only ``+`` / ``-`` lines (prefix stripped).
     - *new_with_ctx* / *old_with_ctx* include context lines on both sides.
-    - *old_ts* / *new_ts* are ISO 8601 timestamps extracted from the
+    - *old_ts* / *new_ts* are timestamps extracted from the
       ``---`` / ``+++`` headers (used as ``scraped_at`` for recovered records).
     """
     added: list[str] = []
     removed: list[str] = []
     new_ctx: list[str] = []
     old_ctx: list[str] = []
-    fallback_ts = datetime.now(UTC).isoformat()
+    fallback_ts = datetime.now(UTC)
     old_ts = fallback_ts
     new_ts = fallback_ts
 
