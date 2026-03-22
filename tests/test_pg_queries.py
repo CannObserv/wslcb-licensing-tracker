@@ -13,9 +13,14 @@ from wslcb_licensing_tracker.pg_queries import (
     get_entity_records,
     get_entities,
     get_source_by_id,
+    get_record_source_link,
     invalidate_filter_cache,
 )
-from wslcb_licensing_tracker.pg_db import SOURCE_TYPE_LIVE_SCRAPE, get_or_create_source
+from wslcb_licensing_tracker.pg_db import (
+    SOURCE_TYPE_LIVE_SCRAPE,
+    get_or_create_source,
+    link_record_source,
+)
 from wslcb_licensing_tracker.pg_pipeline import insert_record
 
 
@@ -160,3 +165,22 @@ class TestGetSourceById:
     async def test_returns_none_for_missing(self, pg_conn):
         row = await get_source_by_id(pg_conn, 999999999)
         assert row is None
+
+
+class TestGetRecordSourceLink:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_true_when_linked(self, pg_conn, standard_new_application):
+        standard_new_application["license_number"] = "query_rsl_001"
+        result = await insert_record(pg_conn, standard_new_application)
+        record_id = result[0]
+        source_id = await get_or_create_source(
+            pg_conn,
+            source_type_id=SOURCE_TYPE_LIVE_SCRAPE,
+            url="https://example.com/test-record-source-link",
+        )
+        await link_record_source(pg_conn, record_id, source_id)
+        assert await get_record_source_link(pg_conn, record_id, source_id) is True
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_false_when_not_linked(self, pg_conn):
+        assert await get_record_source_link(pg_conn, 999999999, 999999999) is False

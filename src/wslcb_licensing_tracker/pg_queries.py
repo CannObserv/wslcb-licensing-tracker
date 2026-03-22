@@ -846,6 +846,20 @@ async def get_entities(  # noqa: PLR0913
     return {"entities": [dict(r) for r in rows_result.mappings().all()], "total": total}
 
 
+async def get_record_source_link(conn: AsyncConnection, record_id: int, source_id: int) -> bool:
+    """Return True if a record_sources row links record_id to source_id."""
+    row = (
+        await conn.execute(
+            text(
+                "SELECT 1 FROM record_sources"
+                " WHERE record_id = :record_id AND source_id = :source_id"
+            ),
+            {"record_id": record_id, "source_id": source_id},
+        )
+    ).one_or_none()
+    return row is not None
+
+
 async def get_source_by_id(conn: AsyncConnection, source_id: int) -> dict | None:
     """Fetch a single source row joined with its source_type slug and label.
 

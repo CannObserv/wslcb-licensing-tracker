@@ -20,7 +20,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -32,7 +31,6 @@ from .data_migration import run_pending_migrations
 from .database import create_engine_from_env, get_db
 from .display import format_outcome, summarize_provenance
 from .log_config import setup_logging
-from .models import record_sources as record_sources_table
 from .parser import extract_tbody_from_diff, extract_tbody_from_snapshot, strip_anchor_tags
 from .pg_db import DATA_DIR, get_record_sources
 from .pg_entities import get_entity_by_id
@@ -44,6 +42,7 @@ from .pg_queries import (
     get_filter_options,
     get_record_by_id,
     get_record_link,
+    get_record_source_link,
     get_related_records,
     get_source_by_id,
     get_stats,
@@ -372,7 +371,7 @@ async def source_viewer(
     with the original WSLCB inline styles.  Public endpoint — no auth required.
     """
     async with get_db(request.app.state.engine) as conn:
-        # 1. Look up source row with JOIN to source_types
+        # 1. Look up source row
         source_row = await get_source_by_id(conn, source_id)
         if source_row is None:
             raise HTTPException(status_code=404, detail="Source not found")
@@ -383,15 +382,7 @@ async def source_viewer(
             raise HTTPException(status_code=404, detail="Record not found")
 
         # 3. Verify record_sources link
-        link_row = (
-            await conn.execute(
-                select(record_sources_table.c.record_id).where(
-                    record_sources_table.c.record_id == record_id,
-                    record_sources_table.c.source_id == source_id,
-                )
-            )
-        ).one_or_none()
-        if link_row is None:
+        if not await get_record_source_link(conn, record_id, source_id):
             raise HTTPException(status_code=404, detail="Source not linked to record")
 
     source = source_row
