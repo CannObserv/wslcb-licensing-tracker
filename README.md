@@ -146,7 +146,8 @@ wslcb-licensing-tracker/
 │   ├── alembic.ini
 │   └── versions/
 │       ├── 0001_baseline_postgresql_schema.py
-│       └── 0002_fts.py
+│       ├── 0002_fts.py
+│       └── 0003_timestamp_columns.py
 ├── requirements.txt        # Python dependencies (runtime + dev)
 ├── pytest.ini              # Pytest configuration
 ├── tests/                  # Test suite
