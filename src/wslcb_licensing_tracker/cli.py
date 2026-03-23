@@ -442,16 +442,27 @@ def admin_remove_user(email: str) -> None:
 # argument, e.g. wslcb-task@scrape → ``cli scrape``.  These aliases keep
 # flat invocations working alongside the grouped form.
 
-main.add_command(scrape, "scrape")
-main.add_command(backfill_snapshots, "backfill-snapshots")
-main.add_command(backfill_diffs, "backfill-diffs")
-main.add_command(backfill_addresses, "backfill-addresses")
-main.add_command(refresh_addresses, "refresh-addresses")
-main.add_command(check, "check")
-main.add_command(rebuild_links, "rebuild-links")
-main.add_command(cleanup_redundant, "cleanup-redundant")
-main.add_command(reprocess_endorsements, "reprocess-endorsements")
-main.add_command(reprocess_entities, "reprocess-entities")
+_ALIASES = [
+    (scrape, "scrape"),
+    (backfill_snapshots, "backfill-snapshots"),
+    (backfill_diffs, "backfill-diffs"),
+    (backfill_addresses, "backfill-addresses"),
+    (refresh_addresses, "refresh-addresses"),
+    (check, "check"),
+    (rebuild_links, "rebuild-links"),
+    (cleanup_redundant, "cleanup-redundant"),
+    (reprocess_endorsements, "reprocess-endorsements"),
+    (reprocess_entities, "reprocess-entities"),
+]
+for _cmd, _name in _ALIASES:
+    _alias = click.Command(
+        _name,
+        callback=_cmd.callback,
+        params=list(_cmd.params),
+        help=_cmd.help,
+        hidden=True,
+    )
+    main.add_command(_alias)
 
 
 if __name__ == "__main__":

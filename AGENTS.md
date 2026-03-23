@@ -60,7 +60,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `admin_routes.py` | `APIRouter` for `/admin/*`. All routes async; `_get_db` dependency yields `AsyncConnection`; all imports from `pg_*` equivalents. Template renderer accessed via `request.app.state.tpl`. |
 | `admin_auth.py` | `require_admin()` FastAPI dependency. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. `_lookup_admin()` is async — uses `request.app.state.engine` to query `admin_users`. |
 | `log_config.py` | `setup_logging()` — auto-detects TTY vs JSON format. Call once per entry point. |
-| `cli.py` | All commands use PG modules with `asyncio.run()` wrappers. Engine from `create_engine_from_env()` (reads `DATABASE_URL`). Admin user commands use inline SQLAlchemy queries. |
+| `cli.py` | Click-based CLI with `ingest`, `db`, `admin` groups. Hidden top-level aliases for systemd `wslcb-task@%i` compat (e.g. `wslcb scrape` = `wslcb ingest scrape`). All commands use `asyncio.run()` wrappers. Engine from `create_engine_from_env()`. |
 | `templates/` | `base.html` (main layout — nav, footer, CSS/JS includes). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
 | `tailwind.config.js` | Tailwind CSS config — content paths, co-green/co-purple palette. Consumed by `scripts/build-css.sh`. |
 | `static/css/input.css` | Tailwind source: `@tailwind` directives + HTMX loading states + badge classes + `.scroll-shadow-right`. |
