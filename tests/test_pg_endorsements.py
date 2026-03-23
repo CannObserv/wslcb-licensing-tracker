@@ -1,8 +1,10 @@
 """Tests for pg_endorsements.py — async endorsement pipeline."""
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from wslcb_licensing_tracker.models import license_endorsements, endorsement_codes
+
+from wslcb_licensing_tracker.models import endorsement_codes, license_endorsements
 from wslcb_licensing_tracker.pg_endorsements import (
     ensure_endorsement,
     get_endorsement_groups,
@@ -29,9 +31,11 @@ class TestEnsureEndorsement:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_uppercases_name(self, pg_conn):
         eid = await ensure_endorsement(pg_conn, "spirits store")
-        row = (await pg_conn.execute(
-            select(license_endorsements.c.name).where(license_endorsements.c.id == eid)
-        )).scalar_one()
+        row = (
+            await pg_conn.execute(
+                select(license_endorsements.c.name).where(license_endorsements.c.id == eid)
+            )
+        ).scalar_one()
         assert row == "SPIRITS STORE"
 
 
@@ -77,9 +81,7 @@ class TestProcessRecord:
         standard_new_application["license_number"] = "endorse_004"
         result = await insert_record(pg_conn, standard_new_application)
         record_id = result[0]
-        linked = await process_record(
-            pg_conn, record_id, "450, GROCERY STORE - BEER/WINE"
-        )
+        linked = await process_record(pg_conn, record_id, "450, GROCERY STORE - BEER/WINE")
         assert linked == 1
         endorsements = await get_record_endorsements(pg_conn, [record_id])
         assert "GROCERY STORE - BEER/WINE" in endorsements[record_id]
@@ -94,9 +96,7 @@ class TestProcessRecord:
         assert linked == 0
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_unknown_numeric_creates_placeholder(
-        self, pg_conn, standard_new_application
-    ):
+    async def test_unknown_numeric_creates_placeholder(self, pg_conn, standard_new_application):
         """Unknown numeric code with no mapping creates a placeholder endorsement."""
         standard_new_application["license_number"] = "endorse_006"
         result = await insert_record(pg_conn, standard_new_application)
@@ -158,9 +158,7 @@ class TestAliasManagement:
 
 class TestGetEndorsementOptions:
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_returns_names_for_linked_records(
-        self, pg_conn, standard_new_application
-    ):
+    async def test_returns_names_for_linked_records(self, pg_conn, standard_new_application):
         """get_endorsement_options returns sorted canonical names."""
         standard_new_application["license_number"] = "opt_001"
         result = await insert_record(pg_conn, standard_new_application)

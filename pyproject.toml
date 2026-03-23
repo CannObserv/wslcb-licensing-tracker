@@ -43,8 +43,6 @@ packages = ["src/wslcb_licensing_tracker"]
 [tool.ruff]
 line-length = 100
 src = ["src"]
-exclude = ["tests/"]
-
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
@@ -68,6 +66,32 @@ ignore = [
 "src/wslcb_licensing_tracker/cli.py" = ["T201", "FBT001"]
 "src/wslcb_licensing_tracker/integrity.py" = ["T201"]
 "src/wslcb_licensing_tracker/pg_integrity.py" = ["T201"]
+# Tests: allow assert, missing annotations, missing docstrings, magic values,
+# unused fixture args, late imports, private member access, nested with statements
+"tests/**/*.py" = [
+    "S101",    # assert is the whole point of tests
+    "ANN",     # type annotations not needed in tests
+    "D",       # docstrings not needed in tests
+    "PLR2004", # magic values in assertions are fine
+    "ARG001", "ARG002",  # unused args — pytest fixtures
+    "PLC0415", # late imports for test isolation
+    "SLF001",  # accessing private members under test
+    "SIM117",  # nested with statements (pytest.raises + patch)
+    "PT018",   # composite assertions in pytest.raises
+    "TRY003", "TRY002", "EM101",  # exception messages in tests don't need constants
+    "RUF012",  # mutable class vars in test classes are fine
+    "FBT001", "FBT002",  # boolean positional args in test helpers
+    "E741",    # ambiguous variable names (l, I) in test data
+    "N806",    # uppercase variable names in tests
+    "PLW0108", # unnecessary lambda — used for mock side_effect
+    "ERA001",  # commented-out code in tests
+    "B905",    # zip without strict in tests
+    "PTH118", "PTH120", "PTH123",  # pathlib not required in tests
+    "PT011",   # pytest.raises too broad — fine for tests
+    "PERF401", # manual list comprehension — clarity over perf in tests
+    "RUF015",  # unnecessary next() on single iteration
+    "RUF059",  # unused unpacked variables
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

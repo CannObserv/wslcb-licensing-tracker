@@ -4,6 +4,7 @@ Covers envelope structure, /cities, /stats, /export, and /health.
 Uses FastAPI TestClient with async dependency overrides; no disk DB,
 no network calls.
 """
+
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,9 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.app import app
 from wslcb_licensing_tracker.api_routes import _get_db
-
+from wslcb_licensing_tracker.app import app
 
 # ---------------------------------------------------------------------------
 # Async helpers
@@ -76,7 +76,9 @@ def client(mock_conn, mock_engine):
         patch("wslcb_licensing_tracker.api_routes.get_db"),
         patch("wslcb_licensing_tracker.app.get_current_user", new_callable=AsyncMock),
     )
-    mock_cities, mock_stats, mock_export, mock_get_db, mock_get_current_user = [p.start() for p in patches]
+    mock_cities, mock_stats, mock_export, mock_get_db, mock_get_current_user = [
+        p.start() for p in patches
+    ]
     mock_get_current_user.return_value = None
 
     mock_cities.return_value = ["SEATTLE", "TACOMA"]
@@ -240,7 +242,7 @@ class TestHealthEndpoint:
             @asynccontextmanager
             async def _broken_get_db_ctx(engine):
                 raise Exception("disk I/O error")
-                yield  # noqa: unreachable
+                yield  # unreachable — required by @asynccontextmanager
 
             mock_get_db.side_effect = _broken_get_db_ctx
             resp = client.get("/api/v1/health")
@@ -252,7 +254,7 @@ class TestHealthEndpoint:
             @asynccontextmanager
             async def _broken_get_db_ctx(engine):
                 raise Exception("disk I/O error")
-                yield  # noqa: unreachable
+                yield  # unreachable — required by @asynccontextmanager
 
             mock_get_db.side_effect = _broken_get_db_ctx
             resp = client.get("/api/v1/health")
@@ -283,7 +285,7 @@ class TestHealthEndpoint:
             @asynccontextmanager
             async def _fail_ctx(engine):
                 raise Exception("no real DB in test")
-                yield  # noqa: unreachable
+                yield  # unreachable — required by @asynccontextmanager
 
             mock_get_db.side_effect = _fail_ctx
             plain_client = TestClient(app)

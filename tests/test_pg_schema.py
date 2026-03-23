@@ -18,10 +18,12 @@ async def test_init_db_creates_tables(pg_engine):
 
     # Verify key tables exist
     async with pg_engine.connect() as conn:
-        result = await conn.execute(text(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
-        ))
+        result = await conn.execute(
+            text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+            )
+        )
         tables = {row[0] for row in result}
 
     assert "license_records" in tables

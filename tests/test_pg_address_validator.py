@@ -1,7 +1,10 @@
 """Tests for pg_address_validator.py — async address validation DB layer."""
-import pytest
+
 from unittest.mock import patch
+
+import pytest
 from sqlalchemy import select
+
 from wslcb_licensing_tracker.models import locations
 from wslcb_licensing_tracker.pg_address_validator import standardize_location, validate_location
 from wslcb_licensing_tracker.pg_db import get_or_create_location
@@ -25,9 +28,9 @@ class TestStandardizeLocation:
         ):
             result = await standardize_location(pg_conn, loc_id, "123 MAIN ST, SEATTLE, WA 98101")
         assert result is True
-        row = (await pg_conn.execute(
-            select(locations.c.std_city).where(locations.c.id == loc_id)
-        )).scalar_one()
+        row = (
+            await pg_conn.execute(select(locations.c.std_city).where(locations.c.id == loc_id))
+        ).scalar_one()
         assert row == "SEATTLE"
 
     @pytest.mark.asyncio(loop_scope="session")
@@ -45,7 +48,10 @@ class TestValidateLocation:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_when_validation_disabled(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "456 OAK AVE, SPOKANE, WA 99201")
-        with patch("wslcb_licensing_tracker.pg_address_validator._is_validation_enabled", return_value=False):
+        with patch(
+            "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+            return_value=False,
+        ):
             result = await validate_location(pg_conn, loc_id, "456 OAK AVE, SPOKANE, WA 99201")
         assert result is False
 
@@ -65,21 +71,31 @@ class TestValidateLocation:
             "validation": {"status": "confirmed", "dpv_match_code": "Y"},
         }
         with (
-            patch("wslcb_licensing_tracker.pg_address_validator._is_validation_enabled", return_value=True),
-            patch("wslcb_licensing_tracker.pg_address_validator.validate", return_value=mock_result),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator.validate", return_value=mock_result
+            ),
         ):
             result = await validate_location(pg_conn, loc_id, "789 PINE ST, TACOMA, WA 98401")
         assert result is True
-        row = (await pg_conn.execute(
-            select(locations.c.address_validated_at).where(locations.c.id == loc_id)
-        )).scalar_one()
+        row = (
+            await pg_conn.execute(
+                select(locations.c.address_validated_at).where(locations.c.id == loc_id)
+            )
+        ).scalar_one()
         assert row is not None
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_api_error(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "UNVALIDATABLE ADDRESS")
         with (
-            patch("wslcb_licensing_tracker.pg_address_validator._is_validation_enabled", return_value=True),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                return_value=True,
+            ),
             patch("wslcb_licensing_tracker.pg_address_validator.validate", return_value=None),
         ):
             result = await validate_location(pg_conn, loc_id, "UNVALIDATABLE ADDRESS")
@@ -95,14 +111,26 @@ class TestValidateLocation:
             "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
         }
         with (
-            patch("wslcb_licensing_tracker.pg_address_validator._is_validation_enabled", return_value=True),
-            patch("wslcb_licensing_tracker.pg_address_validator.validate", return_value=mock_result),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator.validate", return_value=mock_result
+            ),
         ):
             result = await validate_location(pg_conn, loc_id, "AMBIGUOUS RD, NOWHERE, WA 99999")
         assert result is False
-        row = (await pg_conn.execute(
-            select(locations.c.validation_status, locations.c.address_validated_at)
-            .where(locations.c.id == loc_id)
-        )).mappings().one()
+        row = (
+            (
+                await pg_conn.execute(
+                    select(locations.c.validation_status, locations.c.address_validated_at).where(
+                        locations.c.id == loc_id
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
         assert row["validation_status"] == "not_confirmed"
         assert row["address_validated_at"] is None

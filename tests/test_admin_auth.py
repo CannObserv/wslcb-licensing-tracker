@@ -72,7 +72,9 @@ async def test_lookup_admin_missing_returns_none():
 @pytest.mark.asyncio
 async def test_get_current_user_with_valid_header():
     conn = _make_conn(row=(1, "admin@example.com", "admin"))
-    req = _make_request(headers={"X-ExeDev-Email": "admin@example.com", "X-ExeDev-UserID": "usr_1"}, conn=conn)
+    req = _make_request(
+        headers={"X-ExeDev-Email": "admin@example.com", "X-ExeDev-UserID": "usr_1"}, conn=conn
+    )
     with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         result = await get_current_user(req)
     assert result is not None
@@ -93,7 +95,9 @@ async def test_get_current_user_no_header_returns_none():
 async def test_get_current_user_dev_email_fallback():
     conn = _make_conn(row=(1, "admin@example.com", "admin"))
     req = _make_request(headers={}, conn=conn)
-    with patch.dict(os.environ, {"ADMIN_DEV_EMAIL": "admin@example.com", "ADMIN_DEV_USERID": "dev"}):
+    with patch.dict(
+        os.environ, {"ADMIN_DEV_EMAIL": "admin@example.com", "ADMIN_DEV_USERID": "dev"}
+    ):
         with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
             result = await get_current_user(req)
     assert result is not None
@@ -103,7 +107,9 @@ async def test_get_current_user_dev_email_fallback():
 @pytest.mark.asyncio
 async def test_get_current_user_not_in_admin_table():
     conn = _make_conn(row=None)
-    req = _make_request(headers={"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"}, conn=conn)
+    req = _make_request(
+        headers={"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"}, conn=conn
+    )
     with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         result = await get_current_user(req)
     assert result is None
@@ -115,7 +121,9 @@ async def test_get_current_user_not_in_admin_table():
 @pytest.mark.asyncio
 async def test_require_admin_valid():
     conn = _make_conn(row=(1, "admin@example.com", "admin"))
-    req = _make_request(headers={"X-ExeDev-Email": "admin@example.com", "X-ExeDev-UserID": "usr_1"}, conn=conn)
+    req = _make_request(
+        headers={"X-ExeDev-Email": "admin@example.com", "X-ExeDev-UserID": "usr_1"}, conn=conn
+    )
     with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         result = await require_admin(req)
     assert result["email"] == "admin@example.com"
@@ -136,7 +144,9 @@ async def test_require_admin_not_in_table_raises_403():
     from fastapi import HTTPException
 
     conn = _make_conn(row=None)
-    req = _make_request(headers={"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"}, conn=conn)
+    req = _make_request(
+        headers={"X-ExeDev-Email": "stranger@example.com", "X-ExeDev-UserID": "usr_x"}, conn=conn
+    )
     with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
         with pytest.raises(HTTPException) as exc_info:
             await require_admin(req)
@@ -176,8 +186,10 @@ def test_cli_add_and_list_and_remove_users():
 
     # add-user: SELECT returns None (no existing user)
     conn.execute.return_value = _make_execute_result(fetchone=None)
-    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
-         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
+    with (
+        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
+    ):
         result = runner.invoke(main, ["admin", "add-user", "first@example.com"])
     assert result.exit_code == 0
     assert conn.commit.called
@@ -185,21 +197,25 @@ def test_cli_add_and_list_and_remove_users():
     # list-users: fetchall returns empty list → prints "No admin users."
     conn.reset_mock()
     conn.execute.return_value = _make_execute_result(fetchall=[])
-    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
-         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
+    with (
+        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
+    ):
         result = runner.invoke(main, ["admin", "list-users"])
     assert result.exit_code == 0
 
     # remove-user: fetchone returns a row (user exists), count = 2 (not last)
     conn.reset_mock()
     results = [
-        _make_execute_result(fetchone=MagicMock()),   # SELECT id
-        _make_execute_result(scalar_one=2),            # SELECT COUNT
-        _make_execute_result(),                        # DELETE
+        _make_execute_result(fetchone=MagicMock()),  # SELECT id
+        _make_execute_result(scalar_one=2),  # SELECT COUNT
+        _make_execute_result(),  # DELETE
     ]
     conn.execute.side_effect = results
-    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
-         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
+    with (
+        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
+    ):
         result = runner.invoke(main, ["admin", "remove-user", "first@example.com"])
     assert result.exit_code == 0
     assert conn.commit.called
@@ -214,13 +230,15 @@ def test_cli_remove_last_user_exits():
     conn = AsyncMock()
     results = [
         _make_execute_result(fetchone=MagicMock()),  # SELECT id → found
-        _make_execute_result(scalar_one=1),           # COUNT → 1 (last user)
+        _make_execute_result(scalar_one=1),  # COUNT → 1 (last user)
     ]
     conn.execute.side_effect = results
 
     runner = CliRunner()
-    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
-         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
+    with (
+        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
+    ):
         result = runner.invoke(main, ["admin", "remove-user", "solo@example.com"])
     assert result.exit_code != 0
 
@@ -236,8 +254,10 @@ def test_cli_add_duplicate_user_is_noop():
     conn.execute.return_value = _make_execute_result(fetchone=MagicMock(id=1))
 
     runner = CliRunner()
-    with patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()), \
-         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)):
+    with (
+        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
+    ):
         result = runner.invoke(main, ["admin", "add-user", "dup@example.com"])
     assert result.exit_code == 0
 

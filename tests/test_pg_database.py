@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from wslcb_licensing_tracker.database import create_engine_from_env, get_database_url, get_db
+from wslcb_licensing_tracker.database import get_database_url, get_db
 
 
 def test_get_database_url_default(monkeypatch):
@@ -48,10 +48,12 @@ async def test_alembic_baseline_creates_all_tables(pg_engine):
     """After running the baseline migration, all 20 app tables + alembic_version exist."""
     # Migrations already applied by pg_engine fixture — just verify the tables exist
     async with pg_engine.connect() as conn:
-        result = await conn.execute(text(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
-        ))
+        result = await conn.execute(
+            text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+            )
+        )
         table_names = {row[0] for row in result}
 
     count = len(table_names)
@@ -59,11 +61,26 @@ async def test_alembic_baseline_creates_all_tables(pg_engine):
     assert count == 21
 
     EXPECTED_TABLES = {
-        "locations", "license_endorsements", "endorsement_codes", "scrape_log",
-        "source_types", "sources", "license_records", "record_endorsements",
-        "entities", "record_entities", "record_links", "record_enrichments",
-        "record_sources", "admin_users", "admin_audit_log", "endorsement_aliases",
-        "endorsement_dismissed_suggestions", "regulated_substances",
-        "regulated_substance_endorsements", "data_migrations", "alembic_version",
+        "locations",
+        "license_endorsements",
+        "endorsement_codes",
+        "scrape_log",
+        "source_types",
+        "sources",
+        "license_records",
+        "record_endorsements",
+        "entities",
+        "record_entities",
+        "record_links",
+        "record_enrichments",
+        "record_sources",
+        "admin_users",
+        "admin_audit_log",
+        "endorsement_aliases",
+        "endorsement_dismissed_suggestions",
+        "regulated_substances",
+        "regulated_substance_endorsements",
+        "data_migrations",
+        "alembic_version",
     }
     assert table_names == EXPECTED_TABLES

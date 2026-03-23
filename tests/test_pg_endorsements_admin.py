@@ -1,16 +1,16 @@
 """Tests for pg_endorsements_admin.py — async endorsement admin helpers."""
+
 import pytest
-from wslcb_licensing_tracker.pg_endorsements_admin import (
-    endorsement_similarity,
-    get_endorsement_list,
-    get_code_mappings,
-    add_code_mapping,
-    remove_code_mapping,
-    create_code,
-    suggest_duplicate_endorsements,
-    dismiss_suggestion,
-)
+
 from wslcb_licensing_tracker.pg_endorsements import ensure_endorsement
+from wslcb_licensing_tracker.pg_endorsements_admin import (
+    add_code_mapping,
+    create_code,
+    endorsement_similarity,
+    get_code_mappings,
+    get_endorsement_list,
+    remove_code_mapping,
+)
 
 
 class TestEndorsementSimilarity:
