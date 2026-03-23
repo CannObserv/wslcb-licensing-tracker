@@ -4,8 +4,9 @@ get_filter_options(), get_cities_for_state(), and get_stats() must
 always hit the database — no stale in-process copies.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 
 def _make_conn_mock():
@@ -26,14 +27,17 @@ class TestNoCacheFilterOptions:
         """Two calls should each execute queries — no TTL short-circuit."""
         conn = _make_conn_mock()
 
-        with patch(
-            "wslcb_licensing_tracker.pg_queries_filter.get_endorsement_options",
-            new_callable=AsyncMock,
-            return_value=[],
-        ), patch(
-            "wslcb_licensing_tracker.pg_queries_filter.get_regulated_substances",
-            new_callable=AsyncMock,
-            return_value=[],
+        with (
+            patch(
+                "wslcb_licensing_tracker.pg_queries_filter.get_endorsement_options",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.pg_queries_filter.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             from wslcb_licensing_tracker.pg_queries_filter import get_filter_options
 
@@ -75,21 +79,33 @@ class TestNoCacheStats:
         # get_stats calls execute 3 times per invocation (agg, pipeline, scrape)
         # We need mappings().first() to return appropriate dicts
         agg_mapping = {
-            "total_records": 1, "new_application_count": 0,
-            "approved_count": 0, "discontinued_count": 0,
-            "min_date": None, "max_date": None,
-            "unique_businesses": 0, "unique_licenses": 0,
+            "total_records": 1,
+            "new_application_count": 0,
+            "approved_count": 0,
+            "discontinued_count": 0,
+            "min_date": None,
+            "max_date": None,
+            "unique_businesses": 0,
+            "unique_licenses": 0,
             "unique_entities": 0,
         }
         pipeline_mapping = {
-            "total": 0, "approved": 0, "discontinued": 0,
-            "pending": 0, "data_gap": 0, "unknown": 0,
+            "total": 0,
+            "approved": 0,
+            "discontinued": 0,
+            "pending": 0,
+            "data_gap": 0,
+            "unknown": 0,
         }
 
         result_mock = MagicMock()
         result_mock.mappings.return_value.first.side_effect = [
-            agg_mapping, pipeline_mapping, None,
-            agg_mapping, pipeline_mapping, None,
+            agg_mapping,
+            pipeline_mapping,
+            None,
+            agg_mapping,
+            pipeline_mapping,
+            None,
         ]
         conn.execute.return_value = result_mock
 
@@ -109,9 +125,11 @@ class TestInvalidateFunctionsExist:
 
     def test_invalidate_filter_cache_is_callable(self):
         from wslcb_licensing_tracker.pg_queries_filter import invalidate_filter_cache
+
         # Should not raise
         invalidate_filter_cache()
 
     def test_invalidate_stats_cache_is_callable(self):
         from wslcb_licensing_tracker.pg_queries_stats import invalidate_stats_cache
+
         invalidate_stats_cache()

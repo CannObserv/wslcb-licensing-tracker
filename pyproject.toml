@@ -61,9 +61,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# print() is legitimate CLI output per project convention
-# print() is legitimate CLI output; FBT001 false-positives on click callback params
-"src/wslcb_licensing_tracker/cli.py" = ["T201", "FBT001"]
+# FBT001 false-positives on click boolean callback params (is_flag=True)
+"src/wslcb_licensing_tracker/cli.py" = ["FBT001"]
 "src/wslcb_licensing_tracker/integrity.py" = ["T201"]
 "src/wslcb_licensing_tracker/pg_integrity.py" = ["T201"]
 # Tests: allow assert, missing annotations, missing docstrings, magic values,

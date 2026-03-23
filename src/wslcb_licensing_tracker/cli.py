@@ -6,9 +6,14 @@ All operational commands are exposed as click subcommands grouped by domain:
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
 - ``admin``: add-user, list-users, remove-user
 
+Top-level aliases exist for backward compatibility with the systemd
+``wslcb-task@%i`` template (which passes a single token).  Both forms
+work: ``wslcb scrape`` and ``wslcb ingest scrape``.
+
 Usage::
 
-    wslcb ingest scrape                # live scrape
+    wslcb scrape                       # top-level alias (systemd compat)
+    wslcb ingest scrape                # grouped form
     wslcb ingest backfill-snapshots    # replay archived HTML
     wslcb ingest backfill-diffs        # replay diff archives
     wslcb ingest backfill-addresses    # validate un-validated locations
@@ -428,6 +433,25 @@ def admin_remove_user(email: str) -> None:
         click.echo(error)
         sys.exit(1)
     click.echo(f"Removed admin user: {email}")
+
+
+# ---------------------------------------------------------------------------
+# Top-level aliases — backward compatibility with systemd wslcb-task@%i
+# ---------------------------------------------------------------------------
+# The systemd template unit passes %i (instance name) as a single CLI
+# argument, e.g. wslcb-task@scrape → ``cli scrape``.  These aliases keep
+# flat invocations working alongside the grouped form.
+
+main.add_command(scrape, "scrape")
+main.add_command(backfill_snapshots, "backfill-snapshots")
+main.add_command(backfill_diffs, "backfill-diffs")
+main.add_command(backfill_addresses, "backfill-addresses")
+main.add_command(refresh_addresses, "refresh-addresses")
+main.add_command(check, "check")
+main.add_command(rebuild_links, "rebuild-links")
+main.add_command(cleanup_redundant, "cleanup-redundant")
+main.add_command(reprocess_endorsements, "reprocess-endorsements")
+main.add_command(reprocess_entities, "reprocess-entities")
 
 
 if __name__ == "__main__":

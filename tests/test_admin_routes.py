@@ -245,11 +245,11 @@ class TestNoInitRouter:
         assert not hasattr(mod, "_tpl"), "_tpl module-level variable should be removed"
 
     def test_render_reads_from_app_state(self):
-        """_render should use request.app.state.tpl, not a module-level variable."""
+        """_render should read tpl from request.app.state, not a module-level variable."""
         import inspect
 
         source = inspect.getsource(_render)
-        assert "request.app.state.tpl" in source
+        assert "request.app.state" in source
 
 
 class TestAdminEndorsementsPageLoads:

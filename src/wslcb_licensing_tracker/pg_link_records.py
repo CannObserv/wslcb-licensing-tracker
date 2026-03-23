@@ -378,6 +378,8 @@ async def _link_incremental(  # noqa: PLR0911, PLR0913
     *direction* is ``'forward'`` (new_app seeking outcome) or
     ``'backward'`` (outcome seeking new_app).
     """
+    # asyncpg's $N parameter translation is ambiguous with PG's ::date cast
+    # (e.g. :param::date looks like two casts).  Use to_date() instead.
     tol = f"interval '{DATE_TOLERANCE_DAYS} days'"
     _to_date = "to_date({p}, 'YYYY-MM-DD')"
     if direction == "forward":

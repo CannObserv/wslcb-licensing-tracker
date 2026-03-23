@@ -81,7 +81,7 @@ async def _render(
     if tpl is None:
         msg = "app.state.tpl not set — template renderer not configured in lifespan"
         raise RuntimeError(msg)
-    return await request.app.state.tpl(request, template, ctx, status_code)
+    return await tpl(request, template, ctx, status_code)
 
 
 async def _get_db(request: Request) -> AsyncGenerator[AsyncConnection, None]:

@@ -19,7 +19,7 @@ license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
 ```
 
-- No build step. Tailwind via CDN, HTMX. No node_modules.
+- No build step. Tailwind via CDN, HTMX. `node_modules/` exists only for JS test tooling (jsdom); not used at runtime.
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
 - PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
 

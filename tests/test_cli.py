@@ -177,7 +177,7 @@ class TestAdminGroup:
             conn.execute = AsyncMock(return_value=mock_result)
             yield conn
 
-        with patch("wslcb_licensing_tracker.cli.get_db", side_effect=lambda *a, **k: _ctx()):
+        with patch("wslcb_licensing_tracker.cli.get_db", side_effect=lambda *_a, **_kw: _ctx()):
             result = CliRunner().invoke(main, ["admin", "add-user", "test@example.com"])
         assert result.exit_code == 0
         assert "Added admin user" in result.output
@@ -194,7 +194,7 @@ class TestAdminGroup:
             conn.execute = AsyncMock(return_value=mock_result)
             yield conn
 
-        with patch("wslcb_licensing_tracker.cli.get_db", side_effect=lambda *a, **k: _ctx()):
+        with patch("wslcb_licensing_tracker.cli.get_db", side_effect=lambda *_a, **_kw: _ctx()):
             result = CliRunner().invoke(main, ["admin", "list-users"])
         assert result.exit_code == 0
         assert "No admin users" in result.output
@@ -224,7 +224,7 @@ class TestAdminGroup:
             conn.execute = _execute
             yield conn
 
-        with patch("wslcb_licensing_tracker.cli.get_db", side_effect=lambda *a, **k: _ctx()):
+        with patch("wslcb_licensing_tracker.cli.get_db", side_effect=lambda *_a, **_kw: _ctx()):
             result = CliRunner().invoke(main, ["admin", "remove-user", "test@example.com"])
         assert result.exit_code == 0
         assert "Removed admin user" in result.output
