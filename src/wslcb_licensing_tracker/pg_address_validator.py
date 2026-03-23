@@ -45,6 +45,12 @@ _cached_api_key: str | None = None
 # module-level construction is safe before any event loop exists.
 _shared_client: httpx.AsyncClient = httpx.AsyncClient(timeout=TIMEOUT)
 
+
+async def close_shared_client() -> None:
+    """Close the module-level httpx client, releasing TLS sessions cleanly."""
+    await _shared_client.aclose()
+
+
 # Candidate env file paths, checked in order:
 # 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
 # 2. <project-root>/env                — local dev fallback

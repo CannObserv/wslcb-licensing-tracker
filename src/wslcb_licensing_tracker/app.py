@@ -25,7 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from . import admin_routes, api_routes
+from . import admin_routes, api_routes, pg_address_validator
 from .admin_auth import AdminRedirectException, get_current_user
 from .data_migration import run_pending_migrations
 from .database import create_engine_from_env, get_db
@@ -63,6 +63,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     await run_pending_migrations(engine)
     yield
     await engine.dispose()
+    await pg_address_validator.close_shared_client()
 
 
 app = FastAPI(title="WSLCB Licensing Tracker", lifespan=lifespan)
