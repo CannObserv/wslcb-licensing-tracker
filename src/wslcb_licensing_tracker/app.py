@@ -172,8 +172,9 @@ async def _tpl(
     return templates.TemplateResponse(request, template, ctx, status_code=status_code)
 
 
-# Inject shared template renderer into admin router (must precede first request).
-admin_routes.init_router(_tpl)
+# Store template renderer on app.state so admin_routes (and any future router)
+# can access it via request.app.state.tpl without module-level injection.
+app.state.tpl = _tpl
 
 
 async def _admin_redirect_handler(

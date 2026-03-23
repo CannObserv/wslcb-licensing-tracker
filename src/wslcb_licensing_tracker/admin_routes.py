@@ -2,11 +2,11 @@
 
 All /admin/* handlers live here and are included into the main app via
 ``app.include_router(admin_routes.router)`` in app.py.  The shared
-``_tpl()`` coroutine is injected at startup via ``init_router()``.
+``tpl`` coroutine is read from ``request.app.state.tpl`` at render time.
 """
 
 import logging
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
@@ -66,20 +66,8 @@ _VALID_ENDORSEMENT_SECTIONS = frozenset({"substances", "endorsements", "suggesti
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers (injected by app.py at include time)
+# Shared helpers
 # ---------------------------------------------------------------------------
-
-_tpl: Callable | None = None  # set by init_router()
-
-
-def init_router(tpl_fn: Callable) -> None:
-    """Bind the shared _tpl() coroutine from app.py into this router.
-
-    Must be called before the first request is served.  Raises
-    ``RuntimeError`` on any route invocation if skipped.
-    """
-    global _tpl  # noqa: PLW0603
-    _tpl = tpl_fn
 
 
 async def _render(
@@ -88,11 +76,12 @@ async def _render(
     ctx: dict[str, Any],
     status_code: int = 200,
 ) -> HTMLResponse:
-    """Thin wrapper around the injected _tpl helper; raises if uninitialised."""
-    if _tpl is None:
-        msg = "admin_routes.init_router() was never called — cannot render templates"
+    """Render a template via the ``tpl`` coroutine stored on ``app.state``."""
+    tpl = getattr(request.app.state, "tpl", None)
+    if tpl is None:
+        msg = "app.state.tpl not set — template renderer not configured in lifespan"
         raise RuntimeError(msg)
-    return await _tpl(request, template, ctx, status_code)
+    return await request.app.state.tpl(request, template, ctx, status_code)
 
 
 async def _get_db(request: Request) -> AsyncGenerator[AsyncConnection, None]:
