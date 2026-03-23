@@ -230,6 +230,10 @@ class TestHealthEndpoint:
         resp = client.get("/api/v1/health")
         assert resp.json()["data"]["db"] == "ok"
 
+    def test_healthy_data_contains_build(self, client):
+        resp = client.get("/api/v1/health")
+        assert "build" in resp.json()["data"]
+
     def test_db_error_returns_503(self, client):
         with patch("wslcb_licensing_tracker.api_routes.get_db") as mock_get_db:
 

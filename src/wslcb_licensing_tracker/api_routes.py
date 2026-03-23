@@ -12,6 +12,7 @@ The CSV export endpoint (/api/v1/export) is exempt from the envelope
 import csv
 import io
 import logging
+import os
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
@@ -109,7 +110,11 @@ async def api_health(request: Request) -> JSONResponse:
         async with get_db(request.app.state.engine) as conn:
             await conn.execute(text("SELECT 1"))
         return JSONResponse(
-            {"ok": True, "message": "Healthy", "data": {"db": "ok"}},
+            {
+                "ok": True,
+                "message": "Healthy",
+                "data": {"db": "ok", "build": os.environ.get("BUILD_ID", "dev")},
+            },
             status_code=200,
         )
     except Exception as exc:  # noqa: BLE001
