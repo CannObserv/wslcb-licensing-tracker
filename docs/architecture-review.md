@@ -187,7 +187,6 @@ This eliminates the circular `backfill_* → scraper → backfill_*` dependency 
 
 @dataclass
 class IngestOptions:
-    validate_addresses: bool = True
     link_entities: bool = True
     link_outcomes: bool = True
     source_id: int | None = None
@@ -214,8 +213,8 @@ def ingest_batch(db, records: list[dict], options: IngestOptions) -> BatchResult
 
 After this, each ingestion script becomes a thin shell:
 - **`scraper.py`:** Fetch HTML → archive → parse → `ingest_batch(options=IngestOptions())`
-- **`backfill_snapshots.py`:** Discover files → parse → `ingest_batch(options=IngestOptions(validate_addresses=False))`  
-- **`backfill_diffs.py`:** Parse diffs → `ingest_batch(options=IngestOptions(validate_addresses=False, link_entities=False))`
+- **`backfill_snapshots.py`:** Discover files → parse → `ingest_batch(options=IngestOptions())`
+- **`backfill_diffs.py`:** Parse diffs → `ingest_batch(options=IngestOptions(link_entities=False))`
 
 The repair logic in `backfill_snapshots.py` (fixing broken ASSUMPTION and CHANGE OF LOCATION records) stays in that module — it's genuinely source-specific, not part of the general pipeline.
 
