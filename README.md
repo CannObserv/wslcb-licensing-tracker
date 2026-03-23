@@ -78,7 +78,7 @@ wslcb-licensing-tracker/
 ├── api_routes.py           # Versioned API router (/api/v1/*)
 ├── admin_routes.py         # Admin router (/admin/*)
 ├── admin_auth.py           # Admin authentication (exe.dev proxy headers)
-├── cli.py                  # Unified CLI entry point (argparse subcommands)
+├── cli.py                  # Unified CLI entry point (click groups: ingest, db, admin)
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
 ├── text_utils.py           # Pure-string text normalization (clean_entity_name, strip_duplicate_marker, …)
@@ -99,8 +99,8 @@ wslcb-licensing-tracker/
 ├── pg_link_records.py      # Async application→outcome record linking
 ├── pg_queries_hydrate.py   # Integration layer: enrich_record, hydrate_records
 ├── pg_queries_search.py    # Core search + single-record lookups (imports pg_db only)
-├── pg_queries_filter.py    # Filter dropdowns + TTL caches
-├── pg_queries_stats.py     # Dashboard statistics + stats cache
+├── pg_queries_filter.py    # Filter dropdowns (no cache — always live from DB)
+├── pg_queries_stats.py     # Dashboard statistics (no cache — always live from DB)
 ├── pg_queries_export.py    # Flat CSV export (streaming + batch)
 ├── pg_queries_entity.py    # Entity-centric record queries
 ├── pg_admin_audit.py       # Async admin audit log
@@ -145,6 +145,7 @@ wslcb-licensing-tracker/
 │           ├── notifications/  # Unified diffs of the notifications section
 │           ├── approvals/      # Unified diffs of the approvals section
 │           └── discontinued/   # Unified diffs of the discontinued section
+├── package.json            # JS test tooling only (devDependencies: jsdom)
 ├── scripts/
 │   └── sqlite_to_pg.py     # One-time SQLite→PostgreSQL data migration script
 ├── alembic/                # Alembic schema migrations
@@ -185,6 +186,11 @@ wslcb-licensing-tracker/
 │   ├── test_pg_address_validator.py # Address validation DB layer tests
 │   ├── test_pg_admin_audit.py   # Admin audit log tests
 │   ├── test_pg_substances.py    # Regulated substance CRUD tests
+│   ├── test_cli.py              # Click CLI group and subcommand tests
+│   ├── test_cli_scrape.py       # Scrape CLI subcommand tests
+│   ├── test_cache_removal.py    # Cache removal verification tests (#99)
+│   ├── js/
+│   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 ├── wslcb-web.service            # systemd service for the web app
 ├── wslcb-task@.service          # systemd template for oneshot tasks
