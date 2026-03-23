@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
-from wslcb_licensing_tracker.admin_routes import _get_db
+from wslcb_licensing_tracker.admin_routes import _get_db, _render
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +227,35 @@ class TestAdminDashboard:
 
         assert resp.status_code == 200
         assert "9999" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# #100 — init_router removed, _tpl via app.state
+# ---------------------------------------------------------------------------
+
+
+class TestNoInitRouter:
+    """admin_routes must not expose init_router or module-level _tpl."""
+
+    def test_no_init_router_function(self):
+        """init_router() must not exist on admin_routes module."""
+        import wslcb_licensing_tracker.admin_routes as mod
+
+        assert not hasattr(mod, "init_router"), "init_router should be removed"
+
+    def test_no_module_level_tpl(self):
+        """Module-level _tpl mutable variable must not exist."""
+        import wslcb_licensing_tracker.admin_routes as mod
+
+        # _render still exists as a helper, but _tpl as a module global should not
+        assert not hasattr(mod, "_tpl"), "_tpl module-level variable should be removed"
+
+    def test_render_reads_from_app_state(self):
+        """_render should use request.app.state.tpl, not a module-level variable."""
+        import inspect
+
+        source = inspect.getsource(_render)
+        assert "request.app.state.tpl" in source
 
 
 class TestAdminEndorsementsPageLoads:
