@@ -10,6 +10,7 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter |
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure |
+| `wslcb-address-validation.timer` | Weekly address backfill, Sunday 2:00 AM Pacific, ±5 min jitter |
 
 ### Task service instances
 
@@ -35,8 +36,10 @@ Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`
 
 ```bash
 sudo cp deploy/wslcb-web.service deploy/wslcb-task@.service deploy/wslcb-scraper.timer \
+     deploy/wslcb-address-validation.timer \
      deploy/wslcb-healthcheck.service deploy/wslcb-healthcheck.timer /etc/systemd/system/
 sudo systemctl daemon-reload
+sudo systemctl enable --now wslcb-address-validation.timer
 sudo systemctl enable --now wslcb-healthcheck.timer
 sudo systemctl restart wslcb-web.service
 ```

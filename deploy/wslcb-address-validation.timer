@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly address validation backfill (Sunday 2:00 AM Pacific)
+
+[Timer]
+Unit=wslcb-task@backfill-addresses.service
+OnCalendar=Sun *-*-* 02:00:00 America/Los_Angeles
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
