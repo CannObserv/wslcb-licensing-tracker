@@ -29,7 +29,7 @@ from .pg_queries_stats import get_stats
 
 logger = logging.getLogger(__name__)
 
-_BUILD_ID = os.environ.get("BUILD_ID", "dev")
+_BUILD_ID = os.environ.get("BUILD_ID") or "dev"
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
