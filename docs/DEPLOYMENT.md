@@ -96,3 +96,7 @@ With `REQUIRE_PG_TESTS=1`, if `TEST_DATABASE_URL` is missing, `pytest_sessionsta
 
 - Virtualenv at `.venv/` (managed by `uv sync`). If project directory moves, recreate.
 - All persistent data in `./data/` (gitignored).
+
+### BUILD_ID
+
+Set automatically by `wslcb-web.service` at startup — `ExecStartPre` writes the short git SHA to `/run/wslcb-build-id`. Used for static asset cache-busting (`?v=<build_id>`) and shown in `/api/v1/health` response and page footer. Falls back to `"dev"` if unset.
