@@ -92,14 +92,27 @@ async def test_fix_orphaned_locations_returns_int(conn):
 async def test_fix_orphaned_locations_removes_orphan(conn):
     """An orphaned location (no license_records reference) is deleted when fix=True."""
     from sqlalchemy import text
-    await conn.execute(
-        text("INSERT INTO locations (raw_address, city, state, zip_code) "
-             "VALUES ('999 Orphan St', '', 'WA', '')")
-    )
+    # Guard: this test commits data — confirm we're targeting the test database.
+    assert "wslcb_test" in os.environ.get("TEST_DATABASE_URL", ""), \
+        "Must run against wslcb_test database"
+    # SAVEPOINT lets us roll back the INSERT if fix_orphaned_locations raises,
+    # preventing a stale orphan from leaking into later tests in this session.
+    await conn.execute(text("SAVEPOINT test_fix_orphan"))
+    try:
+        await conn.execute(
+            text("INSERT INTO locations (raw_address, city, state, zip_code) "
+                 "VALUES ('999 Orphan St', '', 'WA', '')")
+        )
+        removed = await fix_orphaned_locations(conn)
+        assert removed >= 1
+    except Exception:
+        await conn.execute(text("ROLLBACK TO SAVEPOINT test_fix_orphan"))
+        raise
+    finally:
+        # RELEASE cleans up the savepoint marker whether the block succeeded or
+        # was rolled back (after ROLLBACK TO SAVEPOINT the marker still exists).
+        await conn.execute(text("RELEASE SAVEPOINT test_fix_orphan"))
     await conn.commit()
-    removed = await fix_orphaned_locations(conn)
-    await conn.commit()
-    assert removed >= 1
 
 
 def test_print_report_returns_zero_for_clean_report():

@@ -19,6 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
+# Tables wiped at the start of each PostgreSQL test session, in FK-safe order.
+# Keeps committed data from one run from poisoning the next.
+# Omissions are intentional:
+#   source_types   — reference data seeded by migration 0001; reseeded explicitly below
+#   data_migrations — tracks which one-time data migrations have run; must not be cleared
+_PG_SESSION_TABLES = [
+    "record_links", "record_enrichments", "record_sources", "record_endorsements",
+    "record_entities", "scrape_log", "sources", "license_records", "locations",
+]
+
 
 # ── CI enforcement ───────────────────────────────────────────────────
 
@@ -203,13 +213,6 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
         cfg.attributes["connection"] = connection
         command.upgrade(cfg, "head")
 
-    # Tables to wipe before each test session, in FK-safe order.
-    # source_types is reference data seeded by migration 0001 — do NOT truncate it.
-    _TRUNCATE_TABLES = [
-        "record_links", "record_enrichments", "record_sources", "record_endorsements",
-        "record_entities", "scrape_log", "sources", "license_records", "locations",
-    ]
-
     try:
         async with engine.connect() as conn:
             await conn.run_sync(_run_upgrade)
@@ -218,7 +221,7 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
         # Truncate all test-writable tables for a clean slate each session.
         # Prevents stale committed data from previous runs causing false failures.
         async with engine.connect() as conn:
-            for table in _TRUNCATE_TABLES:
+            for table in _PG_SESSION_TABLES:
                 await conn.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"))
             # Reseed source_types reference data — the migration INSERT has no ON CONFLICT
             # guard, so if the table was previously wiped it won't be repopulated by
