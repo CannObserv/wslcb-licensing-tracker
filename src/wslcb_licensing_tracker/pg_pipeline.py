@@ -4,7 +4,7 @@ Async equivalent of pipeline.py. Uses SQLAlchemy Core expressions and
 the table objects from models.py.
 
 Entity linking is STUBBED — Phase 3 ports entities.py and endorsements.py.
-Address validation and outcome linking are also STUBBED for Phase 3.
+Outcome linking is also STUBBED for Phase 3.
 """
 
 import logging
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 class IngestOptions:
     """Configuration for the ingestion pipeline."""
 
-    validate_addresses: bool = True
     link_outcomes: bool = True
     source_id: int | None = None
     source_role: str = "first_seen"

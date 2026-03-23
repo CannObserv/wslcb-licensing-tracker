@@ -154,7 +154,7 @@ class TestPgIngestRecord:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_inserts_new_record(self, pg_conn, standard_new_application):
         """ingest_record inserts a new record."""
-        options = IngestOptions(validate_addresses=False, link_outcomes=False)
+        options = IngestOptions(link_outcomes=False)
         result = await ingest_record(pg_conn, standard_new_application, options)
         assert result is not None
         assert result.is_new is True
@@ -165,7 +165,6 @@ class TestPgIngestRecord:
         """Duplicate record gets provenance linked as 'confirmed'."""
         source_id = await self._seed_source(pg_conn)
         options = IngestOptions(
-            validate_addresses=False,
             link_outcomes=False,
             source_id=source_id,
         )
@@ -188,7 +187,6 @@ class TestPgIngestRecord:
         """New record gets provenance linked as 'first_seen'."""
         source_id = await self._seed_source(pg_conn)
         options = IngestOptions(
-            validate_addresses=False,
             link_outcomes=False,
             source_id=source_id,
             source_role="first_seen",
@@ -207,7 +205,7 @@ class TestPgIngestRecord:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_no_enrichment_recorded_before_phase3(self, pg_conn, standard_new_application):
         """No enrichment rows are written in Phase 2 — Phase 3 detects missing rows for backfill."""
-        options = IngestOptions(validate_addresses=False, link_outcomes=False)
+        options = IngestOptions(link_outcomes=False)
         r = await ingest_record(pg_conn, standard_new_application, options)
         assert r.is_new is True
 
@@ -239,7 +237,6 @@ async def test_pg_ingest_batch(pg_engine, standard_new_application):
         records.append(rec)
 
     options = IngestOptions(
-        validate_addresses=False,
         link_outcomes=False,
         batch_size=2,
     )

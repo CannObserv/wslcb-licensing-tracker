@@ -153,7 +153,6 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                 records = parse_records_from_table(table, section_type)
                 logger.debug("  %s: parsed %d records", section_type, len(records))
                 opts = IngestOptions(
-                    validate_addresses=True,
                     link_outcomes=True,
                     source_id=source_id,
                 )

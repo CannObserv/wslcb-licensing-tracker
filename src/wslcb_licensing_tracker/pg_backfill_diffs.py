@@ -95,7 +95,6 @@ async def backfill_diffs(
             )
 
             opts = IngestOptions(
-                validate_addresses=False,
                 link_outcomes=False,
                 source_id=source_id,
             )

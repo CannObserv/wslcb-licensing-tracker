@@ -135,7 +135,6 @@ async def backfill_from_snapshots(engine: AsyncEngine) -> None:
             )
 
             opts = IngestOptions(
-                validate_addresses=False,
                 link_outcomes=False,
                 source_id=source_id,
             )

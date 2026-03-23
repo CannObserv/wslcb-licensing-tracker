@@ -65,7 +65,7 @@ Many pipeline tests call `seed_endorsements(db)` as the first line to populate l
 
 ### Options object to disable side-effects
 ```python
-opts = IngestOptions(validate_addresses=False, link_outcomes=False)
+opts = IngestOptions(link_outcomes=False)
 ```
 Tests disable expensive/network features via options, enabling only what's under test.
 
