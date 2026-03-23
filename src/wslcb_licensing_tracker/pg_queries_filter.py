@@ -1,14 +1,16 @@
-"""Filter dropdown data and TTL caches for WSLCB licensing tracker.
+"""Filter dropdown data for WSLCB licensing tracker.
 
 Contains:
-- get_filter_options() — cached dropdown data for search page
-- get_cities_for_state() — cached city list for a given state
-- invalidate_filter_cache() — clear all query-layer caches (filter,
-  city, and stats)
+- get_filter_options() — dropdown data for search page
+- get_cities_for_state() — city list for a given state
+- invalidate_filter_cache() — legacy no-op, retained for call-site compat
+
+No in-process caching (#99).  The underlying queries are indexed and
+run in <10 ms, so the TTL cache was removed to eliminate silent
+inconsistency across multiple uvicorn workers.
 """
 
 import logging
-import time
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -20,13 +22,6 @@ from .pg_substances import get_regulated_substances
 
 logger = logging.getLogger(__name__)
 
-# In-process cache for filter dropdown options.
-_filter_cache: dict = {}
-_FILTER_CACHE_TTL = 300  # seconds (5 minutes)
-
-# Per-state city list cache.
-_city_cache: dict[str, tuple[float, list[str]]] = {}
-
 _LOCATION_IDS_SUBQUERY = (
     "SELECT location_id FROM license_records WHERE location_id IS NOT NULL"
     " UNION "
@@ -35,23 +30,21 @@ _LOCATION_IDS_SUBQUERY = (
 
 
 def invalidate_filter_cache() -> None:
-    """Clear all in-process filter caches.
+    """No-op retained for backward compatibility.
 
-    Call after any admin mutation that changes endorsements, regulated
-    substances, or locations so the next search page load reflects the
-    current state rather than a stale snapshot.
+    Previously cleared in-process TTL caches.  Caches were removed in
+    #99 — every call now hits the database directly.  Admin mutation
+    call-sites still invoke this; removing those calls is not worth the
+    churn.
     """
-    _filter_cache.clear()
-    _city_cache.clear()
     invalidate_stats_cache()
 
 
 async def get_filter_options(conn: AsyncConnection) -> dict:
-    """Get distinct values for filter dropdowns (cached, 5-min TTL)."""
-    now = time.monotonic()
-    if _filter_cache and now - _filter_cache["ts"] < _FILTER_CACHE_TTL:
-        return _filter_cache["data"]
+    """Get distinct values for filter dropdowns.
 
+    Always queries the database — no in-process cache.
+    """
     options: dict = {}
     for col in ["section_type", "application_type"]:
         result = await conn.execute(
@@ -78,8 +71,6 @@ async def get_filter_options(conn: AsyncConnection) -> dict:
 
     options["endorsement"] = await get_endorsement_options(conn)
     options["regulated_substance"] = await get_regulated_substances(conn)
-    _filter_cache["data"] = options
-    _filter_cache["ts"] = now
     return options
 
 
@@ -87,13 +78,8 @@ async def get_cities_for_state(conn: AsyncConnection, state: str) -> list[str]:
     """Return distinct display cities for locations in *state*.
 
     Only returns cities from locations referenced by at least one
-    license record. Results are cached for _FILTER_CACHE_TTL seconds per state.
+    license record.  Always queries the database — no in-process cache.
     """
-    now = time.monotonic()
-    cached = _city_cache.get(state)
-    if cached and now - cached[0] < _FILTER_CACHE_TTL:
-        return cached[1]
-
     result = await conn.execute(
         text(f"""
             SELECT DISTINCT display_city FROM (
@@ -107,6 +93,4 @@ async def get_cities_for_state(conn: AsyncConnection, state: str) -> list[str]:
         """),
         {"state": state},
     )
-    cities = [r[0] for r in result.fetchall()]
-    _city_cache[state] = (now, cities)
-    return cities
+    return [r[0] for r in result.fetchall()]

@@ -1,14 +1,16 @@
 """Dashboard statistics queries for WSLCB licensing tracker.
 
 Contains:
-- get_stats() — cached summary statistics (TTL: 60 s)
+- get_stats() — summary statistics (always live from DB)
 - _get_pipeline_stats() — application pipeline outcome breakdown
-- invalidate_stats_cache() — clear the stats cache; called by
-  pg_queries_filter.invalidate_filter_cache()
+- invalidate_stats_cache() — legacy no-op, retained for call-site compat
+
+No in-process caching (#99).  The underlying queries are indexed and
+run in <10 ms, so the TTL cache was removed to eliminate silent
+inconsistency across multiple uvicorn workers.
 """
 
 import logging
-import time
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -17,15 +19,14 @@ from .pg_db import DATA_GAP_CUTOFF, LINKABLE_TYPES, PENDING_CUTOFF_DAYS
 
 logger = logging.getLogger(__name__)
 
-_stats_cache: dict = {}
-_STATS_CACHE_TTL = 60  # seconds (1 minute)
-
 _LINKABLE_TYPES_CSV = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
 
 
 def invalidate_stats_cache() -> None:
-    """Clear the in-process stats cache."""
-    _stats_cache.clear()
+    """No-op retained for backward compatibility.
+
+    Previously cleared an in-process TTL cache.  Removed in #99.
+    """
 
 
 async def _get_pipeline_stats(conn: AsyncConnection) -> dict:
@@ -99,7 +100,9 @@ async def _get_pipeline_stats(conn: AsyncConnection) -> dict:
 
 
 async def get_stats(conn: AsyncConnection) -> dict:
-    """Get summary statistics (cached, 1-min TTL).
+    """Get summary statistics.
+
+    Always queries the database — no in-process cache.
 
     All aggregates are computed in two queries:
     1. A single SELECT over license_records combining section-type counts,
@@ -108,10 +111,6 @@ async def get_stats(conn: AsyncConnection) -> dict:
 
     A third query fetches the most-recent scrape_log row.
     """
-    now = time.monotonic()
-    if _stats_cache and now - _stats_cache["ts"] < _STATS_CACHE_TTL:
-        return _stats_cache["data"]
-
     agg_result = await conn.execute(
         text("""
         SELECT
@@ -137,7 +136,7 @@ async def get_stats(conn: AsyncConnection) -> dict:
     scrape_row = scrape_result.mappings().first()
     last_scrape = dict(scrape_row) if scrape_row else None
 
-    result = {
+    return {
         "total_records": agg["total_records"] if agg else 0,
         "new_application_count": agg["new_application_count"] if agg else 0,
         "approved_count": agg["approved_count"] if agg else 0,
@@ -149,6 +148,3 @@ async def get_stats(conn: AsyncConnection) -> dict:
         "last_scrape": last_scrape,
         "pipeline": pipeline,
     }
-    _stats_cache["data"] = result
-    _stats_cache["ts"] = now
-    return result

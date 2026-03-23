@@ -96,6 +96,18 @@ REQUIRE_PG_TESTS=1 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb 
 
 With `REQUIRE_PG_TESTS=1`, if `TEST_DATABASE_URL` is missing, `pytest_sessionstart` calls `pytest.exit(returncode=1)` before any collection or test execution — catching all skip paths including `@pytest.mark.skipif` and standalone connection fixtures.
 
+## Caching
+
+Filter dropdowns and dashboard statistics have **no in-process cache** (#99).
+Every request hits the database directly.  The underlying queries are indexed
+and complete in <10 ms, so the previous TTL caches were removed to eliminate
+silent inconsistency when running multiple uvicorn workers.
+
+`invalidate_filter_cache()` and `invalidate_stats_cache()` still exist as
+no-ops so admin mutation call-sites compile without changes.
+
+Worker count has no effect on data freshness — safe to scale workers freely.
+
 ## Environment
 
 - Virtualenv at `.venv/` (managed by `uv sync`). If project directory moves, recreate.
