@@ -4,7 +4,7 @@ description: "Finalizes work by ensuring everything is committed, pushed to the 
 compatibility: Designed for Claude. Requires git and gh CLI. Python project using venv, pytest, systemd.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: ship it, push GH, close GH, wrap up
   overrides: shipping-work-claude
   override-reason: "Concrete test commands (source venv/bin/activate && python -m pytest); encodes #<n> [type]: desc Conventional Commits convention; systemd restart reminder after web app changes"
@@ -93,6 +93,8 @@ If on a feature branch, merge to `main` first. Then continue.
 bash skills/shipping-work-claude/scripts/push.sh
 ```
 
+Confirm push succeeded before proceeding.
+
 ### Step 5 — Comment on GitHub issues
 
 For each issue in scope:
@@ -127,9 +129,31 @@ Present a summary table:
 |---|---|---|---|
 | #19 | ... | ✅ Closed | Summary posted |
 
+### Step 8 — Next-steps notification
+
+After the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. Common categories:
+
+| Category | Trigger | Example action |
+|---|---|---|
+| DB migration | Alembic revision added or schema change | `alembic upgrade head` or restart service |
+| Service restart | Any production code change (no auto-reload) | `sudo systemctl restart wslcb-web.service` |
+| Data migration | New normalizer, field rename, backfill script | Run `wslcb reprocess-endorsements`, `wslcb rebuild-links`, etc. |
+| Env var / secret | New config key added | Add to `env` file and restart |
+
+Present only the items that apply. Be specific — name the file, table, or command. Example:
+
+```
+**Next steps for production:**
+- Restart required — `app.py` changed, run `sudo systemctl restart wslcb-web.service`
+- Run `wslcb reprocess-endorsements` — endorsement logic updated
+```
+
+Then **offer to execute** any item within your capabilities. Ask once — don't nag.
+
+If nothing applies, omit this step entirely.
+
 ## Notes
 
-- If web app files changed (`app.py`, `templates/`, `static/`), remind the user to `sudo systemctl restart wslcb-web.service` if the app is running in production
 - If `gh` CLI hits errors, use `--json` flag workarounds as needed
 - The project's AGENTS.md is authoritative for commit conventions — read it before committing
 - Load GH token for `gh` commands: `export GH_TOKEN=$(grep GITHUB_TOKEN env | cut -d= -f2)`
