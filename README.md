@@ -59,7 +59,7 @@ Each record includes:
 | Database | [PostgreSQL](https://www.postgresql.org/) with [tsvector](https://www.postgresql.org/docs/current/datatype-textsearch.html) + [pg_trgm](https://www.postgresql.org/docs/current/pgtrgm.html) full-text search |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
 | Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (pre-built CLI, custom brand palette) |
-| Scheduling | systemd timer (twice-daily) |
+| Scheduling | systemd timers (scraper twice-daily, address validation weekly) |
 
 ## Logging
 
@@ -190,7 +190,8 @@ wslcb-licensing-tracker/
 ├── wslcb-task@.service          # systemd template for oneshot tasks
 ├── wslcb-scraper.timer          # systemd timer (twice-daily: 12:30 AM and 6:30 AM Pacific)
 ├── wslcb-healthcheck.service    # systemd health check service (restarts web on failure)
-└── wslcb-healthcheck.timer      # systemd health check timer (every 5 minutes)
+├── wslcb-healthcheck.timer      # systemd health check timer (every 5 minutes)
+└── wslcb-address-validation.timer # weekly address standardization backfill (Sunday 2 AM Pacific)
 ```
 
 ## Setup
@@ -246,6 +247,7 @@ Then visit [http://localhost:8000](http://localhost:8000).
 
 ```bash
 sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer \
+     wslcb-address-validation.timer \
      wslcb-healthcheck.service wslcb-healthcheck.timer /etc/systemd/system/
 sudo cp sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
 sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
@@ -253,6 +255,7 @@ sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-web.service
 sudo systemctl enable --now wslcb-scraper.timer
+sudo systemctl enable --now wslcb-address-validation.timer
 sudo systemctl enable --now wslcb-healthcheck.timer
 ```
 
