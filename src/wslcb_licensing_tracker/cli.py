@@ -20,6 +20,7 @@ Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -43,11 +44,27 @@ from .pg_link_records import build_all_links as pg_build_all_links
 from .pg_scraper import cleanup_redundant_scrapes as pg_cleanup_redundant
 from .pg_scraper import scrape as pg_scrape
 
+logger = logging.getLogger(__name__)
 
-def cmd_scrape(_args: argparse.Namespace) -> None:
-    """Run a live scrape of the WSLCB licensing page."""
+
+def cmd_scrape(args: argparse.Namespace) -> None:
+    """Run a live scrape, then backfill un-standardized addresses."""
     engine = create_engine_from_env()
     asyncio.run(pg_scrape(engine))
+
+    # Post-scrape: standardize any new locations via the address API.
+    # Failure here is non-fatal — the weekly timer catches stragglers.
+    try:
+
+        async def _backfill() -> None:
+            async with get_db(engine) as conn:
+                await pg_backfill_addresses(conn, rate_limit=args.rate_limit)
+                await conn.commit()
+
+        asyncio.run(_backfill())
+    except Exception:  # noqa: BLE001 — intentionally broad; backfill failure is non-fatal
+        logger.warning("Post-scrape address backfill failed", exc_info=True)
+
     engine.dispose()
 
 
@@ -320,6 +337,13 @@ def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statemen
 
     # scrape
     p = sub.add_parser("scrape", help="Run a live scrape of the WSLCB page")
+    p.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0.1,
+        metavar="SECONDS",
+        help="Seconds to sleep between address API calls (default: 0.1)",
+    )
     p.set_defaults(func=cmd_scrape)
 
     # backfill-snapshots
