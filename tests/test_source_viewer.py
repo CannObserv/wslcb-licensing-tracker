@@ -3,14 +3,13 @@
 Uses FastAPI TestClient with async pg_queries and SQLAlchemy Core queries mocked.
 Parser extraction functions are also mocked so tests run without real snapshot files.
 """
+
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,6 +114,7 @@ def _stop(patches):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestSourceViewerRoute:
     def test_404_invalid_record_id(self):
         # source found, but record not found
@@ -149,8 +149,10 @@ class TestSourceViewerRoute:
         """Returns 200 with iframe srcdoc when extractor returns HTML."""
         client, patches = _make_client(source_row=_SAMPLE_SOURCE, record=_SAMPLE_RECORD)
         try:
-            with patch("wslcb_licensing_tracker.app.extract_tbody_from_snapshot",
-                       return_value="<tbody><tr><td>Business Name:</td><td>ACME</td></tr></tbody>"):
+            with patch(
+                "wslcb_licensing_tracker.app.extract_tbody_from_snapshot",
+                return_value="<tbody><tr><td>Business Name:</td><td>ACME</td></tr></tbody>",
+            ):
                 resp = client.get("/source/1/record/1")
 
             assert resp.status_code == 200
@@ -163,7 +165,9 @@ class TestSourceViewerRoute:
         """Returns 200 with not-found notice when extractor returns None."""
         client, patches = _make_client(source_row=_SAMPLE_SOURCE, record=_SAMPLE_RECORD)
         try:
-            with patch("wslcb_licensing_tracker.app.extract_tbody_from_snapshot", return_value=None):
+            with patch(
+                "wslcb_licensing_tracker.app.extract_tbody_from_snapshot", return_value=None
+            ):
                 resp = client.get("/source/1/record/1")
 
             assert resp.status_code == 200
@@ -175,8 +179,10 @@ class TestSourceViewerRoute:
         """co_diff_archive sources dispatch to extract_tbody_from_diff."""
         client, patches = _make_client(source_row=_DIFF_SOURCE, record=_SAMPLE_RECORD)
         try:
-            with patch("wslcb_licensing_tracker.app.extract_tbody_from_diff",
-                       return_value="<tbody><tr><td>License Number:</td><td>078001</td></tr></tbody>") as mock_diff:
+            with patch(
+                "wslcb_licensing_tracker.app.extract_tbody_from_diff",
+                return_value="<tbody><tr><td>License Number:</td><td>078001</td></tr></tbody>",
+            ) as mock_diff:
                 resp = client.get("/source/1/record/1")
 
             assert resp.status_code == 200
@@ -190,12 +196,15 @@ class TestSourceViewerRoute:
         client, patches = _make_client(source_row=_SAMPLE_SOURCE, record=_SAMPLE_RECORD)
         try:
             anchored_tbody = (
-                '<tbody><tr>'
-                '<td>Business Name:</td>'
+                "<tbody><tr>"
+                "<td>Business Name:</td>"
                 '<td><a href="http://example.com">ACME CANNABIS CO</a></td>'
-                '</tr></tbody>'
+                "</tr></tbody>"
             )
-            with patch("wslcb_licensing_tracker.app.extract_tbody_from_snapshot", return_value=anchored_tbody):
+            with patch(
+                "wslcb_licensing_tracker.app.extract_tbody_from_snapshot",
+                return_value=anchored_tbody,
+            ):
                 resp = client.get("/source/1/record/1")
 
             assert resp.status_code == 200

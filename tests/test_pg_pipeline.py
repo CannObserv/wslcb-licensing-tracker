@@ -3,16 +3,22 @@
 Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
 """
 
-import pytest
 from datetime import UTC, datetime
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from wslcb_licensing_tracker.models import license_records, locations, record_enrichments, record_sources, source_types, sources
+from wslcb_licensing_tracker.models import (
+    license_records,
+    locations,
+    record_enrichments,
+    record_sources,
+    source_types,
+    sources,
+)
 from wslcb_licensing_tracker.pg_pipeline import (
-    BatchResult,
     IngestOptions,
-    IngestResult,
     ingest_batch,
     ingest_record,
     insert_record,
@@ -49,10 +55,11 @@ class TestPgInsertRecord:
         assert result is not None
         record_id = result[0]
 
-        row = (await pg_conn.execute(
-            select(license_records.c.business_name)
-            .where(license_records.c.id == record_id)
-        )).one()
+        row = (
+            await pg_conn.execute(
+                select(license_records.c.business_name).where(license_records.c.id == record_id)
+            )
+        ).one()
         assert row.business_name == "ACME CANNABIS SHOP"  # trailing dot stripped, uppercased
 
     @pytest.mark.asyncio(loop_scope="session")
@@ -63,16 +70,18 @@ class TestPgInsertRecord:
         assert result is not None
         record_id = result[0]
 
-        row = (await pg_conn.execute(
-            select(license_records.c.location_id)
-            .where(license_records.c.id == record_id)
-        )).one()
+        row = (
+            await pg_conn.execute(
+                select(license_records.c.location_id).where(license_records.c.id == record_id)
+            )
+        ).one()
         assert row.location_id is not None
 
-        loc = (await pg_conn.execute(
-            select(locations.c.raw_address)
-            .where(locations.c.id == row.location_id)
-        )).one()
+        loc = (
+            await pg_conn.execute(
+                select(locations.c.raw_address).where(locations.c.id == row.location_id)
+            )
+        ).one()
         assert loc.raw_address == "123 MAIN ST, SEATTLE, WA 98101"
 
     @pytest.mark.asyncio(loop_scope="session")
@@ -85,12 +94,14 @@ class TestPgInsertRecord:
         assert result is not None
         record_id = result[0]
 
-        row = (await pg_conn.execute(
-            select(
-                license_records.c.business_name,
-                license_records.c.raw_business_name,
-            ).where(license_records.c.id == record_id)
-        )).one()
+        row = (
+            await pg_conn.execute(
+                select(
+                    license_records.c.business_name,
+                    license_records.c.raw_business_name,
+                ).where(license_records.c.id == record_id)
+            )
+        ).one()
         assert row.business_name == "ACME CANNABIS SHOP"
         assert row.raw_business_name == "acme cannabis shop."
 
@@ -122,10 +133,13 @@ class TestPgInsertRecord:
         assert result is not None
         record_id = result[0]
 
-        row = (await pg_conn.execute(
-            select(license_records.c.has_additional_names)
-            .where(license_records.c.id == record_id)
-        )).one()
+        row = (
+            await pg_conn.execute(
+                select(license_records.c.has_additional_names).where(
+                    license_records.c.id == record_id
+                )
+            )
+        ).one()
         assert row.has_additional_names == 1
 
 
@@ -203,8 +217,8 @@ class TestPgIngestRecord:
         assert result.first() is not None
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_no_enrichment_recorded_before_phase3(self, pg_conn, standard_new_application):
-        """No enrichment rows are written in Phase 2 — Phase 3 detects missing rows for backfill."""
+    async def test_enrichment_endorsements_recorded(self, pg_conn, standard_new_application):
+        """Endorsement enrichment step is recorded for new records."""
         options = IngestOptions(link_outcomes=False)
         r = await ingest_record(pg_conn, standard_new_application, options)
         assert r.is_new is True
@@ -214,8 +228,111 @@ class TestPgIngestRecord:
                 record_enrichments.c.record_id == r.record_id,
             )
         )
+        steps = {row[0] for row in result}
+        assert "endorsements" in steps
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_enrichment_entities_recorded(self, pg_conn, standard_new_application):
+        """Entity enrichment step is recorded for new records."""
+        standard_new_application["license_number"] = "ENR_ENT001"
+        options = IngestOptions(link_outcomes=False)
+        r = await ingest_record(pg_conn, standard_new_application, options)
+        assert r.is_new is True
+
+        result = await pg_conn.execute(
+            select(record_enrichments.c.step).where(
+                record_enrichments.c.record_id == r.record_id,
+            )
+        )
+        steps = {row[0] for row in result}
+        assert "entities" in steps
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_enrichment_outcome_link_recorded(self, pg_conn, standard_new_application):
+        """Outcome link enrichment step is recorded for new records when link_outcomes=True."""
+        standard_new_application["license_number"] = "ENR_LNK001"
+        options = IngestOptions(link_outcomes=True)
+        r = await ingest_record(pg_conn, standard_new_application, options)
+        assert r.is_new is True
+
+        result = await pg_conn.execute(
+            select(record_enrichments.c.step).where(
+                record_enrichments.c.record_id == r.record_id,
+            )
+        )
+        steps = {row[0] for row in result}
+        assert "outcome_link" in steps
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_no_outcome_link_when_disabled(self, pg_conn, standard_new_application):
+        """Outcome link enrichment is skipped when link_outcomes=False."""
+        standard_new_application["license_number"] = "ENR_NO_LNK001"
+        options = IngestOptions(link_outcomes=False)
+        r = await ingest_record(pg_conn, standard_new_application, options)
+        assert r.is_new is True
+
+        result = await pg_conn.execute(
+            select(record_enrichments.c.step).where(
+                record_enrichments.c.record_id == r.record_id,
+            )
+        )
+        steps = {row[0] for row in result}
+        assert "outcome_link" not in steps
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_no_enrichment_for_duplicates(self, pg_conn, standard_new_application):
+        """Duplicate records skip enrichment (already done on first insert)."""
+        standard_new_application["license_number"] = "ENR_DUP001"
+        options = IngestOptions(link_outcomes=False)
+        r1 = await ingest_record(pg_conn, standard_new_application, options)
+        assert r1.is_new is True
+
+        # Clear enrichments to prove duplicates don't re-add them
+        await pg_conn.execute(
+            record_enrichments.delete().where(
+                record_enrichments.c.record_id == r1.record_id,
+            )
+        )
+
+        r2 = await ingest_record(pg_conn, standard_new_application, options)
+        assert r2.is_new is False
+
+        result = await pg_conn.execute(
+            select(record_enrichments.c.step).where(
+                record_enrichments.c.record_id == r2.record_id,
+            )
+        )
         steps = [row[0] for row in result]
         assert steps == []
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_enrichment_failure_isolation(
+        self, pg_conn, standard_new_application, monkeypatch
+    ):
+        """A failure in one enrichment step does not block others."""
+        standard_new_application["license_number"] = "ENR_FAIL001"
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        # Break endorsements; entities + outcome_link should still run
+        monkeypatch.setattr("wslcb_licensing_tracker.pg_pipeline.process_record", _boom)
+
+        options = IngestOptions(link_outcomes=True)
+        r = await ingest_record(pg_conn, standard_new_application, options)
+        assert r is not None
+        assert r.is_new is True
+
+        result = await pg_conn.execute(
+            select(record_enrichments.c.step).where(
+                record_enrichments.c.record_id == r.record_id,
+            )
+        )
+        steps = {row[0] for row in result}
+        # endorsements should NOT be there (it failed), but entities and outcome_link should
+        assert "endorsements" not in steps
+        assert "entities" in steps
+        assert "outcome_link" in steps
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -251,8 +368,6 @@ async def test_pg_ingest_batch(pg_engine, standard_new_application):
         finally:
             # Clean up committed data
             await conn.execute(
-                license_records.delete().where(
-                    license_records.c.license_number.like("BATCH%")
-                )
+                license_records.delete().where(license_records.c.license_number.like("BATCH%"))
             )
             await conn.commit()

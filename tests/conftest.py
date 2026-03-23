@@ -7,6 +7,7 @@ no network calls, no disk I/O for the database.
 PostgreSQL tests use the pg_engine / pg_conn fixtures defined below,
 which require TEST_DATABASE_URL to be set in the environment.
 """
+
 import os
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -25,8 +26,15 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 #   source_types   — reference data seeded by migration 0001; reseeded explicitly below
 #   data_migrations — tracks which one-time data migrations have run; must not be cleared
 _PG_SESSION_TABLES = [
-    "record_links", "record_enrichments", "record_sources", "record_endorsements",
-    "record_entities", "scrape_log", "sources", "license_records", "locations",
+    "record_links",
+    "record_enrichments",
+    "record_sources",
+    "record_endorsements",
+    "record_entities",
+    "scrape_log",
+    "sources",
+    "license_records",
+    "locations",
 ]
 
 
@@ -226,15 +234,23 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
             # Reseed source_types reference data — the migration INSERT has no ON CONFLICT
             # guard, so if the table was previously wiped it won't be repopulated by
             # alembic upgrade (which skips already-applied migrations).
-            await conn.execute(text("""
-                INSERT INTO source_types (id, slug, label, description) VALUES
-                    (1, 'live_scrape',      'Live Scrape',       'Direct scrape of the WSLCB licensing page'),
-                    (2, 'co_archive',       'CO Page Archive',   'Cannabis Observer archived HTML snapshots'),
-                    (3, 'internet_archive', 'Internet Archive',  'Wayback Machine snapshots'),
-                    (4, 'co_diff_archive',  'CO Diff Archive',   'Cannabis Observer diff-detected change snapshots'),
-                    (5, 'manual',           'Manual Entry',      'Manually entered or corrected records')
+            await conn.execute(
+                text("""
+                INSERT INTO source_types (id, slug, label, description)
+                VALUES
+                    (1, 'live_scrape', 'Live Scrape',
+                     'Direct scrape of the WSLCB licensing page'),
+                    (2, 'co_archive', 'CO Page Archive',
+                     'Cannabis Observer archived HTML snapshots'),
+                    (3, 'internet_archive', 'Internet Archive',
+                     'Wayback Machine snapshots'),
+                    (4, 'co_diff_archive', 'CO Diff Archive',
+                     'Cannabis Observer diff-detected change snapshots'),
+                    (5, 'manual', 'Manual Entry',
+                     'Manually entered or corrected records')
                 ON CONFLICT (id) DO NOTHING
-            """))
+            """)
+            )
             await conn.commit()
 
         yield engine

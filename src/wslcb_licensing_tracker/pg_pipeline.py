@@ -13,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .models import license_records, record_enrichments
 from .pg_db import get_or_create_location, link_record_source
-from .pg_entities import ADDITIONAL_NAMES_MARKERS
+from .pg_endorsements import process_record
+from .pg_entities import ADDITIONAL_NAMES_MARKERS, parse_and_link_entities
+from .pg_link_records import link_new_record
 from .text_utils import clean_applicants_string, clean_entity_name
 
 logger = logging.getLogger(__name__)
@@ -101,8 +103,6 @@ async def insert_record(
 
     Returns (new_id, True) for freshly inserted records and
     (existing_id, False) when a duplicate is detected.
-
-    Entity linking is STUBBED — Phase 3 adds parse_and_link_entities.
     """
     # Resolve locations
     location_id = await get_or_create_location(
@@ -165,7 +165,6 @@ async def insert_record(
     result = await conn.execute(stmt)
     row = result.first()
     if row:
-        # Phase 3: parse_and_link_entities for applicants goes here
         return (row[0], True)
 
     # Conflict — fetch existing ID
@@ -189,6 +188,53 @@ async def insert_record(
         )
         return None
     return (row[0], False)
+
+
+async def _enrich_new_record(
+    conn: AsyncConnection,
+    record_id: int,
+    record: dict,
+    options: IngestOptions,
+) -> None:
+    """Run enrichment steps for a newly inserted record.
+
+    Each step is wrapped in a savepoint so a failure in one does not
+    block the others.
+    """
+    # Endorsements
+    try:
+        async with conn.begin_nested():
+            await process_record(conn, record_id, record.get("license_type", ""))
+            await _record_enrichment(conn, record_id, STEP_ENDORSEMENTS)
+    except Exception:
+        logger.exception("Endorsement enrichment failed for record %d", record_id)
+
+    # Entity linking
+    try:
+        async with conn.begin_nested():
+            applicants = record.get("applicants", "")
+            if applicants:
+                await parse_and_link_entities(conn, record_id, applicants)
+            prev_applicants = record.get("previous_applicants", "")
+            if prev_applicants:
+                await parse_and_link_entities(
+                    conn,
+                    record_id,
+                    prev_applicants,
+                    role="previous_applicant",
+                )
+            await _record_enrichment(conn, record_id, STEP_ENTITIES)
+    except Exception:
+        logger.exception("Entity enrichment failed for record %d", record_id)
+
+    # Outcome linking
+    if options.link_outcomes:
+        try:
+            async with conn.begin_nested():
+                await link_new_record(conn, record_id)
+                await _record_enrichment(conn, record_id, STEP_OUTCOME_LINK)
+        except Exception:
+            logger.exception("Outcome link enrichment failed for record %d", record_id)
 
 
 async def ingest_record(
@@ -222,9 +268,8 @@ async def ingest_record(
     record_id, is_new = result
 
     if is_new:
-        # Endorsements, entity linking, address validation, and outcome linking
-        # are STUBBED — Phase 3 ports these steps. Enrichment rows are NOT
-        # recorded here so Phase 3 can detect which records need backfill.
+        # Step 2: Enrichment (endorsements, entities, outcome links)
+        await _enrich_new_record(conn, record_id, record, options)
 
         # Step 3: Link provenance (first_seen)
         if options.source_id is not None:
@@ -240,8 +285,6 @@ async def ingest_record(
                     "Error linking provenance for record %d",
                     record_id,
                 )
-
-        # Address validation and outcome linking are STUBBED (Phase 3 implementation)
 
     # Duplicate — link provenance as 'confirmed'
     elif options.source_id is not None:

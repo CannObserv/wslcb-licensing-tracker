@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "description": "JS test dependencies only — not used in production",
+  "scripts": {
+    "test": "node --test tests/js/test_*.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

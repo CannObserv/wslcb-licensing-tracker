@@ -20,16 +20,14 @@ class TestLogAction:
             target_id=1,
             details={"key": "value"},
         )
-        assert isinstance(row_id, int)  # noqa: S101
-        assert row_id > 0  # noqa: S101
+        assert isinstance(row_id, int)
+        assert row_id > 0
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_null_details(self, pg_conn: AsyncConnection) -> None:
         """log_action handles None details."""
-        row_id = await log_action(
-            pg_conn, "test@example.com", "endorsement.noop", "endorsement"
-        )
-        assert isinstance(row_id, int)  # noqa: S101
+        row_id = await log_action(pg_conn, "test@example.com", "endorsement.noop", "endorsement")
+        assert isinstance(row_id, int)
 
 
 class TestGetAuditLog:
@@ -38,20 +36,16 @@ class TestGetAuditLog:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_rows_and_count(self, pg_conn: AsyncConnection) -> None:
         """get_audit_log returns rows and total count."""
-        await log_action(
-            pg_conn, "a@example.com", "test.action", "record", target_id=99
-        )
+        await log_action(pg_conn, "a@example.com", "test.action", "record", target_id=99)
         rows, total = await get_audit_log(pg_conn)
-        assert total >= 1  # noqa: S101
-        assert isinstance(rows, list)  # noqa: S101
-        assert all("details_parsed" in r for r in rows)  # noqa: S101
+        assert total >= 1
+        assert isinstance(rows, list)
+        assert all("details_parsed" in r for r in rows)
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_filter_by_action(self, pg_conn: AsyncConnection) -> None:
         """get_audit_log filters by action."""
         await log_action(pg_conn, "b@example.com", "unique.action.xyz", "record")
-        rows, total = await get_audit_log(
-            pg_conn, filters={"action": "unique.action.xyz"}
-        )
-        assert total >= 1  # noqa: S101
-        assert all(r["action"] == "unique.action.xyz" for r in rows)  # noqa: S101
+        rows, total = await get_audit_log(pg_conn, filters={"action": "unique.action.xyz"})
+        assert total >= 1
+        assert all(r["action"] == "unique.action.xyz" for r in rows)

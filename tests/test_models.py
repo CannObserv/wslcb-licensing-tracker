@@ -2,7 +2,6 @@
 
 from wslcb_licensing_tracker import models
 
-
 EXPECTED_TABLES = {
     "locations",
     "license_endorsements",
@@ -28,12 +27,12 @@ EXPECTED_TABLES = {
 
 
 def test_all_tables_present():
-    """metadata contains all expected table names."""
+    """Metadata contains all expected table names."""
     assert set(models.metadata.tables.keys()) == EXPECTED_TABLES
 
 
 def test_locations_columns():
-    """locations table has all expected columns."""
+    """Locations table has all expected columns."""
     cols = {c.name for c in models.locations.c}
     assert "id" in cols
     assert "raw_address" in cols

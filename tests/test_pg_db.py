@@ -3,12 +3,20 @@
 Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
 """
 
-import pytest
 from datetime import UTC, datetime
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from wslcb_licensing_tracker.models import license_records, locations, record_sources, scrape_log, source_types, sources
+from wslcb_licensing_tracker.models import (
+    license_records,
+    locations,
+    record_sources,
+    scrape_log,
+    source_types,
+    sources,
+)
 from wslcb_licensing_tracker.pg_db import (
     get_or_create_location,
     get_or_create_source,
@@ -51,12 +59,16 @@ class TestPgGetOrCreateLocation:
     async def test_stores_city_state_zip(self, pg_conn):
         """City, state, and zip_code are stored correctly."""
         loc_id = await get_or_create_location(
-            pg_conn, "789 OAK DR, OLYMPIA, WA 98501",
-            city="OLYMPIA", state="WA", zip_code="98501",
+            pg_conn,
+            "789 OAK DR, OLYMPIA, WA 98501",
+            city="OLYMPIA",
+            state="WA",
+            zip_code="98501",
         )
         result = await pg_conn.execute(
-            select(locations.c.city, locations.c.state, locations.c.zip_code)
-            .where(locations.c.id == loc_id)
+            select(locations.c.city, locations.c.state, locations.c.zip_code).where(
+                locations.c.id == loc_id
+            )
         )
         row = result.one()
         assert row.city == "OLYMPIA"
@@ -85,7 +97,8 @@ class TestPgGetOrCreateSource:
         """Creates a source row and returns its ID."""
         await self._seed_source_type(pg_conn)
         src_id = await get_or_create_source(
-            pg_conn, source_type_id=1,
+            pg_conn,
+            source_type_id=1,
             snapshot_path="data/wslcb/2025/2025-06-15/page.html",
         )
         assert isinstance(src_id, int)
@@ -164,8 +177,7 @@ class TestPgLinkRecordSource:
             record_id = row[0]
         else:
             r = await pg_conn.execute(
-                select(license_records.c.id)
-                .where(license_records.c.license_number == "999991")
+                select(license_records.c.id).where(license_records.c.license_number == "999991")
             )
             record_id = r.scalar_one()
 
@@ -179,8 +191,7 @@ class TestPgLinkRecordSource:
         await link_record_source(pg_conn, record_id, source_id, "first_seen")
 
         result = await pg_conn.execute(
-            select(record_sources)
-            .where(record_sources.c.record_id == record_id)
+            select(record_sources).where(record_sources.c.record_id == record_id)
         )
         assert len(result.all()) == 1
 
@@ -192,8 +203,7 @@ class TestPgLinkRecordSource:
         await link_record_source(pg_conn, record_id, source_id, "confirmed")
 
         result = await pg_conn.execute(
-            select(record_sources)
-            .where(record_sources.c.record_id == record_id)
+            select(record_sources).where(record_sources.c.record_id == record_id)
         )
         assert len(result.all()) == 2
 
@@ -245,14 +255,22 @@ class TestPgGetPrimarySource:
 
         r1 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=1, snapshot_path="test/pri-first.html", captured_at=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC))
+            .values(
+                source_type_id=1,
+                snapshot_path="test/pri-first.html",
+                captured_at=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
+            )
             .returning(sources.c.id)
         )
         first_id = r1.scalar_one()
 
         r2 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=2, snapshot_path="test/pri-confirmed.html", captured_at=datetime(2025, 6, 15, 11, 0, 0, tzinfo=UTC))
+            .values(
+                source_type_id=2,
+                snapshot_path="test/pri-confirmed.html",
+                captured_at=datetime(2025, 6, 15, 11, 0, 0, tzinfo=UTC),
+            )
             .returning(sources.c.id)
         )
         confirmed_id = r2.scalar_one()
@@ -271,7 +289,8 @@ class TestPgGetRecordSources:
     async def test_returns_empty_list(self, pg_conn):
         """Returns empty list for record with no sources."""
         await pg_conn.execute(
-            pg_insert(source_types).values(id=1, slug="live_scrape", label="Live Scrape")
+            pg_insert(source_types)
+            .values(id=1, slug="live_scrape", label="Live Scrape")
             .on_conflict_do_nothing()
         )
         result = await pg_conn.execute(
@@ -294,7 +313,8 @@ class TestPgGetRecordSources:
     async def test_returns_all_sources(self, pg_conn):
         """Returns all linked sources newest-first."""
         await pg_conn.execute(
-            pg_insert(source_types).values(id=1, slug="live_scrape", label="Live Scrape")
+            pg_insert(source_types)
+            .values(id=1, slug="live_scrape", label="Live Scrape")
             .on_conflict_do_nothing()
         )
         result = await pg_conn.execute(
@@ -312,14 +332,22 @@ class TestPgGetRecordSources:
 
         r1 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=1, snapshot_path="test/rs-old.html", captured_at=datetime(2025, 6, 14, 10, 0, 0, tzinfo=UTC))
+            .values(
+                source_type_id=1,
+                snapshot_path="test/rs-old.html",
+                captured_at=datetime(2025, 6, 14, 10, 0, 0, tzinfo=UTC),
+            )
             .returning(sources.c.id)
         )
         old_id = r1.scalar_one()
 
         r2 = await pg_conn.execute(
             pg_insert(sources)
-            .values(source_type_id=1, snapshot_path="test/rs-new.html", captured_at=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC))
+            .values(
+                source_type_id=1,
+                snapshot_path="test/rs-new.html",
+                captured_at=datetime(2025, 6, 15, 10, 0, 0, tzinfo=UTC),
+            )
             .returning(sources.c.id)
         )
         new_id = r2.scalar_one()

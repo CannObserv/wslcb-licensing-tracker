@@ -19,7 +19,7 @@ license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
 ```
 
-- No build step. Tailwind via CDN, HTMX. No node_modules.
+- No build step. Tailwind via CDN, HTMX. `node_modules/` exists only for JS test tooling (jsdom); not used at runtime.
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
 - PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
 
@@ -43,8 +43,8 @@ license_records → locations (FK: location_id, previous_location_id)
 | `pg_link_records.py` | Async application→outcome linking. `get_outcome_status()` is pure Python — not async. `outcome_filter_sql()` moved to `pg_db.py`. Bidirectional linking queries use `text()` with PG date arithmetic (`record_date::date - interval 'N days'`). `build_all_links()` truncates `record_links` before rebuilding. `get_record_links_bulk()` — batch SELECT JOIN returning `dict[int, dict]`. |
 | `pg_queries_hydrate.py` | Integration layer: `enrich_record()`, `_hydrate_records()`, `hydrate_records` alias. Intentionally imports from `pg_endorsements`, `pg_entities`, `pg_link_records` — the single acknowledged fan-in point for the query layer. |
 | `pg_queries_search.py` | Core search + single-record lookups. `RECORD_COLUMNS`, `RECORD_JOINS` (shared SQL fragments), `_build_where_clause()`, `search_records()`, `get_record_by_id()`, `get_related_records()`, `get_record_source_link()`, `get_source_by_id()`, `get_record_link()`. Imports only from `pg_db`. |
-| `pg_queries_filter.py` | Filter dropdown data + TTL caches. `get_filter_options()`, `get_cities_for_state()`, `invalidate_filter_cache()`. Imports `pg_endorsements`, `pg_substances`. |
-| `pg_queries_stats.py` | Dashboard statistics. `get_stats()` (1-min TTL cache), `_get_pipeline_stats()`, `invalidate_stats_cache()`. Imports only from `pg_db`. |
+| `pg_queries_filter.py` | Filter dropdown data (no cache — #99). `get_filter_options()`, `get_cities_for_state()`, `invalidate_filter_cache()` (no-op). Imports `pg_endorsements`, `pg_substances`. |
+| `pg_queries_stats.py` | Dashboard statistics (no cache — #99). `get_stats()`, `_get_pipeline_stats()`, `invalidate_stats_cache()` (no-op). Imports only from `pg_db`. |
 | `pg_queries_export.py` | Flat record export. `export_records()`, `export_records_cursor()` (streaming). Inlines endorsements + outcome links in SQL. Imports only from `pg_db`. |
 | `pg_queries_entity.py` | Entity-centric queries. `get_entity_records()`, `get_entities()`. Imports `pg_queries_search` (SQL constants) and `pg_queries_hydrate`. |
 | `seed_code_map.json` | 103-entry JSON dict: WSLCB numeric code → endorsement name(s). **Edit this file, not the Python module**, when adding/correcting seed mappings. |
@@ -55,12 +55,12 @@ license_records → locations (FK: location_id, previous_location_id)
 | `pg_scraper.py` | Async scraper. `scrape(engine)` — fetch, hash-check, archive, ingest via `pg_pipeline.ingest_batch()`. `get_last_content_hash(conn)` — SQLAlchemy query against `scrape_log`. `cleanup_redundant_scrapes(engine)` — removes unchanged scrape rows. Pure helpers `compute_content_hash` and `save_html_snapshot` defined here. |
 | `pg_backfill_snapshots.py` | Async backfill from HTML snapshots. Two-phase: ingest from snapshot files, then repair ASSUMPTION and CHANGE OF LOCATION records. `backfill_from_snapshots(engine)`. |
 | `pg_backfill_diffs.py` | Async backfill from diff archives. `backfill_diffs(engine, section, single_file, limit, dry_run)`. Pure diff parsing re-imported from `parser.py`. |
-| `app.py` | FastAPI app, port 8000. Lifespan creates `AsyncEngine` on `app.state.engine`, calls `run_pending_migrations()`, disposes on shutdown. All routes use `async with get_db(request.app.state.engine) as conn:`. Admin routes via `app.include_router()`; `admin_routes.init_router(_tpl)` must be called before first request. Public routes only — admin routes in `admin_routes.py`. |
+| `app.py` | FastAPI app, port 8000. Lifespan creates `AsyncEngine` on `app.state.engine`, calls `run_pending_migrations()`, disposes on shutdown. All routes use `async with get_db(request.app.state.engine) as conn:`. `app.state.tpl` stores the shared template renderer; admin routes read it via `request.app.state.tpl`. Public routes only — admin routes in `admin_routes.py`. |
 | `api_routes.py` | `APIRouter(prefix="/api/v1")`. All routes async; `_get_db` dependency yields `AsyncConnection`. CSV export uses async generator with `export_records_cursor()`. JSON envelope `{"ok": bool, "message": str, "data": ...}`. Endpoints: `GET /api/v1/cities`, `/stats`, `/export` (StreamingResponse), `/health`. |
-| `admin_routes.py` | `APIRouter` for `/admin/*`. All routes async; `_get_db` dependency yields `AsyncConnection`; all imports from `pg_*` equivalents. `init_router(tpl_fn)` receives shared `_tpl()` at startup. |
+| `admin_routes.py` | `APIRouter` for `/admin/*`. All routes async; `_get_db` dependency yields `AsyncConnection`; all imports from `pg_*` equivalents. Template renderer accessed via `request.app.state.tpl`. |
 | `admin_auth.py` | `require_admin()` FastAPI dependency. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. `_lookup_admin()` is async — uses `request.app.state.engine` to query `admin_users`. |
 | `log_config.py` | `setup_logging()` — auto-detects TTY vs JSON format. Call once per entry point. |
-| `cli.py` | All commands use PG modules with `asyncio.run()` wrappers. Engine from `create_engine_from_env()` (reads `DATABASE_URL`). Admin user commands use inline SQLAlchemy queries. |
+| `cli.py` | Click-based CLI with `ingest`, `db`, `admin` groups. Hidden top-level aliases for systemd `wslcb-task@%i` compat (e.g. `wslcb scrape` = `wslcb ingest scrape`). All commands use `asyncio.run()` wrappers. Engine from `create_engine_from_env()`. |
 | `templates/` | `base.html` (main layout — nav, footer, CSS/JS includes). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
 | `tailwind.config.js` | Tailwind CSS config — content paths, co-green/co-purple palette. Consumed by `scripts/build-css.sh`. |
 | `static/css/input.css` | Tailwind source: `@tailwind` directives + HTMX loading states + badge classes + `.scroll-shadow-right`. |

@@ -1,12 +1,15 @@
 """Tests for pg_queries_* modules — async search and read queries."""
+
 import pytest
-from wslcb_licensing_tracker.pg_queries_export import export_records, export_records_cursor
-from wslcb_licensing_tracker.pg_queries_entity import get_entity_records, get_entities
-from wslcb_licensing_tracker.pg_queries_filter import (
-    get_cities_for_state,
-    get_filter_options,
-    invalidate_filter_cache,
+
+from wslcb_licensing_tracker.pg_db import (
+    SOURCE_TYPE_LIVE_SCRAPE,
+    get_or_create_source,
+    link_record_source,
 )
+from wslcb_licensing_tracker.pg_pipeline import insert_record
+from wslcb_licensing_tracker.pg_queries_entity import get_entity_records
+from wslcb_licensing_tracker.pg_queries_export import export_records, export_records_cursor
 from wslcb_licensing_tracker.pg_queries_hydrate import enrich_record
 from wslcb_licensing_tracker.pg_queries_search import (
     get_record_by_id,
@@ -16,21 +19,22 @@ from wslcb_licensing_tracker.pg_queries_search import (
     search_records,
 )
 from wslcb_licensing_tracker.pg_queries_stats import get_stats
-from wslcb_licensing_tracker.pg_db import (
-    SOURCE_TYPE_LIVE_SCRAPE,
-    get_or_create_source,
-    link_record_source,
-)
-from wslcb_licensing_tracker.pg_pipeline import insert_record
 
 
 class TestEnrichRecord:
     """Pure Python — no DB."""
+
     def test_adds_display_fields(self):
-        record = {"std_city": "SEATTLE", "city": "seattle",
-                  "std_postal_code": "98101", "zip_code": "98101",
-                  "prev_std_city": "", "previous_city": "TACOMA",
-                  "prev_std_postal_code": "", "previous_zip_code": "98402"}
+        record = {
+            "std_city": "SEATTLE",
+            "city": "seattle",
+            "std_postal_code": "98101",
+            "zip_code": "98101",
+            "prev_std_city": "",
+            "previous_city": "TACOMA",
+            "prev_std_postal_code": "",
+            "previous_zip_code": "98402",
+        }
         enriched = enrich_record(record)
         assert enriched["display_city"] == "SEATTLE"
         assert enriched["display_previous_city"] == "TACOMA"
@@ -107,6 +111,7 @@ class TestGetStats:
         stats = await get_stats(pg_conn)
         assert "total_records" in stats
         assert stats["total_records"] >= 1
+
 
 class TestGetRecordById:
     @pytest.mark.asyncio(loop_scope="session")

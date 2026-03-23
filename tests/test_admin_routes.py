@@ -9,12 +9,10 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
+from wslcb_licensing_tracker.admin_routes import _get_db, _render
 from wslcb_licensing_tracker.app import app
-from wslcb_licensing_tracker.admin_routes import _get_db
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,9 +57,7 @@ class TestAdminDashboardRequiresAuth:
 
     def test_unauthenticated_redirected_or_forbidden(self):
         """GET /admin/ without valid admin headers → 302/303/403."""
-        with patch(
-            "wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None
-        ):
+        with patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None):
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get(
                 "/admin/",
@@ -105,9 +101,7 @@ class TestAdminDashboard:
             return result
 
         mock_conn.execute.side_effect = [
-            _mapping_result(
-                {"total": 100, "new_apps": 50, "approved": 30, "discontinued": 20}
-            ),
+            _mapping_result({"total": 100, "new_apps": 50, "approved": 30, "discontinued": 20}),
             _mapping_result({"last_24h": 5, "last_7d": 20}),
             _all_result([]),
             _scalar_result(1),
@@ -227,6 +221,35 @@ class TestAdminDashboard:
 
         assert resp.status_code == 200
         assert "9999" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# #100 — init_router removed, _tpl via app.state
+# ---------------------------------------------------------------------------
+
+
+class TestNoInitRouter:
+    """admin_routes must not expose init_router or module-level _tpl."""
+
+    def test_no_init_router_function(self):
+        """init_router() must not exist on admin_routes module."""
+        import wslcb_licensing_tracker.admin_routes as mod
+
+        assert not hasattr(mod, "init_router"), "init_router should be removed"
+
+    def test_no_module_level_tpl(self):
+        """Module-level _tpl mutable variable must not exist."""
+        import wslcb_licensing_tracker.admin_routes as mod
+
+        # _render still exists as a helper, but _tpl as a module global should not
+        assert not hasattr(mod, "_tpl"), "_tpl module-level variable should be removed"
+
+    def test_render_reads_from_app_state(self):
+        """_render should read tpl from request.app.state, not a module-level variable."""
+        import inspect
+
+        source = inspect.getsource(_render)
+        assert "request.app.state" in source
 
 
 class TestAdminEndorsementsPageLoads:

@@ -7,3 +7,4 @@ env
 .pytest_cache/
 .worktrees/
 scripts/bin/
+node_modules/

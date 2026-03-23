@@ -27,6 +27,7 @@ def test_compute_content_hash_is_deterministic():
 def test_get_last_content_hash_is_importable():
     """pg_scraper.get_last_content_hash is an async function."""
     import inspect
+
     assert inspect.iscoroutinefunction(get_last_content_hash)
 
 

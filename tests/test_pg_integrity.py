@@ -3,7 +3,7 @@
 import os
 
 import pytest
-import pytest_asyncio  # noqa: F401 — needed for @pytest_asyncio.fixture
+import pytest_asyncio
 
 from wslcb_licensing_tracker.pg_integrity import (
     check_broken_fks,
@@ -61,8 +61,13 @@ async def test_check_endorsement_anomalies_returns_dict(conn):
 @pytest.mark.asyncio(loop_scope="session")
 async def test_run_all_checks_returns_complete_report(conn):
     report = await run_all_checks(conn)
-    for key in ("orphaned_locations", "broken_fks", "unenriched",
-                "endorsement_anomalies", "entity_duplicates"):
+    for key in (
+        "orphaned_locations",
+        "broken_fks",
+        "unenriched",
+        "endorsement_anomalies",
+        "entity_duplicates",
+    ):
         assert key in report
 
 
@@ -92,16 +97,20 @@ async def test_fix_orphaned_locations_returns_int(conn):
 async def test_fix_orphaned_locations_removes_orphan(conn):
     """An orphaned location (no license_records reference) is deleted when fix=True."""
     from sqlalchemy import text
+
     # Guard: this test commits data — confirm we're targeting the test database.
-    assert "wslcb_test" in os.environ.get("TEST_DATABASE_URL", ""), \
+    assert "wslcb_test" in os.environ.get("TEST_DATABASE_URL", ""), (
         "Must run against wslcb_test database"
+    )
     # SAVEPOINT lets us roll back the INSERT if fix_orphaned_locations raises,
     # preventing a stale orphan from leaking into later tests in this session.
     await conn.execute(text("SAVEPOINT test_fix_orphan"))
     try:
         await conn.execute(
-            text("INSERT INTO locations (raw_address, city, state, zip_code) "
-                 "VALUES ('999 Orphan St', '', 'WA', '')")
+            text(
+                "INSERT INTO locations (raw_address, city, state, zip_code) "
+                "VALUES ('999 Orphan St', '', 'WA', '')"
+            )
         )
         removed = await fix_orphaned_locations(conn)
         assert removed >= 1
@@ -120,8 +129,10 @@ def test_print_report_returns_zero_for_clean_report():
         "orphaned_locations": {"count": 0},
         "broken_fks": {"count": 0, "details": []},
         "unenriched": {
-            "no_endorsements": 0, "no_entities": 0,
-            "no_provenance": 0, "no_enrichment_tracking": 0,
+            "no_endorsements": 0,
+            "no_entities": 0,
+            "no_provenance": 0,
+            "no_enrichment_tracking": 0,
         },
         "endorsement_anomalies": {"unresolved_codes": 0, "placeholder_endorsements": 0},
         "entity_duplicates": {"count": 0, "details": []},
@@ -134,8 +145,10 @@ def test_print_report_returns_nonzero_for_issues():
         "orphaned_locations": {"count": 3},
         "broken_fks": {"count": 0, "details": []},
         "unenriched": {
-            "no_endorsements": 2, "no_entities": 0,
-            "no_provenance": 0, "no_enrichment_tracking": 0,
+            "no_endorsements": 2,
+            "no_entities": 0,
+            "no_provenance": 0,
+            "no_enrichment_tracking": 0,
         },
         "endorsement_anomalies": {"unresolved_codes": 0, "placeholder_endorsements": 0},
         "entity_duplicates": {"count": 0, "details": []},

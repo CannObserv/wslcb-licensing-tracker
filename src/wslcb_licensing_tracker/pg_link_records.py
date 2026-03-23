@@ -378,6 +378,10 @@ async def _link_incremental(  # noqa: PLR0911, PLR0913
     *direction* is ``'forward'`` (new_app seeking outcome) or
     ``'backward'`` (outcome seeking new_app).
     """
+    # asyncpg's $N parameter translation is ambiguous with PG's ::date cast
+    # (e.g. :param::date looks like two casts).  Use to_date() instead.
+    tol = f"interval '{DATE_TOLERANCE_DAYS} days'"
+    _to_date = "to_date({p}, 'YYYY-MM-DD')"
     if direction == "forward":
         # new_application seeking an outcome
         if app_type == _DISC_LINK_TYPE:
@@ -398,7 +402,7 @@ async def _link_incremental(  # noqa: PLR0911, PLR0913
             WHERE section_type = :out_section
               AND license_number = :lic_num
               AND application_type = :out_type_val
-              AND record_date::date >= :record_date::date - interval '{DATE_TOLERANCE_DAYS} days'
+              AND record_date::date >= {_to_date.format(p=":record_date")} - {tol}
             ORDER BY record_date ASC, id ASC
             LIMIT 1
             """),
@@ -426,7 +430,7 @@ async def _link_incremental(  # noqa: PLR0911, PLR0913
             WHERE section_type = 'new_application'
               AND license_number = :lic_num
               AND application_type = :na_type_val
-              AND record_date::date <= :out_date::date + interval '{DATE_TOLERANCE_DAYS} days'
+              AND record_date::date <= {_to_date.format(p=":out_date")} + {tol}
             ORDER BY record_date DESC, id DESC
             LIMIT 1
             """),
@@ -458,7 +462,7 @@ async def _link_incremental(  # noqa: PLR0911, PLR0913
             WHERE section_type = 'new_application'
               AND license_number = :lic_num
               AND application_type = :na_type_val
-              AND record_date::date <= :record_date::date + interval '{DATE_TOLERANCE_DAYS} days'
+              AND record_date::date <= {_to_date.format(p=":record_date")} + {tol}
             ORDER BY record_date DESC, id DESC
             LIMIT 1
             """),
@@ -481,7 +485,7 @@ async def _link_incremental(  # noqa: PLR0911, PLR0913
             WHERE section_type = :outcome_section
               AND license_number = :lic_num
               AND application_type = :out_type_val
-              AND record_date::date >= :new_date::date - interval '{DATE_TOLERANCE_DAYS} days'
+              AND record_date::date >= {_to_date.format(p=":new_date")} - {tol}
             ORDER BY record_date ASC, id ASC
             LIMIT 1
             """),
