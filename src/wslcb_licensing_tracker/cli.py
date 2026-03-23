@@ -1,29 +1,34 @@
 """Unified CLI entry point for the WSLCB Licensing Tracker.
 
-All operational commands are exposed as argparse subcommands.  This
-replaces the previous pattern of ``python scraper.py --flag`` with
-explicit ``python cli.py <subcommand>`` invocations.
+All operational commands are exposed as click subcommands grouped by domain:
+
+- ``ingest``: scrape, backfill-snapshots, backfill-diffs, backfill-addresses, refresh-addresses
+- ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
+- ``admin``: add-user, list-users, remove-user
 
 Usage::
 
-    python cli.py scrape                  # live scrape
-    python cli.py backfill-snapshots      # replay archived HTML
-    python cli.py backfill-diffs          # replay diff archives
-    python cli.py backfill-addresses      # validate un-validated locations
-    python cli.py refresh-addresses       # re-validate all locations
-    python cli.py rebuild-links           # rebuild application→outcome links
-    python cli.py check                   # run integrity checks
-    python cli.py check --fix             # run checks and auto-fix safe issues
+    wslcb ingest scrape                # live scrape
+    wslcb ingest backfill-snapshots    # replay archived HTML
+    wslcb ingest backfill-diffs        # replay diff archives
+    wslcb ingest backfill-addresses    # validate un-validated locations
+    wslcb ingest refresh-addresses     # re-validate all locations
+    wslcb db rebuild-links             # rebuild application→outcome links
+    wslcb db check                     # run integrity checks
+    wslcb db check --fix               # run checks and auto-fix safe issues
+    wslcb admin add-user EMAIL         # add admin user
+    wslcb admin list-users             # list admin users
+    wslcb admin remove-user EMAIL      # remove admin user
 
 Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 """
 
-import argparse
 import asyncio
 import logging
 import sys
 from pathlib import Path
 
+import click
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -47,8 +52,40 @@ from .pg_scraper import scrape as pg_scrape
 logger = logging.getLogger(__name__)
 
 
-def cmd_scrape(args: argparse.Namespace) -> None:
-    """Run a live scrape, then backfill un-standardized addresses."""
+# ---------------------------------------------------------------------------
+# Top-level group
+# ---------------------------------------------------------------------------
+
+
+@click.group(invoke_without_command=True)
+@click.pass_context
+def main(ctx: click.Context) -> None:
+    """WSLCB Licensing Tracker — operational commands."""
+    setup_logging()
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+# ---------------------------------------------------------------------------
+# ingest group
+# ---------------------------------------------------------------------------
+
+
+@main.group()
+def ingest() -> None:
+    """Data ingestion commands (scrape, backfill)."""
+
+
+@ingest.command()
+@click.option(
+    "--rate-limit",
+    type=float,
+    default=0.1,
+    show_default=True,
+    help="Seconds between address API calls.",
+)
+def scrape(rate_limit: float) -> None:
+    """Run a live scrape of the WSLCB page."""
     engine = create_engine_from_env()
     asyncio.run(pg_scrape(engine))
 
@@ -58,7 +95,7 @@ def cmd_scrape(args: argparse.Namespace) -> None:
 
         async def _backfill() -> None:
             async with get_db(engine) as conn:
-                await pg_backfill_addresses(conn, rate_limit=args.rate_limit)
+                await pg_backfill_addresses(conn, rate_limit=rate_limit)
                 await conn.commit()
 
         asyncio.run(_backfill())
@@ -68,80 +105,141 @@ def cmd_scrape(args: argparse.Namespace) -> None:
     engine.dispose()
 
 
-def cmd_backfill_snapshots(_args: argparse.Namespace) -> None:
+@ingest.command("backfill-snapshots")
+def backfill_snapshots() -> None:
     """Ingest records from archived HTML snapshots."""
     engine = create_engine_from_env()
     asyncio.run(pg_backfill_snapshots(engine))
     engine.dispose()
 
 
-def cmd_backfill_diffs(args: argparse.Namespace) -> None:
+@ingest.command("backfill-diffs")
+@click.option(
+    "--section",
+    type=click.Choice(list(SECTION_DIR_MAP.keys())),
+    default=None,
+    help="Process only this section subdirectory.",
+)
+@click.option("--file", "single_file", default=None, help="Process a single diff file.")
+@click.option("--limit", type=int, default=None, help="Process at most N diff files.")
+@click.option("--dry-run", is_flag=True, help="Parse and count, no writes.")
+def backfill_diffs(
+    section: str | None,
+    single_file: str | None,
+    limit: int | None,
+    dry_run: bool,
+) -> None:
     """Ingest records from unified-diff archives."""
     engine = create_engine_from_env()
     result = asyncio.run(
         pg_backfill_diffs(
             engine,
-            section=args.section,
-            single_file=args.file,
-            limit=args.limit,
-            dry_run=args.dry_run,
+            section=section,
+            single_file=single_file,
+            limit=limit,
+            dry_run=dry_run,
         )
     )
     engine.dispose()
-    if args.dry_run:
-        print(
+    if dry_run:
+        click.echo(
             f"[dry-run] Would insert {result['inserted']:,} record(s)"
             f" from {result['files_processed']:,} file(s)."
         )
     else:
-        print(
+        click.echo(
             f"Processed {result['files_processed']:,} file(s): "
             f"{result['inserted']:,} inserted, {result['skipped']:,} skipped, "
             f"{result['errors']:,} errors."
         )
 
 
-def cmd_backfill_addresses(args: argparse.Namespace) -> None:
+@ingest.command("backfill-addresses")
+@click.option(
+    "--rate-limit",
+    type=float,
+    default=0.1,
+    show_default=True,
+    help="Seconds between API calls.",
+)
+def backfill_addresses(rate_limit: float) -> None:
     """Validate un-validated locations via the address API."""
     engine = create_engine_from_env()
 
     async def _run() -> None:
         async with get_db(engine) as conn:
-            await pg_backfill_addresses(conn, rate_limit=args.rate_limit)
+            await pg_backfill_addresses(conn, rate_limit=rate_limit)
             await conn.commit()
 
     asyncio.run(_run())
     engine.dispose()
 
 
-def cmd_refresh_addresses(args: argparse.Namespace) -> None:
-    """Re-validate locations via the address API.
-
-    By default re-validates all locations.  Pass --location-ids to target only
-    a specific set (e.g. IDs extracted from a prior run's lock-failure log).
-    """
+@ingest.command("refresh-addresses")
+@click.option(
+    "--rate-limit",
+    type=float,
+    default=0.1,
+    show_default=True,
+    help="Seconds between API calls.",
+)
+@click.option(
+    "--location-ids",
+    default=None,
+    type=click.Path(exists=True),
+    help="File of newline-separated location IDs to re-validate.",
+)
+def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
+    """Re-validate locations via the address API."""
     engine = create_engine_from_env()
 
-    # Read the IDs file synchronously before entering the async context.
     ids: list[int] | None = None
-    if args.location_ids:
-        with Path(args.location_ids).open() as fh:
+    if location_ids:
+        with Path(location_ids).open() as fh:
             ids = [int(line.strip()) for line in fh if line.strip()]
 
     async def _run() -> None:
         async with get_db(engine) as conn:
             if ids is not None:
-                await pg_refresh_specific_addresses(conn, ids, rate_limit=args.rate_limit)
+                await pg_refresh_specific_addresses(conn, ids, rate_limit=rate_limit)
             else:
-                await pg_refresh_addresses(conn, rate_limit=args.rate_limit)
+                await pg_refresh_addresses(conn, rate_limit=rate_limit)
             await conn.commit()
 
     asyncio.run(_run())
     engine.dispose()
 
 
-def cmd_rebuild_links(_args: argparse.Namespace) -> None:
-    """Rebuild all application→outcome links from scratch."""
+# ---------------------------------------------------------------------------
+# db group
+# ---------------------------------------------------------------------------
+
+
+@main.group()
+def db() -> None:
+    """Database maintenance commands."""
+
+
+@db.command()
+@click.option("--fix", is_flag=True, help="Auto-fix safe issues.")
+def check(fix: bool) -> None:
+    """Run database integrity checks."""
+    engine = create_engine_from_env()
+
+    async def _run() -> dict:
+        async with get_db(engine) as conn:
+            return await pg_run_all_checks(conn, fix=fix)
+
+    report = asyncio.run(_run())
+    engine.dispose()
+    issues = print_report(report)
+    if issues:
+        sys.exit(1)
+
+
+@db.command("rebuild-links")
+def rebuild_links() -> None:
+    """Rebuild all application-outcome links."""
     engine = create_engine_from_env()
 
     async def _run() -> None:
@@ -153,36 +251,27 @@ def cmd_rebuild_links(_args: argparse.Namespace) -> None:
     engine.dispose()
 
 
-def cmd_check(args: argparse.Namespace) -> None:
-    """Run database integrity checks."""
-    engine = create_engine_from_env()
-
-    async def _run() -> dict:
-        async with get_db(engine) as conn:
-            return await pg_run_all_checks(conn, fix=args.fix)
-
-    report = asyncio.run(_run())
-    engine.dispose()
-    issues = print_report(report)
-    if issues:
-        sys.exit(1)
-
-
-def cmd_cleanup_redundant(args: argparse.Namespace) -> None:
+@db.command("cleanup-redundant")
+@click.option("--keep-files", is_flag=True, help="Don't delete snapshot files from disk.")
+def cleanup_redundant(keep_files: bool) -> None:
     """Remove data from scrapes that found no new records."""
     engine = create_engine_from_env()
-    result = asyncio.run(pg_cleanup_redundant(engine, delete_files=not args.keep_files))
+    result = asyncio.run(pg_cleanup_redundant(engine, delete_files=not keep_files))
     engine.dispose()
     if result["scrape_logs"] == 0:
-        print("Nothing to clean up.")
+        click.echo("Nothing to clean up.")
     else:
-        print(
+        click.echo(
             f"Cleaned {result['scrape_logs']} redundant scrape(s): "
             f"{result['files']} snapshot files removed."
         )
 
 
-def cmd_reprocess_endorsements(args: argparse.Namespace) -> None:
+@db.command("reprocess-endorsements")
+@click.option("--record-id", type=int, default=None, help="Only reprocess this record ID.")
+@click.option("--code", default=None, help="Only reprocess records with this license-type code.")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+def reprocess_endorsements(record_id: int | None, code: str | None, dry_run: bool) -> None:
     """Regenerate record_endorsements from current code mappings."""
     engine = create_engine_from_env()
 
@@ -190,26 +279,29 @@ def cmd_reprocess_endorsements(args: argparse.Namespace) -> None:
         async with get_db(engine) as conn:
             result = await pg_reprocess_endorsements(
                 conn,
-                record_id=args.record_id,
-                code=args.code,
-                dry_run=args.dry_run,
+                record_id=record_id,
+                code=code,
+                dry_run=dry_run,
             )
-            if not args.dry_run:
+            if not dry_run:
                 await conn.commit()
             return result
 
     result = asyncio.run(_run())
     engine.dispose()
-    if args.dry_run:
-        print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
+    if dry_run:
+        click.echo(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
-        print(
+        click.echo(
             f"Reprocessed {result['records_processed']:,} record(s); "
             f"{result['endorsements_linked']:,} endorsement link(s) written."
         )
 
 
-def cmd_reprocess_entities(args: argparse.Namespace) -> None:
+@db.command("reprocess-entities")
+@click.option("--record-id", type=int, default=None, help="Only reprocess this record ID.")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
     """Regenerate record_entities from current applicants data."""
     engine = create_engine_from_env()
 
@@ -217,30 +309,39 @@ def cmd_reprocess_entities(args: argparse.Namespace) -> None:
         async with get_db(engine) as conn:
             result = await pg_reprocess_entities(
                 conn,
-                record_id=args.record_id,
-                dry_run=args.dry_run,
+                record_id=record_id,
+                dry_run=dry_run,
             )
-            if not args.dry_run:
+            if not dry_run:
                 await conn.commit()
             return result
 
     result = asyncio.run(_run())
     engine.dispose()
-    if args.dry_run:
-        print(f"[dry-run] Would process {result['records_processed']:,} record(s).")
+    if dry_run:
+        click.echo(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
-        print(
+        click.echo(
             f"Reprocessed {result['records_processed']:,} record(s); "
             f"{result['entities_linked']:,} entity link(s) written."
         )
 
 
-# -- Admin subcommands -----------------------------------------------
+# ---------------------------------------------------------------------------
+# admin group
+# ---------------------------------------------------------------------------
 
 
-def cmd_admin_add_user(args: argparse.Namespace) -> None:
+@main.group()
+def admin() -> None:
+    """Admin user management."""
+
+
+@admin.command("add-user")
+@click.argument("email")
+def admin_add_user(email: str) -> None:
     """Add an admin user by email."""
-    email = args.email.strip()
+    email = email.strip()
     engine = create_engine_from_env()
 
     async def _run() -> None:
@@ -253,17 +354,18 @@ def cmd_admin_add_user(args: argparse.Namespace) -> None:
                 )
             ).fetchone()
             if existing:
-                print(f"User already exists: {email}")
+                click.echo(f"User already exists: {email}")
                 return
             await conn.execute(pg_insert(admin_users).values(email=email, created_by="cli"))
             await conn.commit()
-        print(f"Added admin user: {email}")
+        click.echo(f"Added admin user: {email}")
 
     asyncio.run(_run())
     engine.dispose()
 
 
-def cmd_admin_list_users(_args: argparse.Namespace) -> None:
+@admin.command("list-users")
+def admin_list_users() -> None:
     """List all admin users."""
     engine = create_engine_from_env()
 
@@ -282,17 +384,19 @@ def cmd_admin_list_users(_args: argparse.Namespace) -> None:
     rows = asyncio.run(_run())
     engine.dispose()
     if not rows:
-        print("No admin users.")
+        click.echo("No admin users.")
         return
-    print(f"{'Email':<40} {'Role':<10} {'Created At':<20} {'Created By'}")
-    print("-" * 90)
+    click.echo(f"{'Email':<40} {'Role':<10} {'Created At':<20} {'Created By'}")
+    click.echo("-" * 90)
     for email, role, created_at, created_by in rows:
-        print(f"{email:<40} {role:<10} {created_at:<20} {created_by}")
+        click.echo(f"{email:<40} {role:<10} {created_at:<20} {created_by}")
 
 
-def cmd_admin_remove_user(args: argparse.Namespace) -> None:
+@admin.command("remove-user")
+@click.argument("email")
+def admin_remove_user(email: str) -> None:
     """Remove an admin user by email."""
-    email = args.email.strip()
+    email = email.strip()
     engine = create_engine_from_env()
 
     async def _run() -> str | None:
@@ -321,198 +425,9 @@ def cmd_admin_remove_user(args: argparse.Namespace) -> None:
     error = asyncio.run(_run())
     engine.dispose()
     if error:
-        print(error)
+        click.echo(error)
         sys.exit(1)
-    print(f"Removed admin user: {email}")
-
-
-def main() -> None:  # noqa: PLR0915 — arg-parser setup requires many statements; genuine refactoring not worthwhile
-    """Parse CLI arguments and dispatch to the appropriate subcommand handler."""
-    setup_logging()
-
-    top = argparse.ArgumentParser(
-        description="WSLCB Licensing Tracker — operational commands.",
-    )
-    sub = top.add_subparsers(dest="command")
-
-    # scrape
-    p = sub.add_parser("scrape", help="Run a live scrape of the WSLCB page")
-    p.add_argument(
-        "--rate-limit",
-        type=float,
-        default=0.1,
-        metavar="SECONDS",
-        help="Seconds to sleep between address API calls (default: 0.1)",
-    )
-    p.set_defaults(func=cmd_scrape)
-
-    # backfill-snapshots
-    p = sub.add_parser(
-        "backfill-snapshots",
-        help="Ingest records from archived HTML snapshots",
-    )
-    p.set_defaults(func=cmd_backfill_snapshots)
-
-    # backfill-diffs
-    p = sub.add_parser(
-        "backfill-diffs",
-        help="Ingest records from unified-diff archives",
-    )
-    p.add_argument(
-        "--section",
-        choices=list(SECTION_DIR_MAP.keys()),
-        help="Process only this section subdirectory.",
-    )
-    p.add_argument(
-        "--file",
-        help="Process a single diff file instead of scanning directories.",
-    )
-    p.add_argument(
-        "--limit",
-        type=int,
-        help="Process at most N diff files (for validation runs).",
-    )
-    p.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Parse and count, no writes to the database.",
-    )
-    p.set_defaults(func=cmd_backfill_diffs)
-
-    # backfill-addresses
-    p = sub.add_parser(
-        "backfill-addresses",
-        help="Validate un-validated locations via the address API",
-    )
-    p.add_argument(
-        "--rate-limit",
-        type=float,
-        default=0.1,
-        metavar="SECONDS",
-        help="Seconds to sleep between API calls (default: 0.1)",
-    )
-    p.set_defaults(func=cmd_backfill_addresses)
-
-    # refresh-addresses
-    p = sub.add_parser(
-        "refresh-addresses",
-        help="Re-validate locations via the address API (all, or a specific set)",
-    )
-    p.add_argument(
-        "--rate-limit",
-        type=float,
-        default=0.1,
-        metavar="SECONDS",
-        help="Seconds to sleep between API calls (default: 0.1)",
-    )
-    p.add_argument(
-        "--location-ids",
-        metavar="FILE",
-        default=None,
-        help="Path to a file of newline-separated location IDs to re-validate "
-        "(default: re-validate all locations)",
-    )
-    p.set_defaults(func=cmd_refresh_addresses)
-
-    # rebuild-links
-    p = sub.add_parser(
-        "rebuild-links",
-        help="Rebuild all application→outcome links",
-    )
-    p.set_defaults(func=cmd_rebuild_links)
-
-    # check
-    p = sub.add_parser(
-        "check",
-        help="Run database integrity checks",
-    )
-    p.add_argument(
-        "--fix",
-        action="store_true",
-        help="Auto-fix safe issues (orphan cleanup, re-run enrichments)",
-    )
-    p.set_defaults(func=cmd_check)
-
-    # cleanup-redundant
-    p = sub.add_parser(
-        "cleanup-redundant",
-        help="Remove data from scrapes that found no new records",
-    )
-    p.add_argument(
-        "--keep-files",
-        action="store_true",
-        help="Don't delete snapshot files from disk",
-    )
-    p.set_defaults(func=cmd_cleanup_redundant)
-
-    # reprocess-endorsements
-    p = sub.add_parser(
-        "reprocess-endorsements",
-        help="Regenerate record_endorsements from current code mappings",
-    )
-    p.add_argument(
-        "--record-id",
-        type=int,
-        default=None,
-        dest="record_id",
-        help="Only reprocess this single record ID",
-    )
-    p.add_argument(
-        "--code",
-        default=None,
-        help="Only reprocess records with this numeric license-type code (e.g. '394')",
-    )
-    p.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Report what would change without writing to the database",
-    )
-    p.set_defaults(func=cmd_reprocess_endorsements)
-
-    # reprocess-entities
-    p = sub.add_parser(
-        "reprocess-entities",
-        help="Regenerate record_entities from current applicants data",
-    )
-    p.add_argument(
-        "--record-id",
-        type=int,
-        default=None,
-        dest="record_id",
-        help="Only reprocess this single record ID",
-    )
-    p.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Report what would change without writing to the database",
-    )
-    p.set_defaults(func=cmd_reprocess_entities)
-
-    # admin subcommand group
-    p_admin = sub.add_parser("admin", help="Admin user management")
-    admin_sub = p_admin.add_subparsers(dest="admin_command")
-
-    p_add = admin_sub.add_parser("add-user", help="Add an admin user")
-    p_add.add_argument("email", help="Email address to add")
-    p_add.set_defaults(func=cmd_admin_add_user)
-
-    p_list = admin_sub.add_parser("list-users", help="List all admin users")
-    p_list.set_defaults(func=cmd_admin_list_users)
-
-    p_rm = admin_sub.add_parser("remove-user", help="Remove an admin user")
-    p_rm.add_argument("email", help="Email address to remove")
-    p_rm.set_defaults(func=cmd_admin_remove_user)
-
-    args = top.parse_args()
-    if not args.command:
-        top.print_help()
-        sys.exit(1)
-
-    if args.command == "admin" and not getattr(args, "admin_command", None):
-        p_admin.print_help()
-        sys.exit(1)
-
-    args.func(args)
+    click.echo(f"Removed admin user: {email}")
 
 
 if __name__ == "__main__":
