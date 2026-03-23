@@ -1,14 +1,11 @@
 """Tests for text_utils.py — pure-string normalization helpers."""
 
-import pytest
-
 from wslcb_licensing_tracker.text_utils import (
     _normalize_raw_address,
     clean_applicants_string,
     clean_entity_name,
     strip_duplicate_marker,
 )
-
 
 # ── _normalize_raw_address ──────────────────────────────────────────
 

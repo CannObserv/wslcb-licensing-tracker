@@ -2,7 +2,6 @@
 
 Pure unit tests — no database, no network.
 """
-import pytest
 
 
 # ── format_outcome ─────────────────────────────────────────────────
@@ -108,9 +107,21 @@ class TestSummarizeProvenance:
         from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
-            {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
-            {"source_type": "live_scrape", "captured_at": "2025-06-16T12:00:00", "role": "confirmed"},
-            {"source_type": "co_archive", "captured_at": "2025-06-10T00:00:00", "role": "confirmed"},
+            {
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "first_seen",
+            },
+            {
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-16T12:00:00",
+                "role": "confirmed",
+            },
+            {
+                "source_type": "co_archive",
+                "captured_at": "2025-06-10T00:00:00",
+                "role": "confirmed",
+            },
         ]
         result = summarize_provenance(sources)
 
@@ -122,8 +133,16 @@ class TestSummarizeProvenance:
         from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
-            {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
-            {"source_type": "live_scrape", "captured_at": "2025-06-20T12:00:00", "role": "confirmed"},
+            {
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "first_seen",
+            },
+            {
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-20T12:00:00",
+                "role": "confirmed",
+            },
         ]
         result = summarize_provenance(sources)
 
@@ -146,7 +165,11 @@ class TestSummarizeProvenance:
         from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
-            {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
+            {
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "first_seen",
+            },
         ]
         result = summarize_provenance(sources)
 
@@ -167,8 +190,16 @@ class TestSummarizeProvenance:
         from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
-            {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "first_seen"},
-            {"source_type": "internet_archive", "captured_at": "2025-05-01T00:00:00", "role": "confirmed"},
+            {
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "first_seen",
+            },
+            {
+                "source_type": "internet_archive",
+                "captured_at": "2025-05-01T00:00:00",
+                "role": "confirmed",
+            },
         ]
         result = summarize_provenance(sources)
 
@@ -187,7 +218,11 @@ class TestSummarizeProvenance:
 
         sources = [
             {"source_type": "live_scrape", "captured_at": None, "role": "first_seen"},
-            {"source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00", "role": "confirmed"},
+            {
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "confirmed",
+            },
         ]
         result = summarize_provenance(sources)
 
@@ -199,12 +234,27 @@ class TestSummarizeProvenance:
         from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
-            {"id": 10, "source_type": "live_scrape", "captured_at": "2025-06-14T12:00:00",
-             "role": "confirmed", "snapshot_path": "some/path.html"},
-            {"id": 11, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",
-             "role": "first_seen", "snapshot_path": "some/path2.html"},
-            {"id": 20, "source_type": "co_archive", "captured_at": "2025-05-01T00:00:00",
-             "role": "confirmed", "snapshot_path": "some/archive.html"},
+            {
+                "id": 10,
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-14T12:00:00",
+                "role": "confirmed",
+                "snapshot_path": "some/path.html",
+            },
+            {
+                "id": 11,
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "first_seen",
+                "snapshot_path": "some/path2.html",
+            },
+            {
+                "id": 20,
+                "source_type": "co_archive",
+                "captured_at": "2025-05-01T00:00:00",
+                "role": "confirmed",
+                "snapshot_path": "some/archive.html",
+            },
         ]
         result = summarize_provenance(sources)
 
@@ -218,10 +268,20 @@ class TestSummarizeProvenance:
         from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
-            {"id": 5, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",
-             "role": "confirmed", "snapshot_path": None},
-            {"id": 6, "source_type": "live_scrape", "captured_at": "2025-06-14T12:00:00",
-             "role": "confirmed", "snapshot_path": "some/path.html"},
+            {
+                "id": 5,
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "confirmed",
+                "snapshot_path": None,
+            },
+            {
+                "id": 6,
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-14T12:00:00",
+                "role": "confirmed",
+                "snapshot_path": "some/path.html",
+            },
         ]
         result = summarize_provenance(sources)
         assert result["groups"]["live_scrape"]["primary_source_id"] == 6
@@ -231,10 +291,20 @@ class TestSummarizeProvenance:
         from wslcb_licensing_tracker.display import summarize_provenance
 
         sources = [
-            {"id": 1, "source_type": "live_scrape", "captured_at": "2025-06-15T12:00:00",
-             "role": "first_seen", "snapshot_path": None},
-            {"id": 2, "source_type": "live_scrape", "captured_at": "2025-06-14T12:00:00",
-             "role": "confirmed", "snapshot_path": "some/path.html"},
+            {
+                "id": 1,
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-15T12:00:00",
+                "role": "first_seen",
+                "snapshot_path": None,
+            },
+            {
+                "id": 2,
+                "source_type": "live_scrape",
+                "captured_at": "2025-06-14T12:00:00",
+                "role": "confirmed",
+                "snapshot_path": "some/path.html",
+            },
         ]
         result = summarize_provenance(sources)
         # first_seen with snapshot=None still beats confirmed with snapshot

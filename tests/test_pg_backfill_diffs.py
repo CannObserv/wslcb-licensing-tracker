@@ -24,9 +24,7 @@ def diff_data_dir(tmp_path):
     """Fake data dir with one notifications diff file."""
     diffs_dir = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"
     diffs_dir.mkdir(parents=True)
-    (diffs_dir / "2025-06-15.txt").write_text(
-        (FIXTURES_DIR / "diff_two_records.txt").read_text()
-    )
+    (diffs_dir / "2025-06-15.txt").write_text((FIXTURES_DIR / "diff_two_records.txt").read_text())
     return tmp_path
 
 
@@ -131,9 +129,7 @@ async def test_backfill_diffs_inserts_records(pg_engine, tmp_path):
     diffs_dir = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"
     diffs_dir.mkdir(parents=True)
     # Write the fixture diff — distinct license numbers ensure a clean insert.
-    (diffs_dir / "2025-01-01.txt").write_text(
-        (FIXTURES_DIR / "diff_two_records.txt").read_text()
-    )
+    (diffs_dir / "2025-01-01.txt").write_text((FIXTURES_DIR / "diff_two_records.txt").read_text())
     with patch("wslcb_licensing_tracker.pg_backfill_diffs.DATA_DIR", tmp_path):
         result = await backfill_diffs(pg_engine)
     assert result["files_processed"] >= 1
@@ -147,9 +143,7 @@ async def test_backfill_diffs_second_run_skips_duplicates(pg_engine, tmp_path):
     """Re-running the same diff file skips already-ingested records."""
     diffs_dir = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"
     diffs_dir.mkdir(parents=True)
-    (diffs_dir / "2025-02-01.txt").write_text(
-        (FIXTURES_DIR / "diff_two_records.txt").read_text()
-    )
+    (diffs_dir / "2025-02-01.txt").write_text((FIXTURES_DIR / "diff_two_records.txt").read_text())
     with patch("wslcb_licensing_tracker.pg_backfill_diffs.DATA_DIR", tmp_path):
         first = await backfill_diffs(pg_engine)
         second = await backfill_diffs(pg_engine)

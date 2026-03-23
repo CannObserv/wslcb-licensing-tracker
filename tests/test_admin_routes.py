@@ -9,12 +9,10 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.app import app
 from wslcb_licensing_tracker.admin_routes import _get_db
-
+from wslcb_licensing_tracker.app import app
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,9 +57,7 @@ class TestAdminDashboardRequiresAuth:
 
     def test_unauthenticated_redirected_or_forbidden(self):
         """GET /admin/ without valid admin headers → 302/303/403."""
-        with patch(
-            "wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None
-        ):
+        with patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None):
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get(
                 "/admin/",
@@ -105,9 +101,7 @@ class TestAdminDashboard:
             return result
 
         mock_conn.execute.side_effect = [
-            _mapping_result(
-                {"total": 100, "new_apps": 50, "approved": 30, "discontinued": 20}
-            ),
+            _mapping_result({"total": 100, "new_apps": 50, "approved": 30, "discontinued": 20}),
             _mapping_result({"last_24h": 5, "last_7d": 20}),
             _all_result([]),
             _scalar_result(1),

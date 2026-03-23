@@ -7,12 +7,10 @@ Ported to async PostgreSQL mocking pattern.  Tests verify routing behaviour
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.app import app
 from wslcb_licensing_tracker.admin_routes import _get_db
-
+from wslcb_licensing_tracker.app import app
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,8 +74,20 @@ class TestAdminUsersGet:
     def test_lists_users(self):
         """GET /admin/users returns 200."""
         users_data = [
-            {"id": 1, "email": "admin@example.com", "role": "admin", "created_at": "2025-01-01", "created_by": "test"},
-            {"id": 2, "email": "other@example.com", "role": "admin", "created_at": "2025-01-02", "created_by": "test"},
+            {
+                "id": 1,
+                "email": "admin@example.com",
+                "role": "admin",
+                "created_at": "2025-01-01",
+                "created_by": "test",
+            },
+            {
+                "id": 2,
+                "email": "other@example.com",
+                "role": "admin",
+                "created_at": "2025-01-02",
+                "created_by": "test",
+            },
         ]
 
         # Use plain MagicMock for execute result so .mappings() is sync, not a coroutine.
@@ -337,9 +347,7 @@ class TestAdminDashboard:
         user_count_result = MagicMock()
         user_count_result.scalar_one.return_value = 1
 
-        conn.execute.side_effect = [
-            agg_result, recent_result, scrapes_result, user_count_result
-        ]
+        conn.execute.side_effect = [agg_result, recent_result, scrapes_result, user_count_result]
         return conn
 
     def test_dashboard_renders(self):
@@ -351,12 +359,21 @@ class TestAdminDashboard:
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.check_orphaned_locations", new_callable=AsyncMock,
-                  return_value={"count": 0, "details": []}),
-            patch("wslcb_licensing_tracker.admin_routes.check_unenriched_records", new_callable=AsyncMock,
-                  return_value={"no_endorsements": 0, "no_entities": 0}),
-            patch("wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies", new_callable=AsyncMock,
-                  return_value={"unresolved_codes": 0, "placeholder_endorsements": 0}),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_orphaned_locations",
+                new_callable=AsyncMock,
+                return_value={"count": 0, "details": []},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_unenriched_records",
+                new_callable=AsyncMock,
+                return_value={"no_endorsements": 0, "no_entities": 0},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies",
+                new_callable=AsyncMock,
+                return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -379,12 +396,21 @@ class TestAdminDashboard:
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.check_orphaned_locations", new_callable=AsyncMock,
-                  return_value={"count": 0, "details": []}),
-            patch("wslcb_licensing_tracker.admin_routes.check_unenriched_records", new_callable=AsyncMock,
-                  return_value={"no_endorsements": 0, "no_entities": 0}),
-            patch("wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies", new_callable=AsyncMock,
-                  return_value={"unresolved_codes": 0, "placeholder_endorsements": 0}),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_orphaned_locations",
+                new_callable=AsyncMock,
+                return_value={"count": 0, "details": []},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_unenriched_records",
+                new_callable=AsyncMock,
+                return_value={"no_endorsements": 0, "no_entities": 0},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies",
+                new_callable=AsyncMock,
+                return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -405,7 +431,10 @@ class TestAdminDashboard:
             conn = AsyncMock()
             agg_result = MagicMock()
             agg_result.mappings.return_value.one.return_value = {
-                "total": 2, "new_apps": 1, "approved": 1, "discontinued": 0
+                "total": 2,
+                "new_apps": 1,
+                "approved": 1,
+                "discontinued": 0,
             }
             recent_result = MagicMock()
             recent_result.mappings.return_value.one.return_value = {"last_24h": 0, "last_7d": 0}
@@ -413,17 +442,31 @@ class TestAdminDashboard:
             scrapes_result.mappings.return_value.all.return_value = []
             user_count_result = MagicMock()
             user_count_result.scalar_one.return_value = 1
-            conn.execute.side_effect = [agg_result, recent_result, scrapes_result, user_count_result]
+            conn.execute.side_effect = [
+                agg_result,
+                recent_result,
+                scrapes_result,
+                user_count_result,
+            ]
             yield conn
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.check_orphaned_locations", new_callable=AsyncMock,
-                  return_value={"count": 0, "details": []}),
-            patch("wslcb_licensing_tracker.admin_routes.check_unenriched_records", new_callable=AsyncMock,
-                  return_value={"no_endorsements": 0, "no_entities": 0}),
-            patch("wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies", new_callable=AsyncMock,
-                  return_value={"unresolved_codes": 0, "placeholder_endorsements": 0}),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_orphaned_locations",
+                new_callable=AsyncMock,
+                return_value={"count": 0, "details": []},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_unenriched_records",
+                new_callable=AsyncMock,
+                return_value={"no_endorsements": 0, "no_entities": 0},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies",
+                new_callable=AsyncMock,
+                return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -445,7 +488,10 @@ class TestAdminDashboard:
             conn = AsyncMock()
             agg_result = MagicMock()
             agg_result.mappings.return_value.one.return_value = {
-                "total": 1, "new_apps": 1, "approved": 0, "discontinued": 0
+                "total": 1,
+                "new_apps": 1,
+                "approved": 0,
+                "discontinued": 0,
             }
             recent_result = MagicMock()
             recent_result.mappings.return_value.one.return_value = {"last_24h": 1, "last_7d": 1}
@@ -453,17 +499,31 @@ class TestAdminDashboard:
             scrapes_result.mappings.return_value.all.return_value = []
             user_count_result = MagicMock()
             user_count_result.scalar_one.return_value = 1
-            conn.execute.side_effect = [agg_result, recent_result, scrapes_result, user_count_result]
+            conn.execute.side_effect = [
+                agg_result,
+                recent_result,
+                scrapes_result,
+                user_count_result,
+            ]
             yield conn
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.check_orphaned_locations", new_callable=AsyncMock,
-                  return_value={"count": 0, "details": []}),
-            patch("wslcb_licensing_tracker.admin_routes.check_unenriched_records", new_callable=AsyncMock,
-                  return_value={"no_endorsements": 0, "no_entities": 0}),
-            patch("wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies", new_callable=AsyncMock,
-                  return_value={"unresolved_codes": 0, "placeholder_endorsements": 0}),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_orphaned_locations",
+                new_callable=AsyncMock,
+                return_value={"count": 0, "details": []},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_unenriched_records",
+                new_callable=AsyncMock,
+                return_value={"no_endorsements": 0, "no_entities": 0},
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.check_endorsement_anomalies",
+                new_callable=AsyncMock,
+                return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -489,17 +549,40 @@ class TestSuggestionsTabHTML:
     def test_suggestions_table_wrapper_not_overflow_hidden(self):
         """The suggestions table wrapper must not use overflow-hidden."""
         suggestions = [
-            {"id_a": 1, "id_b": 2, "name_a": "TAKEOUT/DELIVERY", "name_b": "TAKE OUT/DELIVERY",
-             "score": 0.9, "dismissed": False, "count_a": 5, "count_b": 3}
+            {
+                "id_a": 1,
+                "id_b": 2,
+                "name_a": "TAKEOUT/DELIVERY",
+                "name_b": "TAKE OUT/DELIVERY",
+                "score": 0.9,
+                "dismissed": False,
+                "count_a": 5,
+                "count_b": 3,
+            }
         ]
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
-                  new_callable=AsyncMock, return_value=suggestions),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                new_callable=AsyncMock,
+                return_value=suggestions,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -520,17 +603,40 @@ class TestSuggestionsTabHTML:
     def test_suggestions_table_wrapper_has_overflow_x_auto(self):
         """The suggestions table container must include overflow-x-auto."""
         suggestions = [
-            {"id_a": 1, "id_b": 2, "name_a": "TAKEOUT/DELIVERY", "name_b": "TAKE OUT/DELIVERY",
-             "score": 0.9, "dismissed": False, "count_a": 5, "count_b": 3}
+            {
+                "id_a": 1,
+                "id_b": 2,
+                "name_a": "TAKEOUT/DELIVERY",
+                "name_b": "TAKE OUT/DELIVERY",
+                "score": 0.9,
+                "dismissed": False,
+                "count_a": 5,
+                "count_b": 3,
+            }
         ]
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
-                  new_callable=AsyncMock, return_value=suggestions),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                new_callable=AsyncMock,
+                return_value=suggestions,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -547,17 +653,40 @@ class TestSuggestionsTabHTML:
     def test_accept_popup_uses_right_0_positioning(self):
         """The Accept popup must use right-0 positioning."""
         suggestions = [
-            {"id_a": 1, "id_b": 2, "name_a": "TAKEOUT/DELIVERY", "name_b": "TAKE OUT/DELIVERY",
-             "score": 0.9, "dismissed": False, "count_a": 5, "count_b": 3}
+            {
+                "id_a": 1,
+                "id_b": 2,
+                "name_a": "TAKEOUT/DELIVERY",
+                "name_b": "TAKE OUT/DELIVERY",
+                "score": 0.9,
+                "dismissed": False,
+                "count_a": 5,
+                "count_b": 3,
+            }
         ]
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
-                  new_callable=AsyncMock, return_value=suggestions),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                new_callable=AsyncMock,
+                return_value=suggestions,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -596,8 +725,14 @@ class TestEndorsementActionRedirects:
     def test_alias_from_suggestions_tab_redirects_to_suggestions(self):
         """POST /alias with return_section=suggestions must redirect to ?section=suggestions."""
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()),
-            patch("wslcb_licensing_tracker.admin_routes.set_canonical_endorsement", new_callable=AsyncMock, return_value=1),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -620,8 +755,14 @@ class TestEndorsementActionRedirects:
     def test_alias_from_endorsements_tab_redirects_to_endorsements(self):
         """POST /alias with return_section=endorsements must redirect to ?section=endorsements."""
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()),
-            patch("wslcb_licensing_tracker.admin_routes.set_canonical_endorsement", new_callable=AsyncMock, return_value=1),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -631,7 +772,11 @@ class TestEndorsementActionRedirects:
             try:
                 resp = client.post(
                     "/admin/endorsements/alias",
-                    data={"canonical_id": "1", "variant_ids": "2", "return_section": "endorsements"},
+                    data={
+                        "canonical_id": "1",
+                        "variant_ids": "2",
+                        "return_section": "endorsements",
+                    },
                     follow_redirects=False,
                 )
             finally:
@@ -644,8 +789,14 @@ class TestEndorsementActionRedirects:
     def test_alias_default_section_is_endorsements(self):
         """POST /alias without return_section defaults to section=endorsements."""
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()),
-            patch("wslcb_licensing_tracker.admin_routes.set_canonical_endorsement", new_callable=AsyncMock, return_value=1),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -671,7 +822,9 @@ class TestEndorsementActionRedirects:
         """POST /dismiss-suggestion with return_section=suggestions → suggestions tab."""
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -694,8 +847,14 @@ class TestEndorsementActionRedirects:
     def test_alias_invalid_return_section_falls_back_to_endorsements(self):
         """POST /alias with unrecognised return_section falls back to endorsements."""
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()),
-            patch("wslcb_licensing_tracker.admin_routes.set_canonical_endorsement", new_callable=AsyncMock, return_value=1),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -705,7 +864,11 @@ class TestEndorsementActionRedirects:
             try:
                 resp = client.post(
                     "/admin/endorsements/alias",
-                    data={"canonical_id": "1", "variant_ids": "2", "return_section": "evil&injected=value"},
+                    data={
+                        "canonical_id": "1",
+                        "variant_ids": "2",
+                        "return_section": "evil&injected=value",
+                    },
                     follow_redirects=False,
                 )
             finally:
@@ -721,7 +884,9 @@ class TestEndorsementActionRedirects:
         """POST /dismiss-suggestion with invalid return_section falls back to endorsements."""
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -747,7 +912,9 @@ class TestEndorsementActionRedirects:
         """POST /dismiss-suggestion without return_section defaults to endorsements."""
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -772,17 +939,40 @@ class TestEndorsementActionRedirects:
     def test_suggestions_alias_form_has_return_section_suggestions(self):
         """The Accept form on the suggestions tab must include return_section=suggestions."""
         suggestions = [
-            {"id_a": 1, "id_b": 2, "name_a": "TAKEOUT/DELIVERY", "name_b": "TAKE OUT/DELIVERY",
-             "score": 0.9, "dismissed": False, "count_a": 5, "count_b": 3}
+            {
+                "id_a": 1,
+                "id_b": 2,
+                "name_a": "TAKEOUT/DELIVERY",
+                "name_b": "TAKE OUT/DELIVERY",
+                "score": 0.9,
+                "dismissed": False,
+                "count_a": 5,
+                "count_b": 3,
+            }
         ]
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
-                  new_callable=AsyncMock, return_value=suggestions),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                new_callable=AsyncMock,
+                return_value=suggestions,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -800,17 +990,40 @@ class TestEndorsementActionRedirects:
     def test_suggestions_dismiss_form_has_return_section_suggestions(self):
         """The Dismiss form on the suggestions tab must include return_section=suggestions."""
         suggestions = [
-            {"id_a": 1, "id_b": 2, "name_a": "TAKEOUT/DELIVERY", "name_b": "TAKE OUT/DELIVERY",
-             "score": 0.9, "dismissed": False, "count_a": 5, "count_b": 3}
+            {
+                "id_a": 1,
+                "id_b": 2,
+                "name_a": "TAKEOUT/DELIVERY",
+                "name_b": "TAKE OUT/DELIVERY",
+                "score": 0.9,
+                "dismissed": False,
+                "count_a": 5,
+                "count_b": 3,
+            }
         ]
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
-                  new_callable=AsyncMock, return_value=suggestions),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                new_callable=AsyncMock,
+                return_value=suggestions,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -836,15 +1049,25 @@ class TestCodeMappingsFilter:
 
     def test_code_row_has_data_names_attribute(self):
         """Each .code-row must expose a data-names attribute with endorsement names."""
-        code_mappings = [
-            {"code": "394", "endorsements": [{"id": 1, "name": "Cannabis Retailer"}]}
-        ]
+        code_mappings = [{"code": "394", "endorsements": [{"id": 1, "name": "Cannabis Retailer"}]}]
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=code_mappings),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=code_mappings,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -856,19 +1079,29 @@ class TestCodeMappingsFilter:
                 del app.state.engine
 
         assert resp.status_code == 200
-        assert 'data-names=' in resp.text
+        assert "data-names=" in resp.text
 
     def test_code_row_data_names_contains_endorsement_name(self):
         """The data-names attribute must contain the endorsement name for that code."""
-        code_mappings = [
-            {"code": "394", "endorsements": [{"id": 1, "name": "Cannabis Retailer"}]}
-        ]
+        code_mappings = [{"code": "394", "endorsements": [{"id": 1, "name": "Cannabis Retailer"}]}]
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=code_mappings),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=code_mappings,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -889,9 +1122,21 @@ class TestCodeMappingsFilter:
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine

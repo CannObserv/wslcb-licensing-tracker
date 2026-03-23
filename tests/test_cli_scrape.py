@@ -9,10 +9,12 @@ from wslcb_licensing_tracker.cli import cmd_scrape
 
 def _mock_get_db(*_args, **_kwargs):
     """Return an async context manager yielding a mock connection."""
+
     @asynccontextmanager
     async def _ctx(*_a, **_kw):
         conn = AsyncMock()
         yield conn
+
     return _ctx()
 
 

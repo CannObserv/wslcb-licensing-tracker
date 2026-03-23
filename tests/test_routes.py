@@ -4,12 +4,12 @@ Covers UI consistency requirements such as shared placeholder text
 and dashboard section ordering.
 Uses FastAPI TestClient with async pg_queries functions mocked; no disk DB.
 """
+
 import copy
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
@@ -35,7 +35,14 @@ _EMPTY_STATS_TEMPLATE = {
     "unique_licenses": 0,
     "unique_entities": 0,
     "last_scrape": None,
-    "pipeline": {"total": 0, "pending": 0, "approved": 0, "discontinued": 0, "unknown": 0, "data_gap": 0},
+    "pipeline": {
+        "total": 0,
+        "pending": 0,
+        "approved": 0,
+        "discontinued": 0,
+        "unknown": 0,
+        "data_gap": 0,
+    },
 }
 
 _EMPTY_FILTERS = {
@@ -50,9 +57,11 @@ _EMPTY_FILTERS = {
 
 def _async_db_ctx(mock_conn: AsyncMock):
     """Return an asynccontextmanager factory that yields mock_conn."""
+
     @asynccontextmanager
     async def _ctx(engine):
         yield mock_conn
+
     return _ctx
 
 
@@ -105,7 +114,10 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
         patch("wslcb_licensing_tracker.app.get_cities_for_state", new=_get_cities_for_state),
         patch("wslcb_licensing_tracker.app.get_entities", new=_get_entities),
         patch("wslcb_licensing_tracker.api_routes.get_db", side_effect=_async_db_ctx(mock_conn)),
-        patch("wslcb_licensing_tracker.api_routes.export_records_cursor", return_value=_async_empty_gen()),
+        patch(
+            "wslcb_licensing_tracker.api_routes.export_records_cursor",
+            return_value=_async_empty_gen(),
+        ),
         patch("wslcb_licensing_tracker.api_routes.get_cities_for_state", new=_get_cities_for_state),
         patch("wslcb_licensing_tracker.api_routes.get_stats", new=_get_stats),
     )
@@ -131,7 +143,7 @@ def _html_section(html: str, start_comment: str, end_comment: str) -> str:
     Used by layout tests to isolate a dashboard section by its HTML comment anchors.
     """
     start = html.index(start_comment)
-    end   = html.index(end_comment, start)
+    end = html.index(end_comment, start)
     return html[start:end]
 
 
@@ -143,20 +155,21 @@ def _card_tag(section: str, label: str) -> str:
     2. Finds the outer card wrapper (the ``<a`` or ``<div`` immediately before it).
     Returns the full opening tag string up to and including ``>``.
     """
-    label_pos         = section.index(label)
+    label_pos = section.index(label)
     # Step 1: find the inner label element opening tag
-    inner_start       = section.rindex("<div", 0, label_pos)
+    inner_start = section.rindex("<div", 0, label_pos)
     # Step 2: find the outer card wrapper — could be <a or <div
-    a_pos   = section.rfind("<a ",   0, inner_start)
-    div_pos = section.rfind("<div",  0, inner_start)
+    a_pos = section.rfind("<a ", 0, inner_start)
+    div_pos = section.rfind("<div", 0, inner_start)
     card_start = max(a_pos, div_pos)
-    card_end   = section.index(">", card_start)
-    return section[card_start:card_end + 1]
+    card_end = section.index(">", card_start)
+    return section[card_start : card_end + 1]
 
 
 # ---------------------------------------------------------------------------
 # Dashboard section-order test (#46)
 # ---------------------------------------------------------------------------
+
 
 class TestDashboardSectionOrder:
     """Dashboard sections must appear in the prescribed order (#46).
@@ -178,14 +191,12 @@ class TestDashboardSectionOrder:
         """Return byte positions of each section anchor, with clear failures."""
         result = {}
         for key, anchor in [
-            ("search",     self.SEARCH),
-            ("stats",      self.STATS),
-            ("pipeline",   self.PIPELINE),
+            ("search", self.SEARCH),
+            ("stats", self.STATS),
+            ("pipeline", self.PIPELINE),
             ("last_scrape", self.LAST_SCRAPE),
         ]:
-            assert anchor in html, (
-                f"Section anchor missing from dashboard HTML: {anchor!r}"
-            )
+            assert anchor in html, f"Section anchor missing from dashboard HTML: {anchor!r}"
             result[key] = html.index(anchor)
         return result
 
@@ -196,9 +207,7 @@ class TestDashboardSectionOrder:
             resp = client.get("/")
             assert resp.status_code == 200
             pos = self._positions(resp.text)
-            assert pos["search"] < pos["stats"], (
-                "Search bar must appear before Stats Cards"
-            )
+            assert pos["search"] < pos["stats"], "Search bar must appear before Stats Cards"
             assert pos["stats"] < pos["pipeline"], (
                 "Stats Cards must appear before Application Pipeline"
             )
@@ -213,6 +222,7 @@ class TestDashboardSectionOrder:
 # Placeholder consistency tests (#45)
 # ---------------------------------------------------------------------------
 
+
 class TestSearchPlaceholder:
     """Both the Dashboard and the Search screen must show identical placeholder text."""
 
@@ -225,7 +235,7 @@ class TestSearchPlaceholder:
             assert SEARCH_PLACEHOLDER in resp.text, (
                 f"Dashboard placeholder mismatch.\n"
                 f"Expected: {SEARCH_PLACEHOLDER!r}\n"
-                f"Found in response: {[l for l in resp.text.splitlines() if 'placeholder' in l.lower()]}"
+                f"Found: {[ln for ln in resp.text.splitlines() if 'placeholder' in ln.lower()]}"
             )
         finally:
             _stop(patches)
@@ -239,7 +249,7 @@ class TestSearchPlaceholder:
             assert SEARCH_PLACEHOLDER in resp.text, (
                 f"Search screen placeholder mismatch.\n"
                 f"Expected: {SEARCH_PLACEHOLDER!r}\n"
-                f"Found in response: {[l for l in resp.text.splitlines() if 'placeholder' in l.lower()]}"
+                f"Found: {[ln for ln in resp.text.splitlines() if 'placeholder' in ln.lower()]}"
             )
         finally:
             _stop(patches)
@@ -248,6 +258,7 @@ class TestSearchPlaceholder:
 # ---------------------------------------------------------------------------
 # Quick Search button wrapping (#47)
 # ---------------------------------------------------------------------------
+
 
 class TestQuickSearchButtonWrapping:
     """Quick Search form must allow the button to wrap on narrow viewports (#47).
@@ -264,7 +275,7 @@ class TestQuickSearchButtonWrapping:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            assert 'flex-wrap' in resp.text, (
+            assert "flex-wrap" in resp.text, (
                 "Quick Search form is missing 'flex-wrap'; "
                 "the Search button will overflow on narrow mobile viewports."
             )
@@ -277,14 +288,13 @@ class TestQuickSearchButtonWrapping:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            form_html = _html_section(resp.text, "<!-- Quick Search -->",
-                                      "<!-- Stats Cards -->")
+            form_html = _html_section(resp.text, "<!-- Quick Search -->", "<!-- Stats Cards -->")
             assert 'type="submit"' in form_html, "Submit button not found in Quick Search form"
             button_line_start = form_html.index('type="submit"')
-            tag_start = form_html.rindex('<button', 0, button_line_start)
-            tag_end   = form_html.index('>', button_line_start) + 1
+            tag_start = form_html.rindex("<button", 0, button_line_start)
+            tag_end = form_html.index(">", button_line_start) + 1
             button_tag = form_html[tag_start:tag_end]
-            assert 'ml-auto' in button_tag, (
+            assert "ml-auto" in button_tag, (
                 f"Search button tag is missing 'ml-auto'; "
                 f"button will not right-align when it wraps to a new line.\n"
                 f"Button tag: {button_tag!r}"
@@ -296,6 +306,7 @@ class TestQuickSearchButtonWrapping:
 # ---------------------------------------------------------------------------
 # Stats Cards mobile 2-per-row layout (#48)
 # ---------------------------------------------------------------------------
+
 
 class TestStatCardsMobileLayout:
     """Stat card grids must use grid-cols-2 at mobile so cards appear 2-per-row (#48).
@@ -314,10 +325,9 @@ class TestStatCardsMobileLayout:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text, "<!-- Stats Cards -->",
-                                    "<!-- Additional Stats -->")
+            section = _html_section(resp.text, "<!-- Stats Cards -->", "<!-- Additional Stats -->")
             first_div_end = section.index(">", section.index("<div"))
-            grid_div = section[section.index("<div"):first_div_end + 1]
+            grid_div = section[section.index("<div") : first_div_end + 1]
             assert "grid-cols-2" in grid_div, (
                 f"Stats Cards grid is missing 'grid-cols-2'; "
                 f"cards will be full-width on mobile.\nGrid div: {grid_div!r}"
@@ -331,10 +341,11 @@ class TestStatCardsMobileLayout:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text, "<!-- Additional Stats -->",
-                                    "<!-- Application Pipeline -->")
+            section = _html_section(
+                resp.text, "<!-- Additional Stats -->", "<!-- Application Pipeline -->"
+            )
             first_div_end = section.index(">", section.index("<div"))
-            grid_div = section[section.index("<div"):first_div_end + 1]
+            grid_div = section[section.index("<div") : first_div_end + 1]
             assert "grid-cols-2" in grid_div, (
                 f"Additional Stats grid is missing 'grid-cols-2'; "
                 f"cards will be full-width on mobile.\nGrid div: {grid_div!r}"
@@ -348,8 +359,9 @@ class TestStatCardsMobileLayout:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text, "<!-- Additional Stats -->",
-                                    "<!-- Application Pipeline -->")
+            section = _html_section(
+                resp.text, "<!-- Additional Stats -->", "<!-- Application Pipeline -->"
+            )
             card_div = _card_tag(section, "Date Range")
             assert "col-span-2" in card_div, (
                 f"Date Range card is missing 'col-span-2'; "
@@ -365,8 +377,9 @@ class TestStatCardsMobileLayout:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text, "<!-- Additional Stats -->",
-                                    "<!-- Application Pipeline -->")
+            section = _html_section(
+                resp.text, "<!-- Additional Stats -->", "<!-- Application Pipeline -->"
+            )
             card_div = _card_tag(section, "Date Range")
             assert "md:col-span-1" in card_div, (
                 f"Date Range card is missing 'md:col-span-1'; "
@@ -381,6 +394,7 @@ class TestStatCardsMobileLayout:
 # Stat cards as linked anchors (#49)
 # ---------------------------------------------------------------------------
 
+
 class TestStatCardLinks:
     """Primary stat cards must be <a> anchors linking to search results (#49).
 
@@ -393,16 +407,16 @@ class TestStatCardLinks:
 
     # (label_text, expected_href) for every linked Stats Card.
     STATS_CARD_LINKS = [
-        ("Total Records",      "/search"),
-        ("New Applications",   "/search?section_type=new_application"),
-        ("Approved",           "/search?section_type=approved"),
-        ("Discontinued",       "/search?section_type=discontinued"),
+        ("Total Records", "/search"),
+        ("New Applications", "/search?section_type=new_application"),
+        ("Approved", "/search?section_type=approved"),
+        ("Discontinued", "/search?section_type=discontinued"),
     ]
 
     # (label_text, expected_href) for linked Additional Stats cards.
     ADDITIONAL_CARD_LINKS = [
-        ("Unique Businesses",  "/search"),
-        ("Unique Licenses",    "/search"),
+        ("Unique Businesses", "/search"),
+        ("Unique Licenses", "/search"),
     ]
 
     def test_stats_cards_are_links(self):
@@ -411,18 +425,15 @@ class TestStatCardLinks:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text,
-                                    "<!-- Stats Cards -->",
-                                    "<!-- Additional Stats -->")
+            section = _html_section(resp.text, "<!-- Stats Cards -->", "<!-- Additional Stats -->")
             for label, href in self.STATS_CARD_LINKS:
                 tag = _card_tag(section, label)
                 assert tag.startswith("<a "), (
-                    f"Stats Card '{label}' outer wrapper is not an <a> tag.\n"
-                    f"Tag: {tag!r}"
+                    f"Stats Card '{label}' outer wrapper is not an <a> tag.\nTag: {tag!r}"
                 )
                 assert f'href="{href}"' in tag, (
                     f"Stats Card '{label}' has wrong or missing href.\n"
-                    f"Expected href=\"{href}\"\nTag: {tag!r}"
+                    f'Expected href="{href}"\nTag: {tag!r}'
                 )
         finally:
             _stop(patches)
@@ -433,9 +444,9 @@ class TestStatCardLinks:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text,
-                                    "<!-- Additional Stats -->",
-                                    "<!-- Application Pipeline -->")
+            section = _html_section(
+                resp.text, "<!-- Additional Stats -->", "<!-- Application Pipeline -->"
+            )
             for label, href in self.ADDITIONAL_CARD_LINKS:
                 tag = _card_tag(section, label)
                 assert tag.startswith("<a "), (
@@ -444,7 +455,7 @@ class TestStatCardLinks:
                 )
                 assert f'href="{href}"' in tag, (
                     f"Additional Stats card '{label}' has wrong or missing href.\n"
-                    f"Expected href=\"{href}\"\nTag: {tag!r}"
+                    f'Expected href="{href}"\nTag: {tag!r}'
                 )
         finally:
             _stop(patches)
@@ -455,9 +466,9 @@ class TestStatCardLinks:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text,
-                                    "<!-- Additional Stats -->",
-                                    "<!-- Application Pipeline -->")
+            section = _html_section(
+                resp.text, "<!-- Additional Stats -->", "<!-- Application Pipeline -->"
+            )
             tag = _card_tag(section, "Date Range")
             assert not tag.startswith("<a "), (
                 f"Date Range card should NOT be a link but its outer wrapper is an <a>.\n"
@@ -472,17 +483,15 @@ class TestStatCardLinks:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text,
-                                    "<!-- Additional Stats -->",
-                                    "<!-- Application Pipeline -->")
+            section = _html_section(
+                resp.text, "<!-- Additional Stats -->", "<!-- Application Pipeline -->"
+            )
             tag = _card_tag(section, "Unique Entities")
             assert tag.startswith("<a "), (
-                f"Unique Entities card should be an <a> link to /entities.\n"
-                f"Tag: {tag!r}"
+                f"Unique Entities card should be an <a> link to /entities.\nTag: {tag!r}"
             )
             assert 'href="/entities"' in tag, (
-                f"Unique Entities card href should be /entities.\n"
-                f"Tag: {tag!r}"
+                f"Unique Entities card href should be /entities.\nTag: {tag!r}"
             )
         finally:
             _stop(patches)
@@ -574,8 +583,9 @@ class TestAdditionalNamesNotice:
         return client, patches
 
     def test_notice_shown_when_flag_is_set(self):
-        record = self._make_record_dict(1, has_flag=True,
-                                        applicants="NOTICE TEST LLC; JANE DOE; BOB SMITH")
+        record = self._make_record_dict(
+            1, has_flag=True, applicants="NOTICE TEST LLC; JANE DOE; BOB SMITH"
+        )
         client, patches = self._make_client_for_record(record)
         try:
             resp = client.get("/record/1")
@@ -585,8 +595,9 @@ class TestAdditionalNamesNotice:
             _stop(patches)
 
     def test_notice_absent_when_flag_not_set(self):
-        record = self._make_record_dict(2, has_flag=False,
-                                        applicants="NOTICE TEST LLC; JANE DOE; BOB SMITH")
+        record = self._make_record_dict(
+            2, has_flag=False, applicants="NOTICE TEST LLC; JANE DOE; BOB SMITH"
+        )
         client, patches = self._make_client_for_record(record)
         try:
             resp = client.get("/record/2")
@@ -724,17 +735,15 @@ class TestDashboardEntitiesLink:
         try:
             resp = client.get("/")
             assert resp.status_code == 200
-            section = _html_section(resp.text,
-                                    "<!-- Additional Stats -->",
-                                    "<!-- Application Pipeline -->")
+            section = _html_section(
+                resp.text, "<!-- Additional Stats -->", "<!-- Application Pipeline -->"
+            )
             tag = _card_tag(section, "Unique Entities")
             assert tag.startswith("<a "), (
-                f"Unique Entities card should be an <a> link to /entities.\n"
-                f"Tag: {tag!r}"
+                f"Unique Entities card should be an <a> link to /entities.\nTag: {tag!r}"
             )
             assert 'href="/entities"' in tag, (
-                f"Unique Entities card href should be /entities.\n"
-                f"Tag: {tag!r}"
+                f"Unique Entities card href should be /entities.\nTag: {tag!r}"
             )
         finally:
             _stop(patches)

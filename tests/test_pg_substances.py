@@ -1,6 +1,9 @@
 """Tests for pg_substances.py — async regulated substance CRUD."""
-import pytest
 
+import pytest
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from wslcb_licensing_tracker.models import license_endorsements
 from wslcb_licensing_tracker.pg_substances import (
     add_substance,
     get_regulated_substances,
@@ -8,8 +11,6 @@ from wslcb_licensing_tracker.pg_substances import (
     remove_substance,
     set_substance_endorsements,
 )
-from wslcb_licensing_tracker.models import license_endorsements
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 
 class TestAddSubstance:

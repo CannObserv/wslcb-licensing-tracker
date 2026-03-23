@@ -89,9 +89,7 @@ async def test_repair_assumptions_updates_empty_business_name(pg_conn):
     license_number = "RASM001"
     record_id = await _insert_assumption_empty_name(pg_conn, license_number)
 
-    source_id = await get_or_create_source(
-        pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL
-    )
+    source_id = await get_or_create_source(pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL)
 
     repair_records = [
         {
@@ -134,9 +132,7 @@ async def test_repair_assumptions_skips_already_named_record(pg_conn):
         )
     )
 
-    source_id = await get_or_create_source(
-        pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL
-    )
+    source_id = await get_or_create_source(pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL)
     repair_records = [
         {
             "application_type": "ASSUMPTION",
@@ -155,9 +151,7 @@ async def test_repair_assumptions_skips_already_named_record(pg_conn):
 @pytest.mark.asyncio(loop_scope="session")
 async def test_repair_assumptions_ignores_non_assumption_records(pg_conn):
     """_repair_assumptions skips records with application_type != ASSUMPTION."""
-    source_id = await get_or_create_source(
-        pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL
-    )
+    source_id = await get_or_create_source(pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL)
     non_assumption = [
         {
             "application_type": "NEW APPLICATION",
@@ -182,9 +176,7 @@ async def test_repair_change_of_location_sets_previous_location(pg_conn):
     license_number = "RCOL001"
     record_id = await _insert_change_of_location_no_prev(pg_conn, license_number)
 
-    source_id = await get_or_create_source(
-        pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL
-    )
+    source_id = await get_or_create_source(pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL)
 
     repair_records = [
         {
@@ -203,9 +195,7 @@ async def test_repair_change_of_location_sets_previous_location(pg_conn):
 
     row = (
         await pg_conn.execute(
-            select(license_records.c.previous_location_id).where(
-                license_records.c.id == record_id
-            )
+            select(license_records.c.previous_location_id).where(license_records.c.id == record_id)
         )
     ).one()
     assert row.previous_location_id is not None
@@ -215,9 +205,7 @@ async def test_repair_change_of_location_sets_previous_location(pg_conn):
 @pytest.mark.asyncio(loop_scope="session")
 async def test_repair_change_of_location_skips_missing_previous_address(pg_conn):
     """Skips records where previous_business_location is absent."""
-    source_id = await get_or_create_source(
-        pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL
-    )
+    source_id = await get_or_create_source(pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL)
     repair_records = [
         {
             "application_type": "CHANGE OF LOCATION",
@@ -235,9 +223,7 @@ async def test_repair_change_of_location_skips_missing_previous_address(pg_conn)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_repair_change_of_location_ignores_non_matching_records(pg_conn):
     """Returns 0 when no DB record matches the repair data."""
-    source_id = await get_or_create_source(
-        pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL
-    )
+    source_id = await get_or_create_source(pg_conn, SOURCE_TYPE_CO_ARCHIVE, url=WSLCB_SOURCE_URL)
     repair_records = [
         {
             "application_type": "CHANGE OF LOCATION",

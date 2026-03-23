@@ -2,6 +2,7 @@
 
 All tests use static HTML fixtures; no network calls, no database.
 """
+
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -9,14 +10,14 @@ import pytest
 from bs4 import BeautifulSoup
 
 from wslcb_licensing_tracker.parser import (
+    SECTION_MAP,
     extract_snapshot_date,
+    is_valid_record,
     normalize_date,
     parse_diff_timestamp,
     parse_location,
     parse_records_from_table,
     parse_snapshot,
-    is_valid_record,
-    SECTION_MAP,
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -34,7 +35,7 @@ def _load_table(fixture_name: str, section_type: str | None = None):
     # Infer section_type from the header if not given
     if section_type is None:
         th = table.find("th")
-        header = th.get_text(strip=True).replace('\xa0', ' ')
+        header = th.get_text(strip=True).replace("\xa0", " ")
         for key, val in SECTION_MAP.items():
             if key in header:
                 section_type = val
@@ -72,14 +73,10 @@ class TestNormalizeDate:
 
 class TestParseLocation:
     def test_full_address(self):
-        assert parse_location("123 MAIN ST, SEATTLE, WA 98101") == (
-            "SEATTLE", "WA", "98101"
-        )
+        assert parse_location("123 MAIN ST, SEATTLE, WA 98101") == ("SEATTLE", "WA", "98101")
 
     def test_zip_plus_four(self):
-        assert parse_location("100 1ST AVE, KENT, WA 98032-1234") == (
-            "KENT", "WA", "98032-1234"
-        )
+        assert parse_location("100 1ST AVE, KENT, WA 98032-1234") == ("KENT", "WA", "98032-1234")
 
     def test_no_zip(self):
         city, state, zip_code = parse_location("100 1ST AVE, KENT, WA")
@@ -92,7 +89,9 @@ class TestParseLocation:
 
     def test_multi_word_city(self):
         assert parse_location("1 ELM DR, LAKE FOREST PARK, WA 98155") == (
-            "LAKE FOREST PARK", "WA", "98155"
+            "LAKE FOREST PARK",
+            "WA",
+            "98155",
         )
 
 
@@ -271,6 +270,7 @@ class TestParseSnapshot:
 
     def test_each_section_has_one_record(self):
         from collections import Counter
+
         counts = Counter(r["section_type"] for r in self.records)
         assert counts["new_application"] == 1
         assert counts["approved"] == 1
@@ -346,10 +346,12 @@ class TestEdgeCases:
 
 # ── extract_tbody_from_snapshot ──────────────────────────────────────
 
+
 class TestExtractTbodyFromSnapshot:
     def test_found_first_record(self, tmp_path):
         """Returns the <tbody> HTML for the first matching record."""
         from wslcb_licensing_tracker.parser import extract_tbody_from_snapshot
+
         src = FIXTURES_DIR / "snapshot_two_records.html"
         result = extract_tbody_from_snapshot(
             src, "new_application", "078001", "2025-06-15", "NEW APPLICATION"
@@ -361,6 +363,7 @@ class TestExtractTbodyFromSnapshot:
     def test_found_second_record(self, tmp_path):
         """Returns the <tbody> for the second record in the same table."""
         from wslcb_licensing_tracker.parser import extract_tbody_from_snapshot
+
         src = FIXTURES_DIR / "snapshot_two_records.html"
         result = extract_tbody_from_snapshot(
             src, "new_application", "412345", "2025-06-14", "RENEWAL"
@@ -372,6 +375,7 @@ class TestExtractTbodyFromSnapshot:
     def test_not_found_wrong_license(self):
         """Returns None when the license number doesn't match."""
         from wslcb_licensing_tracker.parser import extract_tbody_from_snapshot
+
         src = FIXTURES_DIR / "snapshot_two_records.html"
         result = extract_tbody_from_snapshot(
             src, "new_application", "999999", "2025-06-15", "NEW APPLICATION"
@@ -381,6 +385,7 @@ class TestExtractTbodyFromSnapshot:
     def test_not_found_wrong_section(self):
         """Returns None when section_type has no matching table."""
         from wslcb_licensing_tracker.parser import extract_tbody_from_snapshot
+
         src = FIXTURES_DIR / "snapshot_two_records.html"
         result = extract_tbody_from_snapshot(
             src, "approved", "078001", "2025-06-15", "NEW APPLICATION"
@@ -390,10 +395,12 @@ class TestExtractTbodyFromSnapshot:
 
 # ── extract_tbody_from_diff ──────────────────────────────────────────
 
+
 class TestExtractTbodyFromDiff:
     def test_found_in_added_lines(self):
         """Returns the reconstructed <tbody> for a record in the added lines."""
         from wslcb_licensing_tracker.parser import extract_tbody_from_diff
+
         src = FIXTURES_DIR / "diff_two_records.txt"
         result = extract_tbody_from_diff(
             src, "new_application", "078001", "2025-06-15", "NEW APPLICATION"
@@ -405,16 +412,16 @@ class TestExtractTbodyFromDiff:
     def test_found_in_removed_lines(self):
         """Returns the reconstructed <tbody> for a record only in removed lines."""
         from wslcb_licensing_tracker.parser import extract_tbody_from_diff
+
         src = FIXTURES_DIR / "diff_two_records.txt"
-        result = extract_tbody_from_diff(
-            src, "new_application", "412345", "2025-06-14", "RENEWAL"
-        )
+        result = extract_tbody_from_diff(src, "new_application", "412345", "2025-06-14", "RENEWAL")
         assert result is not None
         assert "BOB'S BEER BARN" in result
 
     def test_not_found(self):
         """Returns None when the record key isn't in the diff."""
         from wslcb_licensing_tracker.parser import extract_tbody_from_diff
+
         src = FIXTURES_DIR / "diff_two_records.txt"
         result = extract_tbody_from_diff(
             src, "new_application", "999999", "2025-06-15", "NEW APPLICATION"
@@ -427,6 +434,7 @@ class TestStripAnchorTags:
 
     def test_simple_anchor_removed(self):
         from wslcb_licensing_tracker.parser import strip_anchor_tags
+
         html = '<td><a href="tel:2065551234">206-555-1234</a></td>'
         result = strip_anchor_tags(html)
         assert "<a" not in result
@@ -434,6 +442,7 @@ class TestStripAnchorTags:
 
     def test_nested_anchor_removed(self):
         from wslcb_licensing_tracker.parser import strip_anchor_tags
+
         html = '<td><a href="http://example.com"><b>ACME CO</b></a></td>'
         result = strip_anchor_tags(html)
         assert "<a" not in result
@@ -442,10 +451,8 @@ class TestStripAnchorTags:
 
     def test_multiple_anchors_removed(self):
         from wslcb_licensing_tracker.parser import strip_anchor_tags
-        html = (
-            '<tr><td><a href="/a">First</a></td>'
-            '<td><a href="/b">Second</a></td></tr>'
-        )
+
+        html = '<tr><td><a href="/a">First</a></td><td><a href="/b">Second</a></td></tr>'
         result = strip_anchor_tags(html)
         assert "<a" not in result
         assert "First" in result
@@ -453,17 +460,20 @@ class TestStripAnchorTags:
 
     def test_no_anchors_unchanged(self):
         from wslcb_licensing_tracker.parser import strip_anchor_tags
-        html = '<td>Plain text <b>bold</b></td>'
+
+        html = "<td>Plain text <b>bold</b></td>"
         result = strip_anchor_tags(html)
         assert "Plain text" in result
         assert "<b>" in result
 
     def test_empty_string(self):
         from wslcb_licensing_tracker.parser import strip_anchor_tags
+
         assert strip_anchor_tags("") == ""
 
     def test_anchor_with_no_href(self):
         from wslcb_licensing_tracker.parser import strip_anchor_tags
+
         html = '<td><a name="top">Anchor text</a></td>'
         result = strip_anchor_tags(html)
         assert "<a" not in result

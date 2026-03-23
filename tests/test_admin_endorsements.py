@@ -8,12 +8,10 @@ correct helper invocation) without a real database.
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.app import app
 from wslcb_licensing_tracker.admin_routes import _get_db
-
+from wslcb_licensing_tracker.app import app
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,9 +75,21 @@ class TestAdminEndorsementsGet:
     def test_default_tab_is_substances(self):
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -96,9 +106,21 @@ class TestAdminEndorsementsGet:
     def test_section_substances_renders(self):
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -115,9 +137,21 @@ class TestAdminEndorsementsGet:
     def test_section_endorsements_still_renders(self):
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -134,10 +168,26 @@ class TestAdminEndorsementsGet:
     def test_section_suggestions_still_renders(self):
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -153,9 +203,21 @@ class TestAdminEndorsementsGet:
     def test_section_codes_still_renders(self):
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.get_regulated_substances", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_endorsement_list", new_callable=AsyncMock, return_value=[]),
-            patch("wslcb_licensing_tracker.admin_routes.get_code_mappings", new_callable=AsyncMock, return_value=[{"code": "394", "endorsements": []}]),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                new_callable=AsyncMock,
+                return_value=[{"code": "394", "endorsements": []}],
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -187,7 +249,11 @@ class TestSubstanceAdd:
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.add_substance", new_callable=AsyncMock, return_value=42),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.add_substance",
+                new_callable=AsyncMock,
+                return_value=42,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -220,7 +286,11 @@ class TestSubstanceAdd:
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.add_substance", new_callable=AsyncMock, return_value=42),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.add_substance",
+                new_callable=AsyncMock,
+                return_value=42,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -278,7 +348,11 @@ class TestSubstanceRemove:
         """POST /remove calls remove_substance and redirects with substance_removed flash."""
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.remove_substance", new_callable=AsyncMock, return_value="Test Substance"),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.remove_substance",
+                new_callable=AsyncMock,
+                return_value="Test Substance",
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -329,7 +403,11 @@ class TestSubstanceRemove:
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.remove_substance", new_callable=AsyncMock, return_value="Test"),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.remove_substance",
+                new_callable=AsyncMock,
+                return_value="Test",
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -371,7 +449,10 @@ class TestSubstanceSetEndorsements:
         """POST /set-endorsements calls set_substance_endorsements and redirects."""
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.set_substance_endorsements", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.set_substance_endorsements",
+                new_callable=AsyncMock,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -392,7 +473,7 @@ class TestSubstanceSetEndorsements:
         assert "substance_updated" in resp.headers["location"]
 
     def test_clears_all_when_no_ids_sent(self):
-        """POST /set-endorsements with no endorsement_ids calls set_substance_endorsements with empty list."""
+        """POST /set-endorsements with no IDs calls set_substance_endorsements([])."""
         mock_set = AsyncMock()
 
         with (
@@ -416,7 +497,7 @@ class TestSubstanceSetEndorsements:
 
         # called with substance_id=5 and empty list
         mock_set.assert_called_once()
-        _, call_args = mock_set.call_args[0], mock_set.call_args[0]
+        _ = mock_set.call_args[0]
         # third arg should be the endorsement_ids list (empty)
         assert mock_set.call_args[0][2] == []
 
@@ -426,7 +507,10 @@ class TestSubstanceSetEndorsements:
 
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
-            patch("wslcb_licensing_tracker.admin_routes.set_substance_endorsements", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_routes.set_substance_endorsements",
+                new_callable=AsyncMock,
+            ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
             patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
@@ -498,7 +582,11 @@ def _make_unalias_conn(*, has_alias: bool = True, affected_records: list | None 
     conn = AsyncMock()
     if has_alias:
         conn.execute.side_effect = [
-            exists_result, alias_result, variant_name_result, canonical_name_result, affected_result
+            exists_result,
+            alias_result,
+            variant_name_result,
+            canonical_name_result,
+            affected_result,
         ]
     else:
         conn.execute.side_effect = [exists_result, alias_result]

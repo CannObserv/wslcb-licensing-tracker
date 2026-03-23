@@ -1,12 +1,12 @@
 """Tests for pg_link_records.py — async application-outcome linking."""
+
 import pytest
+
 from wslcb_licensing_tracker.pg_db import outcome_filter_sql
 from wslcb_licensing_tracker.pg_link_records import (
     build_all_links,
-    link_new_record,
     get_outcome_status,
     get_record_links_bulk,
-    get_reverse_link_info,
 )
 from wslcb_licensing_tracker.pg_pipeline import insert_record
 

@@ -1,11 +1,12 @@
 """Tests for pg_entities.py — async entity normalization."""
+
 import pytest
+
 from wslcb_licensing_tracker.pg_entities import (
     get_or_create_entity,
-    parse_and_link_entities,
     get_record_entities,
     merge_duplicate_entities,
-    reprocess_entities,
+    parse_and_link_entities,
 )
 from wslcb_licensing_tracker.pg_pipeline import insert_record
 
@@ -35,7 +36,8 @@ class TestParseAndLinkEntities:
         result = await insert_record(pg_conn, standard_new_application)
         record_id = result[0]
         count = await parse_and_link_entities(
-            pg_conn, record_id,
+            pg_conn,
+            record_id,
             "ACME CANNABIS CO; JOHN DOE; JANE SMITH",
             role="applicant",
         )
@@ -48,7 +50,8 @@ class TestParseAndLinkEntities:
         result = await insert_record(pg_conn, standard_new_application)
         record_id = result[0]
         await parse_and_link_entities(
-            pg_conn, record_id,
+            pg_conn,
+            record_id,
             "ACME CANNABIS CO; JOHN DOE",
             role="applicant",
         )
@@ -62,11 +65,12 @@ class TestParseAndLinkEntities:
         standard_new_application["license_number"] = "entity_003"
         result = await insert_record(pg_conn, standard_new_application)
         record_id = result[0]
+        await parse_and_link_entities(pg_conn, record_id, "JOHN DOE; JANE SMITH", role="applicant")
         await parse_and_link_entities(
-            pg_conn, record_id, "JOHN DOE; JANE SMITH", role="applicant"
-        )
-        await parse_and_link_entities(
-            pg_conn, record_id, "JOHN DOE; JANE SMITH", role="applicant",
+            pg_conn,
+            record_id,
+            "JOHN DOE; JANE SMITH",
+            role="applicant",
             delete_existing=True,
         )
         entity_map = await get_record_entities(pg_conn, [record_id])
