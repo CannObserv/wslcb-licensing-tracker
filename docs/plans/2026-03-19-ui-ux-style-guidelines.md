@@ -18,7 +18,7 @@
 - The Tailwind Play CDN is at `base.html:8`: `<script src="https://cdn.tailwindcss.com?v=3.4.17">`. The inline config is `base.html:9-27`. The `<style>` block is `base.html:29-36`.
 - `search.html` JS block starts at line 137, ends at line 279. Data injection (Jinja2 → JS global) is at line 128-130 and must stay inline.
 - Admin flash banners are in `admin/endorsements.html:18-38`.
-- **Task ordering constraint:** Task 3 (app.py — `css_version` global) must be committed before Tasks 4 and 5 (JS extraction), since the extracted `<script src>` tags use `?v={{ css_version }}`.
+- **Task ordering constraint:** Task 3 (app.py — `build_id` global) must be committed before Tasks 4 and 5 (JS extraction), since the extracted `<script src>` tags use `?v={{ build_id }}`.
 - **admin/base.html has no `</body>`** — it only defines `{% block content %}` inside `base.html`. Auto-dismiss JS (Task 13) goes at the bottom of `{% block admin_content %}` in `admin/base.html`, rendering inside `<body>` before `</body>`.
 - All work committed with `#91` prefix.
 
@@ -277,7 +277,7 @@ In `base.html`, replace lines 8-27:
 ```
 with:
 ```html
-    <link rel="stylesheet" href="/static/css/tailwind.css?v={{ css_version }}">
+    <link rel="stylesheet" href="/static/css/tailwind.css?v={{ build_id }}">
 ```
 
 Also remove the entire `<style>` block at lines 29-36 (those classes are now in `input.css`).
@@ -319,24 +319,17 @@ def test_static_files_have_cache_control_header(client):
 Run: `uv run pytest tests/test_app.py::test_static_files_have_cache_control_header -v`
 Expected: FAIL.
 
-- [ ] **Step 3.2: Add git-sha helper and `css_version` Jinja2 global**
+- [ ] **Step 3.2: Add `build_id` Jinja2 global**
 
-Add `import subprocess` to the imports in `app.py`.
+> **Updated by #110:** `BUILD_ID` is now read from an env var (set by systemd `ExecStartPre`), not from a git subprocess.
 
-After `templates = Jinja2Templates(directory="templates")` (line 96):
+After `templates = Jinja2Templates(directory="templates")` (line 91):
 ```python
-def _get_css_version() -> str:
-    """Return short git SHA for cache-busting static assets. Falls back to 'dev'."""
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, check=True
-        ).stdout.strip()
-    except Exception:
-        return "dev"
-
-_CSS_VERSION = _get_css_version()
-templates.env.globals["css_version"] = _CSS_VERSION
+_BUILD_ID = os.environ.get("BUILD_ID")
+if not _BUILD_ID:
+    logger.warning("BUILD_ID not set; static asset cache-busting disabled")
+    _BUILD_ID = "dev"
+templates.env.globals["build_id"] = _BUILD_ID
 ```
 
 - [ ] **Step 3.3: Add Cache-Control middleware**
@@ -395,7 +388,7 @@ The file references `SUBSTANCE_ENDORSEMENTS` as a global — that's fine since t
 
 Replace the `<script>` block at lines 137-279 (the entire `<script>...</script>` block after `<div id="results">`) with:
 ```html
-<script src="/static/js/search.js?v={{ css_version }}"></script>
+<script src="/static/js/search.js?v={{ build_id }}"></script>
 ```
 
 Keep the data injection inline script at lines 128-130:
@@ -447,7 +440,7 @@ The block contains `{% if q %}filterEndorsements();{% endif %}` — 2 lines of J
 
 Copy all JS content except the `{% if q %}filterEndorsements();{% endif %}` snippet to `static/js/admin-endorsements.js`. In the template, replace the large `<script>` block with:
 ```html
-<script src="/static/js/admin-endorsements.js?v={{ css_version }}"></script>
+<script src="/static/js/admin-endorsements.js?v={{ build_id }}"></script>
 <script>{% if q %}filterEndorsements();{% endif %}</script>
 ```
 
@@ -1031,7 +1024,7 @@ Append a new section at the end of `docs/STYLE.md`:
 - **JavaScript:** No large inline `<script>` blocks in templates. Extract logic to
   `static/js/*.js`. Keep only small data-injection snippets inline (e.g., `const DATA = {{ data | tojson }}`).
 - **Static assets:** All `/static/` responses have `Cache-Control: public, max-age=31536000`.
-  Cache-bust via `?v={{ css_version }}` query param (auto-set to current git SHA at startup).
+  Cache-bust via `?v={{ build_id }}` query param (auto-set to current git SHA at startup).
 
 ## Responsiveness Rules
 

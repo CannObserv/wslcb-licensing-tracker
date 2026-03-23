@@ -29,6 +29,8 @@ from .pg_queries_stats import get_stats
 
 logger = logging.getLogger(__name__)
 
+_BUILD_ID = os.environ.get("BUILD_ID", "dev")
+
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
 
@@ -113,7 +115,7 @@ async def api_health(request: Request) -> JSONResponse:
             {
                 "ok": True,
                 "message": "Healthy",
-                "data": {"db": "ok", "build": os.environ.get("BUILD_ID", "dev")},
+                "data": {"db": "ok", "build": _BUILD_ID},
             },
             status_code=200,
         )

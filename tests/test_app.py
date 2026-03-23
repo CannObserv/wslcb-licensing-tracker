@@ -3,7 +3,6 @@
 Covers non-route concerns such as static asset caching and Jinja2 globals
 that are set up at module load time in app.py.
 """
-import os
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 

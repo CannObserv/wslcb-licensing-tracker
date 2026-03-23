@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=exedev
 WorkingDirectory=/home/exedev/wslcb-licensing-tracker
+# Runs as root (before User= switch); writes BUILD_ID for the app to read.
 ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(/usr/bin/git -C /home/exedev/wslcb-licensing-tracker rev-parse --short HEAD) > /run/wslcb-build-id'
 ExecStart=/home/exedev/wslcb-licensing-tracker/.venv/bin/uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8000
 # Retry loop: poll /api/v1/health up to 20 times (60 s) after start.
