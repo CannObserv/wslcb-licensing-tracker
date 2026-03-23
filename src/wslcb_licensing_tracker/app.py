@@ -7,8 +7,7 @@ registered as an APIRouter and included at startup.
 import html
 import json
 import logging
-import shutil
-import subprocess
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -92,21 +91,11 @@ app.include_router(api_routes.router)
 templates = Jinja2Templates(directory="templates")
 
 
-def _get_css_version() -> str:
-    """Return short git SHA for cache-busting static assets. Falls back to 'dev'."""
-    git = shutil.which("git")
-    if not git:
-        return "dev"
-    try:
-        return subprocess.run(  # noqa: S603
-            [git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "dev"
-
-
-_CSS_VERSION = _get_css_version()
-templates.env.globals["css_version"] = _CSS_VERSION
+_BUILD_ID = os.environ.get("BUILD_ID")
+if not _BUILD_ID:
+    logger.warning("BUILD_ID not set; static asset cache-busting disabled")
+    _BUILD_ID = "dev"
+templates.env.globals["build_id"] = _BUILD_ID
 
 PER_PAGE = 50
 

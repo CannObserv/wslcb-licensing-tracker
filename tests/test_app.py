@@ -1,8 +1,9 @@
-"""Tests for app-level configuration (Cache-Control headers, css_version global).
+"""Tests for app-level configuration (Cache-Control headers, build_id global).
 
 Covers non-route concerns such as static asset caching and Jinja2 globals
 that are set up at module load time in app.py.
 """
+import os
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -80,6 +81,24 @@ def test_index_returns_200():
         with TestClient(app) as client:
             resp = client.get("/")
     assert resp.status_code == 200
+
+
+class TestBuildId:
+    def test_build_id_jinja2_global_exists(self):
+        """build_id must be set as a Jinja2 global."""
+        from wslcb_licensing_tracker.app import templates
+        assert "build_id" in templates.env.globals
+
+    def test_build_id_is_string(self):
+        """build_id Jinja2 global must be a string."""
+        from wslcb_licensing_tracker.app import templates
+        assert isinstance(templates.env.globals["build_id"], str)
+        assert len(templates.env.globals["build_id"]) > 0
+
+    def test_build_id_no_css_version_global(self):
+        """css_version Jinja2 global must not exist (replaced by build_id)."""
+        from wslcb_licensing_tracker.app import templates
+        assert "css_version" not in templates.env.globals
 
 
 def test_record_not_found_returns_404():
