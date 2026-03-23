@@ -2,7 +2,7 @@
 
 import argparse
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from wslcb_licensing_tracker.cli import cmd_scrape
 

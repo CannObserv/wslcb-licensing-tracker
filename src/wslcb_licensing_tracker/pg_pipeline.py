@@ -1,10 +1,6 @@
 """Async PostgreSQL ingestion pipeline for WSLCB licensing tracker.
 
-Async equivalent of pipeline.py. Uses SQLAlchemy Core expressions and
-the table objects from models.py.
-
-Entity linking is STUBBED — Phase 3 ports entities.py and endorsements.py.
-Outcome linking is also STUBBED for Phase 3.
+Uses SQLAlchemy Core expressions and the table objects from models.py.
 """
 
 import logging

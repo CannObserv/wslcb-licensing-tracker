@@ -161,8 +161,8 @@ The Tailwind CLI binary is auto-downloaded on first `build-css.sh` run (~26MB, p
 # Run tests
 uv run pytest tests/ -v
 
-# Manual scrape
-uv run wslcb scrape
+# Manual scrape (runs address backfill afterward)
+uv run wslcb scrape [--rate-limit 0.1]
 
 # Restart web app
 sudo systemctl restart wslcb-web.service

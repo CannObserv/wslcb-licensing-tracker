@@ -66,6 +66,7 @@ External API at `https://address-validator.exe.xyz:8000`.
 
 ```bash
 # Backfill un-processed locations
+# (runs automatically after every scrape; manual invocation for catch-up only)
 uv run wslcb backfill-addresses
 
 # Re-standardize all locations
