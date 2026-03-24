@@ -31,11 +31,13 @@ Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 import asyncio
 import logging
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import click
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .database import create_engine_from_env, get_db
 from .log_config import setup_logging
@@ -55,6 +57,24 @@ from .pg_scraper import cleanup_redundant_scrapes as pg_cleanup_redundant
 from .pg_scraper import scrape as pg_scrape
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_with_engine[T](coro_fn: Callable[[AsyncEngine], Awaitable[T]]) -> T:
+    """Create an async engine, run *coro_fn(engine)*, dispose, return result."""
+    engine = create_engine_from_env()
+
+    async def _go() -> T:
+        try:
+            return await coro_fn(engine)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_go())
 
 
 # ---------------------------------------------------------------------------
@@ -91,31 +111,25 @@ def ingest() -> None:
 )
 def scrape(rate_limit: float) -> None:
     """Run a live scrape of the WSLCB page."""
-    engine = create_engine_from_env()
-    asyncio.run(pg_scrape(engine))
 
-    # Post-scrape: standardize any new locations via the address API.
-    # Failure here is non-fatal — the weekly timer catches stragglers.
-    try:
-
-        async def _backfill() -> None:
+    async def _run(engine: AsyncEngine) -> None:
+        await pg_scrape(engine)
+        # Post-scrape: standardize any new locations via the address API.
+        # Failure here is non-fatal — the weekly timer catches stragglers.
+        try:
             async with get_db(engine) as conn:
                 await pg_backfill_addresses(conn, rate_limit=rate_limit)
                 await conn.commit()
+        except Exception:  # noqa: BLE001 — intentionally broad; backfill failure is non-fatal
+            logger.warning("Post-scrape address backfill failed", exc_info=True)
 
-        asyncio.run(_backfill())
-    except Exception:  # noqa: BLE001 — intentionally broad; backfill failure is non-fatal
-        logger.warning("Post-scrape address backfill failed", exc_info=True)
-
-    engine.dispose()
+    _run_with_engine(_run)
 
 
 @ingest.command("backfill-snapshots")
 def backfill_snapshots() -> None:
     """Ingest records from archived HTML snapshots."""
-    engine = create_engine_from_env()
-    asyncio.run(pg_backfill_snapshots(engine))
-    engine.dispose()
+    _run_with_engine(pg_backfill_snapshots)
 
 
 @ingest.command("backfill-diffs")
@@ -135,9 +149,8 @@ def backfill_diffs(
     dry_run: bool,
 ) -> None:
     """Ingest records from unified-diff archives."""
-    engine = create_engine_from_env()
-    result = asyncio.run(
-        pg_backfill_diffs(
+    result = _run_with_engine(
+        lambda engine: pg_backfill_diffs(
             engine,
             section=section,
             single_file=single_file,
@@ -145,7 +158,6 @@ def backfill_diffs(
             dry_run=dry_run,
         )
     )
-    engine.dispose()
     if dry_run:
         click.echo(
             f"[dry-run] Would insert {result['inserted']:,} record(s)"
@@ -169,15 +181,13 @@ def backfill_diffs(
 )
 def backfill_addresses(rate_limit: float) -> None:
     """Validate un-validated locations via the address API."""
-    engine = create_engine_from_env()
 
-    async def _run() -> None:
+    async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             await pg_backfill_addresses(conn, rate_limit=rate_limit)
             await conn.commit()
 
-    asyncio.run(_run())
-    engine.dispose()
+    _run_with_engine(_run)
 
 
 @ingest.command("refresh-addresses")
@@ -196,14 +206,12 @@ def backfill_addresses(rate_limit: float) -> None:
 )
 def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
     """Re-validate locations via the address API."""
-    engine = create_engine_from_env()
-
     ids: list[int] | None = None
     if location_ids:
         with Path(location_ids).open() as fh:
             ids = [int(line.strip()) for line in fh if line.strip()]
 
-    async def _run() -> None:
+    async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             if ids is not None:
                 await pg_refresh_specific_addresses(conn, ids, rate_limit=rate_limit)
@@ -211,8 +219,7 @@ def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
                 await pg_refresh_addresses(conn, rate_limit=rate_limit)
             await conn.commit()
 
-    asyncio.run(_run())
-    engine.dispose()
+    _run_with_engine(_run)
 
 
 # ---------------------------------------------------------------------------
@@ -229,14 +236,12 @@ def db() -> None:
 @click.option("--fix", is_flag=True, help="Auto-fix safe issues.")
 def check(fix: bool) -> None:
     """Run database integrity checks."""
-    engine = create_engine_from_env()
 
-    async def _run() -> dict:
+    async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
             return await pg_run_all_checks(conn, fix=fix)
 
-    report = asyncio.run(_run())
-    engine.dispose()
+    report = _run_with_engine(_run)
     issues = print_report(report)
     if issues:
         sys.exit(1)
@@ -245,24 +250,22 @@ def check(fix: bool) -> None:
 @db.command("rebuild-links")
 def rebuild_links() -> None:
     """Rebuild all application-outcome links."""
-    engine = create_engine_from_env()
 
-    async def _run() -> None:
+    async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             await pg_build_all_links(conn)
             await conn.commit()
 
-    asyncio.run(_run())
-    engine.dispose()
+    _run_with_engine(_run)
 
 
 @db.command("cleanup-redundant")
 @click.option("--keep-files", is_flag=True, help="Don't delete snapshot files from disk.")
 def cleanup_redundant(keep_files: bool) -> None:
     """Remove data from scrapes that found no new records."""
-    engine = create_engine_from_env()
-    result = asyncio.run(pg_cleanup_redundant(engine, delete_files=not keep_files))
-    engine.dispose()
+    result = _run_with_engine(
+        lambda engine: pg_cleanup_redundant(engine, delete_files=not keep_files)
+    )
     if result["scrape_logs"] == 0:
         click.echo("Nothing to clean up.")
     else:
@@ -278,9 +281,8 @@ def cleanup_redundant(keep_files: bool) -> None:
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
 def reprocess_endorsements(record_id: int | None, code: str | None, dry_run: bool) -> None:
     """Regenerate record_endorsements from current code mappings."""
-    engine = create_engine_from_env()
 
-    async def _run() -> dict:
+    async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
             result = await pg_reprocess_endorsements(
                 conn,
@@ -292,8 +294,7 @@ def reprocess_endorsements(record_id: int | None, code: str | None, dry_run: boo
                 await conn.commit()
             return result
 
-    result = asyncio.run(_run())
-    engine.dispose()
+    result = _run_with_engine(_run)
     if dry_run:
         click.echo(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
@@ -308,9 +309,8 @@ def reprocess_endorsements(record_id: int | None, code: str | None, dry_run: boo
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
 def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
     """Regenerate record_entities from current applicants data."""
-    engine = create_engine_from_env()
 
-    async def _run() -> dict:
+    async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
             result = await pg_reprocess_entities(
                 conn,
@@ -321,8 +321,7 @@ def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
                 await conn.commit()
             return result
 
-    result = asyncio.run(_run())
-    engine.dispose()
+    result = _run_with_engine(_run)
     if dry_run:
         click.echo(f"[dry-run] Would process {result['records_processed']:,} record(s).")
     else:
@@ -347,9 +346,8 @@ def admin() -> None:
 def admin_add_user(email: str) -> None:
     """Add an admin user by email."""
     email = email.strip()
-    engine = create_engine_from_env()
 
-    async def _run() -> None:
+    async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             existing = (
                 await conn.execute(
@@ -365,16 +363,14 @@ def admin_add_user(email: str) -> None:
             await conn.commit()
         click.echo(f"Added admin user: {email}")
 
-    asyncio.run(_run())
-    engine.dispose()
+    _run_with_engine(_run)
 
 
 @admin.command("list-users")
 def admin_list_users() -> None:
     """List all admin users."""
-    engine = create_engine_from_env()
 
-    async def _run() -> list:
+    async def _run(engine: AsyncEngine) -> list:
         async with get_db(engine) as conn:
             result = await conn.execute(
                 select(
@@ -386,8 +382,7 @@ def admin_list_users() -> None:
             )
             return result.fetchall()
 
-    rows = asyncio.run(_run())
-    engine.dispose()
+    rows = _run_with_engine(_run)
     if not rows:
         click.echo("No admin users.")
         return
@@ -402,9 +397,8 @@ def admin_list_users() -> None:
 def admin_remove_user(email: str) -> None:
     """Remove an admin user by email."""
     email = email.strip()
-    engine = create_engine_from_env()
 
-    async def _run() -> str | None:
+    async def _run(engine: AsyncEngine) -> str | None:
         """Return error message string on failure, None on success."""
         async with get_db(engine) as conn:
             row = (
@@ -427,8 +421,7 @@ def admin_remove_user(email: str) -> None:
             await conn.commit()
             return None
 
-    error = asyncio.run(_run())
-    engine.dispose()
+    error = _run_with_engine(_run)
     if error:
         click.echo(error)
         sys.exit(1)

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cli_helpers import mock_async_engine
 
 from wslcb_licensing_tracker.admin_auth import (
     AdminRedirectException,
@@ -187,7 +188,10 @@ def test_cli_add_and_list_and_remove_users():
     # add-user: SELECT returns None (no existing user)
     conn.execute.return_value = _make_execute_result(fetchone=None)
     with (
-        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch(
+            "wslcb_licensing_tracker.cli.create_engine_from_env",
+            return_value=mock_async_engine(),
+        ),
         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
     ):
         result = runner.invoke(main, ["admin", "add-user", "first@example.com"])
@@ -198,7 +202,10 @@ def test_cli_add_and_list_and_remove_users():
     conn.reset_mock()
     conn.execute.return_value = _make_execute_result(fetchall=[])
     with (
-        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch(
+            "wslcb_licensing_tracker.cli.create_engine_from_env",
+            return_value=mock_async_engine(),
+        ),
         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
     ):
         result = runner.invoke(main, ["admin", "list-users"])
@@ -213,7 +220,10 @@ def test_cli_add_and_list_and_remove_users():
     ]
     conn.execute.side_effect = results
     with (
-        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch(
+            "wslcb_licensing_tracker.cli.create_engine_from_env",
+            return_value=mock_async_engine(),
+        ),
         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
     ):
         result = runner.invoke(main, ["admin", "remove-user", "first@example.com"])
@@ -236,7 +246,10 @@ def test_cli_remove_last_user_exits():
 
     runner = CliRunner()
     with (
-        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch(
+            "wslcb_licensing_tracker.cli.create_engine_from_env",
+            return_value=mock_async_engine(),
+        ),
         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
     ):
         result = runner.invoke(main, ["admin", "remove-user", "solo@example.com"])
@@ -255,7 +268,10 @@ def test_cli_add_duplicate_user_is_noop():
 
     runner = CliRunner()
     with (
-        patch("wslcb_licensing_tracker.cli.create_engine_from_env", return_value=MagicMock()),
+        patch(
+            "wslcb_licensing_tracker.cli.create_engine_from_env",
+            return_value=mock_async_engine(),
+        ),
         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
     ):
         result = runner.invoke(main, ["admin", "add-user", "dup@example.com"])
