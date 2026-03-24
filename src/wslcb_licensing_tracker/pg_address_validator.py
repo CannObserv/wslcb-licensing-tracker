@@ -34,8 +34,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://address-validator.exe.xyz:8000"
-TIMEOUT = 5.0
+TIMEOUT = 15.0
 HTTP_OK = 200
+HTTP_TOO_MANY_REQUESTS = 429
+DEFAULT_RETRY_AFTER = 2.0
+MAX_RETRIES = 3
 ISO_ALPHA2_LEN = 2
 
 _cached_api_key: str | None = None
@@ -101,14 +104,70 @@ def _is_validation_enabled() -> bool:
     return os.environ.get("ENABLE_ADDRESS_VALIDATION", "").lower() in ("1", "true", "yes")
 
 
+def _parse_retry_after(response: httpx.Response) -> float:
+    """Extract Retry-After seconds from a response, falling back to DEFAULT_RETRY_AFTER."""
+    raw = response.headers.get("Retry-After", "")
+    try:
+        return max(float(raw), 0.5)
+    except (ValueError, TypeError):
+        return DEFAULT_RETRY_AFTER
+
+
+async def _post_with_retry(
+    url: str,
+    payload: dict,
+    headers: dict,
+    client: httpx.AsyncClient,
+    label: str,
+) -> httpx.Response | None:
+    """POST with retry on HTTP 429.
+
+    Retries up to MAX_RETRIES times.  On 429, reads Retry-After header and
+    sleeps that duration (doubling on each subsequent retry).  Returns the
+    final successful Response, or None if all retries exhausted or a
+    non-retryable error occurs.
+    """
+    backoff_multiplier = 1.0
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = await client.post(url, json=payload, headers=headers)
+        except httpx.TimeoutException:
+            logger.warning("Timeout calling %s API (attempt %d/%d)", label, attempt, MAX_RETRIES)
+            return None
+        except httpx.HTTPError as e:
+            logger.warning("HTTP error calling %s API: %s", label, e)
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Unexpected error calling %s API: %s", label, e)
+            return None
+
+        if response.status_code == HTTP_TOO_MANY_REQUESTS:
+            wait = _parse_retry_after(response) * backoff_multiplier
+            logger.warning(
+                "%s API returned 429 (attempt %d/%d), retrying in %.1fs",
+                label,
+                attempt,
+                MAX_RETRIES,
+                wait,
+            )
+            await asyncio.sleep(wait)
+            backoff_multiplier *= 2.0
+            continue
+
+        return response
+
+    logger.warning("%s API: exhausted %d retries on 429", label, MAX_RETRIES)
+    return None
+
+
 async def standardize(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
     """Standardize an address via POST /api/v1/standardize.
 
     Sends the full raw address string.  The server parses and standardizes
     the address according to USPS Publication 28 rules.
 
-    Returns a dict on success, or None on any failure (network error,
-    non-200 status, timeout).
+    Retries on HTTP 429 with Retry-After backoff (up to MAX_RETRIES).
+    Returns a dict on success, or None on any failure.
     """
     api_key = _load_api_key()
     if not api_key:
@@ -119,31 +178,22 @@ async def standardize(address: str, client: httpx.AsyncClient | None = None) -> 
     payload = {"address": address}
 
     _client = client if client is not None else _shared_client
-    try:
-        response = await _client.post(url, json=payload, headers=headers)
+    response = await _post_with_retry(url, payload, headers, _client, "address standardize")
+    if response is None:
+        return None
 
-        if response.status_code != HTTP_OK:
-            logger.warning(
-                "Address standardize API returned status %d for: %s",
-                response.status_code,
-                address,
-            )
-            return None
+    if response.status_code != HTTP_OK:
+        logger.warning(
+            "Address standardize API returned status %d for: %s",
+            response.status_code,
+            address,
+        )
+        return None
 
-        data = response.json()
-        for warn in data.get("warnings") or []:
-            logger.warning("Address API warning for %r: %s", address, warn)
-    except httpx.TimeoutException:
-        logger.warning("Timeout calling address standardize API for: %s", address)
-        return None
-    except httpx.HTTPError as e:
-        logger.warning("HTTP error calling address standardize API: %s", e)
-        return None
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Unexpected error calling address standardize API: %s", e)
-        return None
-    else:
-        return data
+    data = response.json()
+    for warn in data.get("warnings") or []:
+        logger.warning("Address API warning for %r: %s", address, warn)
+    return data
 
 
 async def validate(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
@@ -152,6 +202,7 @@ async def validate(address: str, client: httpx.AsyncClient | None = None) -> dic
     Sends the full raw address string. The server runs parse → standardize
     internally before calling the USPS DPV provider.
 
+    Retries on HTTP 429 with Retry-After backoff (up to MAX_RETRIES).
     Returns a dict on success, or None on any failure.
     A 200 response with validation.status='not_confirmed' or 'unavailable'
     is returned as a dict (not None) — the caller decides how to handle it.
@@ -165,31 +216,22 @@ async def validate(address: str, client: httpx.AsyncClient | None = None) -> dic
     payload = {"address": address}
 
     _client = client if client is not None else _shared_client
-    try:
-        response = await _client.post(url, json=payload, headers=headers)
+    response = await _post_with_retry(url, payload, headers, _client, "address validation")
+    if response is None:
+        return None
 
-        if response.status_code != HTTP_OK:
-            logger.warning(
-                "Address validation API returned status %d for: %s",
-                response.status_code,
-                address,
-            )
-            return None
+    if response.status_code != HTTP_OK:
+        logger.warning(
+            "Address validation API returned status %d for: %s",
+            response.status_code,
+            address,
+        )
+        return None
 
-        data = response.json()
-        for warn in data.get("warnings") or []:
-            logger.warning("Address API warning for %r: %s", address, warn)
-    except httpx.TimeoutException:
-        logger.warning("Timeout calling address validation API for: %s", address)
-        return None
-    except httpx.HTTPError as e:
-        logger.warning("HTTP error calling address validation API: %s", e)
-        return None
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Unexpected error calling address validation API: %s", e)
-        return None
-    else:
-        return data
+    data = response.json()
+    for warn in data.get("warnings") or []:
+        logger.warning("Address API warning for %r: %s", address, warn)
+    return data
 
 
 async def standardize_location(
@@ -230,19 +272,26 @@ async def standardize_location(
     if result is None:
         return False
 
+    raw_country = result.get("country", "")
+    std_country = (
+        raw_country
+        if (len(raw_country) == ISO_ALPHA2_LEN and raw_country.isalpha() and raw_country.isascii())
+        else ""
+    )
+
     try:
         await conn.execute(
             update(locations)
             .where(locations.c.id == location_id)
             .values(
-                std_address_line_1=result.get("std_address_line_1", ""),
-                std_address_line_2=result.get("std_address_line_2", ""),
-                std_city=result.get("std_city", ""),
-                std_region=result.get("std_region", ""),
-                std_postal_code=result.get("std_postal_code", ""),
-                std_country=result.get("std_country", ""),
-                std_address_string=result.get("std_address_string"),
-                validation_status=result.get("validation_status", "standardized"),
+                std_address_line_1=result.get("address_line_1", ""),
+                std_address_line_2=result.get("address_line_2", ""),
+                std_city=result.get("city", ""),
+                std_region=result.get("region", ""),
+                std_postal_code=result.get("postal_code", ""),
+                std_country=std_country,
+                std_address_string=result.get("standardized"),
+                validation_status="standardized",
                 address_standardized_at=datetime.now(UTC),
             )
         )
@@ -417,7 +466,7 @@ async def _validate_batch(
     rows: list,
     label: str,
     batch_size: int = 100,
-    rate_limit: float = 0.1,
+    rate_limit: float = 0.2,
 ) -> int:
     """Standardize (and optionally validate) a list of location rows.
 
@@ -459,7 +508,7 @@ async def _validate_batch(
 async def backfill_addresses(
     conn: AsyncConnection,
     batch_size: int = 100,
-    rate_limit: float = 0.1,
+    rate_limit: float = 0.2,
 ) -> int:
     """Standardize (and optionally validate) locations that need processing.
 
@@ -502,7 +551,7 @@ async def backfill_addresses(
 async def refresh_addresses(
     conn: AsyncConnection,
     batch_size: int = 100,
-    rate_limit: float = 0.1,
+    rate_limit: float = 0.2,
 ) -> int:
     """Re-standardize (and optionally re-validate) all locations.
 
@@ -541,7 +590,7 @@ async def refresh_specific_addresses(
     conn: AsyncConnection,
     location_ids: list[int],
     batch_size: int = 100,
-    rate_limit: float = 0.1,
+    rate_limit: float = 0.2,
 ) -> int:
     """Re-standardize (and optionally re-validate) a specific set of locations by ID.
 
