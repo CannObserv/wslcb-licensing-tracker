@@ -6,13 +6,15 @@ wrappers needed.
 
 Pipeline
 --------
-1. **Always**: :func:`standardize_location` calls ``POST /api/v1/standardize``
-   and writes ``std_*`` columns + ``address_standardized_at``.
-2. **Optional**: :func:`validate_location` calls ``POST /api/v1/validate``
-   (gated by ENABLE_ADDRESS_VALIDATION env var) and overlays DPV fields +
-   ``address_validated_at``.
+1. **Preferred**: :func:`process_location` picks the best single endpoint based
+   on config — ``/validate`` when ENABLE_ADDRESS_VALIDATION is on (covers both
+   standardization and validation in one call), ``/standardize`` when off.
+2. **Direct**: :func:`standardize_location` and :func:`validate_location` call
+   their respective endpoints — retained for callers that need a specific path.
 
-Caller-commits convention: no ``await conn.commit()`` inside these functions.
+Caller-commits convention: no ``await conn.commit()`` inside single-row helpers.
+:func:`_validate_batch` manages its own transaction lifecycle (savepoints +
+periodic commits) because it is a long-running bulk operation.
 """
 
 import asyncio
@@ -272,13 +274,6 @@ async def standardize_location(
     if result is None:
         return False
 
-    raw_country = result.get("country", "")
-    std_country = (
-        raw_country
-        if (len(raw_country) == ISO_ALPHA2_LEN and raw_country.isalpha() and raw_country.isascii())
-        else ""
-    )
-
     try:
         await conn.execute(
             update(locations)
@@ -289,7 +284,7 @@ async def standardize_location(
                 std_city=result.get("city", ""),
                 std_region=result.get("region", ""),
                 std_postal_code=result.get("postal_code", ""),
-                std_country=std_country,
+                std_country=_sanitize_country(result.get("country", "")),
                 std_address_string=result.get("standardized"),
                 validation_status="standardized",
                 address_standardized_at=datetime.now(UTC),
@@ -352,16 +347,6 @@ async def validate_location(
 
     try:
         if has_address:
-            raw_country = result.get("country", "")
-            std_country = (
-                raw_country
-                if (
-                    len(raw_country) == ISO_ALPHA2_LEN
-                    and raw_country.isalpha()
-                    and raw_country.isascii()
-                )
-                else ""
-            )
             await conn.execute(
                 update(locations)
                 .where(locations.c.id == location_id)
@@ -371,7 +356,7 @@ async def validate_location(
                     std_city=result.get("city", ""),
                     std_region=result.get("region", ""),
                     std_postal_code=result.get("postal_code", ""),
-                    std_country=std_country,
+                    std_country=_sanitize_country(result.get("country", "")),
                     std_address_string=result.get("validated"),
                     validation_status=status,
                     dpv_match_code=dpv,
@@ -392,6 +377,86 @@ async def validate_location(
         logger.exception("Failed to update location %d during validate", location_id)
 
     return False
+
+
+def _sanitize_country(raw: str) -> str:
+    """Return raw if it looks like an ISO 3166-1 alpha-2 code, else empty string."""
+    return raw if (len(raw) == ISO_ALPHA2_LEN and raw.isalpha() and raw.isascii()) else ""
+
+
+async def process_location(
+    conn: AsyncConnection,
+    location_id: int,
+    raw_address: str,
+    client: httpx.AsyncClient | None = None,
+) -> bool:
+    """Smart dispatcher: standardize and/or validate a location in one API call.
+
+    When ENABLE_ADDRESS_VALIDATION is on, calls ``/validate`` which returns a
+    superset of ``/standardize`` — writing all std_* columns, validation fields,
+    and both timestamps in a single round-trip.
+
+    When validation is off, calls ``/standardize`` only.
+
+    Does NOT commit — the caller is responsible for committing.
+
+    Returns True if the location was successfully processed, False otherwise.
+    """
+    if not raw_address or not raw_address.strip():
+        return False
+
+    if _is_validation_enabled():
+        # Single /validate call covers both standardization and validation.
+        try:
+            result = await validate(raw_address, client)
+        except Exception:
+            logger.exception("Validate failed for location %d", location_id)
+            return False
+
+        if result is None:
+            return False
+
+        validation = result.get("validation") or {}
+        status = validation.get("status", "")
+        dpv = validation.get("dpv_match_code")
+        has_address = result.get("address_line_1") is not None
+
+        try:
+            if has_address:
+                await conn.execute(
+                    update(locations)
+                    .where(locations.c.id == location_id)
+                    .values(
+                        std_address_line_1=result.get("address_line_1", ""),
+                        std_address_line_2=result.get("address_line_2", ""),
+                        std_city=result.get("city", ""),
+                        std_region=result.get("region", ""),
+                        std_postal_code=result.get("postal_code", ""),
+                        std_country=_sanitize_country(result.get("country", "")),
+                        std_address_string=result.get("validated"),
+                        validation_status=status,
+                        dpv_match_code=dpv,
+                        latitude=result.get("latitude"),
+                        longitude=result.get("longitude"),
+                        address_standardized_at=datetime.now(UTC),
+                        address_validated_at=datetime.now(UTC),
+                    )
+                )
+                return True
+
+            # not_confirmed or unavailable — store status only
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == location_id)
+                .values(validation_status=status, dpv_match_code=dpv)
+            )
+        except Exception:
+            logger.exception("Failed to update location %d during process", location_id)
+
+        return False
+
+    # Validation disabled — standardize only.
+    return await standardize_location(conn, location_id, raw_address, client)
 
 
 async def _validate_record_location(
@@ -438,9 +503,7 @@ async def _validate_record_location(
     if already_std and (not _is_validation_enabled() or already_val):
         return True
 
-    ok = await standardize_location(conn, loc_row["id"], loc_row["raw_address"], client=client)
-    await validate_location(conn, loc_row["id"], loc_row["raw_address"], client=client)
-    return ok
+    return await process_location(conn, loc_row["id"], loc_row["raw_address"], client=client)
 
 
 async def validate_record(
@@ -472,12 +535,12 @@ async def _validate_batch(
 
     Each row must have 'id' and 'raw_address' keys (mappings).
 
-    Logs progress every *batch_size* records.
-    Sleeps *rate_limit* seconds between API requests.
-    Does NOT commit — the caller is responsible.
+    Uses :func:`process_location` for a single API call per row.
+    Wraps each row in a savepoint so a single DB failure does not poison the
+    batch.  Commits every *batch_size* rows to flush progress incrementally.
 
     Returns:
-        Number of locations successfully standardized.
+        Number of locations successfully processed.
     """
     total = len(rows)
     if total == 0:
@@ -486,21 +549,30 @@ async def _validate_batch(
 
     logger.info("%s for %d locations", label, total)
     succeeded = 0
+    errors = 0
 
     for attempted, row in enumerate(rows, start=1):
         location_id = row["id"]
         address = row["raw_address"]
-        ok = await standardize_location(conn, location_id, address)
-        await validate_location(conn, location_id, address)
-        if ok:
-            succeeded += 1
+
+        try:
+            async with conn.begin_nested():
+                ok = await process_location(conn, location_id, address)
+            if ok:
+                succeeded += 1
+        except Exception:  # noqa: BLE001 — intentionally broad; savepoint isolates damage
+            logger.warning("Savepoint rollback for location %d", location_id, exc_info=True)
+            errors += 1
 
         if attempted % batch_size == 0:
-            logger.debug("Progress: %d/%d (%d succeeded)", attempted, total, succeeded)
+            await conn.commit()
+            logger.info("Progress: %d/%d (%d ok, %d err)", attempted, total, succeeded, errors)
 
         if rate_limit:
             await asyncio.sleep(rate_limit)
 
+    # Final commit for any remaining rows after the last batch_size boundary.
+    await conn.commit()
     logger.info("Done: %d/%d succeeded (%d failed)", succeeded, total, total - succeeded)
     return succeeded
 
