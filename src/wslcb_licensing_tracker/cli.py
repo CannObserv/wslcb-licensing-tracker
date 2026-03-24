@@ -105,7 +105,7 @@ def ingest() -> None:
 @click.option(
     "--rate-limit",
     type=float,
-    default=0.1,
+    default=0.2,
     show_default=True,
     help="Seconds between address API calls.",
 )
@@ -175,7 +175,7 @@ def backfill_diffs(
 @click.option(
     "--rate-limit",
     type=float,
-    default=0.1,
+    default=0.2,
     show_default=True,
     help="Seconds between API calls.",
 )
@@ -194,7 +194,7 @@ def backfill_addresses(rate_limit: float) -> None:
 @click.option(
     "--rate-limit",
     type=float,
-    default=0.1,
+    default=0.2,
     show_default=True,
     help="Seconds between API calls.",
 )
