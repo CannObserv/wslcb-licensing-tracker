@@ -77,16 +77,22 @@ Add retry logic to `standardize()` and `validate()`:
 - Log each retry at `warning` level.
 - After max retries exhausted, return `None` as today.
 
-Also add 429 awareness to `_validate_batch()`: if a 429 is encountered
-(detectable by a new return signal from the HTTP helpers), temporarily
-increase the inter-request sleep for the remainder of the batch.
+**Implementation:** A new `_post_with_retry()` helper handles the retry
+loop: on 429, it reads `Retry-After`, sleeps, and retries with a doubling
+backoff multiplier. `standardize()` and `validate()` delegate to this helper
+instead of calling `client.post()` directly.
 
-**Implementation:** Rather than changing the return type of `standardize()`/
-`validate()`, embed the retry loop inside those functions. They already own
-the HTTP call and error handling. The batch-level adaptive backoff uses a
-simple approach: `_validate_batch()` catches when both standardize and
-validate return `None` for the same address and doubles `rate_limit` for
-subsequent calls (capped at 5s).
+**Batch-level adaptive backoff (not implemented):** The original design
+proposed also adding 429 awareness to `_validate_batch()` — detecting when
+individual calls hit rate limits and dynamically increasing the inter-request
+sleep for the remainder of the batch. This was dropped during implementation
+because: (a) the per-request retry already absorbs transient 429s before
+the batch loop sees them, (b) the rate-limit default was reduced from 0.1s
+to 0.2s to match the service's 5 req/s USPS throughput, making sustained
+429s unlikely, and (c) adding a return signal from `standardize()`/
+`validate()` to distinguish "429 after retries" from "other failure" would
+complicate the API for marginal benefit. If sustained 429s become a problem
+in practice, #118 (Retry-After max cap) is the right place to revisit this.
 
 ### Fix 4: Timeout and rate limit tuning
 
@@ -103,12 +109,14 @@ Update the default in `_validate_batch()`, `backfill_addresses()`,
 
 - **Retry inside HTTP helpers, not at batch level** — keeps the batch loop
   simple; each call is self-contained.
-- **Adaptive batch backoff is best-effort** — doubles sleep on consecutive
-  failures, not a precise feedback loop.
+- **No batch-level adaptive backoff** — per-request retry absorbs transient
+  429s; rate-limit default already matches service throughput. See discussion
+  in Fix 3 above.
 - **No new CLI command for backfill** — `wslcb refresh-addresses` already
   re-processes everything.
 - **`Retry-After` header is authoritative** — always prefer it over our own
   backoff calculation.
+- **No `Retry-After` upper cap** — tracked in #118 for future hardening.
 
 ## Out of Scope
 

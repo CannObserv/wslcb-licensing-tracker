@@ -9,6 +9,7 @@ from sqlalchemy import select
 from wslcb_licensing_tracker.models import locations
 from wslcb_licensing_tracker.pg_address_validator import (
     DEFAULT_RETRY_AFTER,
+    HTTP_TOO_MANY_REQUESTS,
     MAX_RETRIES,
     _parse_retry_after,
     _post_with_retry,
@@ -184,11 +185,11 @@ class TestValidateLocation:
 
 class TestParseRetryAfter:
     def test_parses_numeric_header(self):
-        response = httpx.Response(429, headers={"Retry-After": "3"})
+        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3"})
         assert _parse_retry_after(response) == 3.0
 
     def test_parses_float_header(self):
-        response = httpx.Response(429, headers={"Retry-After": "1.5"})
+        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "1.5"})
         assert _parse_retry_after(response) == 1.5
 
     def test_missing_header_returns_default(self):
@@ -196,11 +197,11 @@ class TestParseRetryAfter:
         assert _parse_retry_after(response) == DEFAULT_RETRY_AFTER
 
     def test_unparseable_header_returns_default(self):
-        response = httpx.Response(429, headers={"Retry-After": "not-a-number"})
+        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "not-a-number"})
         assert _parse_retry_after(response) == DEFAULT_RETRY_AFTER
 
     def test_clamps_to_minimum(self):
-        response = httpx.Response(429, headers={"Retry-After": "0"})
+        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "0"})
         assert _parse_retry_after(response) == 0.5
 
 
@@ -219,7 +220,7 @@ class TestPostWithRetry:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_retries_on_429_then_succeeds(self):
-        retry_response = httpx.Response(429, headers={"Retry-After": "0.01"})
+        retry_response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "0.01"})
         ok_response = httpx.Response(200, json={"ok": True})
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.side_effect = [retry_response, ok_response]
@@ -233,7 +234,7 @@ class TestPostWithRetry:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_exhausts_retries_on_persistent_429(self):
-        retry_response = httpx.Response(429, headers={"Retry-After": "0.01"})
+        retry_response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "0.01"})
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = retry_response
 

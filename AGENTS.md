@@ -39,7 +39,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `pg_endorsements_seed.py` | Async endorsement seeding, repair, and backfill. `SEED_CODE_MAP` loaded from `seed_code_map.json` at module init. Placeholder detection uses `col.op('~')(r'^\d+$')` instead of `GLOB '[0-9]*'`. |
 | `pg_endorsements_admin.py` | Async admin endorsement helpers. `endorsement_similarity()` is pure Python — not async. `dismiss_suggestion()` swaps `id_a/id_b` if `id_a > id_b` to enforce the `id_a < id_b` constraint. `get_endorsement_list()` uses `STRING_AGG` for code aggregation. |
 | `pg_entities.py` | Async entity normalization. `get_or_create_entity()` uses ON CONFLICT DO NOTHING + RETURNING + fallback SELECT. `_ENTITY_REPROCESS_VERSION = 2` constant preserved. `ADDITIONAL_NAMES_MARKERS` frozenset defined here. Also includes `get_entity_by_id()` and `backfill_entities()`. |
-| `pg_address_validator.py` | Async address validation DB layer. HTTP functions (`standardize`, `validate`) are native `async`, using a module-level shared `httpx.AsyncClient` (`_shared_client`, `timeout=TIMEOUT`). DB writes use `update(locations).where(...).values(...)`. `_env_candidates` list exposed for monkeypatching in tests. |
+| `pg_address_validator.py` | Async address validation DB layer. HTTP functions (`standardize`, `validate`) are native `async`, using a module-level shared `httpx.AsyncClient` (`_shared_client`, `timeout=TIMEOUT`). `_post_with_retry()` handles HTTP 429 with `Retry-After` header + exponential backoff (max `MAX_RETRIES`). DB writes use `update(locations).where(...).values(...)`. `_env_candidates` list exposed for monkeypatching in tests. |
 | `pg_link_records.py` | Async application→outcome linking. `get_outcome_status()` is pure Python — not async. `outcome_filter_sql()` moved to `pg_db.py`. Bidirectional linking queries use `text()` with PG date arithmetic (`record_date::date - interval 'N days'`). `build_all_links()` truncates `record_links` before rebuilding. `get_record_links_bulk()` — batch SELECT JOIN returning `dict[int, dict]`. |
 | `pg_queries_hydrate.py` | Integration layer: `enrich_record()`, `_hydrate_records()`, `hydrate_records` alias. Intentionally imports from `pg_endorsements`, `pg_entities`, `pg_link_records` — the single acknowledged fan-in point for the query layer. |
 | `pg_queries_search.py` | Core search + single-record lookups. `RECORD_COLUMNS`, `RECORD_JOINS` (shared SQL fragments), `_build_where_clause()`, `search_records()`, `get_record_by_id()`, `get_related_records()`, `get_record_source_link()`, `get_source_by_id()`, `get_record_link()`. Imports only from `pg_db`. |
@@ -162,7 +162,7 @@ The Tailwind CLI binary is auto-downloaded on first `build-css.sh` run (~26MB, p
 uv run pytest tests/ -v
 
 # Manual scrape (runs address backfill afterward)
-uv run wslcb scrape [--rate-limit 0.1]
+uv run wslcb scrape [--rate-limit 0.2]
 
 # Restart web app
 sudo systemctl restart wslcb-web.service
