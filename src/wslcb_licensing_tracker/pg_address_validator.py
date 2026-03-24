@@ -236,6 +236,11 @@ async def validate(address: str, client: httpx.AsyncClient | None = None) -> dic
     return data
 
 
+def _sanitize_country(raw: str) -> str:
+    """Return raw if it looks like an ISO 3166-1 alpha-2 code, else empty string."""
+    return raw if (len(raw) == ISO_ALPHA2_LEN and raw.isalpha() and raw.isascii()) else ""
+
+
 async def standardize_location(
     conn: AsyncConnection,
     location_id: int,
@@ -362,6 +367,7 @@ async def validate_location(
                     dpv_match_code=dpv,
                     latitude=result.get("latitude"),
                     longitude=result.get("longitude"),
+                    address_standardized_at=datetime.now(UTC),
                     address_validated_at=datetime.now(UTC),
                 )
             )
@@ -377,11 +383,6 @@ async def validate_location(
         logger.exception("Failed to update location %d during validate", location_id)
 
     return False
-
-
-def _sanitize_country(raw: str) -> str:
-    """Return raw if it looks like an ISO 3166-1 alpha-2 code, else empty string."""
-    return raw if (len(raw) == ISO_ALPHA2_LEN and raw.isalpha() and raw.isascii()) else ""
 
 
 async def process_location(

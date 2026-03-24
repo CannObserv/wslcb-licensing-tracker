@@ -485,12 +485,16 @@ class TestProcessLocation:
 
 
 class TestValidateBatch:
+    """Batch tests use pg_engine (not pg_conn) because _validate_batch commits internally."""
+
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_continues_after_row_failure(self, pg_conn):
+    async def test_continues_after_row_failure(self, pg_engine):
         """A failing row should not prevent subsequent rows from succeeding."""
-        loc_ok = await get_or_create_location(pg_conn, "400 GOOD ST, SEATTLE, WA 98101")
-        loc_bad = await get_or_create_location(pg_conn, "500 BAD ST, SEATTLE, WA 98102")
-        loc_ok2 = await get_or_create_location(pg_conn, "600 FINE ST, SEATTLE, WA 98103")
+        async with pg_engine.connect() as conn:
+            loc_ok = await get_or_create_location(conn, "400 GOOD ST, SEATTLE, WA 98101")
+            loc_bad = await get_or_create_location(conn, "500 BAD ST, SEATTLE, WA 98102")
+            loc_ok2 = await get_or_create_location(conn, "600 FINE ST, SEATTLE, WA 98103")
+            await conn.commit()
 
         call_count = 0
 
@@ -499,7 +503,6 @@ class TestValidateBatch:
             call_count += 1
             if location_id == loc_bad:
                 raise RuntimeError("Simulated DB error")
-            # Write a real update so we can verify
             await conn.execute(
                 update(locations)
                 .where(locations.c.id == location_id)
@@ -513,40 +516,44 @@ class TestValidateBatch:
             {"id": loc_ok2, "raw_address": "600 FINE ST, SEATTLE, WA 98103"},
         ]
 
-        with patch(
-            "wslcb_licensing_tracker.pg_address_validator.process_location",
-            side_effect=mock_process,
-        ):
-            result = await _validate_batch(
-                pg_conn, rows, "Test batch", batch_size=100, rate_limit=0
-            )
-
-        assert result == 2  # 2 succeeded, 1 failed
-        assert call_count == 3  # all 3 were attempted
-
-        # Verify the good rows were committed
-        for lid in (loc_ok, loc_ok2):
-            status = (
-                await pg_conn.execute(
-                    select(locations.c.validation_status).where(locations.c.id == lid)
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.pg_address_validator.process_location",
+                side_effect=mock_process,
+            ):
+                result = await _validate_batch(
+                    conn, rows, "Test batch", batch_size=100, rate_limit=0
                 )
-            ).scalar_one()
-            assert status == "test_ok"
+
+            assert result == 2  # 2 succeeded, 1 failed
+            assert call_count == 3  # all 3 were attempted
+
+            # Verify the good rows were committed
+            for lid in (loc_ok, loc_ok2):
+                status = (
+                    await conn.execute(
+                        select(locations.c.validation_status).where(locations.c.id == lid)
+                    )
+                ).scalar_one()
+                assert status == "test_ok"
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_commits_at_batch_size_boundary(self, pg_conn):
+    async def test_commits_at_batch_size_boundary(self, pg_engine):
         """Verify periodic commit happens at batch_size intervals."""
-        locs = []
-        for i in range(5):
-            lid = await get_or_create_location(pg_conn, f"{700 + i} TEST ST, SEATTLE, WA 9810{i}")
-            locs.append({"id": lid, "raw_address": f"{700 + i} TEST ST, SEATTLE, WA 9810{i}"})
+        async with pg_engine.connect() as conn:
+            locs = []
+            for i in range(5):
+                lid = await get_or_create_location(conn, f"{700 + i} TEST ST, SEATTLE, WA 9810{i}")
+                locs.append({"id": lid, "raw_address": f"{700 + i} TEST ST, SEATTLE, WA 9810{i}"})
+            await conn.commit()
 
-        with patch(
-            "wslcb_licensing_tracker.pg_address_validator.process_location",
-            return_value=True,
-        ):
-            result = await _validate_batch(
-                pg_conn, locs, "Batch commit test", batch_size=2, rate_limit=0
-            )
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.pg_address_validator.process_location",
+                return_value=True,
+            ):
+                result = await _validate_batch(
+                    conn, locs, "Batch commit test", batch_size=2, rate_limit=0
+                )
 
-        assert result == 5
+            assert result == 5
