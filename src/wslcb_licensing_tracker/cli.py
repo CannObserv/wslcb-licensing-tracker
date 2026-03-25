@@ -119,7 +119,6 @@ def scrape(rate_limit: float) -> None:
         try:
             async with get_db(engine) as conn:
                 await pg_backfill_addresses(conn, rate_limit=rate_limit)
-                await conn.commit()
         except Exception:  # noqa: BLE001 — intentionally broad; backfill failure is non-fatal
             logger.warning("Post-scrape address backfill failed", exc_info=True)
 
@@ -185,7 +184,6 @@ def backfill_addresses(rate_limit: float) -> None:
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             await pg_backfill_addresses(conn, rate_limit=rate_limit)
-            await conn.commit()
 
     _run_with_engine(_run)
 
@@ -217,7 +215,6 @@ def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
                 await pg_refresh_specific_addresses(conn, ids, rate_limit=rate_limit)
             else:
                 await pg_refresh_addresses(conn, rate_limit=rate_limit)
-            await conn.commit()
 
     _run_with_engine(_run)
 
