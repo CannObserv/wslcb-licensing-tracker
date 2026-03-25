@@ -74,17 +74,19 @@ async def get_db_dep(request: Request) -> AsyncGenerator[AsyncConnection, None]:
         yield conn
 
 
-class _StaticCacheMiddleware(BaseHTTPMiddleware):
-    """Add long-lived Cache-Control headers to all /static/ responses."""
+class _CacheMiddleware(BaseHTTPMiddleware):
+    """Cache headers: long-lived for /static/, no-store for HTML pages."""
 
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]  # noqa: ANN001
         response = await call_next(request)
         if request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "public, max-age=31536000"
+        elif response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
 
-app.add_middleware(_StaticCacheMiddleware)
+app.add_middleware(_CacheMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(admin_routes.router)
 app.include_router(api_routes.router)
