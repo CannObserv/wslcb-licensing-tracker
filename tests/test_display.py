@@ -3,6 +3,7 @@
 Pure unit tests — no database, no network.
 """
 
+from datetime import UTC, datetime
 
 # ── format_outcome ─────────────────────────────────────────────────
 
@@ -309,3 +310,45 @@ class TestSummarizeProvenance:
         result = summarize_provenance(sources)
         # first_seen with snapshot=None still beats confirmed with snapshot
         assert result["groups"]["live_scrape"]["primary_source_id"] == 1
+
+    def test_datetime_captured_at_date_range(self):
+        """Date range computed correctly when captured_at is a datetime object."""
+        from wslcb_licensing_tracker.display import summarize_provenance
+
+        sources = [
+            {
+                "source_type": "live_scrape",
+                "captured_at": datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
+                "role": "first_seen",
+            },
+            {
+                "source_type": "live_scrape",
+                "captured_at": datetime(2025, 6, 20, 18, 30, 0, tzinfo=UTC),
+                "role": "confirmed",
+            },
+        ]
+        result = summarize_provenance(sources)
+
+        assert result["first_date"] == "2025-06-15"
+        assert result["last_date"] == "2025-06-20"
+
+    def test_mixed_datetime_and_string_captured_at(self):
+        """Date range works when sources mix datetime objects and strings."""
+        from wslcb_licensing_tracker.display import summarize_provenance
+
+        sources = [
+            {
+                "source_type": "live_scrape",
+                "captured_at": datetime(2025, 6, 10, 0, 0, 0, tzinfo=UTC),
+                "role": "first_seen",
+            },
+            {
+                "source_type": "co_archive",
+                "captured_at": "2025-06-25T12:00:00",
+                "role": "first_seen",
+            },
+        ]
+        result = summarize_provenance(sources)
+
+        assert result["first_date"] == "2025-06-10"
+        assert result["last_date"] == "2025-06-25"

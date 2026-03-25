@@ -5,6 +5,7 @@ Parser extraction functions are also mocked so tests run without real snapshot f
 """
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -50,7 +51,7 @@ _SAMPLE_SOURCE = {
     "source_label": "Live Scrape",
     "snapshot_path": "path/live.html",
     "url": "https://example.com",
-    "captured_at": "2025-06-15T12:00:00+00:00",
+    "captured_at": datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
     "metadata": None,
 }
 

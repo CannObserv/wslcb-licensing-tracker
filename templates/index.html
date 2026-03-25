@@ -122,7 +122,7 @@
         </div>
         <div>
             <span class="text-gray-500">Started:</span>
-            <span class="ml-1">{{ (stats.last_scrape['started_at'] | ts)[:19] }}</span>
+            <span class="ml-1">{{ stats.last_scrape['started_at'].strftime('%Y-%m-%dT%H:%M:%S') if stats.last_scrape['started_at'] else '' }}</span>
         </div>
         <div>
             <span class="text-gray-500">New records:</span>

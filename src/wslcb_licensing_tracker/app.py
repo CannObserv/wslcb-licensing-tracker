@@ -10,7 +10,6 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Annotated
 from urllib.parse import urlencode
 
@@ -144,23 +143,6 @@ def _filter_build_qs(params: dict) -> str:
 
 
 templates.env.filters["build_qs"] = _filter_build_qs
-
-
-def _filter_ts(value: datetime | str | None) -> str:
-    """Jinja2 filter: convert a datetime (or ISO string) to ISO 8601 string.
-
-    Returns an empty string for None.  Passes strings through unchanged so
-    that templates work correctly whether the DB returns datetime objects or
-    plain text (e.g. during tests with mocked data).
-    """
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
-
-
-templates.env.filters["ts"] = _filter_ts
 
 
 async def _tpl(

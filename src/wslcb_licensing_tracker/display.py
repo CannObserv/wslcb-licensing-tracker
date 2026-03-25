@@ -116,6 +116,16 @@ _DEFAULT_SOURCE_DISPLAY: dict[str, str] = {
 }
 
 
+def _normalize_captured(raw: object) -> tuple[str, str]:
+    """Return (iso_string, date_string) for a captured_at value."""
+    if raw is None:
+        return ("", "")
+    if hasattr(raw, "isoformat"):
+        return (raw.isoformat(), raw.strftime("%Y-%m-%d"))
+    s = str(raw)
+    return (s, s[:10])
+
+
 def summarize_provenance(sources: list[dict]) -> dict:
     """Aggregate provenance sources into a display-ready summary.
 
@@ -149,14 +159,7 @@ def summarize_provenance(sources: list[dict]) -> dict:
         # Compute priority tuple for this source within the group.
         role_rank = _ROLE_PRIORITY.get(s.get("role", ""), 2)
         no_snap = 0 if s.get("snapshot_path") else 1
-        captured_raw = s.get("captured_at")
-        # Normalise to ISO string for comparison/slicing (DB returns datetime objects).
-        if captured_raw is None:
-            captured = ""
-        elif hasattr(captured_raw, "isoformat"):
-            captured = captured_raw.isoformat()
-        else:
-            captured = str(captured_raw)
+        captured, captured_date = _normalize_captured(s.get("captured_at"))
         # Store as (role_rank, no_snap, captured_at) — compare captured_at descending.
         current_best = _group_best[st]
         # Compare: lower role_rank and no_snap is better; higher captured_at is better.
@@ -176,12 +179,11 @@ def summarize_provenance(sources: list[dict]) -> dict:
         if s.get("role") == "repaired":
             repaired = True
 
-        if captured:
-            date_str = captured[:10]
-            if not last_date or date_str > last_date:
-                last_date = date_str
-            if not first_date or date_str < first_date:
-                first_date = date_str
+        if captured_date:
+            if not last_date or captured_date > last_date:
+                last_date = captured_date
+            if not first_date or captured_date < first_date:
+                first_date = captured_date
 
     return {
         "groups": groups,

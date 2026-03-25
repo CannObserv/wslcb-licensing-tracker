@@ -5,6 +5,7 @@ Ported to async PostgreSQL mocking pattern.  Tests verify routing behaviour
 """
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -78,14 +79,14 @@ class TestAdminUsersGet:
                 "id": 1,
                 "email": "admin@example.com",
                 "role": "admin",
-                "created_at": "2025-01-01",
+                "created_at": datetime(2025, 1, 1, tzinfo=UTC),
                 "created_by": "test",
             },
             {
                 "id": 2,
                 "email": "other@example.com",
                 "role": "admin",
-                "created_at": "2025-01-02",
+                "created_at": datetime(2025, 1, 2, tzinfo=UTC),
                 "created_by": "test",
             },
         ]
@@ -1155,3 +1156,45 @@ class TestCodeMappingsFilter:
         with open(static_js) as f:
             js_content = f.read()
         assert "dataset.names" in js_content
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/audit-log
+# ---------------------------------------------------------------------------
+
+
+class TestAdminAuditLog:
+    def test_renders_audit_log_with_datetime(self):
+        """GET /admin/audit-log renders created_at datetimes without error."""
+        rows = [
+            {
+                "id": 1,
+                "created_at": datetime(2025, 3, 10, 14, 30, 45, tzinfo=UTC),
+                "admin_email": "admin@example.com",
+                "action": "add_user",
+                "target_type": "user",
+                "target_id": "2",
+                "detail": "Added user",
+            },
+        ]
+
+        with (
+            patch(
+                "wslcb_licensing_tracker.admin_routes.get_audit_log",
+                new_callable=AsyncMock,
+                return_value=(rows, 1),
+            ),
+            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
+        ):
+            mock_engine = MagicMock()
+            app.state.engine = mock_engine
+            client, patches, _ = _make_client()
+            try:
+                resp = client.get("/admin/audit-log")
+            finally:
+                _stop(patches)
+                del app.state.engine
+
+        assert resp.status_code == 200
+        assert "2025-03-10 14:30:45" in resp.text
+        assert "admin@example.com" in resp.text

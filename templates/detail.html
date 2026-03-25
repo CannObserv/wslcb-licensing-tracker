@@ -199,7 +199,7 @@
             {% endif %}
             <div>
                 <dt class="text-sm font-medium text-gray-500">First Scraped</dt>
-                <dd class="mt-1 text-sm text-gray-400">{{ (record.scraped_at | ts)[:19] }}</dd>
+                <dd class="mt-1 text-sm text-gray-400">{{ record.scraped_at.strftime('%Y-%m-%dT%H:%M:%S') if record.scraped_at else '' }}</dd>
             </div>
             {% if provenance and provenance.total > 0 %}
             <div class="md:col-span-2">
@@ -245,10 +245,10 @@
                                 data-source-id="{{ s.id }}"
                                 aria-pressed="false"
                                 class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }} cursor-pointer hover:ring-1 hover:ring-current focus:outline-none"
-                            >{{ s.source_label }}{% if s.captured_at %} {{ (s.captured_at | ts)[:10] }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}</button>
+                            >{{ s.source_label }}{% if s.captured_at %} {{ s.captured_at.strftime('%Y-%m-%d') }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}</button>
                             {% else %}
                             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium {{ sd.get('css_bg', 'bg-gray-50') }} {{ sd.get('css_text', 'text-gray-600') }} border {{ sd.get('css_border', 'border-gray-200') }}">
-                                {{ s.source_label }}{% if s.captured_at %} {{ (s.captured_at | ts)[:10] }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}
+                                {{ s.source_label }}{% if s.captured_at %} {{ s.captured_at.strftime('%Y-%m-%d') }}{% endif %}{% if s.role == 'repaired' %} <span aria-hidden="true">🔧</span>{% endif %}
                             </span>
                             {% endif %}
                             {% endfor %}
