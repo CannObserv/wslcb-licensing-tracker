@@ -249,9 +249,7 @@ async def admin_users_add(
     async with get_db(request.app.state.engine) as conn:
         existing = (
             await conn.execute(
-                select(admin_users_table.c.id).where(
-                    func.lower(admin_users_table.c.email) == email.lower()
-                )
+                select(admin_users_table.c.id).where(func.lower(admin_users_table.c.email) == email)
             )
         ).one_or_none()
         if existing:
@@ -292,9 +290,7 @@ async def admin_users_remove(
     async with get_db(request.app.state.engine) as conn:
         row = (
             await conn.execute(
-                select(admin_users_table.c.id).where(
-                    func.lower(admin_users_table.c.email) == email.lower()
-                )
+                select(admin_users_table.c.id).where(func.lower(admin_users_table.c.email) == email)
             )
         ).one_or_none()
         if not row:
@@ -303,7 +299,7 @@ async def admin_users_remove(
                 status_code=303,
             )
         await conn.execute(
-            admin_users_table.delete().where(func.lower(admin_users_table.c.email) == email.lower())
+            admin_users_table.delete().where(func.lower(admin_users_table.c.email) == email)
         )
         await log_action(
             conn,

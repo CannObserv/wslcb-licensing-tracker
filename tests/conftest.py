@@ -35,6 +35,8 @@ _PG_SESSION_TABLES = [
     "sources",
     "license_records",
     "locations",
+    "admin_users",
+    "admin_audit_log",
 ]
 
 
