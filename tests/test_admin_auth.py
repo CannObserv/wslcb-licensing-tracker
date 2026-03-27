@@ -263,7 +263,7 @@ def test_cli_remove_last_user_exits():
 
     conn = AsyncMock()
     results = [
-        _make_execute_result(fetchone=MagicMock()),  # SELECT id → found
+        _make_execute_result(fetchone=(42,)),  # SELECT id → found
         _make_execute_result(scalar_one=1),  # COUNT → 1 (last user)
     ]
     conn.execute.side_effect = results

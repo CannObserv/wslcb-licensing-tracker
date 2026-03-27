@@ -35,7 +35,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import click
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -349,9 +349,7 @@ def admin_add_user(email: str) -> None:
         async with get_db(engine) as conn:
             existing = (
                 await conn.execute(
-                    select(admin_users.c.id).where(
-                        text("lower(email) = lower(:email)").bindparams(email=email)
-                    )
+                    select(admin_users.c.id).where(func.lower(admin_users.c.email) == email)
                 )
             ).fetchone()
             if existing:
@@ -414,9 +412,7 @@ def admin_remove_user(email: str) -> None:
         async with get_db(engine) as conn:
             row = (
                 await conn.execute(
-                    select(admin_users.c.id).where(
-                        text("lower(email) = lower(:email)").bindparams(email=email)
-                    )
+                    select(admin_users.c.id).where(func.lower(admin_users.c.email) == email)
                 )
             ).fetchone()
             if not row:
@@ -424,11 +420,7 @@ def admin_remove_user(email: str) -> None:
             count = (await conn.execute(select(func.count()).select_from(admin_users))).scalar_one()
             if count <= 1:
                 return "Cannot remove the last admin user."
-            await conn.execute(
-                delete(admin_users).where(
-                    text("lower(email) = lower(:email)").bindparams(email=email)
-                )
-            )
+            await conn.execute(delete(admin_users).where(func.lower(admin_users.c.email) == email))
             await log_action(
                 conn,
                 email="cli",
