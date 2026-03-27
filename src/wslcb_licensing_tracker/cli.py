@@ -343,7 +343,7 @@ def admin() -> None:
 @click.argument("email")
 def admin_add_user(email: str) -> None:
     """Add an admin user by email."""
-    email = email.strip()
+    email = email.strip().lower()
 
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
@@ -407,7 +407,7 @@ def admin_list_users() -> None:
 @click.argument("email")
 def admin_remove_user(email: str) -> None:
     """Remove an admin user by email."""
-    email = email.strip()
+    email = email.strip().lower()
 
     async def _run(engine: AsyncEngine) -> str | None:
         """Return error message string on failure, None on success."""

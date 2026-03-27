@@ -185,11 +185,11 @@ def test_cli_add_and_list_and_remove_users():
     runner = CliRunner()
     conn = AsyncMock()
 
-    # add-user: SELECT returns None (no existing user); INSERT returns new id; log_action INSERT
+    # add-user: SELECT returns None (no existing user); INSERT returns new id
+    mock_log_action = AsyncMock(return_value=99)
     conn.execute.side_effect = [
         _make_execute_result(fetchone=None),  # SELECT existing
         _make_execute_result(scalar_one=1),  # INSERT .returning(id)
-        _make_execute_result(scalar_one=99),  # log_action INSERT
     ]
     with (
         patch(
@@ -197,10 +197,19 @@ def test_cli_add_and_list_and_remove_users():
             return_value=mock_async_engine(),
         ),
         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
+        patch("wslcb_licensing_tracker.cli.log_action", mock_log_action),
     ):
         result = runner.invoke(main, ["admin", "add-user", "first@example.com"])
     assert result.exit_code == 0
     assert conn.commit.called
+    mock_log_action.assert_called_once_with(
+        conn,
+        email="cli",
+        action="admin_user.add",
+        target_type="admin_user",
+        target_id=1,
+        details={"added_email": "first@example.com"},
+    )
 
     # list-users: fetchall returns empty list → prints "No admin users."
     conn.reset_mock()
@@ -218,11 +227,11 @@ def test_cli_add_and_list_and_remove_users():
 
     # remove-user: fetchone returns a row (user exists), count = 2 (not last)
     conn.reset_mock()
+    mock_log_action = AsyncMock(return_value=99)
     results = [
-        _make_execute_result(fetchone=MagicMock()),  # SELECT id
+        _make_execute_result(fetchone=(42,)),  # SELECT id → row[0] = 42
         _make_execute_result(scalar_one=2),  # SELECT COUNT
         _make_execute_result(),  # DELETE
-        _make_execute_result(scalar_one=99),  # log_action INSERT
     ]
     conn.execute.side_effect = results
     with (
@@ -231,10 +240,19 @@ def test_cli_add_and_list_and_remove_users():
             return_value=mock_async_engine(),
         ),
         patch("wslcb_licensing_tracker.cli.get_db", _make_async_get_db(conn)),
+        patch("wslcb_licensing_tracker.cli.log_action", mock_log_action),
     ):
         result = runner.invoke(main, ["admin", "remove-user", "first@example.com"])
     assert result.exit_code == 0
     assert conn.commit.called
+    mock_log_action.assert_called_once_with(
+        conn,
+        email="cli",
+        action="admin_user.remove",
+        target_type="admin_user",
+        target_id=42,
+        details={"removed_email": "first@example.com"},
+    )
 
 
 def test_cli_remove_last_user_exits():
