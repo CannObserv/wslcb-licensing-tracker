@@ -46,6 +46,7 @@ from .parser import SECTION_DIR_MAP
 from .pg_address_validator import backfill_addresses as pg_backfill_addresses
 from .pg_address_validator import refresh_addresses as pg_refresh_addresses
 from .pg_address_validator import refresh_specific_addresses as pg_refresh_specific_addresses
+from .pg_admin_audit import log_action
 from .pg_backfill_diffs import backfill_diffs as pg_backfill_diffs
 from .pg_backfill_snapshots import backfill_from_snapshots as pg_backfill_snapshots
 from .pg_endorsements import reprocess_endorsements as pg_reprocess_endorsements
@@ -356,7 +357,20 @@ def admin_add_user(email: str) -> None:
             if existing:
                 click.echo(f"User already exists: {email}")
                 return
-            await conn.execute(pg_insert(admin_users).values(email=email, created_by="cli"))
+            result = await conn.execute(
+                pg_insert(admin_users)
+                .values(email=email, created_by="cli")
+                .returning(admin_users.c.id)
+            )
+            new_id = result.scalar_one()
+            await log_action(
+                conn,
+                email="cli",
+                action="admin_user.add",
+                target_type="admin_user",
+                target_id=new_id,
+                details={"added_email": email},
+            )
             await conn.commit()
         click.echo(f"Added admin user: {email}")
 
@@ -414,6 +428,14 @@ def admin_remove_user(email: str) -> None:
                 delete(admin_users).where(
                     text("lower(email) = lower(:email)").bindparams(email=email)
                 )
+            )
+            await log_action(
+                conn,
+                email="cli",
+                action="admin_user.remove",
+                target_type="admin_user",
+                target_id=row[0],
+                details={"removed_email": email},
             )
             await conn.commit()
             return None

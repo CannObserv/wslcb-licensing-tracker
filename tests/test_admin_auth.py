@@ -185,8 +185,12 @@ def test_cli_add_and_list_and_remove_users():
     runner = CliRunner()
     conn = AsyncMock()
 
-    # add-user: SELECT returns None (no existing user)
-    conn.execute.return_value = _make_execute_result(fetchone=None)
+    # add-user: SELECT returns None (no existing user); INSERT returns new id; log_action INSERT
+    conn.execute.side_effect = [
+        _make_execute_result(fetchone=None),  # SELECT existing
+        _make_execute_result(scalar_one=1),  # INSERT .returning(id)
+        _make_execute_result(scalar_one=99),  # log_action INSERT
+    ]
     with (
         patch(
             "wslcb_licensing_tracker.cli.create_engine_from_env",
@@ -200,6 +204,7 @@ def test_cli_add_and_list_and_remove_users():
 
     # list-users: fetchall returns empty list → prints "No admin users."
     conn.reset_mock()
+    conn.execute.side_effect = None
     conn.execute.return_value = _make_execute_result(fetchall=[])
     with (
         patch(
@@ -217,6 +222,7 @@ def test_cli_add_and_list_and_remove_users():
         _make_execute_result(fetchone=MagicMock()),  # SELECT id
         _make_execute_result(scalar_one=2),  # SELECT COUNT
         _make_execute_result(),  # DELETE
+        _make_execute_result(scalar_one=99),  # log_action INSERT
     ]
     conn.execute.side_effect = results
     with (
