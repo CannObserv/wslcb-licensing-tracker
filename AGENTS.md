@@ -195,6 +195,40 @@ uv run wslcb cleanup-redundant
 DATABASE_URL=postgresql+asyncpg://... python scripts/sqlite_to_pg.py
 ```
 
+## Infrastructure
+
+Single-VM setup: production service and dev work share one machine.
+
+| Port | Service |
+|---|---|
+| 8000 | `wslcb-web.service` (systemd, always running) |
+| 8001 | Dev/worktree uvicorn (manual, short-lived) |
+
+Both ports are reachable via the exe.dev proxy:
+- Production: `https://wslcb-licensing-tracker.exe.xyz:8000/`
+- Dev: `https://wslcb-licensing-tracker.exe.xyz:8001/`
+
+**Environment files:**
+
+| File | Owner | Content |
+|---|---|---|
+| `/etc/wslcb-licensing-tracker/.env` | `root:exedev 640` | Production runtime vars: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION` |
+| `.env` (repo root, gitignored) | `exedev` | Dev/agent vars: `GH_TOKEN`, `GH_TOKEN_GF_SKILLS`, `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL` |
+
+The systemd service loads only `/etc/wslcb-licensing-tracker/.env`. Dev code and agents source the repo `.env` directly.
+
+## Server Lifecycle
+
+| Situation | Action |
+|---|---|
+| Python or template change | `sudo systemctl restart wslcb-web.service` |
+| Service file change | `sudo cp deploy/wslcb-web.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart wslcb-web.service` |
+| CSS change | `scripts/build-css.sh` (pre-commit hook does this automatically on commit) |
+| DB schema change | `uv run alembic upgrade head` (no service restart needed) |
+| Test in a worktree | `uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8001` |
+| Check live logs | `journalctl -u wslcb-web.service -f` |
+| Stale process on port 8000 | `sudo systemctl restart wslcb-web.service` — never kill manually |
+
 See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) for systemd services, address validation, and ops commands.
 See [`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md) for WSLCB source page structure and field label quirks (needed when touching `parser.py`).
 See [`docs/SCHEMA.md`](SCHEMA.md) for full table/column reference and migration history.
