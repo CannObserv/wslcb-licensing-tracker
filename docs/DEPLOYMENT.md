@@ -57,10 +57,9 @@ journalctl -u 'wslcb-task@scrape.service' -f
 
 External API at `https://address-validator.exe.xyz:8000`.
 
-- API key: `/etc/wslcb-licensing-tracker/env` (`ADDRESS_VALIDATOR_API_KEY=...`), `640 root:exedev`
-- Falls back to `<project-root>/env` for local dev
-- `ENABLE_ADDRESS_VALIDATION=true` in env enables DPV validation (phase 2); otherwise only standardization runs
-- Services load env via `EnvironmentFile=/etc/wslcb-licensing-tracker/env`
+- API key: `ADDRESS_VALIDATOR_API_KEY` in `/etc/wslcb-licensing-tracker/.env` (owned `root:exedev`, mode `640`)
+- `ENABLE_ADDRESS_VALIDATION=true` enables DPV validation; otherwise only standardization runs
+- Services load env via `EnvironmentFile=/etc/wslcb-licensing-tracker/.env`
 
 ### Common address commands
 
