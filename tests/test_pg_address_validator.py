@@ -1,5 +1,6 @@
 """Tests for pg_address_validator.py — async address validation DB layer."""
 
+import os
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -270,7 +271,7 @@ class TestPostWithRetry:
 class TestStandardizeHTTP:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_without_api_key(self):
-        with patch("wslcb_licensing_tracker.pg_address_validator._load_api_key", return_value=""):
+        with patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": ""}):
             result = await standardize("123 MAIN ST")
         assert result is None
 
@@ -279,7 +280,7 @@ class TestStandardizeHTTP:
         expected = {"address_line_1": "123 MAIN ST", "city": "SEATTLE", "warnings": []}
         mock_response = httpx.Response(200, json=expected)
         with (
-            patch("wslcb_licensing_tracker.pg_address_validator._load_api_key", return_value="key"),
+            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
             patch(
                 "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
                 return_value=mock_response,
@@ -292,14 +293,14 @@ class TestStandardizeHTTP:
 class TestValidateHTTP:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_without_api_key(self):
-        with patch("wslcb_licensing_tracker.pg_address_validator._load_api_key", return_value=""):
+        with patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": ""}):
             result = await validate("123 MAIN ST")
         assert result is None
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_when_post_returns_none(self):
         with (
-            patch("wslcb_licensing_tracker.pg_address_validator._load_api_key", return_value="key"),
+            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
             patch(
                 "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
                 return_value=None,

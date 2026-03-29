@@ -21,7 +21,6 @@ import asyncio
 import logging
 import os
 from datetime import UTC, datetime
-from pathlib import Path
 
 import httpx
 from sqlalchemy import select, update
@@ -43,8 +42,6 @@ DEFAULT_RETRY_AFTER = 2.0
 MAX_RETRIES = 3
 ISO_ALPHA2_LEN = 2
 
-_cached_api_key: str | None = None
-
 # Shared connection pool for all address validation HTTP calls.
 # httpx.AsyncClient binds to the event loop lazily (on first request), so
 # module-level construction is safe before any event loop exists.
@@ -54,47 +51,6 @@ _shared_client: httpx.AsyncClient = httpx.AsyncClient(timeout=TIMEOUT)
 async def close_shared_client() -> None:
     """Close the module-level httpx client, releasing TLS sessions cleanly."""
     await _shared_client.aclose()
-
-
-# Candidate env file paths, checked in order:
-# 1. /etc/wslcb-licensing-tracker/env  — production (outside repo, root-owned)
-# 2. <project-root>/env                — local dev fallback
-# Exposed as a module-level list so tests can monkeypatch it.
-_env_candidates: list[Path] = [
-    Path("/etc/wslcb-licensing-tracker/env"),
-    Path(__file__).resolve().parent.parent.parent / "env",
-]
-
-
-def _load_api_key() -> str:
-    """Load the API key from the ./env file or environment variable.
-
-    Reads from the ./env file first (looking for ADDRESS_VALIDATOR_API_KEY=...),
-    falls back to os.environ, and returns an empty string if neither is found.
-    The result is cached in a module-level variable after the first call.
-    """
-    global _cached_api_key  # noqa: PLW0603  # module-level cache is the intended pattern
-    if _cached_api_key is not None:
-        return _cached_api_key
-
-    for env_path in _env_candidates:
-        try:
-            with env_path.open() as f:
-                for raw_line in f:
-                    line = raw_line.strip()
-                    if line.startswith("#") or not line:
-                        continue
-                    if line.startswith("ADDRESS_VALIDATOR_API_KEY="):
-                        _cached_api_key = line.split("=", 1)[1].strip()
-                        return _cached_api_key
-        except FileNotFoundError:
-            continue
-        except OSError as e:
-            logger.warning("Error reading env file %s: %s", env_path, e)
-
-    # Fallback to environment variable
-    _cached_api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
-    return _cached_api_key
 
 
 def _is_validation_enabled() -> bool:
@@ -171,7 +127,7 @@ async def standardize(address: str, client: httpx.AsyncClient | None = None) -> 
     Retries on HTTP 429 with Retry-After backoff (up to MAX_RETRIES).
     Returns a dict on success, or None on any failure.
     """
-    api_key = _load_api_key()
+    api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
     if not api_key:
         return None
 
@@ -209,7 +165,7 @@ async def validate(address: str, client: httpx.AsyncClient | None = None) -> dic
     A 200 response with validation.status='not_confirmed' or 'unavailable'
     is returned as a dict (not None) — the caller decides how to handle it.
     """
-    api_key = _load_api_key()
+    api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
     if not api_key:
         return None
 
@@ -591,7 +547,7 @@ async def backfill_addresses(
     Returns:
         Number of locations successfully standardized.
     """
-    api_key = _load_api_key()
+    api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
     if not api_key:
         logger.error("No API key configured for address validation")
         return 0
@@ -633,7 +589,7 @@ async def refresh_addresses(
     Returns:
         Number of locations successfully standardized.
     """
-    api_key = _load_api_key()
+    api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
     if not api_key:
         logger.error("No API key configured for address validation")
         return 0
@@ -680,7 +636,7 @@ async def refresh_specific_addresses(
         logger.info("No location IDs provided — nothing to refresh")
         return 0
 
-    api_key = _load_api_key()
+    api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
     if not api_key:
         logger.error("No API key configured for address validation")
         return 0
