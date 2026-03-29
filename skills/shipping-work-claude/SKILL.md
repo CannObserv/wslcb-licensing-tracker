@@ -156,4 +156,4 @@ If nothing applies, omit this step entirely.
 
 - If `gh` CLI hits errors, use `--json` flag workarounds as needed
 - The project's AGENTS.md is authoritative for commit conventions — read it before committing
-- Load GH token for `gh` commands: `export GH_TOKEN=$(grep GITHUB_TOKEN env | cut -d= -f2)`
+- Load GH token for `gh` commands: `export GH_TOKEN=$(grep ^GH_TOKEN= .env | head -1 | cut -d= -f2)`
