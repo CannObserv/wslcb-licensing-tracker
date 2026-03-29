@@ -46,4 +46,11 @@ git diff --name-only --staged HEAD 2>/dev/null || true
 
 echo ""
 echo "=== Tests ==="
-source venv/bin/activate && python -m pytest tests/ -q --tb=short 2>&1 || true
+# Load env files so PG tests get DATABASE_URL and ADDRESS_VALIDATOR_API_KEY.
+if [ -r /etc/wslcb-licensing-tracker/.env ]; then
+    set -a; source /etc/wslcb-licensing-tracker/.env; set +a
+fi
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a; source "$PROJECT_ROOT/.env"; set +a
+fi
+source .venv/bin/activate && python -m pytest tests/ -q --tb=short 2>&1 || true
