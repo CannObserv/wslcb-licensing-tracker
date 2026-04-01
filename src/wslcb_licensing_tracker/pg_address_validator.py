@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .models import license_records, locations
@@ -517,9 +518,20 @@ async def _validate_batch(
                 ok = await process_location(conn, location_id, address)
             if ok:
                 succeeded += 1
-        except Exception:  # noqa: BLE001 — intentionally broad; savepoint isolates damage
+        except Exception as exc:  # noqa: BLE001 — intentionally broad; savepoint isolates damage
             logger.warning("Savepoint rollback for location %d", location_id, exc_info=True)
             errors += 1
+            # If the outer transaction entered an aborted state (e.g. InFailedSQLTransactionError),
+            # begin_nested() itself will fail on every subsequent row.  Rollback to recover a clean
+            # transaction before continuing; break if the rollback also fails.
+            orig = exc.orig if isinstance(exc, DBAPIError) else getattr(exc, "__cause__", None)
+            if orig is not None and "InFailedSQLTransaction" in type(orig).__name__:
+                logger.warning("Outer transaction aborted; rolling back to recover")
+                try:
+                    await conn.rollback()
+                except Exception:
+                    logger.exception("Rollback failed; aborting batch")
+                    break
 
         if attempted % batch_size == 0:
             await conn.commit()
