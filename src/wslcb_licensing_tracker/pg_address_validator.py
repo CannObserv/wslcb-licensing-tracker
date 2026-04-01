@@ -24,7 +24,6 @@ from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select, update
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .models import license_records, locations
@@ -524,8 +523,7 @@ async def _validate_batch(
             # If the outer transaction entered an aborted state (e.g. InFailedSQLTransactionError),
             # begin_nested() itself will fail on every subsequent row.  Rollback to recover a clean
             # transaction before continuing; break if the rollback also fails.
-            orig = exc.orig if isinstance(exc, DBAPIError) else getattr(exc, "__cause__", None)
-            if orig is not None and "InFailedSQLTransaction" in type(orig).__name__:
+            if "InFailedSQLTransaction" in str(exc):
                 logger.warning("Outer transaction aborted; rolling back to recover")
                 try:
                     await conn.rollback()
