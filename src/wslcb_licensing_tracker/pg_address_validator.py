@@ -136,7 +136,8 @@ async def standardize(address: str, client: httpx.AsyncClient | None = None) -> 
     Sends the full raw address string.  The server parses and standardizes
     the address according to USPS Publication 28 rules.
 
-    Retries on HTTP 429 with Retry-After backoff (up to MAX_RETRIES).
+    Retries on HTTP 429 (service rate limit) and 500 (proxy throttle) with
+    exponential backoff (up to MAX_RETRIES).
     Returns a dict on success, or None on any failure.
     """
     api_key = os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
@@ -172,7 +173,8 @@ async def validate(address: str, client: httpx.AsyncClient | None = None) -> dic
     Sends the full raw address string. The server runs parse → standardize
     internally before calling the USPS DPV provider.
 
-    Retries on HTTP 429 with Retry-After backoff (up to MAX_RETRIES).
+    Retries on HTTP 429 (service rate limit) and 500 (proxy throttle) with
+    exponential backoff (up to MAX_RETRIES).
     Returns a dict on success, or None on any failure.
     A 200 response with validation.status='not_confirmed' or 'unavailable'
     is returned as a dict (not None) — the caller decides how to handle it.
