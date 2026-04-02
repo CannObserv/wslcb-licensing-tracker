@@ -38,6 +38,7 @@ BASE_URL = "https://address-validator.exe.xyz:8000"
 TIMEOUT = 15.0
 HTTP_OK = 200
 HTTP_TOO_MANY_REQUESTS = 429
+HTTP_INTERNAL_SERVER_ERROR = 500
 DEFAULT_RETRY_AFTER = 2.0
 MAX_RETRIES = 3
 ISO_ALPHA2_LEN = 2
@@ -78,10 +79,11 @@ async def _post_with_retry(
     client: httpx.AsyncClient,
     label: str,
 ) -> httpx.Response | None:
-    """POST with retry on HTTP 429.
+    """POST with retry on HTTP 429 (service rate limit) and 500 (proxy throttle).
 
     Retries up to MAX_RETRIES times.  On 429, reads Retry-After header and
-    sleeps that duration (doubling on each subsequent retry).  Returns the
+    sleeps that duration (doubling on each subsequent retry).  On 500, falls
+    back to DEFAULT_RETRY_AFTER with the same exponential backoff.  Returns the
     final successful Response, or None if all retries exhausted or a
     non-retryable error occurs.
     """
@@ -99,22 +101,32 @@ async def _post_with_retry(
             logger.warning("Unexpected error calling %s API: %s", label, e)
             return None
 
-        if response.status_code == HTTP_TOO_MANY_REQUESTS:
+        if response.status_code in (HTTP_TOO_MANY_REQUESTS, HTTP_INTERNAL_SERVER_ERROR):
             wait = _parse_retry_after(response) * backoff_multiplier
-            logger.warning(
-                "%s API returned 429 (attempt %d/%d), retrying in %.1fs",
-                label,
-                attempt,
-                MAX_RETRIES,
-                wait,
-            )
+            if response.status_code == HTTP_TOO_MANY_REQUESTS:
+                logger.warning(
+                    "%s API returned 429 (rate limited by service, attempt %d/%d),"
+                    " retrying in %.1fs",
+                    label,
+                    attempt,
+                    MAX_RETRIES,
+                    wait,
+                )
+            else:
+                logger.warning(
+                    "%s API returned 500 (proxy throttle, attempt %d/%d), retrying in %.1fs",
+                    label,
+                    attempt,
+                    MAX_RETRIES,
+                    wait,
+                )
             await asyncio.sleep(wait)
             backoff_multiplier *= 2.0
             continue
 
         return response
 
-    logger.warning("%s API: exhausted %d retries on 429", label, MAX_RETRIES)
+    logger.warning("%s API: exhausted %d retries on 429/500", label, MAX_RETRIES)
     return None
 
 
@@ -486,7 +498,7 @@ async def _validate_batch(
     rows: list,
     label: str,
     batch_size: int = 100,
-    rate_limit: float = 0.2,
+    rate_limit: float = 0.5,
 ) -> int:
     """Standardize (and optionally validate) a list of location rows.
 
@@ -548,7 +560,7 @@ async def _validate_batch(
 async def backfill_addresses(
     conn: AsyncConnection,
     batch_size: int = 100,
-    rate_limit: float = 0.2,
+    rate_limit: float = 0.5,
 ) -> int:
     """Standardize (and optionally validate) locations that need processing.
 
@@ -591,7 +603,7 @@ async def backfill_addresses(
 async def refresh_addresses(
     conn: AsyncConnection,
     batch_size: int = 100,
-    rate_limit: float = 0.2,
+    rate_limit: float = 0.5,
 ) -> int:
     """Re-standardize (and optionally re-validate) all locations.
 
@@ -630,7 +642,7 @@ async def refresh_specific_addresses(
     conn: AsyncConnection,
     location_ids: list[int],
     batch_size: int = 100,
-    rate_limit: float = 0.2,
+    rate_limit: float = 0.5,
 ) -> int:
     """Re-standardize (and optionally re-validate) a specific set of locations by ID.
 
@@ -638,7 +650,7 @@ async def refresh_specific_addresses(
         conn: Async SQLAlchemy connection.
         location_ids: List of locations.id values to re-process.
         batch_size: How often to log progress (default 100).
-        rate_limit: Seconds to sleep between API calls (default 0.1).
+        rate_limit: Seconds to sleep between API calls (default 0.5).
 
     Returns:
         Number of locations successfully standardized.

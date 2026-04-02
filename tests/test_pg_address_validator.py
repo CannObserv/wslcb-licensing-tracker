@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from wslcb_licensing_tracker.models import locations
 from wslcb_licensing_tracker.pg_address_validator import (
     DEFAULT_RETRY_AFTER,
+    HTTP_INTERNAL_SERVER_ERROR,
     HTTP_TOO_MANY_REQUESTS,
     MAX_RETRIES,
     _parse_retry_after,
@@ -282,6 +283,32 @@ class TestPostWithRetry:
         retry_response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "0.01"})
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = retry_response
+
+        result = await _post_with_retry(
+            "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+        )
+        assert result is None
+        assert mock_client.post.call_count == MAX_RETRIES
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_retries_on_500_then_succeeds(self):
+        error_response = httpx.Response(HTTP_INTERNAL_SERVER_ERROR)
+        ok_response = httpx.Response(200, json={"ok": True})
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.side_effect = [error_response, ok_response]
+
+        result = await _post_with_retry(
+            "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+        )
+        assert result is not None
+        assert result.status_code == 200
+        assert mock_client.post.call_count == 2
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_exhausts_retries_on_persistent_500(self):
+        error_response = httpx.Response(HTTP_INTERNAL_SERVER_ERROR)
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.return_value = error_response
 
         result = await _post_with_retry(
             "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
