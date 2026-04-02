@@ -34,6 +34,9 @@ locations = Table(
     Column("state", Text, nullable=False, server_default="'WA'"),
     Column("zip_code", Text, nullable=False, server_default="''"),
     Column("std_address_line_1", Text, nullable=False, server_default="''"),
+    # Nullable since migration 0004.  API writes NULL when no second line is present;
+    # rows inserted without specifying this column get '' via server_default.
+    # Both representations are normalised to '' by COALESCE in the query layer.
     Column("std_address_line_2", Text, nullable=True, server_default="''"),
     Column("std_city", Text, nullable=False, server_default="''"),
     Column("std_region", Text, nullable=False, server_default="''"),

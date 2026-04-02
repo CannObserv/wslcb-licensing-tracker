@@ -25,7 +25,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `address_validated_at` — TIMESTAMPTZ of when the address was confirmed (i.e., provider returned `address_line_1`); NULL = not yet confirmed (includes `not_confirmed` and `unavailable` responses)
 - Most `std_*` columns default to empty string; `std_address_line_2` is nullable (NULL = no second line; query layer normalises via `COALESCE`). `validated_address`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are also nullable
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
-- `get_or_create_location()` in `db.py` handles the upsert logic (uses `_normalize_raw_address()` from `db.py`)
+- `get_or_create_location()` in `pg_db.py` handles the upsert logic (uses `_normalize_raw_address()` from `text_utils.py`)
 
 ### `license_records` (main table)
 - Uniqueness constraint: `(section_type, record_date, license_number, application_type)`
@@ -171,7 +171,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 
 ### `source_types` (provenance enum)
 - Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`
-- Python constants in `db.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc.
+- Python constants in `pg_db.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc.
 - Seeded by `init_db()` via `INSERT OR IGNORE`
 
 ### `sources` (provenance artifacts)
@@ -184,15 +184,15 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `scrape_log_id` — FK to `scrape_log` for live scrapes (avoids duplicating operational data)
 - `metadata` — JSON blob for source-specific attributes (`truncated`, `file_size_bytes`, `sections_present`, `sha256`, `wayback_timestamp`)
 - UNIQUE constraint on `(source_type_id, snapshot_path)`
-- `get_or_create_source()` in `db.py` handles idempotent upsert
+- `get_or_create_source()` in `pg_db.py` handles idempotent upsert
 
 ### `record_sources` (provenance junction)
 - M:M junction linking `license_records` ↔ `sources`
 - `role` — `'first_seen'` (introduced by this source), `'confirmed'` (already existed, corroborated), `'repaired'` (data fixed from this source); enforced by CHECK constraint
 - Composite PK `(record_id, source_id, role)` — a record can have multiple roles for the same source (e.g., `first_seen` + `repaired`)
-- `link_record_source()` in `db.py` handles idempotent insert
+- `link_record_source()` in `pg_db.py` handles idempotent insert
 - `ON DELETE CASCADE` on both FKs
-- `get_record_sources()` in `db.py` returns provenance for display on detail page
+- `get_record_sources()` in `pg_db.py` returns provenance for display on detail page
 
 ## Migration Framework
 

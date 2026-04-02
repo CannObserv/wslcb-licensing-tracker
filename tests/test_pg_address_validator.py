@@ -656,3 +656,20 @@ class TestValidateBatch:
         # loc_abort triggered rollback; loc_before and loc_after both returned True.
         assert result == 2
         assert call_count == 3
+
+        # Verify committed DB state: rollback undoes loc_before's uncommitted write;
+        # loc_after's write (in the new transaction after recovery) is committed.
+        async with pg_engine.connect() as conn:
+            statuses = {
+                row["id"]: row["validation_status"]
+                for row in (
+                    await conn.execute(
+                        select(locations.c.id, locations.c.validation_status).where(
+                            locations.c.id.in_([loc_before, loc_abort, loc_after])
+                        )
+                    )
+                ).mappings()
+            }
+        assert statuses[loc_before] is None  # rolled back
+        assert statuses[loc_abort] is None  # never updated
+        assert statuses[loc_after] == "recovered_ok"  # committed after recovery
