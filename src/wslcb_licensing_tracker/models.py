@@ -34,7 +34,7 @@ locations = Table(
     Column("state", Text, nullable=False, server_default="'WA'"),
     Column("zip_code", Text, nullable=False, server_default="''"),
     Column("std_address_line_1", Text, nullable=False, server_default="''"),
-    Column("std_address_line_2", Text, nullable=False, server_default="''"),
+    Column("std_address_line_2", Text, nullable=True, server_default="''"),
     Column("std_city", Text, nullable=False, server_default="''"),
     Column("std_region", Text, nullable=False, server_default="''"),
     Column("std_postal_code", Text, nullable=False, server_default="''"),

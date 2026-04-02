@@ -23,6 +23,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Re-adding NOT NULL requires all existing NULLs to be filled first;
-    # that is intentionally left to the caller.
+    op.execute("UPDATE locations SET std_address_line_2 = '' WHERE std_address_line_2 IS NULL")
     op.alter_column("locations", "std_address_line_2", nullable=False)

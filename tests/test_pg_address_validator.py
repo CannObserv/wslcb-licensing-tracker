@@ -71,6 +71,48 @@ class TestStandardizeLocation:
         assert result is False
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_null_address_line_2_is_written_as_null(self, pg_conn):
+        """API returning address_line_2: null writes NULL to the column (not empty string).
+
+        dict.get("address_line_2", "") returns None when the key is present with a
+        null value — the fallback default only applies when the key is absent.
+        Migration 0004 made the column nullable so this no longer raises
+        NotNullViolationError.
+        """
+        loc_id = await get_or_create_location(pg_conn, "800 NULL LINE ST, SEATTLE, WA 98101")
+        mock_result = {
+            "address_line_1": "800 NULL LINE ST",
+            "address_line_2": None,  # key present, value null — as returned by the API
+            "city": "SEATTLE",
+            "region": "WA",
+            "postal_code": "98101",
+            "country": "US",
+            "standardized": "800 NULL LINE ST  SEATTLE, WA 98101",
+        }
+        with patch(
+            "wslcb_licensing_tracker.pg_address_validator.standardize",
+            return_value=mock_result,
+        ):
+            result = await standardize_location(
+                pg_conn, loc_id, "800 NULL LINE ST, SEATTLE, WA 98101"
+            )
+        assert result is True
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.std_address_line_1,
+                        locations.c.std_address_line_2,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["std_address_line_1"] == "800 NULL LINE ST"
+        assert row["std_address_line_2"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_sanitizes_country_code(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "456 ELM ST, TACOMA, WA 98401")
         mock_result = {
@@ -558,3 +600,59 @@ class TestValidateBatch:
                 )
 
             assert result == 5
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_recovers_from_aborted_outer_transaction(self, pg_engine):
+        """When a row raises an error whose .orig contains InFailedSQLTransactionError,
+        _validate_batch rolls back the outer transaction and continues processing
+        subsequent rows rather than cascading the failure to every remaining row."""
+        async with pg_engine.connect() as conn:
+            loc_before = await get_or_create_location(conn, "900 BEFORE ST, SEATTLE, WA 98101")
+            loc_abort = await get_or_create_location(conn, "901 ABORT ST, SEATTLE, WA 98102")
+            loc_after = await get_or_create_location(conn, "902 AFTER ST, SEATTLE, WA 98103")
+            await conn.commit()
+
+        call_count = 0
+
+        class _FakeAbortError(Exception):
+            """Mimics the sqlalchemy DBAPIError shape produced by asyncpg in production."""
+
+            def __init__(self):
+                super().__init__("transaction aborted")
+                # orig is the asyncpg adapter wrapper; its str() contains the
+                # asyncpg exception class name.
+                self.orig = Exception(
+                    "<class 'asyncpg.exceptions.InFailedSQLTransactionError'>: "
+                    "current transaction is aborted, commands ignored"
+                )
+
+        async def mock_process(conn, location_id, address, client=None):
+            nonlocal call_count
+            call_count += 1
+            if location_id == loc_abort:
+                raise _FakeAbortError
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == location_id)
+                .values(validation_status="recovered_ok")
+            )
+            return True
+
+        rows = [
+            {"id": loc_before, "raw_address": "900 BEFORE ST, SEATTLE, WA 98101"},
+            {"id": loc_abort, "raw_address": "901 ABORT ST, SEATTLE, WA 98102"},
+            {"id": loc_after, "raw_address": "902 AFTER ST, SEATTLE, WA 98103"},
+        ]
+
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.pg_address_validator.process_location",
+                side_effect=mock_process,
+            ):
+                result = await _validate_batch(
+                    conn, rows, "Rollback recovery test", batch_size=100, rate_limit=0
+                )
+
+        # loc_abort triggered rollback; loc_before and loc_after both returned True.
+        assert result == 2
+        assert call_count == 3

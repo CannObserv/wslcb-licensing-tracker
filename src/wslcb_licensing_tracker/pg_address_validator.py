@@ -523,7 +523,8 @@ async def _validate_batch(
             # If the outer transaction entered an aborted state (e.g. InFailedSQLTransactionError),
             # begin_nested() itself will fail on every subsequent row.  Rollback to recover a clean
             # transaction before continuing; break if the rollback also fails.
-            if "InFailedSQLTransaction" in str(exc):
+            orig = getattr(exc, "orig", exc.__cause__)
+            if orig is not None and "InFailedSQLTransaction" in str(orig):
                 logger.warning("Outer transaction aborted; rolling back to recover")
                 try:
                     await conn.rollback()

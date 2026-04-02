@@ -10,7 +10,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `raw_address` (UNIQUE) — the first-seen raw string, normalized (NBSP → space)
 - `city`, `state`, `zip_code` — regex-parsed from raw address at creation time
 - `std_address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`); empty string if none
-- `std_address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); empty string if none
+- `std_address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); NULL if none (migration 0004; older rows may have empty string)
 - `std_city` — standardized city name from the address validator
 - `std_state` — standardized 2-letter state code
 - `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
@@ -23,7 +23,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `latitude` — WGS84 latitude from the address validator; NULL if not confirmed
 - `longitude` — WGS84 longitude from the address validator; NULL if not confirmed
 - `address_validated_at` — TIMESTAMPTZ of when the address was confirmed (i.e., provider returned `address_line_1`); NULL = not yet confirmed (includes `not_confirmed` and `unavailable` responses)
-- All `std_*` columns default to empty string (not NULL) for new rows; `validated_address`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are nullable
+- Most `std_*` columns default to empty string; `std_address_line_2` is nullable (NULL = no second line; query layer normalises via `COALESCE`). `validated_address`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are also nullable
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
 - `get_or_create_location()` in `db.py` handles the upsert logic (uses `_normalize_raw_address()` from `db.py`)
 
