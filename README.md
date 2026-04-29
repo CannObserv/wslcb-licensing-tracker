@@ -232,30 +232,30 @@ uv run pre-commit install
 
 ### Configure the database
 
-Copy the template and set your PostgreSQL connection URL:
+Create `.env` at the repo root and set your PostgreSQL connection URL:
 
 ```bash
-cp env.example env
-# Edit env: set DATABASE_URL=postgresql+asyncpg://user:password@localhost/wslcb
+# .env (gitignored)
+DATABASE_URL=postgresql+asyncpg://user:password@localhost/wslcb
 ```
 
 Apply the schema:
 ```bash
-alembic upgrade head
+uv run alembic upgrade head
 ```
 
 ### Run the initial scrape
 
 ```bash
-python cli.py scrape
+uv run wslcb scrape
 ```
 
-This fetches the current 30-day report, populates the SQLite database (`data/wslcb.db`), and archives a copy of the source HTML under `data/wslcb/licensinginfo/`.
+This fetches the current 30-day report, inserts records into the PostgreSQL database, and archives a copy of the source HTML under `data/wslcb/licensinginfo/`.
 
 ### Start the web application
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 8000
+uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8000
 ```
 
 Then visit [http://localhost:8000](http://localhost:8000).
@@ -332,7 +332,7 @@ All `/api/v1/` responses use a consistent JSON envelope: `{"ok": bool, "message"
 Admin routes are protected by exe.dev proxy authentication (`X-ExeDev-Email` / `X-ExeDev-UserID` headers). The first admin user must be bootstrapped via CLI:
 
 ```bash
-python cli.py admin add-user you@example.com
+uv run wslcb admin add-user you@example.com
 ```
 
 ## License Type Normalization
@@ -361,13 +361,13 @@ Each location is standardized via an external address validation API into struct
 Locations are validated at scrape time. When a new record references an already-known address, it reuses the existing location row and skips the API call. Un-validated locations can be backfilled:
 
 ```bash
-python cli.py backfill-addresses
+uv run wslcb backfill-addresses
 ```
 
 To re-validate all locations (e.g., after the validation service is updated):
 
 ```bash
-python cli.py refresh-addresses
+uv run wslcb refresh-addresses
 ```
 
 This is safe to interrupt — progress is committed in batches and each location's timestamp is updated individually.
@@ -377,7 +377,7 @@ This is safe to interrupt — progress is committed in batches and each location
 To check the database for data quality issues:
 
 ```bash
-python cli.py check
+uv run wslcb db check
 ```
 
 This reports orphaned locations, broken foreign keys, un-enriched records, endorsement anomalies, and entity duplicates.
@@ -385,30 +385,10 @@ This reports orphaned locations, broken foreign keys, un-enriched records, endor
 To auto-fix safe issues (e.g., remove orphaned locations):
 
 ```bash
-python cli.py check --fix
+uv run wslcb db check --fix
 ```
 
 The original raw address string is always preserved in `locations.raw_address`. If the validation service is unavailable, the scrape completes normally and standardized fields remain empty until a future backfill.
-
-## Rebuilding from Sources
-
-To create a fresh database from all archived diff files and HTML snapshots:
-
-```bash
-python cli.py rebuild --output data/wslcb-rebuilt.db
-```
-
-This replays all historical data through the ingestion pipeline in four phases: diff archive ingestion, snapshot ingestion, endorsement discovery, and outcome link building.
-
-Use `--force` to overwrite an existing output file, and `--verify` to compare the rebuilt database against the production database:
-
-```bash
-python cli.py rebuild --output data/wslcb-rebuilt.db --verify --force
-```
-
-Verification compares record natural keys and reports missing/extra records with a per-section breakdown. Exits with code 1 if discrepancies are found.
-
-**Note:** This is a long-running operation (20+ minutes on the full archive of 4400+ diff files).
 
 ## ASSUMPTION Records
 
@@ -481,14 +461,14 @@ Provenance is displayed on record detail pages as collapsed summary badges (e.g.
 To ingest historical records and repair broken data from archived HTML snapshots:
 
 ```bash
-python cli.py backfill-snapshots
+uv run wslcb backfill-snapshots
 ```
 
 This runs a two-phase process:
 1. **Ingest** — insert new records from all archived snapshots (duplicates are safely skipped)
 2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
-Safe to re-run at any time. Address validation is deferred; run `python cli.py backfill-addresses` afterward to validate new locations.
+Safe to re-run at any time. Address validation is deferred; run `uv run wslcb backfill-addresses` afterward to validate new locations.
 
 ## Testing
 
