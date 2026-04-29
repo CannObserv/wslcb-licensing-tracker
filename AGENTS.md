@@ -22,6 +22,8 @@ license_records → locations (FK: location_id, previous_location_id)
 - No build step. Tailwind via CDN, HTMX. `node_modules/` exists only for JS test tooling (jsdom); not used at runtime.
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
 - PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
+- systemd unit/timer files in `infra/`. See `docs/DEPLOYMENT.md` for installation commands.
+- AI agent skills in `skills/`; vendor skill repos (git submodules) in `skills-vendor/`.
 
 ## Key Files
 

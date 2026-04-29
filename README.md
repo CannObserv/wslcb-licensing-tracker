@@ -146,16 +146,26 @@ wslcb-licensing-tracker/
 │           ├── approvals/      # Unified diffs of the approvals section
 │           └── discontinued/   # Unified diffs of the discontinued section
 ├── package.json            # JS test tooling only (devDependencies: jsdom)
+├── pyproject.toml          # Python project metadata, dependencies, ruff + pytest config (uv)
 ├── scripts/
-│   └── sqlite_to_pg.py     # One-time SQLite→PostgreSQL data migration script
+│   ├── build-css.sh            # Rebuild Tailwind output (run manually or via pre-commit)
+│   ├── download-tailwind.sh    # Download platform-specific Tailwind CLI binary
+│   ├── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
+│   └── sqlite_to_pg.py         # One-time SQLite→PostgreSQL data migration script
 ├── alembic/                # Alembic schema migrations
 │   ├── alembic.ini
 │   └── versions/
 │       ├── 0001_baseline_postgresql_schema.py
 │       ├── 0002_fts.py
 │       └── 0003_timestamp_columns.py
-├── requirements.txt        # Python dependencies (runtime + dev)
-├── pytest.ini              # Pytest configuration
+├── infra/                  # systemd unit and timer files (copy to /etc/systemd/system/)
+│   ├── wslcb-web.service           # Web app service
+│   ├── wslcb-task@.service         # Oneshot task template
+│   ├── wslcb-scraper.timer         # Twice-daily scraper timer
+│   ├── wslcb-healthcheck.service   # Health check service (restarts web on failure)
+│   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
+│   ├── wslcb-address-validation.timer # Weekly address backfill timer
+│   └── sudoers.d-wslcb-healthcheck # sudoers snippet for passwordless restart
 ├── tests/                  # Test suite
 │   ├── conftest.py              # Shared fixtures (sample record dicts)
 │   ├── test_parser.py           # Parser function tests
@@ -192,12 +202,11 @@ wslcb-licensing-tracker/
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
-├── wslcb-web.service            # systemd service for the web app
-├── wslcb-task@.service          # systemd template for oneshot tasks
-├── wslcb-scraper.timer          # systemd timer (twice-daily: 12:30 AM and 6:30 AM Pacific)
-├── wslcb-healthcheck.service    # systemd health check service (restarts web on failure)
-├── wslcb-healthcheck.timer      # systemd health check timer (every 5 minutes)
-└── wslcb-address-validation.timer # weekly address standardization backfill (Sunday 2 AM Pacific)
+└── docs/                   # Operations and architecture documentation
+    ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
+    ├── SCHEMA.md            # Full table/column reference and migration history
+    ├── SOURCE_PAGE.md       # WSLCB source page structure and field label quirks
+    └── STYLE.md             # Brand colors and CSS conventions
 ```
 
 ## Setup
@@ -211,12 +220,14 @@ wslcb-licensing-tracker/
 ### Installation
 
 ```bash
-git clone https://github.com/CannObserv/wslcb-licensing-tracker.git
+git clone --recurse-submodules https://github.com/CannObserv/wslcb-licensing-tracker.git
 cd wslcb-licensing-tracker
 
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Install dependencies (requires uv — https://docs.astral.sh/uv/)
+uv sync --dev
+
+# Install pre-commit hooks (ruff lint/format + Tailwind CSS rebuild)
+uv run pre-commit install
 ```
 
 ### Configure the database
@@ -252,10 +263,10 @@ Then visit [http://localhost:8000](http://localhost:8000).
 ### Set up automated scraping (systemd)
 
 ```bash
-sudo cp wslcb-web.service wslcb-task@.service wslcb-scraper.timer \
-     wslcb-address-validation.timer \
-     wslcb-healthcheck.service wslcb-healthcheck.timer /etc/systemd/system/
-sudo cp sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
+sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
+     infra/wslcb-address-validation.timer \
+     infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
+sudo cp infra/sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
 sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
 
 sudo systemctl daemon-reload
