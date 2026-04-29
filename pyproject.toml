@@ -33,6 +33,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+addopts = "--cov --cov-report=term-missing"
 
 [tool.coverage.run]
 source = ["src/wslcb_licensing_tracker"]

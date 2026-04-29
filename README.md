@@ -480,7 +480,8 @@ Safe to re-run at any time. Address validation is deferred; run `uv run wslcb ba
 The project uses pytest with async PostgreSQL mocks and static HTML fixtures. Tests that require a live database are skipped unless `TEST_DATABASE_URL` is set. Non-PG tests run in under 2 seconds with no network calls.
 
 ```bash
-uv run pytest tests/ -v
+uv run pytest tests/ -v              # coverage runs automatically
+uv run pytest tests/ -v --no-cov    # skip coverage for quick iteration
 ```
 
 The project follows **red/green TDD**: every new feature and bug fix starts with a failing test, then the minimum code to make it pass, then refactoring.

@@ -194,8 +194,11 @@ The systemd service loads only `/etc/wslcb-licensing-tracker/.env`. Dev code and
 ## Common Tasks
 
 ```bash
-# Run tests
+# Run tests (coverage runs automatically)
 uv run pytest tests/ -v
+
+# Run tests without coverage (faster, for quick iteration)
+uv run pytest tests/ -v --no-cov
 
 # Manual scrape (runs address backfill afterward)
 uv run wslcb scrape [--rate-limit 0.2]
