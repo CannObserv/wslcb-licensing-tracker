@@ -197,7 +197,7 @@ The systemd service loads only `/etc/wslcb-licensing-tracker/.env`. Dev code and
 # Run tests (coverage runs automatically)
 uv run pytest tests/ -v
 
-# Run tests without coverage (faster, for quick iteration)
+# Run tests without coverage (faster; also suppresses full module table on single-file runs)
 uv run pytest tests/ -v --no-cov
 
 # Manual scrape (runs address backfill afterward)

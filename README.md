@@ -146,7 +146,7 @@ wslcb-licensing-tracker/
 │           ├── approvals/      # Unified diffs of the approvals section
 │           └── discontinued/   # Unified diffs of the discontinued section
 ├── package.json            # JS test tooling only (devDependencies: jsdom)
-├── pyproject.toml          # Python project metadata, dependencies, ruff + pytest config (uv)
+├── pyproject.toml          # Python project metadata, dependencies, ruff + pytest + coverage config (uv)
 ├── scripts/
 │   ├── build-css.sh            # Rebuild Tailwind output (run manually or via pre-commit)
 │   ├── download-tailwind.sh    # Download platform-specific Tailwind CLI binary
