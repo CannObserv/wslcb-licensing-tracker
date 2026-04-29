@@ -108,7 +108,7 @@ wslcb-licensing-tracker/
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
 ├── log_config.py           # Centralized logging configuration
 ├── seed_code_map.json      # Seed data: WSLCB numeric code → endorsement name(s)
-├── env                     # API keys (gitignored, 640 root:exedev)
+├── .env                    # Dev env vars: DATABASE_URL, GH_TOKEN, ADMIN_DEV_EMAIL (gitignored)
 ├── templates/
 │   ├── base.html           # Base layout template
 │   ├── index.html          # Dashboard with stats
@@ -157,7 +157,8 @@ wslcb-licensing-tracker/
 │   └── versions/
 │       ├── 0001_baseline_postgresql_schema.py
 │       ├── 0002_fts.py
-│       └── 0003_timestamp_columns.py
+│       ├── 0003_timestamp_columns.py
+│       └── 0004_nullable_std_address_line_2.py
 ├── infra/                  # systemd unit and timer files (copy to /etc/systemd/system/)
 │   ├── wslcb-web.service           # Web app service
 │   ├── wslcb-task@.service         # Oneshot task template
@@ -166,6 +167,10 @@ wslcb-licensing-tracker/
 │   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
 │   ├── wslcb-address-validation.timer # Weekly address backfill timer
 │   └── sudoers.d-wslcb-healthcheck # sudoers snippet for passwordless restart
+├── skills/                 # Claude Code agent skills (local + symlinks to skills-vendor/)
+├── skills-vendor/          # Vendored skill repos (git submodules)
+│   ├── gregoryfoster-skills/   # gregoryfoster/skills submodule
+│   └── obra-superpowers/       # obra/superpowers submodule
 ├── tests/                  # Test suite
 │   ├── conftest.py              # Shared fixtures (sample record dicts)
 │   ├── test_parser.py           # Parser function tests
@@ -292,9 +297,9 @@ journalctl -u wslcb-web.service       # web app logs
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `ADDRESS_VALIDATOR_API_KEY` | *(none)* | API key for the address validation service (also read from `./env` file) |
+| `ADDRESS_VALIDATOR_API_KEY` | *(none)* | API key for the address validation service |
 
-The SQLite database and archived HTML snapshots are stored in `./data/` relative to the project root.
+Archived HTML snapshots and other persistent data are stored in `./data/` relative to the project root.
 
 ## API Endpoints
 
