@@ -19,7 +19,7 @@ Remove the `subprocess.run(git rev-parse)` call from `app.py` module load. Repla
 
 | Area | What changes |
 |---|---|
-| `deploy/wslcb-web.service` | Add `ExecStartPre` to write `/run/wslcb-build-id`; add `EnvironmentFile=/run/wslcb-build-id` |
+| `infra/wslcb-web.service` | Add `ExecStartPre` to write `/run/wslcb-build-id`; add `EnvironmentFile=/run/wslcb-build-id` |
 | `app.py` | Replace `_get_css_version()` with env var read + warning. Expose as `build_id` Jinja2 global. Remove `subprocess`, `shutil` imports. |
 | Templates (5 files) | Rename `css_version` → `build_id` |
 | `api_routes.py` | Add `"build"` field to `/api/v1/health` response |

@@ -21,7 +21,7 @@ the weekly timer catches failures.
 
 ### 2. Weekly systemd timer
 
-New timer unit `deploy/wslcb-address-validation.timer` using the existing
+New timer unit `infra/wslcb-address-validation.timer` using the existing
 `wslcb-task@` template:
 
 - `Unit=wslcb-task@backfill-addresses.service`

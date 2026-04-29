@@ -20,7 +20,7 @@
 | `tests/test_pg_address_validator.py` | Replace `_load_api_key` patches with `os.environ` patches |
 | `.gitignore` | `env` → `.env` |
 | `env` (filesystem only, gitignored) | Rename to `.env`; rename `GITHUB_TOKEN*` → `GH_TOKEN*` |
-| `deploy/wslcb-web.service` | `EnvironmentFile=/etc/wslcb-licensing-tracker/.env` |
+| `infra/wslcb-web.service` | `EnvironmentFile=/etc/wslcb-licensing-tracker/.env` |
 | `/etc/wslcb-licensing-tracker/env` (system) | Rename to `.env`; remove dev-only vars |
 | `.claude/skills/reviewing-code-claude/scripts/gather-context.sh` | Fix `venv/` → `.venv/`; source env files before pytest |
 | `.claude/skills/using-git-worktrees/SKILL.md` | Add project-specific setup: copy `.env`, document port 8001 |
@@ -243,10 +243,10 @@ EOF
 ## Task 3: Update service file and rename `/etc/` env file
 
 **Files:**
-- Modify: `deploy/wslcb-web.service`
+- Modify: `infra/wslcb-web.service`
 - System: `/etc/wslcb-licensing-tracker/env` → `.env` (clean production vars only)
 
-- [ ] **Step 1: Update `deploy/wslcb-web.service`**
+- [ ] **Step 1: Update `infra/wslcb-web.service`**
 
 Change line `EnvironmentFile=/etc/wslcb-licensing-tracker/env` to:
 
@@ -257,7 +257,7 @@ EnvironmentFile=/etc/wslcb-licensing-tracker/.env
 - [ ] **Step 2: Verify the change**
 
 ```bash
-grep EnvironmentFile deploy/wslcb-web.service
+grep EnvironmentFile infra/wslcb-web.service
 ```
 
 Expected: `EnvironmentFile=/etc/wslcb-licensing-tracker/.env`
@@ -289,7 +289,7 @@ sudo chown root:exedev /etc/wslcb-licensing-tracker/.env
 - [ ] **Step 4: Install updated service file and restart**
 
 ```bash
-sudo cp deploy/wslcb-web.service /etc/systemd/system/
+sudo cp infra/wslcb-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart wslcb-web.service
 ```
@@ -312,7 +312,7 @@ sudo rm /etc/wslcb-licensing-tracker/env
 - [ ] **Step 7: Commit the service file change**
 
 ```bash
-git add deploy/wslcb-web.service
+git add infra/wslcb-web.service
 git commit -m "$(cat <<'EOF'
 #125 chore: update service EnvironmentFile path to .env
 EOF
@@ -500,7 +500,7 @@ The systemd service loads only `/etc/wslcb-licensing-tracker/.env`. Dev code and
 | Situation | Action |
 |---|---|
 | Python or template change | `sudo systemctl restart wslcb-web.service` |
-| Service file change | `sudo cp deploy/wslcb-web.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart wslcb-web.service` |
+| Service file change | `sudo cp infra/wslcb-web.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart wslcb-web.service` |
 | CSS change | `scripts/build-css.sh` (pre-commit hook does this automatically on commit) |
 | DB schema change | `uv run alembic upgrade head` (no service restart needed) |
 | Test in a worktree | `uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8001` |

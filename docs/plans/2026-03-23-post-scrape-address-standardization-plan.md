@@ -200,12 +200,12 @@ git commit -m "#113 feat: run backfill-addresses after every scrape"
 ### Task 3: Add weekly systemd timer
 
 **Files:**
-- Create: `deploy/wslcb-address-validation.timer`
+- Create: `infra/wslcb-address-validation.timer`
 - Modify: `docs/DEPLOYMENT.md` — add timer to services table and deployment instructions
 
 - [ ] **Step 1: Create the timer unit file**
 
-Create `deploy/wslcb-address-validation.timer`:
+Create `infra/wslcb-address-validation.timer`:
 
 ```ini
 [Unit]
@@ -236,9 +236,9 @@ Add `wslcb-address-validation.timer` to the services table in `docs/DEPLOYMENT.m
 In the "After changing service files" `sudo cp` command, add the new timer file:
 
 ```bash
-sudo cp deploy/wslcb-web.service deploy/wslcb-task@.service deploy/wslcb-scraper.timer \
-     deploy/wslcb-address-validation.timer \
-     deploy/wslcb-healthcheck.service deploy/wslcb-healthcheck.timer /etc/systemd/system/
+sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
+     infra/wslcb-address-validation.timer \
+     infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-address-validation.timer
 sudo systemctl enable --now wslcb-healthcheck.timer
@@ -248,7 +248,7 @@ sudo systemctl restart wslcb-web.service
 - [ ] **Step 4: Commit**
 
 ```bash
-git add deploy/wslcb-address-validation.timer docs/DEPLOYMENT.md
+git add infra/wslcb-address-validation.timer docs/DEPLOYMENT.md
 git commit -m "#113 feat: add weekly systemd timer for address validation backfill"
 ```
 

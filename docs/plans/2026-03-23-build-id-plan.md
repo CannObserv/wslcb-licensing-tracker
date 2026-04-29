@@ -196,11 +196,11 @@ git commit -m "#110 feat: show build ID in page footer"
 ### Task 5: Update systemd service file
 
 **Files:**
-- Modify: `deploy/wslcb-web.service`
+- Modify: `infra/wslcb-web.service`
 
 - [ ] **Step 1: Add ExecStartPre and EnvironmentFile**
 
-In `deploy/wslcb-web.service`, add these two lines before the existing `ExecStart`:
+In `infra/wslcb-web.service`, add these two lines before the existing `ExecStart`:
 
 ```ini
 ExecStartPre=/bin/bash -c 'echo BUILD_ID=$(/usr/bin/git -C /home/exedev/wslcb-licensing-tracker rev-parse --short HEAD) > /run/wslcb-build-id'
@@ -227,7 +227,7 @@ EnvironmentFile=/run/wslcb-build-id
 - [ ] **Step 2: Commit**
 
 ```bash
-git add deploy/wslcb-web.service
+git add infra/wslcb-web.service
 git commit -m "#110 feat: set BUILD_ID via ExecStartPre in systemd service"
 ```
 
@@ -283,7 +283,7 @@ git push
 - [ ] **Step 2: Copy updated service file and reload**
 
 ```bash
-sudo cp deploy/wslcb-web.service /etc/systemd/system/
+sudo cp infra/wslcb-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart wslcb-web.service
 ```

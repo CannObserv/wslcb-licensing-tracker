@@ -26,7 +26,7 @@ wslcb-task@rebuild-links
 ### Sudoers rule (install once)
 
 ```bash
-sudo cp deploy/sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
+sudo cp infra/sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
 sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
 ```
 
@@ -35,9 +35,9 @@ Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`
 ## After changing service files
 
 ```bash
-sudo cp deploy/wslcb-web.service deploy/wslcb-task@.service deploy/wslcb-scraper.timer \
-     deploy/wslcb-address-validation.timer \
-     deploy/wslcb-healthcheck.service deploy/wslcb-healthcheck.timer /etc/systemd/system/
+sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
+     infra/wslcb-address-validation.timer \
+     infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-address-validation.timer
 sudo systemctl enable --now wslcb-healthcheck.timer
