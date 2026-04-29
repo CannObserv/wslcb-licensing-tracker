@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LOCK=\"/tmp/wslcb-submodule-update-$(date +%Y%m%d)\"; if [ ! -f \"$LOCK\" ]; then git submodule update --remote --merge vendor/gregoryfoster-skills vendor/obra-superpowers && touch \"$LOCK\" && if ! git diff --quiet HEAD vendor/gregoryfoster-skills vendor/obra-superpowers 2>/dev/null; then git add vendor/gregoryfoster-skills vendor/obra-superpowers && git commit -m 'chore: update skills submodules'; fi; fi"
+            "command": "LOCK=\"/tmp/wslcb-submodule-update-$(date +%Y%m%d)\"; if [ ! -f \"$LOCK\" ]; then git submodule update --remote --merge skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers && touch \"$LOCK\" && if ! git diff --quiet HEAD skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers 2>/dev/null; then git add skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers && git commit -m 'chore: update skills submodules'; fi; fi"
           }
         ]
       }

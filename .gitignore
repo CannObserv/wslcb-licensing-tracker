@@ -5,6 +5,9 @@ __pycache__/
 data/
 .env
 .pytest_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
 .worktrees/
 scripts/bin/
 node_modules/
