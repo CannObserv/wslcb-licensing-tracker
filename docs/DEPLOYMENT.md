@@ -115,3 +115,39 @@ Worker count has no effect on data freshness — safe to scale workers freely.
 ### BUILD_ID
 
 Set automatically by `wslcb-web.service` at startup — `ExecStartPre` writes the short git SHA to `/run/wslcb-build-id`. Used for static asset cache-busting (`?v=<build_id>`) and shown in `/api/v1/health` response and page footer. Falls back to `"dev"` if unset.
+
+## Day-to-day Operations
+
+### Server lifecycle
+
+| Situation | Action |
+|---|---|
+| Python or template change | `sudo systemctl restart wslcb-web.service` |
+| Service file change | `sudo cp infra/*.service infra/*.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart wslcb-web.service` |
+| CSS change | `scripts/build-css.sh` (pre-commit hook does this automatically) |
+| DB schema change | `uv run alembic upgrade head` (no service restart needed) |
+| Test in a worktree | `uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8001` |
+| Stale process on port 8000 | `sudo systemctl restart wslcb-web.service` — never kill manually |
+
+### Application commands
+
+```bash
+# Integrity
+uv run wslcb check
+uv run wslcb check --fix
+
+# Data repair
+uv run wslcb rebuild-links
+uv run wslcb reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
+uv run wslcb reprocess-entities [--record-id 12345] [--dry-run]
+
+# Backfill
+uv run wslcb backfill-snapshots
+uv run wslcb backfill-diffs [--section notifications] [--limit 100] [--dry-run]
+uv run wslcb cleanup-redundant
+
+# Admin users
+wslcb admin add-user you@example.com
+wslcb admin list-users
+wslcb admin remove-user you@example.com
+```

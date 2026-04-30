@@ -19,56 +19,10 @@ license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
 ```
 
-- No runtime build step. Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`; pre-commit hook runs this automatically. HTMX via CDN. `node_modules/` exists only for JS test tooling (jsdom); not used at runtime.
+- No runtime build step. Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`; pre-commit hook runs this automatically. HTMX via CDN.
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
 - PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
-- systemd unit/timer files in `infra/`. See `docs/DEPLOYMENT.md` for installation commands.
-- AI agent skills in `skills/`; vendor skill repos (git submodules) in `skills-vendor/`.
-
-## Key Files
-
-| File | Purpose / Non-obvious notes |
-|---|---|
-| `text_utils.py` | Pure-string text normalization utilities (no DB dependency). `clean_entity_name()`, `strip_duplicate_marker()`, `clean_applicants_string()`, `_normalize_raw_address()`. Import from here; do not duplicate these functions. |
-| `database.py` | Async engine factory. `create_engine_from_env()` — reads `DATABASE_URL` env var. `get_db()` async context manager yielding `AsyncConnection`. |
-| `models.py` | SQLAlchemy Core `Table` objects for all 20 tables. Single shared `metadata`. Import table objects from here for all PG queries. |
-| `pg_schema.py` | Alembic-based init. `init_db(engine)` — runs all pending migrations (idempotent). `_table_exists(conn, name)` / `_column_exists(conn, table, column)` — introspection helpers. |
-| `pg_db.py` | Async location/source/provenance helpers + shared constants. `get_or_create_location()`, `get_or_create_source()`, `link_record_source()`, `get_primary_source()`, `get_record_sources()`. Constants: `DATA_DIR`, `WSLCB_SOURCE_URL`, `SOURCE_TYPE_*`, `SOURCE_ROLE_PRIORITY`, `US_STATES`. |
-| `pg_pipeline.py` | **All ingestion flows through here.** `insert_record()` — canonical insertion (dedup, location resolution, name cleaning, entity linking). `ingest_record()`, `ingest_batch()`, `IngestOptions`, `IngestResult`, `BatchResult`. |
-| `pg_admin_audit.py` | Async audit log helpers. `log_action()` uses `pg_insert(...).returning(id)`. `get_audit_log()` uses named `text()` params; `admin_email` filter uses `lower()` instead of `COLLATE NOCASE`. |
-| `pg_substances.py` | Async regulated substance CRUD. `get_regulated_substances()` runs two queries (substances + per-substance endorsements). `remove_substance()` manually deletes junction rows before the parent (no CASCADE assumption). |
-| `pg_endorsements.py` | Async endorsement pipeline. `ensure_endorsement()` uses ON CONFLICT DO NOTHING + RETURNING with fallback SELECT. `_sync_resolved_endorsements()` uses a single `text()` UPDATE with `STRING_AGG(...ORDER BY)`. Alias self-join uses aliased table objects. Numeric code detection uses `.isdigit()` on the stripped Python value (no SQL GLOB needed). |
-| `pg_endorsements_seed.py` | Async endorsement seeding, repair, and backfill. `SEED_CODE_MAP` loaded from `seed_code_map.json` at module init. Placeholder detection uses `col.op('~')(r'^\d+$')` instead of `GLOB '[0-9]*'`. |
-| `pg_endorsements_admin.py` | Async admin endorsement helpers. `endorsement_similarity()` is pure Python — not async. `dismiss_suggestion()` swaps `id_a/id_b` if `id_a > id_b` to enforce the `id_a < id_b` constraint. `get_endorsement_list()` uses `STRING_AGG` for code aggregation. |
-| `pg_entities.py` | Async entity normalization. `get_or_create_entity()` uses ON CONFLICT DO NOTHING + RETURNING + fallback SELECT. `_ENTITY_REPROCESS_VERSION = 2` constant preserved. `ADDITIONAL_NAMES_MARKERS` frozenset defined here. Also includes `get_entity_by_id()` and `backfill_entities()`. |
-| `pg_address_validator.py` | Async address validation DB layer. `process_location()` is the preferred entry point — calls `/validate` (one round-trip) when `ENABLE_ADDRESS_VALIDATION` is on, `/standardize` when off. `standardize_location()` / `validate_location()` retained for direct callers. `_post_with_retry()` handles HTTP 429 with `Retry-After` header + exponential backoff (max `MAX_RETRIES`). `_validate_batch()` manages its own transaction lifecycle (savepoint per row, commit per `batch_size`). Module-level shared `httpx.AsyncClient` (`_shared_client`, `timeout=TIMEOUT`). |
-| `pg_link_records.py` | Async application→outcome linking. `get_outcome_status()` is pure Python — not async. `outcome_filter_sql()` moved to `pg_db.py`. Bidirectional linking queries use `text()` with PG date arithmetic (`record_date::date - interval 'N days'`). `build_all_links()` truncates `record_links` before rebuilding. `get_record_links_bulk()` — batch SELECT JOIN returning `dict[int, dict]`. |
-| `pg_queries_hydrate.py` | Integration layer: `enrich_record()`, `_hydrate_records()`, `hydrate_records` alias. Intentionally imports from `pg_endorsements`, `pg_entities`, `pg_link_records` — the single acknowledged fan-in point for the query layer. |
-| `pg_queries_search.py` | Core search + single-record lookups. `RECORD_COLUMNS`, `RECORD_JOINS` (shared SQL fragments), `_build_where_clause()`, `search_records()`, `get_record_by_id()`, `get_related_records()`, `get_record_source_link()`, `get_source_by_id()`, `get_record_link()`. Imports only from `pg_db`. |
-| `pg_queries_filter.py` | Filter dropdown data (no cache — #99). `get_filter_options()`, `get_cities_for_state()`, `invalidate_filter_cache()` (no-op). Imports `pg_endorsements`, `pg_substances`. |
-| `pg_queries_stats.py` | Dashboard statistics (no cache — #99). `get_stats()`, `_get_pipeline_stats()`, `invalidate_stats_cache()` (no-op). Imports only from `pg_db`. |
-| `pg_queries_export.py` | Flat record export. `export_records()`, `export_records_cursor()` (streaming). Inlines endorsements + outcome links in SQL. Imports only from `pg_db`. |
-| `pg_queries_entity.py` | Entity-centric queries. `get_entity_records()`, `get_entities()`. Imports `pg_queries_search` (SQL constants) and `pg_queries_hydrate`. |
-| `seed_code_map.json` | 103-entry JSON dict: WSLCB numeric code → endorsement name(s). **Edit this file, not the Python module**, when adding/correcting seed mappings. |
-| `parser.py` | Pure HTML/diff parsing — no DB, no side effects. `extract_tbody_from_snapshot()`, `extract_tbody_from_diff()`. Only depends on stdlib + bs4/lxml + `pg_db.DATA_DIR`. |
-| `display.py` | Presentation formatting. `format_outcome()`, `summarize_provenance()`, `OUTCOME_STYLES`. `_ROLE_PRIORITY` alias for `pg_db.SOURCE_ROLE_PRIORITY`. |
-| `data_migration.py` | Run-once data migration framework. `run_pending_migrations(engine)` — checks `data_migrations` table, runs any pending migrations in order, marks each complete. Called from lifespan. Registered migrations: seed endorsements, repair code-name, merge mixed-case, backfill endorsements, backfill entities, build record links. |
-| `pg_integrity.py` | Async integrity checks. `check_orphaned_locations()`, `check_unenriched_records()`, `check_endorsement_anomalies()`, `check_broken_fks()`, `check_entity_duplicates()`, `fix_orphaned_locations()` (caller-commits). `run_all_checks(conn, *, fix=False)` — runs all checks, auto-commits after fix. `print_report(report)` — pure Python, returns issue count. |
-| `pg_scraper.py` | Async scraper. `scrape(engine)` — fetch, hash-check, archive, ingest via `pg_pipeline.ingest_batch()`. `get_last_content_hash(conn)` — SQLAlchemy query against `scrape_log`. `cleanup_redundant_scrapes(engine)` — removes unchanged scrape rows. Pure helpers `compute_content_hash` and `save_html_snapshot` defined here. |
-| `pg_backfill_snapshots.py` | Async backfill from HTML snapshots. Two-phase: ingest from snapshot files, then repair ASSUMPTION and CHANGE OF LOCATION records. `backfill_from_snapshots(engine)`. |
-| `pg_backfill_diffs.py` | Async backfill from diff archives. `backfill_diffs(engine, section, single_file, limit, dry_run)`. Pure diff parsing re-imported from `parser.py`. |
-| `app.py` | FastAPI app, port 8000. Lifespan creates `AsyncEngine` on `app.state.engine`, calls `run_pending_migrations()`, disposes on shutdown. All routes use `async with get_db(request.app.state.engine) as conn:`. `app.state.tpl` stores the shared template renderer; admin routes read it via `request.app.state.tpl`. Public routes only — admin routes in `admin_routes.py`. |
-| `api_routes.py` | `APIRouter(prefix="/api/v1")`. All routes async; `_get_db` dependency yields `AsyncConnection`. CSV export uses async generator with `export_records_cursor()`. JSON envelope `{"ok": bool, "message": str, "data": ...}`. Endpoints: `GET /api/v1/cities`, `/stats`, `/export` (StreamingResponse), `/health`. |
-| `admin_routes.py` | `APIRouter` for `/admin/*`. All routes async; `_get_db` dependency yields `AsyncConnection`; all imports from `pg_*` equivalents. Template renderer accessed via `request.app.state.tpl`. |
-| `admin_auth.py` | `require_admin()` FastAPI dependency. Reads `X-ExeDev-Email` / `X-ExeDev-UserID` proxy headers; falls back to `ADMIN_DEV_EMAIL` / `ADMIN_DEV_USERID` env vars for local dev. `_lookup_admin()` is async — uses `request.app.state.engine` to query `admin_users`. |
-| `log_config.py` | `setup_logging()` — auto-detects TTY vs JSON format. Call once per entry point. |
-| `cli.py` | Click-based CLI with `ingest`, `db`, `admin` groups. Hidden top-level aliases for systemd `wslcb-task@%i` compat (e.g. `wslcb scrape` = `wslcb ingest scrape`). All commands use `asyncio.run()` wrappers. Engine from `create_engine_from_env()`. |
-| `templates/` | `base.html` (main layout — nav, footer, CSS/JS includes). `partials/results.html` (HTMX target). `partials/record_table.html` (shared record table). |
-| `tailwind.config.js` | Tailwind CSS config — content paths, co-green/co-purple palette. Consumed by `scripts/build-css.sh`. |
-| `static/css/input.css` | Tailwind source: `@tailwind` directives + HTMX loading states + badge classes + `.scroll-shadow-right`. |
-| `static/js/search.js` | Client-side logic for search page: section-type toggle, state→city fetch, endorsement multi-select dropdown. |
-| `static/js/admin-endorsements.js` | Admin endorsements page JS: filter, alias panel, rebuild-hiddens, suggestion helpers, code filter. |
-| `static/js/detail.js` | Record detail page JS: source viewer toggle (`toggleSourceViewer`, `closeSourceViewer`). |
+- systemd unit/timer files in `infra/`. AI agent skills in `skills/`; vendor repos (git submodules) in `skills-vendor/`.
 
 ## Frozen vs. Derived Data Contract
 
@@ -86,9 +40,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `record_entities` | `pg_entities.reprocess_entities()` | `wslcb reprocess-entities` |
 | `record_links` | `pg_link_records.build_all_links()` | `wslcb rebuild-links` |
 
-`reprocess_endorsements()` is idempotent — deletes existing rows before inserting fresh ones.
-
-`build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL (sourced from the matched new-application record). Run `wslcb rebuild-links` to repair existing rows.
+`reprocess_endorsements()` is idempotent. `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL.
 
 ## Conventions
 
@@ -104,22 +56,15 @@ license_records → locations (FK: location_id, previous_location_id)
 - Use `%s`/`%d` style in log calls (not f-strings).
 
 ### Testing
-Red/Green TDD: write a failing test first, then implement.
+Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/ -v` must pass before committing.
 
-```bash
-uv run pytest tests/ -v   # must pass before committing
-```
-
-- No network calls, no disk DB. PostgreSQL tests use `pg_conn` / `pg_engine` fixtures (require `TEST_DATABASE_URL`); non-PG tests mock the async connection.
-- HTML parser tests use static fixtures in `tests/fixtures/`.
-- Match `test_<module>.py` to the module being changed.
-- Sample record fixtures in `conftest.py`: `standard_new_application`, `assumption_record`, `change_of_location_record`, `approved_numeric_code`, `discontinued_code_name`.
+- No network calls, no disk DB. PostgreSQL tests use `pg_conn` / `pg_engine` fixtures (require `TEST_DATABASE_URL`).
+- Match `test_<module>.py` to the module being changed. Sample fixtures in `conftest.py`.
 
 ### Templates
-- Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`. Config in `tailwind.config.js`. No bundler.
 - HTMX for partial updates; `/search` detects `HX-Request` header.
 - Custom Jinja2 filters in `app.py`: `section_label`, `phone_format`, `build_qs`.
-- See [`docs/STYLE.md`](STYLE.md) for brand colors and CSS conventions.
+- See [`docs/STYLE.md`](docs/STYLE.md) for brand colors and CSS conventions.
 
 ### Data Integrity
 - `insert_record()` returns `(id, True)` for new, `(id, False)` for duplicate, `None` on unexpected `IntegrityError`.
@@ -145,95 +90,88 @@ Never use `gh` for git push/pull. Never use SSH key for API calls.
 
 Common types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`. Put `(closes #N)` in commit **body** (not subject) to auto-close on push.
 
-## Dev Setup (one-time after clone)
+## Dev Setup
 
 ```bash
-# Install pre-commit hooks (runs ruff + auto-rebuilds Tailwind CSS before each commit)
-uv run pre-commit install
-
-# Manual CSS rebuild (if you change templates or tailwind.config.js without committing)
-scripts/build-css.sh
+uv run pre-commit install   # runs ruff + auto-rebuilds Tailwind CSS before each commit
+scripts/build-css.sh        # manual CSS rebuild if not committing
 ```
 
-The Tailwind CLI binary is auto-downloaded on first `build-css.sh` run (~26MB, platform-specific, gitignored at `scripts/bin/`).
-
 ## Infrastructure
-
-Single-VM setup: production service and dev work share one machine.
 
 | Port | Service |
 |---|---|
 | 8000 | `wslcb-web.service` (systemd, always running) |
 | 8001 | Dev/worktree uvicorn (manual, short-lived) |
 
-Both ports are reachable via the exe.dev proxy:
-- Production: `https://wslcb-licensing-tracker.exe.xyz:8000/`
-- Dev: `https://wslcb-licensing-tracker.exe.xyz:8001/`
-
-**Environment files:**
-
-| File | Owner | Content |
-|---|---|---|
-| `/etc/wslcb-licensing-tracker/.env` | `root:exedev 640` | Production runtime vars: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION` |
-| `.env` (repo root, gitignored) | `exedev` | Dev/agent vars: `GH_TOKEN`, `GH_TOKEN_GF_SKILLS`, `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL` |
-
-The systemd service loads only `/etc/wslcb-licensing-tracker/.env`. Dev code and agents source the repo `.env` directly.
-
-## Server Lifecycle
-
-| Situation | Action |
+| File | Content |
 |---|---|
-| Python or template change | `sudo systemctl restart wslcb-web.service` |
-| Service file change | `sudo cp infra/wslcb-web.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart wslcb-web.service` |
-| CSS change | `scripts/build-css.sh` (pre-commit hook does this automatically on commit) |
-| DB schema change | `uv run alembic upgrade head` (no service restart needed) |
-| Test in a worktree | `uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8001` |
-| Check live logs | `journalctl -u wslcb-web.service -f` |
-| Stale process on port 8000 | `sudo systemctl restart wslcb-web.service` — never kill manually |
+| `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION` |
+| `.env` (repo root, gitignored) | Dev/agent: `GH_TOKEN`, `GH_TOKEN_GF_SKILLS`, `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL` |
 
 ## Common Tasks
 
 ```bash
-# Run tests (coverage runs automatically)
-uv run pytest tests/ -v
-
-# Run tests without coverage (faster; also suppresses full module table on single-file runs)
-uv run pytest tests/ -v --no-cov
-
-# Manual scrape (runs address backfill afterward)
-uv run wslcb scrape [--rate-limit 0.2]
-
-# Restart web app
-sudo systemctl restart wslcb-web.service
-
-# Integrity check
-uv run wslcb check
-uv run wslcb check --fix
-
-# Rebuild links
-uv run wslcb rebuild-links
-
-# Reprocess endorsements
-uv run wslcb reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
-
-# Reprocess entities
-uv run wslcb reprocess-entities [--record-id 12345] [--dry-run]
-
-# Manage admin users
-wslcb admin add-user you@example.com
-wslcb admin list-users
-wslcb admin remove-user you@example.com
-
-# Backfill / repair
-uv run wslcb backfill-snapshots
-uv run wslcb backfill-diffs [--section notifications] [--limit 100] [--dry-run]
-uv run wslcb backfill-addresses
-uv run wslcb cleanup-redundant
-
-# One-time SQLite → PostgreSQL data migration
-DATABASE_URL=postgresql+asyncpg://... python scripts/sqlite_to_pg.py
+uv run pytest tests/ -v                     # run tests (--no-cov to skip coverage)
+sudo systemctl restart wslcb-web.service    # restart after Python/template changes
+uv run wslcb scrape                         # manual scrape (add --rate-limit 0.2 to throttle)
+uv run wslcb check [--fix]                  # integrity check
+uv run wslcb reprocess-endorsements         # [--code N] [--record-id N] [--dry-run]
+uv run wslcb rebuild-links                  # rebuilds record_links + backfills previous_location_id
 ```
 
-See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) for systemd services, address validation, and ops commands.
-See [`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md) for WSLCB source page structure and field label quirks (needed when touching `parser.py`).
-See [`docs/SCHEMA.md`](SCHEMA.md) for full table/column reference and migration history.
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.
+
+## Skills
+
+### SocratiCode — When to use each tool
+
+| Goal | Tool |
+|---|---|
+| Understand what a codebase does / where a feature lives | `codebase_search` (broad query) |
+| Find a specific function, constant, or type | `codebase_search` (exact name) or grep |
+| Find exact error messages, log strings, or regex patterns | grep / ripgrep |
+| See what a file imports or what depends on it | `codebase_graph_query` |
+| Check blast radius before modifying or deleting a file | `codebase_impact` (symbol) or `codebase_graph_query` (file) |
+| What breaks if I change function X? | `codebase_impact target=X` |
+| What does this entry point actually do? | `codebase_flow entrypoint=X` |
+| List entry points in this codebase | `codebase_flow` (no args) |
+| Who calls this function and what does it call? | `codebase_symbol name=X` |
+| What functions/classes exist in this file? | `codebase_symbols file=path` |
+| Search for symbols by name across the project | `codebase_symbols query=X` |
+| Spot architectural problems | `codebase_graph_circular`, `codebase_graph_stats` |
+| Visualise module structure | `codebase_graph_visualize` |
+| Verify index is up to date | `codebase_status` |
+| Discover what project knowledge is available | `codebase_context` |
+| Find database tables, API endpoints, infra configs | `codebase_context_search` |
+
+Start with `codebase_search`; follow with graph tools; read files only after narrowing to 1–3.
+
+### Project skills
+
+| Skill | When to use |
+|---|---|
+| `brainstorming` | New feature without a prior design discussion |
+| `dispatching-parallel-agents` | 2+ independent tasks with no shared state |
+| `managing-skills-claude` | Add/update/remove skill repos (submodule + symlink) |
+| `orchestrating-issue-backlog-claude` | Prioritize backlog, design parallel execution plan |
+| `reviewing-architecture-claude` | Say "AR" or "architecture review" |
+| `reviewing-code-claude` | Say "CR" or "code review" |
+| `shipping-work-claude` | Say "ship it", "push GH", or "wrap up" |
+| `subagent-driven-development` | Execute plans with independent tasks in current session |
+| `systematic-debugging` | Any bug, test failure, or unexpected behavior |
+| `test-driven-development` | Before writing implementation code |
+| `using-git-worktrees` | Feature isolation or before executing plans |
+| `verification-before-completion` | Before claiming work complete or committing |
+| `writing-plans` | Have spec/requirements, before touching code |
+| `writing-skills` | Create, edit, or verify skills |
+
+See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases.
+
+## Reference
+
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
+- [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference and migration history
+- [`docs/SOURCE_PAGE.md`](docs/SOURCE_PAGE.md) — WSLCB source page structure and field label quirks (needed when touching `parser.py`)
+- [`docs/STYLE.md`](docs/STYLE.md) — brand colors and CSS conventions
+- [`docs/SKILLS.md`](docs/SKILLS.md) — project skill descriptions and trigger phrases
