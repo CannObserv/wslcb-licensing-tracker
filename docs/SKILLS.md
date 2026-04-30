@@ -1,6 +1,6 @@
 # Skills
 
-Project skills available via the Skill tool (or `/skill-name` shorthand). Implementations live in `skills/`; vendor skill repos are git submodules in `skills-vendor/`.
+Project skills available via the Skill tool or `/skill-name` in Claude Code. Implementations live in `skills/`; vendor skill repos are git submodules in `skills-vendor/`.
 
 Invoke a skill by name when the trigger phrase matches — the skill provides structured prompts, anti-patterns, and step sequences that guide the work.
 

@@ -40,7 +40,7 @@ license_records → locations (FK: location_id, previous_location_id)
 | `record_entities` | `pg_entities.reprocess_entities()` | `wslcb reprocess-entities` |
 | `record_links` | `pg_link_records.build_all_links()` | `wslcb rebuild-links` |
 
-`reprocess_endorsements()` is idempotent. `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL.
+`reprocess_endorsements()` is idempotent — deletes existing rows before inserting fresh ones. `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL.
 
 ## Conventions
 
@@ -94,7 +94,7 @@ Common types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`. Put `(closes #
 
 ```bash
 uv run pre-commit install   # runs ruff + auto-rebuilds Tailwind CSS before each commit
-scripts/build-css.sh        # manual CSS rebuild if not committing
+scripts/build-css.sh        # manual CSS rebuild if changing templates or tailwind.config.js without committing
 ```
 
 ## Infrastructure
