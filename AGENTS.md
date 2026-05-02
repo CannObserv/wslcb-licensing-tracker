@@ -7,6 +7,33 @@ Guidance for AI agents working on this project.
 **Live instance:** https://wslcb-licensing-tracker.exe.xyz:8000/
 **Repo:** https://github.com/CannObserv/wslcb-licensing-tracker
 
+## Code Exploration Policy
+
+SocratiCode MCP tools are deferred — schemas aren't loaded until you call `ToolSearch`. The `SessionStart` hook emits a reminder at session open; run `ToolSearch` with the prefetch query below before any code exploration task.
+
+Prefetch query: `select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_graph_circular,mcp__plugin_socraticode_socraticode__codebase_graph_stats,mcp__plugin_socraticode_socraticode__codebase_graph_visualize,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search`
+
+**Negative rule.** Broad semantic questions (where a feature lives, what a module does) → SocratiCode. `grep`/`ripgrep` → exact strings and regex only. Explore subagent → path-pattern file walks only, not semantic search.
+
+| Goal | Tool |
+|---|---|
+| Understand what a codebase does / where a feature lives | `codebase_search` (broad query) |
+| Find a specific function, constant, or type | `codebase_search` (exact name) or grep |
+| Find exact error messages, log strings, or regex patterns | grep / ripgrep |
+| See what a file imports or what depends on it | `codebase_graph_query` |
+| Check blast radius before modifying or deleting a file | `codebase_impact` (symbol) or `codebase_graph_query` (file) |
+| What breaks if I change function X? | `codebase_impact target=X` |
+| What does this entry point actually do? | `codebase_flow entrypoint=X` |
+| List entry points in this codebase | `codebase_flow` (no args) |
+| Who calls this function and what does it call? | `codebase_symbol name=X` |
+| What functions/classes exist in this file? | `codebase_symbols file=path` |
+| Search for symbols by name across the project | `codebase_symbols query=X` |
+| Spot architectural problems | `codebase_graph_circular`, `codebase_graph_stats` |
+| Visualise module structure | `codebase_graph_visualize` |
+| Verify index is up to date | `codebase_status` |
+| Discover what project knowledge is available | `codebase_context` |
+| Find database tables, API endpoints, infra configs | `codebase_context_search` |
+
 ## Architecture
 
 ```
@@ -124,28 +151,9 @@ See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server li
 
 ## Skills
 
-### SocratiCode — When to use each tool
+### SocratiCode
 
-| Goal | Tool |
-|---|---|
-| Understand what a codebase does / where a feature lives | `codebase_search` (broad query) |
-| Find a specific function, constant, or type | `codebase_search` (exact name) or grep |
-| Find exact error messages, log strings, or regex patterns | grep / ripgrep |
-| See what a file imports or what depends on it | `codebase_graph_query` |
-| Check blast radius before modifying or deleting a file | `codebase_impact` (symbol) or `codebase_graph_query` (file) |
-| What breaks if I change function X? | `codebase_impact target=X` |
-| What does this entry point actually do? | `codebase_flow entrypoint=X` |
-| List entry points in this codebase | `codebase_flow` (no args) |
-| Who calls this function and what does it call? | `codebase_symbol name=X` |
-| What functions/classes exist in this file? | `codebase_symbols file=path` |
-| Search for symbols by name across the project | `codebase_symbols query=X` |
-| Spot architectural problems | `codebase_graph_circular`, `codebase_graph_stats` |
-| Visualise module structure | `codebase_graph_visualize` |
-| Verify index is up to date | `codebase_status` |
-| Discover what project knowledge is available | `codebase_context` |
-| Find database tables, API endpoints, infra configs | `codebase_context_search` |
-
-Start with `codebase_search`; follow with graph tools; read files only after narrowing to 1–3.
+See **Code Exploration Policy** above.
 
 ### Project skills
 

@@ -1,0 +1,37 @@
+[
+  {
+    "name": "database-schema",
+    "path": "docs/SCHEMA.md",
+    "description": "Table and column reference with FK relationships and full Alembic migration history. Check before writing any migration, DB query, or schema-dependent feature."
+  },
+  {
+    "name": "deployment",
+    "path": "docs/DEPLOYMENT.md",
+    "description": "Server lifecycle, systemd service management, address validation workflow, backfill commands, and full ops reference. Check before touching infra, services, or env config."
+  },
+  {
+    "name": "source-page",
+    "path": "docs/SOURCE_PAGE.md",
+    "description": "WSLCB source page HTML structure and field label quirks. Must consult when touching parser.py or any scraping/parsing logic."
+  },
+  {
+    "name": "style",
+    "path": "docs/STYLE.md",
+    "description": "Brand colors, CSS conventions, and Tailwind usage patterns. Check before modifying templates or adding new UI components."
+  },
+  {
+    "name": "infra",
+    "path": "infra/",
+    "description": "systemd unit and timer files for all services (web, scraper, address validation, healthcheck). Consult when modifying service configuration or adding new scheduled tasks."
+  },
+  {
+    "name": "architecture-review",
+    "path": "docs/architecture-review.md",
+    "description": "Architectural review findings and design decisions. Useful context for structural changes or understanding historical design rationale."
+  },
+  {
+    "name": "research",
+    "path": "docs/research/",
+    "description": "Domain research: entity classification, template analysis, data audits, and record linking analysis. Relevant for work on entities, record linking, and data quality."
+  }
+]
