@@ -27,7 +27,7 @@
   {
     "name": "architecture-review",
     "path": "docs/architecture-review.md",
-    "description": "Architectural review findings and design decisions. Useful context for structural changes or understanding historical design rationale."
+    "description": "Architectural review findings and design decisions. Consult before proposing structural changes or making decisions that prior AR findings may already address."
   },
   {
     "name": "research",
