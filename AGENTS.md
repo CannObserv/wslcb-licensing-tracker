@@ -161,11 +161,11 @@ See **Code Exploration Policy** above.
 |---|---|
 | `brainstorming` | New feature without a prior design discussion |
 | `dispatching-parallel-agents` | 2+ independent tasks with no shared state |
-| `managing-skills-claude` | Add/update/remove skill repos (submodule + symlink) |
-| `orchestrating-issue-backlog-claude` | Prioritize backlog, design parallel execution plan |
-| `reviewing-architecture-claude` | Say "AR" or "architecture review" |
-| `reviewing-code-claude` | Say "CR" or "code review" |
-| `shipping-work-claude` | Say "ship it", "push GH", or "wrap up" |
+| `managing-skills` | Add/update/remove skill repos (submodule + symlink) |
+| `orchestrating-issue-backlog` | Prioritize backlog, design parallel execution plan |
+| `reviewing-architecture` | Say "AR" or "architecture review" |
+| `reviewing-code-python-fastapi` | Say "CR" or "code review" |
+| `shipping-work-python-fastapi` | Say "ship it", "push GH", or "wrap up" |
 | `subagent-driven-development` | Execute plans with independent tasks in current session |
 | `systematic-debugging` | Any bug, test failure, or unexpected behavior |
 | `test-driven-development` | Before writing implementation code |

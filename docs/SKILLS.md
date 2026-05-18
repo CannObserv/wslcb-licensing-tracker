@@ -16,33 +16,33 @@ Routes 2+ independent tasks to parallel subagents using the Agent tool. Handles 
 
 **Trigger:** 2+ clearly independent tasks that can proceed without shared state or sequential dependencies.
 
-## managing-skills-claude
+## managing-skills
 
 Manages external skill repos using the git submodule + symlink pattern. Adds skill repos as submodules under `skills-vendor/`, symlinks individual skills into `skills/` and `.claude/skills/` for discovery, handles updates and removal.
 
 **Trigger:** "add skill repo", "add external skills", "manage skills", "update vendor skills".
 
-## orchestrating-issue-backlog-claude
+## orchestrating-issue-backlog
 
 Prioritizes an open issue backlog using agreed rubrics, analyzes conflict zones and dependencies, designs a parallel-safe batch execution plan using git worktrees, produces a design doc and GitHub issue, then hands off to an agent team.
 
 **Trigger:** Need to work through a backlog of issues systematically, in parallel.
 
-## reviewing-architecture-claude
+## reviewing-architecture
 
 High-level architectural review evaluating structural health, design principles, and long-term maintainability. Produces a numbered findings report, waits for terse directives (`fix` / `stet` / `GH`), then implements approved refactors. Distinct from line-level code review.
 
 **Trigger:** "AR", "architecture review", "architectural review".
 
-## reviewing-code-claude
+## reviewing-code-python-fastapi
 
-Structured code and documentation review using a severity-tiered findings format. Produces a numbered findings report, waits for terse directives (`fix` / `stet` / `GH`), then implements and commits approved changes.
+Structured code and documentation review using a severity-tiered findings format. Tuned for Python FastAPI projects (uv + ruff + pytest). Produces a numbered findings report, waits for terse directives (`fix` / `stet` / `GH`), then implements and commits approved changes.
 
 **Trigger:** "CR", "code review", "perform a review".
 
-## shipping-work-claude
+## shipping-work-python-fastapi
 
-Finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table.
+Finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Tuned for Python FastAPI projects (uv + ruff + pytest); sources `$PROJECT_ROOT/env` before tests.
 
 **Trigger:** "ship it", "push GH", "close GH", "wrap up".
 
