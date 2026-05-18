@@ -73,12 +73,13 @@ TABLE_ORDER = [
 def read_sqlite_table(conn: sqlite3.Connection, table: str) -> tuple[list[str], list[tuple]]:
     """Return (column_names, rows) for a SQLite table. Returns ([], []) if table missing."""
     try:
-        cur = conn.execute(f"SELECT * FROM {table}")  # noqa: S608
+        cur = conn.execute(f"SELECT * FROM {table}")
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
-        return cols, rows
     except sqlite3.OperationalError:
         return [], []
+    else:
+        return cols, rows
 
 
 async def copy_table(
@@ -99,8 +100,8 @@ async def copy_table(
     overriding = "OVERRIDING SYSTEM VALUE" if has_identity else ""
 
     sql = (
-        f'INSERT INTO {table} ({col_list}) {overriding} VALUES ({placeholders})'
-        f' ON CONFLICT DO NOTHING'
+        f"INSERT INTO {table} ({col_list}) {overriding} VALUES ({placeholders})"
+        f" ON CONFLICT DO NOTHING"
     )
 
     if dry_run:
@@ -126,7 +127,7 @@ async def reset_sequences(pg: asyncpg.Connection) -> None:
     """
     for table in IDENTITY_TABLES:
         try:
-            max_id = await pg.fetchval(f"SELECT COALESCE(MAX(id), 0) FROM {table}")  # noqa: S608
+            max_id = await pg.fetchval(f"SELECT COALESCE(MAX(id), 0) FROM {table}")
             next_val = max_id + 1
             await pg.execute(
                 f"ALTER TABLE {table} ALTER COLUMN id RESTART WITH {next_val}"
@@ -166,12 +167,12 @@ async def verify_counts(
     all_ok = True
     for table in TABLE_ORDER:
         try:
-            sqlite_count = sqlite_conn.execute(  # noqa: S608
+            sqlite_count = sqlite_conn.execute(
                 f"SELECT COUNT(*) FROM {table}"
             ).fetchone()[0]
         except sqlite3.OperationalError:
             sqlite_count = 0
-        pg_count = await pg.fetchval(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
+        pg_count = await pg.fetchval(f"SELECT COUNT(*) FROM {table}")
         status = "✅" if pg_count >= sqlite_count else "❌"
         print(f"  {status} {table:<40} sqlite={sqlite_count:>8,}  pg={pg_count:>8,}")
         if pg_count < sqlite_count:

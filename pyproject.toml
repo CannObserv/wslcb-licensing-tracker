@@ -54,6 +54,7 @@ packages = ["src/wslcb_licensing_tracker"]
 [tool.ruff]
 line-length = 100
 src = ["src"]
+exclude = ["alembic/", "skills-vendor/"]
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
@@ -72,6 +73,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# One-off migration utility: print() is the user interface; boolean flag is legacy CLI signature
+"scripts/sqlite_to_pg.py" = ["T201", "D103", "FBT001", "FBT002", "ASYNC240"]
 # FBT001 false-positives on click boolean callback params (is_flag=True)
 "src/wslcb_licensing_tracker/cli.py" = ["FBT001"]
 "src/wslcb_licensing_tracker/integrity.py" = ["T201"]

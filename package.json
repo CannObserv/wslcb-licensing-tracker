@@ -2,7 +2,10 @@
   "private": true,
   "description": "JS test dependencies only — not used in production",
   "scripts": {
-    "test": "node --test tests/js/test_*.js"
+    "test": "node --test tests/js/test_*.js",
+    "test:js": "node --test tests/js/test_*.js",
+    "lint:js": "echo 'No ESLint configured (vanilla JS, no bundler)'",
+    "format:js:check": "echo 'No Prettier configured (vanilla JS, no bundler)'"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"
