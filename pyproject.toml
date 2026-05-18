@@ -64,9 +64,6 @@ ignore = [
     # Conflicts with ruff formatter
     "COM812", # trailing-comma-missing
     "ISC001", # single-line-implicit-string-concatenation
-    # Deprecated
-    "ANN101", # missing-type-self
-    "ANN102", # missing-type-cls
     # All SQL uses parameterized queries; dynamic parts are constants or
     # generated placeholders (e.g. ",".join("?" * n)) — not user input.
     "S608",   # possible-sql-injection-vector

@@ -1,12 +1,12 @@
 ---
 name: brainstorming
 description: Explores user intent, requirements, and design before any implementation. Use when the user says "brainstorm", "design this", "let's design", or proposes a new feature without a prior design discussion.
-compatibility: Designed for Claude. Requires git and gh CLI. Python/SQLite web app (FastAPI + Jinja2/HTMX frontend, FTS5) using venv, pytest, systemd.
+compatibility: Designed for Claude. Requires git and gh CLI. Python FastAPI project (Jinja2/HTMX frontend) using uv, pytest, systemd.
 metadata:
   author: gregoryfoster
   version: "1.0"
   triggers: brainstorm, design this, let's design
-  overrides: brainstorming
+  overrides: obra-superpowers/brainstorming
   override-reason: "Project-specific conventions: docs/plans/ path, Conventional Commits for design doc commit, writing-plans is optional not mandatory; invokes using-git-worktrees after design approval for any multi-step implementation"
 ---
 
