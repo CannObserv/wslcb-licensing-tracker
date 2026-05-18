@@ -1,13 +1,13 @@
 ---
 name: shipping-work-python-fastapi
 description: "For Python/FastAPI projects (uv + ruff + pytest): finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Use when the user says 'ship it', 'push GH', 'close GH', or 'wrap up' and the project is a FastAPI service."
-compatibility: Designed for Python FastAPI projects using uv, ruff, pytest. Requires git, gh, uv. Loads $PROJECT_ROOT/env before tests for projects that need it. Deployment via systemd (out of scope for the skill).
+compatibility: Designed for Python FastAPI projects using uv, ruff, pytest. Requires git, gh, uv. Loads $PROJECT_ROOT/.env before tests for projects that need it. Deployment via systemd (out of scope for the skill).
 metadata:
   author: gregoryfoster
   version: "1.2"
   triggers: ship it, push GH, close GH, wrap up
   overrides: gregoryfoster-skills/shipping-work-python-fastapi
-  override-reason: "Sources $PROJECT_ROOT/env before delegating to upstream pre-ship for projects that need env-loaded test fixtures"
+  override-reason: "Sources $PROJECT_ROOT/.env before delegating to upstream pre-ship for projects that need env-loaded test fixtures"
 ---
 
 # Shipping Work — Python/FastAPI — wslcb-licensing-tracker
