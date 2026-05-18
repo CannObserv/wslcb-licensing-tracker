@@ -1,1 +1,1 @@
-../../../../skills-vendor/gregoryfoster-skills/skills/shipping-work-python-fastapi/scripts/close-issue.sh
+../../../skills-vendor/gregoryfoster-skills/skills/shipping-work-python-fastapi/scripts/close-issue.sh
