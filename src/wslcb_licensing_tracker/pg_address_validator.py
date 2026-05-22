@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://address-validator.exe.xyz:8000"
 API_PATH_PREFIX = "/api/v2"
+CONFIRMED_STATUSES = frozenset(
+    {"confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"}
+)
 TIMEOUT = 15.0
 HTTP_OK = 200
 HTTP_TOO_MANY_REQUESTS = 429
@@ -320,8 +323,7 @@ async def validate_location(
     dpv = validation.get("dpv_match_code")
 
     # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
-    confirmed_statuses = {"confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"}
-    has_address = status in confirmed_statuses
+    has_address = status in CONFIRMED_STATUSES
 
     try:
         if has_address:
@@ -394,8 +396,7 @@ async def process_location(
         status = validation.get("status", "")
         dpv = validation.get("dpv_match_code")
         # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
-        confirmed_statuses = {"confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"}
-        has_address = status in confirmed_statuses
+        has_address = status in CONFIRMED_STATUSES
 
         try:
             if has_address:

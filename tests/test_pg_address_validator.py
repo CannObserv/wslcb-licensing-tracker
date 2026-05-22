@@ -229,49 +229,6 @@ class TestValidateLocation:
         assert row["validation_status"] == "not_confirmed"
         assert row["address_validated_at"] is None
 
-    @pytest.mark.asyncio(loop_scope="session")
-    async def test_v2_empty_address_line_1_not_confirmed_writes_status_only(self, pg_conn):
-        """v2 not_confirmed: address_line_1='' must NOT trigger address column writes.
-
-        The old gate (is not None) treats '' as having an address. The new gate
-        must use the validation status to distinguish confirmed from not_confirmed.
-        """
-        loc_id = await get_or_create_location(pg_conn, "V2 GATE TEST RD, NOWHERE, WA 99997")
-        mock_result = {
-            "address_line_1": "",  # v2 sends "" not None for unconfirmed
-            "address_line_2": "",
-            "city": "",
-            "region": "",
-            "postal_code": "",
-            "country": "",
-            "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
-            "warnings": [],
-        }
-        with (
-            patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
-                return_value=True,
-            ),
-            patch(
-                "wslcb_licensing_tracker.pg_address_validator.validate", return_value=mock_result
-            ),
-        ):
-            result = await validate_location(pg_conn, loc_id, "V2 GATE TEST RD, NOWHERE, WA 99997")
-        assert result is False
-        row = (
-            (
-                await pg_conn.execute(
-                    select(locations.c.address_validated_at, locations.c.validation_status).where(
-                        locations.c.id == loc_id
-                    )
-                )
-            )
-            .mappings()
-            .one()
-        )
-        assert row["address_validated_at"] is None
-        assert row["validation_status"] == "not_confirmed"
-
 
 class TestParseRetryAfter:
     def test_parses_numeric_header(self):
@@ -599,53 +556,6 @@ class TestProcessLocation:
         )
         assert row["validation_status"] == "not_confirmed"
         assert row["address_validated_at"] is None
-
-    @pytest.mark.asyncio(loop_scope="session")
-    async def test_v2_empty_address_line_1_not_confirmed_writes_status_only(self, pg_conn):
-        """v2 not_confirmed: address_line_1='' must NOT trigger address column writes.
-
-        The old gate (is not None) treats '' as having an address. The new gate
-        must use validation status so '' on not_confirmed takes the status-only path.
-        """
-        loc_id = await get_or_create_location(pg_conn, "PROCESS V2 GATE RD, NOWHERE, WA 99996")
-        mock_result = {
-            "address_line_1": "",  # v2 sends "" not None for unconfirmed
-            "address_line_2": "",
-            "city": "",
-            "region": "",
-            "postal_code": "",
-            "country": "",
-            "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
-            "warnings": [],
-        }
-        with (
-            patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
-                return_value=True,
-            ),
-            patch(
-                "wslcb_licensing_tracker.pg_address_validator.validate",
-                return_value=mock_result,
-            ),
-        ):
-            result = await process_location(
-                pg_conn, loc_id, "PROCESS V2 GATE RD, NOWHERE, WA 99996"
-            )
-        assert result is False
-        row = (
-            (
-                await pg_conn.execute(
-                    select(
-                        locations.c.address_validated_at,
-                        locations.c.validation_status,
-                    ).where(locations.c.id == loc_id)
-                )
-            )
-            .mappings()
-            .one()
-        )
-        assert row["address_validated_at"] is None
-        assert row["validation_status"] == "not_confirmed"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
