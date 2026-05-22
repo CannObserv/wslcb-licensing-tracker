@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://address-validator.exe.xyz:8000"
+API_PATH_PREFIX = "/api/v2"
 TIMEOUT = 15.0
 HTTP_OK = 200
 HTTP_TOO_MANY_REQUESTS = 429
@@ -131,7 +132,7 @@ async def _post_with_retry(
 
 
 async def standardize(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
-    """Standardize an address via POST /api/v1/standardize.
+    """Standardize an address via POST /api/v2/standardize.
 
     Sends the full raw address string.  The server parses and standardizes
     the address according to USPS Publication 28 rules.
@@ -144,7 +145,7 @@ async def standardize(address: str, client: httpx.AsyncClient | None = None) -> 
     if not api_key:
         return None
 
-    url = f"{BASE_URL}/api/v1/standardize"
+    url = f"{BASE_URL}{API_PATH_PREFIX}/standardize"
     headers = {"X-API-Key": api_key}
     payload = {"address": address}
 
@@ -168,7 +169,7 @@ async def standardize(address: str, client: httpx.AsyncClient | None = None) -> 
 
 
 async def validate(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
-    """Validate an address via POST /api/v1/validate.
+    """Validate an address via POST /api/v2/validate.
 
     Sends the full raw address string. The server runs parse → standardize
     internally before calling the USPS DPV provider.
@@ -183,7 +184,7 @@ async def validate(address: str, client: httpx.AsyncClient | None = None) -> dic
     if not api_key:
         return None
 
-    url = f"{BASE_URL}/api/v1/validate"
+    url = f"{BASE_URL}{API_PATH_PREFIX}/validate"
     headers = {"X-API-Key": api_key}
     payload = {"address": address}
 
@@ -217,7 +218,7 @@ async def standardize_location(
     raw_address: str,
     client: httpx.AsyncClient | None = None,
 ) -> bool:
-    """Standardize and update a single location row via POST /api/v1/standardize.
+    """Standardize and update a single location row via POST /api/v2/standardize.
 
     Always runs regardless of the ENABLE_ADDRESS_VALIDATION flag.
 
@@ -278,7 +279,7 @@ async def validate_location(
     raw_address: str,
     client: httpx.AsyncClient | None = None,
 ) -> bool:
-    """Optionally validate a location row via POST /api/v1/validate.
+    """Optionally validate a location row via POST /api/v2/validate.
 
     Gated by ENABLE_ADDRESS_VALIDATION env var. No-op (returns False) when
     the flag is off.
@@ -318,7 +319,9 @@ async def validate_location(
     status = validation.get("status", "")
     dpv = validation.get("dpv_match_code")
 
-    has_address = result.get("address_line_1") is not None
+    # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
+    confirmed_statuses = {"confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"}
+    has_address = status in confirmed_statuses
 
     try:
         if has_address:
@@ -390,7 +393,9 @@ async def process_location(
         validation = result.get("validation") or {}
         status = validation.get("status", "")
         dpv = validation.get("dpv_match_code")
-        has_address = result.get("address_line_1") is not None
+        # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
+        confirmed_statuses = {"confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"}
+        has_address = status in confirmed_statuses
 
         try:
             if has_address:

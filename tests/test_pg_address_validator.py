@@ -196,11 +196,12 @@ class TestValidateLocation:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_not_confirmed_writes_status_but_not_validated_at(self, pg_conn):
-        # API responds but cannot confirm the address (no address_line_1 in response).
+        # v2: not_confirmed returns address_line_1="" (empty string, not absent/None).
         # Should write validation_status/dpv_match_code, leave address_validated_at NULL,
         # and return False.
         loc_id = await get_or_create_location(pg_conn, "AMBIGUOUS RD, NOWHERE, WA 99999")
         mock_result = {
+            "address_line_1": "",  # v2 shape: empty string on failure
             "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
         }
         with (
@@ -227,6 +228,49 @@ class TestValidateLocation:
         )
         assert row["validation_status"] == "not_confirmed"
         assert row["address_validated_at"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_v2_empty_address_line_1_not_confirmed_writes_status_only(self, pg_conn):
+        """v2 not_confirmed: address_line_1='' must NOT trigger address column writes.
+
+        The old gate (is not None) treats '' as having an address. The new gate
+        must use the validation status to distinguish confirmed from not_confirmed.
+        """
+        loc_id = await get_or_create_location(pg_conn, "V2 GATE TEST RD, NOWHERE, WA 99997")
+        mock_result = {
+            "address_line_1": "",  # v2 sends "" not None for unconfirmed
+            "address_line_2": "",
+            "city": "",
+            "region": "",
+            "postal_code": "",
+            "country": "",
+            "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
+            "warnings": [],
+        }
+        with (
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator.validate", return_value=mock_result
+            ),
+        ):
+            result = await validate_location(pg_conn, loc_id, "V2 GATE TEST RD, NOWHERE, WA 99997")
+        assert result is False
+        row = (
+            (
+                await pg_conn.execute(
+                    select(locations.c.address_validated_at, locations.c.validation_status).where(
+                        locations.c.id == loc_id
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["address_validated_at"] is None
+        assert row["validation_status"] == "not_confirmed"
 
 
 class TestParseRetryAfter:
@@ -339,6 +383,21 @@ class TestPostWithRetry:
 
 class TestStandardizeHTTP:
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_uses_v2_url(self):
+        """standardize() must post to /api/v2/standardize, not /api/v1/."""
+        mock_response = httpx.Response(200, json={"address_line_1": "123 MAIN ST", "warnings": []})
+        with (
+            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
+                return_value=mock_response,
+            ) as mock_post,
+        ):
+            await standardize("123 MAIN ST")
+        url_called = mock_post.call_args[0][0]
+        assert "/api/v2/standardize" in url_called
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_without_api_key(self):
         with patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": ""}):
             result = await standardize("123 MAIN ST")
@@ -360,6 +419,21 @@ class TestStandardizeHTTP:
 
 
 class TestValidateHTTP:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_uses_v2_url(self):
+        """validate() must post to /api/v2/validate, not /api/v1/."""
+        mock_response = httpx.Response(200, json={"address_line_1": "123 MAIN ST", "warnings": []})
+        with (
+            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
+                return_value=mock_response,
+            ) as mock_post,
+        ):
+            await validate("123 MAIN ST")
+        url_called = mock_post.call_args[0][0]
+        assert "/api/v2/validate" in url_called
+
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_without_api_key(self):
         with patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": ""}):
@@ -492,10 +566,10 @@ class TestProcessLocation:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_not_confirmed_writes_status_only(self, pg_conn):
-        """When /validate returns not_confirmed (no address_line_1), writes
-        status and dpv only, returns False."""
+        """v2 not_confirmed: address_line_1='' — writes status and dpv only, returns False."""
         loc_id = await get_or_create_location(pg_conn, "NOWHERE RD, BADTOWN, WA 00000")
         mock_result = {
+            "address_line_1": "",  # v2 shape: empty string on failure
             "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
             "warnings": [],
         }
@@ -525,6 +599,53 @@ class TestProcessLocation:
         )
         assert row["validation_status"] == "not_confirmed"
         assert row["address_validated_at"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_v2_empty_address_line_1_not_confirmed_writes_status_only(self, pg_conn):
+        """v2 not_confirmed: address_line_1='' must NOT trigger address column writes.
+
+        The old gate (is not None) treats '' as having an address. The new gate
+        must use validation status so '' on not_confirmed takes the status-only path.
+        """
+        loc_id = await get_or_create_location(pg_conn, "PROCESS V2 GATE RD, NOWHERE, WA 99996")
+        mock_result = {
+            "address_line_1": "",  # v2 sends "" not None for unconfirmed
+            "address_line_2": "",
+            "city": "",
+            "region": "",
+            "postal_code": "",
+            "country": "",
+            "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
+            "warnings": [],
+        }
+        with (
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.pg_address_validator.validate",
+                return_value=mock_result,
+            ),
+        ):
+            result = await process_location(
+                pg_conn, loc_id, "PROCESS V2 GATE RD, NOWHERE, WA 99996"
+            )
+        assert result is False
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.address_validated_at,
+                        locations.c.validation_status,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["address_validated_at"] is None
+        assert row["validation_status"] == "not_confirmed"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
