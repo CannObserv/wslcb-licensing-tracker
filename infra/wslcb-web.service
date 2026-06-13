@@ -16,7 +16,7 @@ Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/etc/wslcb-licensing-tracker/.env
-EnvironmentFile=/run/wslcb-build-id
+EnvironmentFile=-/run/wslcb-build-id
 
 [Install]
 WantedBy=multi-user.target
