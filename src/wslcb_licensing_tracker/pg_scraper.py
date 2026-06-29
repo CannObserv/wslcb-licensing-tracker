@@ -3,6 +3,7 @@
 Async PostgreSQL port of scraper.py.
 """
 
+import gzip
 import hashlib
 import logging
 from datetime import UTC, datetime
@@ -34,10 +35,10 @@ def compute_content_hash(html: str) -> str:
 
 
 def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
-    """Save raw HTML to the per-date snapshot directory.
+    """Save raw HTML to the per-date snapshot directory as gzip-compressed.
 
     Path pattern:
-    ``data/wslcb/licensinginfo/[yyyy]/[yyyy_mm_dd]/[yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html``
+    ``data/wslcb/licensinginfo/[yyyy]/[yyyy_mm_dd]/[yyyy_mm_dd]-licensinginfo.lcb.wa.gov-v[x].html.gz``
 
     Saves the HTML exactly as received from the server (no transformation).
     Increments the version number if a snapshot for the same date already exists.
@@ -48,14 +49,15 @@ def save_html_snapshot(html: str, scrape_date: datetime) -> Path:
     date_dir = DATA_DIR / "wslcb" / "licensinginfo" / year_str / date_str
 
     version = 1
-    while list(date_dir.glob(f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html")):
+    while list(date_dir.glob(f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html.gz")):
         version += 1
 
     date_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html"
+    filename = f"{date_str}-licensinginfo.lcb.wa.gov-v{version}.html.gz"
     filepath = date_dir / filename
-    filepath.write_text(html, encoding="utf-8")
+    with gzip.open(filepath, "wt", encoding="utf-8") as fh:
+        fh.write(html)
     return filepath
 
 
@@ -234,6 +236,9 @@ async def cleanup_redundant_scrapes(
         for row in rows:
             if delete_files and row["snapshot_path"]:
                 snap = DATA_DIR / row["snapshot_path"]
+                # Handle both .html (legacy) and .html.gz (current) on disk
+                if not snap.exists():
+                    snap = snap.parent / (snap.name + ".gz")
                 if snap.exists():
                     snap.unlink()
                     result["files"] += 1

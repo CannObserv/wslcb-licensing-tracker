@@ -1,5 +1,6 @@
 """Tests for pg_scraper.py — pure helper logic and behavioral DB tests."""
 
+import gzip
 import os
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -11,6 +12,7 @@ from wslcb_licensing_tracker.pg_scraper import (
     cleanup_redundant_scrapes,
     compute_content_hash,
     get_last_content_hash,
+    save_html_snapshot,
 )
 
 _needs_db = pytest.mark.skipif(
@@ -68,3 +70,36 @@ async def test_cleanup_redundant_scrapes_removes_unchanged_rows(pg_engine):
             {"id": inserted_id},
         )
         assert remaining.fetchone() is None
+
+
+# ── save_html_snapshot ───────────────────────────────────────────────
+
+
+def test_save_html_snapshot_creates_gz(tmp_path, monkeypatch):
+    """save_html_snapshot writes a .html.gz file, not .html."""
+    import wslcb_licensing_tracker.pg_scraper as mod
+
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    html = "<html><body>test</body></html>"
+    scrape_time = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+
+    path = save_html_snapshot(html, scrape_time)
+
+    assert path.name.endswith(".html.gz"), f"Expected .html.gz, got {path.name}"
+    assert path.exists()
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        assert fh.read() == html
+
+
+def test_save_html_snapshot_increments_version(tmp_path, monkeypatch):
+    """save_html_snapshot increments version when same-date file exists."""
+    import wslcb_licensing_tracker.pg_scraper as mod
+
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    scrape_time = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+
+    p1 = save_html_snapshot("v1", scrape_time)
+    p2 = save_html_snapshot("v2", scrape_time)
+
+    assert "v1" in p1.name
+    assert "v2" in p2.name

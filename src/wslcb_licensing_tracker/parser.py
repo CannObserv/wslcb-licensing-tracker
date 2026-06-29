@@ -10,6 +10,7 @@ Extracted from ``scraper.py``, ``backfill_snapshots.py``, and
 ``backfill_diffs.py`` as part of the Phase 1 architecture refactor (#16).
 """
 
+import gzip
 import logging
 import re
 from datetime import UTC, datetime
@@ -181,13 +182,40 @@ def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dis
 # ── Full-page snapshot parsing ───────────────────────────────────────
 
 
+def _read_snapshot(path: Path) -> str:
+    """Read a snapshot file, handling both .html and .html.gz transparently.
+
+    If *path* ends in ``.gz``, opens with gzip.  If *path* does not exist but
+    ``path + ".gz"`` does, reads the compressed variant — this covers DB rows
+    that still record the old ``.html`` extension after on-disk compression.
+    """
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            return fh.read()
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    gz_path = path.parent / (path.name + ".gz")
+    with gzip.open(gz_path, "rt", encoding="utf-8") as fh:
+        return fh.read()
+
+
 def snapshot_paths(data_dir: Path) -> list[Path]:
-    """Return all archived snapshot paths, sorted chronologically."""
-    return sorted(data_dir.glob("wslcb/licensinginfo/**/*.html"))
+    """Return all archived snapshot paths, sorted chronologically.
+
+    Includes both uncompressed ``.html`` and compressed ``.html.gz`` files.
+    """
+    html = set(data_dir.glob("wslcb/licensinginfo/**/*.html"))
+    gz = set(data_dir.glob("wslcb/licensinginfo/**/*.html.gz"))
+    # Exclude plain .html when a .gz sibling exists (transition period)
+    shadowed = {p.parent / p.name[: -len(".gz")] for p in gz}
+    return sorted((html - shadowed) | gz)
 
 
 def extract_snapshot_date(path: Path) -> datetime | None:
-    """Extract a UTC midnight datetime from a snapshot filename (e.g. '2025_12_16')."""
+    """Extract a UTC midnight datetime from a snapshot filename (e.g. '2025_12_16').
+
+    Works for both ``.html`` and ``.html.gz`` filenames.
+    """
     m = re.search(r"(\d{4})_(\d{2})_(\d{2})", path.name)
     if not m:
         return None
@@ -196,7 +224,7 @@ def extract_snapshot_date(path: Path) -> datetime | None:
 
 def parse_snapshot(path: Path) -> list[dict]:
     """Parse a snapshot file and return a list of record dicts."""
-    html = path.read_text(encoding="utf-8")
+    html = _read_snapshot(path)
     soup = BeautifulSoup(html, "lxml")
     records = []
     for table in soup.find_all("table"):
@@ -481,10 +509,7 @@ def extract_tbody_from_snapshot(
     Returns the raw ``str(tbody)`` HTML string (inline styles intact) or
     ``None`` if the record is not present in this snapshot.
     """
-    try:
-        html = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        html = path.read_text(encoding="latin-1")
+    html = _read_snapshot(path)
 
     soup = BeautifulSoup(html, "lxml")
 

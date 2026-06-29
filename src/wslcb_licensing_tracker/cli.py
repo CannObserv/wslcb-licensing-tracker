@@ -29,6 +29,7 @@ Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 """
 
 import asyncio
+import gzip
 import logging
 import sys
 from collections.abc import Awaitable, Callable
@@ -49,6 +50,7 @@ from .pg_address_validator import refresh_specific_addresses as pg_refresh_speci
 from .pg_admin_audit import log_action
 from .pg_backfill_diffs import backfill_diffs as pg_backfill_diffs
 from .pg_backfill_snapshots import backfill_from_snapshots as pg_backfill_snapshots
+from .pg_db import DATA_DIR
 from .pg_endorsements import reprocess_endorsements as pg_reprocess_endorsements
 from .pg_entities import reprocess_entities as pg_reprocess_entities
 from .pg_integrity import print_report
@@ -218,6 +220,51 @@ def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
                 await pg_refresh_addresses(conn, rate_limit=rate_limit)
 
     _run_with_engine(_run)
+
+
+@ingest.command("compress-snapshots")
+@click.option("--dry-run", is_flag=True, help="Report what would be compressed without writing.")
+def compress_snapshots(dry_run: bool) -> None:
+    """Compress existing .html snapshots to .html.gz in place.
+
+    One-time migration: converts all uncompressed HTML snapshots under
+    data/wslcb/licensinginfo/ to gzip-compressed .html.gz files, then
+    removes the originals.  Safe to re-run — already-compressed files are
+    skipped.
+    """
+    html_files = sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
+    if not html_files:
+        click.echo("No uncompressed snapshots found.")
+        return
+
+    compressed = 0
+    skipped = 0
+    saved_bytes = 0
+
+    for path in html_files:
+        gz_path = path.parent / (path.name + ".gz")
+        if gz_path.exists():
+            skipped += 1
+            continue
+        original_size = path.stat().st_size
+        if dry_run:
+            click.echo(f"  [dry-run] Would compress {path.name}")
+            compressed += 1
+            continue
+        content = path.read_bytes()
+        gz_path.write_bytes(gzip.compress(content))
+        compressed_size = gz_path.stat().st_size
+        saved_bytes += original_size - compressed_size
+        path.unlink()
+        compressed += 1
+
+    if dry_run:
+        click.echo(f"[dry-run] Would compress {compressed} file(s), {skipped} already compressed.")
+    else:
+        click.echo(
+            f"Compressed {compressed} snapshot(s), {skipped} already compressed. "
+            f"Freed {saved_bytes / 1_048_576:.1f} MB."
+        )
 
 
 # ---------------------------------------------------------------------------

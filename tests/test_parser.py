@@ -3,6 +3,7 @@
 All tests use static HTML fixtures; no network calls, no database.
 """
 
+import gzip
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from wslcb_licensing_tracker.parser import (
     SECTION_MAP,
+    _read_snapshot,
     extract_snapshot_date,
     is_valid_record,
     normalize_date,
@@ -18,6 +20,7 @@ from wslcb_licensing_tracker.parser import (
     parse_location,
     parse_records_from_table,
     parse_snapshot,
+    snapshot_paths,
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -331,6 +334,88 @@ class TestEdgeCases:
         p = tmp_path / "empty.html"
         p.write_text(html)
         assert parse_snapshot(p) == []
+
+
+# ── Gzip snapshot support ────────────────────────────────────────────
+
+
+class TestReadSnapshot:
+    def test_reads_plain_html(self, tmp_path):
+        """`_read_snapshot` reads an uncompressed .html file."""
+        p = tmp_path / "test.html"
+        p.write_text("hello", encoding="utf-8")
+        assert _read_snapshot(p) == "hello"
+
+    def test_reads_gz_directly(self, tmp_path):
+        """`_read_snapshot` reads a .html.gz file when given its path."""
+        p = tmp_path / "test.html.gz"
+        p.write_bytes(gzip.compress(b"hello"))
+        assert _read_snapshot(p) == "hello"
+
+    def test_falls_back_to_gz_when_html_missing(self, tmp_path):
+        """`_read_snapshot` finds .html.gz when the .html path doesn't exist."""
+        gz = tmp_path / "test.html.gz"
+        gz.write_bytes(gzip.compress(b"hello"))
+        plain = tmp_path / "test.html"  # does not exist
+        assert _read_snapshot(plain) == "hello"
+
+    def test_raises_when_neither_exists(self, tmp_path):
+        """`_read_snapshot` raises FileNotFoundError when no file is found."""
+        p = tmp_path / "missing.html"
+        with pytest.raises((FileNotFoundError, OSError)):
+            _read_snapshot(p)
+
+
+class TestSnapshotPaths:
+    def test_finds_html_files(self, tmp_path):
+        d = tmp_path / "wslcb" / "licensinginfo" / "2025" / "2025_12_01"
+        d.mkdir(parents=True)
+        (d / "2025_12_01-test-v1.html").write_text("x")
+        paths = snapshot_paths(tmp_path)
+        assert len(paths) == 1
+        assert paths[0].suffix == ".html"
+
+    def test_finds_gz_files(self, tmp_path):
+        d = tmp_path / "wslcb" / "licensinginfo" / "2026" / "2026_01_01"
+        d.mkdir(parents=True)
+        (d / "2026_01_01-test-v1.html.gz").write_bytes(gzip.compress(b"x"))
+        paths = snapshot_paths(tmp_path)
+        assert len(paths) == 1
+        assert paths[0].name.endswith(".html.gz")
+
+    def test_gz_shadows_html_sibling(self, tmp_path):
+        """When .html and .html.gz both exist, only .html.gz is returned."""
+        d = tmp_path / "wslcb" / "licensinginfo" / "2026" / "2026_01_01"
+        d.mkdir(parents=True)
+        base = "2026_01_01-test-v1"
+        (d / f"{base}.html").write_text("x")
+        (d / f"{base}.html.gz").write_bytes(gzip.compress(b"x"))
+        paths = snapshot_paths(tmp_path)
+        assert len(paths) == 1
+        assert paths[0].name.endswith(".html.gz")
+
+    def test_mixed_years(self, tmp_path):
+        """Returns files from multiple years sorted chronologically."""
+        for year, date in [("2025", "2025_12_01"), ("2026", "2026_01_01")]:
+            d = tmp_path / "wslcb" / "licensinginfo" / year / date
+            d.mkdir(parents=True)
+            (d / f"{date}-test-v1.html.gz").write_bytes(gzip.compress(b"x"))
+        paths = snapshot_paths(tmp_path)
+        assert len(paths) == 2
+        assert "2025" in paths[0].parts
+        assert "2026" in paths[1].parts
+
+
+class TestParseSnapshotGz:
+    def test_parse_gz_snapshot_returns_same_records(self, tmp_path):
+        """parse_snapshot on a .html.gz file returns the same records as the .html."""
+        src = FIXTURES_DIR / "full_snapshot.html"
+        gz = tmp_path / "2026_01_01-test-v1.html.gz"
+        gz.write_bytes(gzip.compress(src.read_bytes()))
+        records_gz = parse_snapshot(gz)
+        records_html = parse_snapshot(src)
+        assert len(records_gz) == len(records_html)
+        assert {r["section_type"] for r in records_gz} == {r["section_type"] for r in records_html}
 
     def test_record_without_license_number_skipped(self):
         """A partial record missing license_number is not emitted."""
