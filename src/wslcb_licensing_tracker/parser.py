@@ -187,16 +187,29 @@ def _read_snapshot(path: Path) -> str:
 
     If *path* ends in ``.gz``, opens with gzip.  If *path* does not exist but
     ``path + ".gz"`` does, reads the compressed variant — this covers DB rows
-    that still record the old ``.html`` extension after on-disk compression.
+    that still record the old ``.html`` extension after on-disk compression
+    (sources.snapshot_path is not updated when files are compressed in place).
+
+    Falls back to latin-1 if the file is not valid UTF-8.
     """
     if path.suffix == ".gz":
+        return _read_gz(path)
+    if path.exists():
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return path.read_text(encoding="latin-1")
+    gz_path = path.parent / (path.name + ".gz")
+    return _read_gz(gz_path)
+
+
+def _read_gz(path: Path) -> str:
+    try:
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             return fh.read()
-    if path.exists():
-        return path.read_text(encoding="utf-8")
-    gz_path = path.parent / (path.name + ".gz")
-    with gzip.open(gz_path, "rt", encoding="utf-8") as fh:
-        return fh.read()
+    except UnicodeDecodeError:
+        with gzip.open(path, "rt", encoding="latin-1") as fh:
+            return fh.read()
 
 
 def snapshot_paths(data_dir: Path) -> list[Path]:

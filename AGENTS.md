@@ -40,7 +40,7 @@ Prefetch query: `select:mcp__plugin_socraticode_socraticode__codebase_search,mcp
 pg_scraper.py ─┐
 pg_backfill_snapshots.py ─┼─→ pg_pipeline.py ─→ PostgreSQL (tsvector + pg_trgm) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
 pg_backfill_diffs.py ──────┘                                                       ←─ display.py (presentation)
-                             ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html
+                             ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html.gz
 
 license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
@@ -96,6 +96,7 @@ Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/
 ### Data Integrity
 - `insert_record()` returns `(id, True)` for new, `(id, False)` for duplicate, `None` on unexpected `IntegrityError`.
 - Never delete historical data — accumulating beyond the 30-day source window is the whole point.
+- `sources.snapshot_path` stores the path as it was at ingest time. Files compressed by `wslcb ingest compress-snapshots` are renamed `.html` → `.html.gz` on disk but the DB column is not updated. `parser._read_snapshot()` transparently falls back to the `.gz` sibling, so all read paths work without a migration. Do not "fix" the DB paths — the fallback is the contract.
 
 ## Git Workflow
 

@@ -2,7 +2,8 @@
 
 All operational commands are exposed as click subcommands grouped by domain:
 
-- ``ingest``: scrape, backfill-snapshots, backfill-diffs, backfill-addresses, refresh-addresses
+- ``ingest``: scrape, backfill-snapshots, backfill-diffs, backfill-addresses, refresh-addresses,
+  compress-snapshots
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
 - ``admin``: add-user, list-users, remove-user
 
@@ -18,6 +19,7 @@ Usage::
     wslcb ingest backfill-diffs        # replay diff archives
     wslcb ingest backfill-addresses    # validate un-validated locations
     wslcb ingest refresh-addresses     # re-validate all locations
+    wslcb ingest compress-snapshots    # compress .html snapshots to .html.gz in place
     wslcb db rebuild-links             # rebuild application→outcome links
     wslcb db check                     # run integrity checks
     wslcb db check --fix               # run checks and auto-fix safe issues
@@ -244,6 +246,9 @@ def compress_snapshots(dry_run: bool) -> None:
     for path in html_files:
         gz_path = path.parent / (path.name + ".gz")
         if gz_path.exists():
+            # .gz already present — clean up orphaned .html if interrupted previously
+            if not dry_run and path.exists():
+                path.unlink()
             skipped += 1
             continue
         original_size = path.stat().st_size
