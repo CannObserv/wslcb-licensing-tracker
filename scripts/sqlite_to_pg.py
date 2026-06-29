@@ -129,9 +129,7 @@ async def reset_sequences(pg: asyncpg.Connection) -> None:
         try:
             max_id = await pg.fetchval(f"SELECT COALESCE(MAX(id), 0) FROM {table}")
             next_val = max_id + 1
-            await pg.execute(
-                f"ALTER TABLE {table} ALTER COLUMN id RESTART WITH {next_val}"
-            )
+            await pg.execute(f"ALTER TABLE {table} ALTER COLUMN id RESTART WITH {next_val}")
             print(f"  Reset sequence: {table} → start at {next_val}")
         except Exception as exc:  # noqa: BLE001
             print(f"  WARNING: Could not reset sequence for {table}: {exc}")
@@ -167,9 +165,7 @@ async def verify_counts(
     all_ok = True
     for table in TABLE_ORDER:
         try:
-            sqlite_count = sqlite_conn.execute(
-                f"SELECT COUNT(*) FROM {table}"
-            ).fetchone()[0]
+            sqlite_count = sqlite_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         except sqlite3.OperationalError:
             sqlite_count = 0
         pg_count = await pg.fetchval(f"SELECT COUNT(*) FROM {table}")
@@ -194,7 +190,7 @@ async def main(dry_run: bool = False) -> None:
 
     # Mask credentials in output
     try:
-        display_url = pg_url[:pg_url.index("@") + 1] + "..."
+        display_url = pg_url[: pg_url.index("@") + 1] + "..."
     except ValueError:
         display_url = pg_url
 
@@ -249,6 +245,7 @@ async def main(dry_run: bool = False) -> None:
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser(description="Migrate SQLite → PostgreSQL")
     p.add_argument("--dry-run", action="store_true", help="Parse and count, no writes")
     args = p.parse_args()

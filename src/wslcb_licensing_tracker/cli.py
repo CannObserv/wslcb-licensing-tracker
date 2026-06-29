@@ -241,13 +241,16 @@ def compress_snapshots(dry_run: bool) -> None:
 
     compressed = 0
     skipped = 0
+    would_unlink = 0
     saved_bytes = 0
 
     for path in html_files:
         gz_path = path.parent / (path.name + ".gz")
         if gz_path.exists():
             # .gz already present — clean up orphaned .html if interrupted previously
-            if not dry_run and path.exists():
+            if dry_run:
+                would_unlink += 1
+            else:
                 path.unlink()
             skipped += 1
             continue
@@ -264,7 +267,10 @@ def compress_snapshots(dry_run: bool) -> None:
         compressed += 1
 
     if dry_run:
-        click.echo(f"[dry-run] Would compress {compressed} file(s), {skipped} already compressed.")
+        summary = f"[dry-run] Would compress {compressed} file(s), {skipped} already compressed."
+        if would_unlink:
+            summary += f" {would_unlink} orphaned .html would be removed."
+        click.echo(summary)
     else:
         click.echo(
             f"Compressed {compressed} snapshot(s), {skipped} already compressed. "

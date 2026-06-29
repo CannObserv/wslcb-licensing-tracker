@@ -1,5 +1,6 @@
 """Tests for the click-based CLI."""
 
+import gzip
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -238,3 +239,74 @@ class TestAdminGroup:
         assert result.exit_code == 0
         assert "scrape" in result.output
         assert "backfill-snapshots" in result.output
+
+
+class TestCompressSnapshots:
+    """Tests for `wslcb ingest compress-snapshots`."""
+
+    def _make_snapshot_dir(self, tmp_path):
+        d = tmp_path / "wslcb" / "licensinginfo" / "2026" / "2026_01_01"
+        d.mkdir(parents=True)
+        return d
+
+    def test_no_files_exits_cleanly(self, tmp_path):
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-snapshots"])
+        assert result.exit_code == 0
+        assert "No uncompressed snapshots found" in result.output
+
+    def test_dry_run_lists_files_without_writing(self, tmp_path):
+        d = self._make_snapshot_dir(tmp_path)
+        html = d / "2026_01_01-test-v1.html"
+        html.write_text("<html/>")
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-snapshots", "--dry-run"])
+        assert result.exit_code == 0
+        assert "dry-run" in result.output
+        assert html.name in result.output
+        assert html.exists()
+        assert not (d / "2026_01_01-test-v1.html.gz").exists()
+
+    def test_compresses_and_removes_original(self, tmp_path):
+        d = self._make_snapshot_dir(tmp_path)
+        html = d / "2026_01_01-test-v1.html"
+        html.write_text("<html>content</html>")
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-snapshots"])
+        assert result.exit_code == 0
+        assert "Compressed 1" in result.output
+        assert not html.exists()
+        gz = d / "2026_01_01-test-v1.html.gz"
+        assert gz.exists()
+        with gzip.open(gz, "rt", encoding="utf-8") as fh:
+            assert fh.read() == "<html>content</html>"
+
+    def test_rerun_skips_already_compressed(self, tmp_path):
+        d = self._make_snapshot_dir(tmp_path)
+        (d / "2026_01_01-test-v1.html.gz").write_bytes(gzip.compress(b"x"))
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-snapshots"])
+        assert result.exit_code == 0
+        assert "No uncompressed snapshots found" in result.output
+
+    def test_orphan_cleanup_removes_html_when_gz_exists(self, tmp_path):
+        d = self._make_snapshot_dir(tmp_path)
+        base = "2026_01_01-test-v1"
+        (d / f"{base}.html").write_text("<html/>")
+        (d / f"{base}.html.gz").write_bytes(gzip.compress(b"<html/>"))
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-snapshots"])
+        assert result.exit_code == 0
+        assert not (d / f"{base}.html").exists()
+        assert (d / f"{base}.html.gz").exists()
+
+    def test_dry_run_reports_orphaned_html(self, tmp_path):
+        d = self._make_snapshot_dir(tmp_path)
+        base = "2026_01_01-test-v1"
+        (d / f"{base}.html").write_text("<html/>")
+        (d / f"{base}.html.gz").write_bytes(gzip.compress(b"<html/>"))
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-snapshots", "--dry-run"])
+        assert result.exit_code == 0
+        assert "orphaned" in result.output
+        assert (d / f"{base}.html").exists()

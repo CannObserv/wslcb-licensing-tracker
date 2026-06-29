@@ -204,6 +204,7 @@ def _read_snapshot(path: Path) -> str:
 
 
 def _read_gz(path: Path) -> str:
+    """Read a gzip-compressed snapshot, falling back to latin-1 if not valid UTF-8."""
     try:
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             return fh.read()
