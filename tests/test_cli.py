@@ -310,3 +310,74 @@ class TestCompressSnapshots:
         assert result.exit_code == 0
         assert "orphaned" in result.output
         assert (d / f"{base}.html").exists()
+
+
+class TestCompressDiffs:
+    """Tests for `wslcb ingest compress-diffs`."""
+
+    def _make_diffs_dir(self, tmp_path):
+        d = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"
+        d.mkdir(parents=True)
+        return d
+
+    def test_no_files_exits_cleanly(self, tmp_path):
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-diffs"])
+        assert result.exit_code == 0
+        assert "No uncompressed diffs found" in result.output
+
+    def test_dry_run_lists_files_without_writing(self, tmp_path):
+        d = self._make_diffs_dir(tmp_path)
+        txt = d / "2025_06_15-notifications-diff.txt"
+        txt.write_text("diff content")
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-diffs", "--dry-run"])
+        assert result.exit_code == 0
+        assert "dry-run" in result.output
+        assert txt.name in result.output
+        assert txt.exists()
+        assert not (d / "2025_06_15-notifications-diff.txt.gz").exists()
+
+    def test_compresses_and_removes_original(self, tmp_path):
+        d = self._make_diffs_dir(tmp_path)
+        txt = d / "2025_06_15-notifications-diff.txt"
+        txt.write_text("diff content")
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-diffs"])
+        assert result.exit_code == 0
+        assert "Compressed 1" in result.output
+        assert not txt.exists()
+        gz = d / "2025_06_15-notifications-diff.txt.gz"
+        assert gz.exists()
+        with gzip.open(gz, "rt", encoding="utf-8") as fh:
+            assert fh.read() == "diff content"
+
+    def test_rerun_skips_already_compressed(self, tmp_path):
+        d = self._make_diffs_dir(tmp_path)
+        (d / "2025_06_15-notifications-diff.txt.gz").write_bytes(gzip.compress(b"x"))
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-diffs"])
+        assert result.exit_code == 0
+        assert "No uncompressed diffs found" in result.output
+
+    def test_orphan_cleanup_removes_txt_when_gz_exists(self, tmp_path):
+        d = self._make_diffs_dir(tmp_path)
+        base = "2025_06_15-notifications-diff"
+        (d / f"{base}.txt").write_text("diff content")
+        (d / f"{base}.txt.gz").write_bytes(gzip.compress(b"diff content"))
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-diffs"])
+        assert result.exit_code == 0
+        assert not (d / f"{base}.txt").exists()
+        assert (d / f"{base}.txt.gz").exists()
+
+    def test_dry_run_reports_orphaned_txt(self, tmp_path):
+        d = self._make_diffs_dir(tmp_path)
+        base = "2025_06_15-notifications-diff"
+        (d / f"{base}.txt").write_text("diff content")
+        (d / f"{base}.txt.gz").write_bytes(gzip.compress(b"diff content"))
+        with patch("wslcb_licensing_tracker.cli.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-diffs", "--dry-run"])
+        assert result.exit_code == 0
+        assert "orphaned" in result.output
+        assert (d / f"{base}.txt").exists()

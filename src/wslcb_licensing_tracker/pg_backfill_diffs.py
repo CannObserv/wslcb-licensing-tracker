@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .database import get_db
-from .parser import SECTION_DIR_MAP, extract_records_from_diff
+from .parser import SECTION_DIR_MAP, extract_records_from_diff, glob_with_gz
 from .pg_db import DATA_DIR, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL, get_or_create_source
 from .pg_pipeline import IngestOptions, ingest_batch
 
@@ -59,7 +59,7 @@ async def backfill_diffs(
     else:
         diff_files = []
         for section_type, section_dir in _diff_section_dirs(DATA_DIR, section):
-            for f in sorted(section_dir.glob("*.txt")):
+            for f in glob_with_gz(section_dir, "*.txt"):
                 diff_files.append((section_type, f))
 
     if limit:

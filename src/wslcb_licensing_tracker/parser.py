@@ -182,29 +182,38 @@ def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dis
 # ── Full-page snapshot parsing ───────────────────────────────────────
 
 
+def _resolve_maybe_gz(path: Path) -> Path:
+    """Resolve *path* to itself, or to its ``.gz`` sibling if *path* is missing.
+
+    Covers DB rows / callers that still record the pre-compression extension
+    after on-disk compression (e.g. ``sources.snapshot_path`` is not updated
+    when files are compressed in place) — the fallback is the contract, not
+    a bug; see AGENTS.md.
+    """
+    if path.suffix == ".gz" or path.exists():
+        return path
+    return path.parent / (path.name + ".gz")
+
+
 def _read_snapshot(path: Path) -> str:
     """Read a snapshot file, handling both .html and .html.gz transparently.
 
     If *path* ends in ``.gz``, opens with gzip.  If *path* does not exist but
-    ``path + ".gz"`` does, reads the compressed variant — this covers DB rows
-    that still record the old ``.html`` extension after on-disk compression
-    (sources.snapshot_path is not updated when files are compressed in place).
+    ``path + ".gz"`` does, reads the compressed variant.
 
     Falls back to latin-1 if the file is not valid UTF-8.
     """
-    if path.suffix == ".gz":
-        return _read_gz(path)
-    if path.exists():
-        try:
-            return path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return path.read_text(encoding="latin-1")
-    gz_path = path.parent / (path.name + ".gz")
-    return _read_gz(gz_path)
+    resolved = _resolve_maybe_gz(path)
+    if resolved.suffix == ".gz":
+        return _read_gz(resolved)
+    try:
+        return resolved.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return resolved.read_text(encoding="latin-1")
 
 
 def _read_gz(path: Path) -> str:
-    """Read a gzip-compressed snapshot, falling back to latin-1 if not valid UTF-8."""
+    """Read a gzip-compressed file, falling back to latin-1 if not valid UTF-8."""
     try:
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             return fh.read()
@@ -213,16 +222,36 @@ def _read_gz(path: Path) -> str:
             return fh.read()
 
 
+def _read_text_strict(path: Path) -> str:
+    """Read *path* as text, resolving a missing plain path to its ``.gz`` sibling.
+
+    Unlike ``_read_snapshot``, stays strict UTF-8 — no latin-1 fallback.
+    """
+    resolved = _resolve_maybe_gz(path)
+    if resolved.suffix == ".gz":
+        return _read_gz(resolved)
+    return resolved.read_text(encoding="utf-8")
+
+
+def glob_with_gz(dir_path: Path, pattern: str) -> list[Path]:
+    """Return files matching *pattern* under *dir_path*, plus its gzipped variant.
+
+    When both a plain file and its ``.gz`` sibling exist, only the ``.gz``
+    file is returned. Shared by ``snapshot_paths`` and diff-archive file
+    discovery so both tolerate in-place gzip compression identically.
+    """
+    plain = set(dir_path.glob(pattern))
+    gz = set(dir_path.glob(pattern + ".gz"))
+    shadowed = {p.parent / p.name[: -len(".gz")] for p in gz}
+    return sorted((plain - shadowed) | gz)
+
+
 def snapshot_paths(data_dir: Path) -> list[Path]:
     """Return all archived snapshot paths, sorted chronologically.
 
     Includes both uncompressed ``.html`` and compressed ``.html.gz`` files.
     """
-    html = set(data_dir.glob("wslcb/licensinginfo/**/*.html"))
-    gz = set(data_dir.glob("wslcb/licensinginfo/**/*.html.gz"))
-    # Exclude plain .html when a .gz sibling exists (transition period)
-    shadowed = {p.parent / p.name[: -len(".gz")] for p in gz}
-    return sorted((html - shadowed) | gz)
+    return glob_with_gz(data_dir, "wslcb/licensinginfo/**/*.html")
 
 
 def extract_snapshot_date(path: Path) -> datetime | None:
@@ -346,8 +375,14 @@ def extract_records_from_diff(filepath: Path, section_type: str) -> list[dict]:
     docstring.  The supplemental (with-context) pass is only run when the
     primary pass produced incomplete records at hunk boundaries, keeping
     overall parse time low.
+
+    Transparently falls back to a ``.txt.gz`` sibling when *filepath* itself
+    doesn't exist, mirroring ``_read_snapshot``'s compression tolerance.
+    Unlike snapshots, plain ``.txt`` reads stay strict UTF-8 (no latin-1
+    fallback) — historical diff archives don't carry the mojibake snapshots
+    do, and callers rely on decode errors surfacing as parse errors.
     """
-    content = filepath.read_text(encoding="utf-8")
+    content = _read_text_strict(filepath)
     added, removed, new_ctx, old_ctx, old_ts, new_ts = split_diff_lines(content)
 
     # ── Primary pass (no context) ──
@@ -433,7 +468,7 @@ def discover_diff_files(
         if not dir_path.is_dir():
             logger.warning("Directory not found: %s", dir_path)
             continue
-        result.extend((fp, sec_type) for fp in sorted(dir_path.glob("*.txt")))
+        result.extend((fp, sec_type) for fp in glob_with_gz(dir_path, "*.txt"))
 
     return result
 

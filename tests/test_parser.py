@@ -13,7 +13,9 @@ from bs4 import BeautifulSoup
 from wslcb_licensing_tracker.parser import (
     SECTION_MAP,
     _read_snapshot,
+    extract_records_from_diff,
     extract_snapshot_date,
+    glob_with_gz,
     is_valid_record,
     normalize_date,
     parse_diff_timestamp,
@@ -406,6 +408,33 @@ class TestSnapshotPaths:
         assert "2026" in paths[1].parts
 
 
+class TestGlobWithGz:
+    """Tests for `glob_with_gz` — the generic dedup-glob `snapshot_paths` is built on."""
+
+    def test_finds_plain_files(self, tmp_path):
+        (tmp_path / "a.txt").write_text("x")
+        paths = glob_with_gz(tmp_path, "*.txt")
+        assert paths == [tmp_path / "a.txt"]
+
+    def test_finds_gz_files(self, tmp_path):
+        (tmp_path / "a.txt.gz").write_bytes(gzip.compress(b"x"))
+        paths = glob_with_gz(tmp_path, "*.txt")
+        assert paths == [tmp_path / "a.txt.gz"]
+
+    def test_gz_shadows_plain_sibling(self, tmp_path):
+        (tmp_path / "a.txt").write_text("x")
+        (tmp_path / "a.txt.gz").write_bytes(gzip.compress(b"x"))
+        paths = glob_with_gz(tmp_path, "*.txt")
+        assert paths == [tmp_path / "a.txt.gz"]
+
+    def test_sorted_and_unaffected_by_other_extensions(self, tmp_path):
+        (tmp_path / "b.txt").write_text("x")
+        (tmp_path / "a.txt").write_text("x")
+        (tmp_path / "c.csv").write_text("x")
+        paths = glob_with_gz(tmp_path, "*.txt")
+        assert paths == [tmp_path / "a.txt", tmp_path / "b.txt"]
+
+
 class TestParseSnapshotGz:
     def test_parse_gz_snapshot_returns_same_records(self, tmp_path):
         """parse_snapshot on a .html.gz file returns the same records as the .html."""
@@ -591,6 +620,37 @@ class TestParseDiffTimestamp:
     def test_empty_string_returns_datetime(self):
         result = parse_diff_timestamp("")
         assert isinstance(result, datetime)
+
+
+# ── extract_records_from_diff (.gz support) ──────────────────────────
+
+
+class TestExtractRecordsFromDiffGz:
+    def test_reads_gz_directly(self, tmp_path):
+        """extract_records_from_diff reads a .txt.gz file when given its path."""
+        src = FIXTURES_DIR / "diff_two_records.txt"
+        gz = tmp_path / "test.txt.gz"
+        gz.write_bytes(gzip.compress(src.read_bytes()))
+        records_gz = extract_records_from_diff(gz, "new_application")
+        records_plain = extract_records_from_diff(src, "new_application")
+        assert len(records_gz) == len(records_plain)
+        assert records_gz[0]["license_number"] == records_plain[0]["license_number"]
+
+    def test_falls_back_to_gz_when_txt_missing(self, tmp_path):
+        """extract_records_from_diff finds .txt.gz when the .txt path doesn't exist."""
+        src = FIXTURES_DIR / "diff_two_records.txt"
+        gz = tmp_path / "test.txt.gz"
+        gz.write_bytes(gzip.compress(src.read_bytes()))
+        plain = tmp_path / "test.txt"  # does not exist
+        records = extract_records_from_diff(plain, "new_application")
+        assert len(records) == len(extract_records_from_diff(src, "new_application"))
+
+    def test_bad_utf8_still_raises_for_plain_txt(self, tmp_path):
+        """Strict UTF-8 decoding is preserved for plain .txt (no latin-1 fallback)."""
+        p = tmp_path / "bad.txt"
+        p.write_bytes(b"\xff\xfe")
+        with pytest.raises(UnicodeDecodeError):
+            extract_records_from_diff(p, "new_application")
 
 
 # ── extract_snapshot_date ─────────────────────────────────────────────

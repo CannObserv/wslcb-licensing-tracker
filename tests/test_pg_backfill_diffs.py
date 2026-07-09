@@ -76,6 +76,22 @@ async def test_backfill_diffs_dry_run_parses_files(diff_data_dir):
 
 
 @pytest.mark.asyncio
+async def test_backfill_diffs_dry_run_finds_compressed_files(tmp_path):
+    """A .txt.gz diff archive is discovered and parsed like a plain .txt."""
+    import gzip
+
+    diffs_dir = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"
+    diffs_dir.mkdir(parents=True)
+    content = (FIXTURES_DIR / "diff_two_records.txt").read_bytes()
+    (diffs_dir / "2025-06-15.txt.gz").write_bytes(gzip.compress(content))
+    with patch("wslcb_licensing_tracker.pg_backfill_diffs.DATA_DIR", tmp_path):
+        result = await backfill_diffs(None, dry_run=True)
+    assert result["files_processed"] == 1
+    assert result["inserted"] >= 1
+    assert result["errors"] == 0
+
+
+@pytest.mark.asyncio
 async def test_backfill_diffs_dry_run_counts_parse_errors(tmp_path):
     """dry_run increments errors when a file raises an exception."""
     diffs_dir = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"

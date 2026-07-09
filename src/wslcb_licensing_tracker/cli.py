@@ -3,7 +3,7 @@
 All operational commands are exposed as click subcommands grouped by domain:
 
 - ``ingest``: scrape, backfill-snapshots, backfill-diffs, backfill-addresses, refresh-addresses,
-  compress-snapshots
+  compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
 - ``admin``: add-user, list-users, remove-user
 
@@ -20,6 +20,7 @@ Usage::
     wslcb ingest backfill-addresses    # validate un-validated locations
     wslcb ingest refresh-addresses     # re-validate all locations
     wslcb ingest compress-snapshots    # compress .html snapshots to .html.gz in place
+    wslcb ingest compress-diffs        # compress diff archive .txt files to .txt.gz in place
     wslcb db rebuild-links             # rebuild application→outcome links
     wslcb db check                     # run integrity checks
     wslcb db check --fix               # run checks and auto-fix safe issues
@@ -36,6 +37,7 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import NamedTuple
 
 import click
 from sqlalchemy import delete, func, select
@@ -224,30 +226,27 @@ def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
     _run_with_engine(_run)
 
 
-@ingest.command("compress-snapshots")
-@click.option("--dry-run", is_flag=True, help="Report what would be compressed without writing.")
-def compress_snapshots(dry_run: bool) -> None:
-    """Compress existing .html snapshots to .html.gz in place.
+class _CompressResult(NamedTuple):
+    compressed: int
+    skipped: int
+    would_unlink: int
+    saved_bytes: int
 
-    One-time migration: converts all uncompressed HTML snapshots under
-    data/wslcb/licensinginfo/ to gzip-compressed .html.gz files, then
-    removes the originals.  Safe to re-run — already-compressed files are
-    skipped.
+
+def _compress_files(paths: list[Path], dry_run: bool) -> _CompressResult:
+    """Gzip each of *paths* to a ``.gz`` sibling, removing the original.
+
+    Cleans up orphaned plain files whose ``.gz`` sibling already exists
+    (covers a previously-interrupted run).
     """
-    html_files = sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
-    if not html_files:
-        click.echo("No uncompressed snapshots found.")
-        return
-
     compressed = 0
     skipped = 0
     would_unlink = 0
     saved_bytes = 0
 
-    for path in html_files:
+    for path in paths:
         gz_path = path.parent / (path.name + ".gz")
         if gz_path.exists():
-            # .gz already present — clean up orphaned .html if interrupted previously
             if dry_run:
                 would_unlink += 1
             else:
@@ -266,16 +265,64 @@ def compress_snapshots(dry_run: bool) -> None:
         path.unlink()
         compressed += 1
 
+    return _CompressResult(compressed, skipped, would_unlink, saved_bytes)
+
+
+def _report_compress_result(
+    noun: str, orphan_ext: str, result: _CompressResult, dry_run: bool
+) -> None:
+    """Echo a summary line for a compress-* command, matching the compress-snapshots format."""
     if dry_run:
-        summary = f"[dry-run] Would compress {compressed} file(s), {skipped} already compressed."
-        if would_unlink:
-            summary += f" {would_unlink} orphaned .html would be removed."
+        summary = (
+            f"[dry-run] Would compress {result.compressed} file(s), "
+            f"{result.skipped} already compressed."
+        )
+        if result.would_unlink:
+            summary += f" {result.would_unlink} orphaned .{orphan_ext} would be removed."
         click.echo(summary)
     else:
         click.echo(
-            f"Compressed {compressed} snapshot(s), {skipped} already compressed. "
-            f"Freed {saved_bytes / 1_048_576:.1f} MB."
+            f"Compressed {result.compressed} {noun}(s), {result.skipped} already compressed. "
+            f"Freed {result.saved_bytes / 1_048_576:.1f} MB."
         )
+
+
+@ingest.command("compress-snapshots")
+@click.option("--dry-run", is_flag=True, help="Report what would be compressed without writing.")
+def compress_snapshots(dry_run: bool) -> None:
+    """Compress existing .html snapshots to .html.gz in place.
+
+    One-time migration: converts all uncompressed HTML snapshots under
+    data/wslcb/licensinginfo/ to gzip-compressed .html.gz files, then
+    removes the originals.  Safe to re-run — already-compressed files are
+    skipped.
+    """
+    html_files = sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
+    if not html_files:
+        click.echo("No uncompressed snapshots found.")
+        return
+
+    result = _compress_files(html_files, dry_run)
+    _report_compress_result("snapshot", "html", result, dry_run)
+
+
+@ingest.command("compress-diffs")
+@click.option("--dry-run", is_flag=True, help="Report what would be compressed without writing.")
+def compress_diffs(dry_run: bool) -> None:
+    """Compress existing diff archive .txt files to .txt.gz in place.
+
+    One-time migration: converts all uncompressed diff files under
+    data/wslcb/licensinginfo-diffs/ to gzip-compressed .txt.gz files, then
+    removes the originals.  Safe to re-run — already-compressed files are
+    skipped.  See #137.
+    """
+    txt_files = sorted(DATA_DIR.glob("wslcb/licensinginfo-diffs/**/*.txt"))
+    if not txt_files:
+        click.echo("No uncompressed diffs found.")
+        return
+
+    result = _compress_files(txt_files, dry_run)
+    _report_compress_result("diff", "txt", result, dry_run)
 
 
 # ---------------------------------------------------------------------------

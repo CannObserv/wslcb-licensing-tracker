@@ -96,7 +96,7 @@ Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/
 ### Data Integrity
 - `insert_record()` returns `(id, True)` for new, `(id, False)` for duplicate, `None` on unexpected `IntegrityError`.
 - Never delete historical data — accumulating beyond the 30-day source window is the whole point.
-- `sources.snapshot_path` stores the path as it was at ingest time. Files compressed by `wslcb ingest compress-snapshots` are renamed `.html` → `.html.gz` on disk but the DB column is not updated. `parser._read_snapshot()` transparently falls back to the `.gz` sibling, so all read paths work without a migration. Do not "fix" the DB paths — the fallback is the contract.
+- `sources.snapshot_path` stores the path as it was at ingest time. Files compressed by `wslcb ingest compress-snapshots` are renamed `.html` → `.html.gz` on disk but the DB column is not updated. `parser._read_snapshot()` transparently falls back to the `.gz` sibling, so all read paths work without a migration. Do not "fix" the DB paths — the fallback is the contract. The same contract applies to `data/wslcb/licensinginfo-diffs/` archives: `wslcb ingest compress-diffs` (#137) renames `.txt` → `.txt.gz` in place, and `parser.extract_records_from_diff()` / `glob_with_gz()` transparently tolerate either extension — no DB migration there either.
 
 ## Git Workflow
 
