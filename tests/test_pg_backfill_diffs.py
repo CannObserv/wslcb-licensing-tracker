@@ -1,5 +1,6 @@
 """Tests for pg_backfill_diffs.py — file-scanning, dry-run, and live ingest."""
 
+import gzip
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -78,8 +79,6 @@ async def test_backfill_diffs_dry_run_parses_files(diff_data_dir):
 @pytest.mark.asyncio
 async def test_backfill_diffs_dry_run_finds_compressed_files(tmp_path):
     """A .txt.gz diff archive is discovered and parsed like a plain .txt."""
-    import gzip
-
     diffs_dir = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"
     diffs_dir.mkdir(parents=True)
     content = (FIXTURES_DIR / "diff_two_records.txt").read_bytes()

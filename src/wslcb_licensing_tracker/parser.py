@@ -427,52 +427,6 @@ def extract_records_from_diff(filepath: Path, section_type: str) -> list[dict]:
     return list(primary.values())
 
 
-# ── Diff file discovery ──────────────────────────────────────────────
-
-
-def discover_diff_files(
-    data_dir: Path,
-    section: str | None = None,
-    single_file: str | None = None,
-) -> list[tuple[Path, str]]:
-    """Return ``[(path, section_type), ...]`` sorted by filename.
-
-    *section* limits to a single subdirectory (e.g. ``"notifications"``).
-    *single_file* overrides everything and processes just one file.
-    """
-    if single_file:
-        p = Path(single_file).resolve()
-        if not p.exists():
-            logger.error("File not found: %s", p)
-            return []
-        # Infer section from parent directory name.
-        dir_name = p.parent.name
-        if dir_name not in SECTION_DIR_MAP:
-            logger.error(
-                "Cannot infer section from directory '%s'. Expected one of: %s",
-                dir_name,
-                list(SECTION_DIR_MAP.keys()),
-            )
-            return []
-        return [(p, SECTION_DIR_MAP[dir_name])]
-
-    dirs = (
-        {section: SECTION_DIR_MAP[section]}
-        if section and section in SECTION_DIR_MAP
-        else SECTION_DIR_MAP
-    )
-
-    result: list[tuple[Path, str]] = []
-    for dir_name, sec_type in dirs.items():
-        dir_path = data_dir / "wslcb" / "licensinginfo-diffs" / dir_name
-        if not dir_path.is_dir():
-            logger.warning("Directory not found: %s", dir_path)
-            continue
-        result.extend((fp, sec_type) for fp in glob_with_gz(dir_path, "*.txt"))
-
-    return result
-
-
 # ── Source viewer: raw <tbody> extraction ──────────────────────────
 
 
@@ -662,8 +616,13 @@ def extract_tbody_from_diff(
     "after" state) and the removed lines as a fallback.  For each contiguous
     ``<tbody>…</tbody>`` block found in those lines, checks whether the
     natural key matches.  Returns the raw HTML string or ``None``.
+
+    Transparently falls back to a ``.txt.gz`` sibling when *path* doesn't
+    exist — callers (e.g. the source_viewer route) pass DATA_DIR joined with
+    ``sources.snapshot_path``, which keeps its original ``.txt`` extension
+    after ``compress-diffs`` renames the file on disk.
     """
-    content = path.read_text(encoding="utf-8")
+    content = _read_text_strict(path)
     added, removed, _new_ctx, _old_ctx, _old_ts, _new_ts = split_diff_lines(content)
 
     for lines in (added, removed):

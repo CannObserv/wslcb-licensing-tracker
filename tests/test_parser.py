@@ -542,6 +542,25 @@ class TestExtractTbodyFromDiff:
         )
         assert result is None
 
+    def test_falls_back_to_gz_when_txt_missing(self, tmp_path):
+        """Reads a .txt.gz sibling when the DB's stale .txt snapshot_path is missing on disk.
+
+        Regression test for the source_viewer route (app.py), which passes
+        DATA_DIR / sources.snapshot_path straight through — that path keeps
+        its original .txt extension after compress-diffs renames the file.
+        """
+        from wslcb_licensing_tracker.parser import extract_tbody_from_diff
+
+        src = FIXTURES_DIR / "diff_two_records.txt"
+        gz = tmp_path / "test.txt.gz"
+        gz.write_bytes(gzip.compress(src.read_bytes()))
+        plain = tmp_path / "test.txt"  # does not exist, mirrors a stale DB path
+        result = extract_tbody_from_diff(
+            plain, "new_application", "078001", "2025-06-15", "NEW APPLICATION"
+        )
+        assert result is not None
+        assert "ACME CANNABIS CO" in result
+
 
 class TestStripAnchorTags:
     """Tests for strip_anchor_tags() — removes <a> wrappers, preserves text."""
