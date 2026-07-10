@@ -45,8 +45,8 @@ HTTP_TOO_MANY_REQUESTS = 429
 HTTP_INTERNAL_SERVER_ERROR = 500
 DEFAULT_RETRY_AFTER = 2.0
 # Upper bound on any single retry sleep. Bounds an adversarial or buggy
-# Retry-After header (and its backoff-multiplied product) so a single request
-# can never stall the batch/event loop for minutes. See issue #118.
+# Retry-After header (and its backoff-multiplied product) so no single retry
+# sleep exceeds 60s — worst-case ~180s total across MAX_RETRIES. See issue #118.
 MAX_RETRY_AFTER = 60.0
 MAX_RETRIES = 3
 ISO_ALPHA2_LEN = 2
@@ -80,6 +80,10 @@ def _parse_retry_after(response: httpx.Response) -> float:
     """
     raw = response.headers.get("Retry-After", "")
     try:
+        # Only the RFC 7231 delay-seconds form is honored. The HTTP-date form
+        # ("Wed, 21 Oct 2015 07:28:00 GMT") is intentionally treated as
+        # unparseable and falls back to DEFAULT_RETRY_AFTER — our validator
+        # emits numeric values, and the fallback degrades safely (2s, not a stall).
         parsed = max(float(raw), 0.5)
     except (ValueError, TypeError):
         return DEFAULT_RETRY_AFTER

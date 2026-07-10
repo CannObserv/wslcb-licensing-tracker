@@ -264,7 +264,7 @@ class TestParseRetryAfter:
             "exceeds cap" in r.message or "clamp" in r.message.lower() for r in caplog.records
         )
 
-    def test_at_cap_is_not_clamped_below(self):
+    def test_value_at_cap_is_returned_unchanged(self):
         response = httpx.Response(
             HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": str(MAX_RETRY_AFTER)}
         )
