@@ -54,10 +54,8 @@ def is_extension_dir_in_use(path: Path) -> bool:
     """Return True if any process has a command line referencing extension dir *path*.
 
     Guards against pruning an "older" version that a running session hasn't
-    reloaded away from yet — an extension update on disk doesn't necessarily
-    mean the active process picked it up (found live on this VM: the running
-    Claude Code session's own native binary was still launched from the
-    version this function is meant to protect).
+    reloaded away from yet — a newer version existing on disk doesn't
+    guarantee the active process has picked it up.
     """
     return _pgrep_match(str(path))
 
@@ -147,13 +145,20 @@ def select_aged_paths(dir_path: Path, max_age_days: int, now: datetime | None = 
     return [entry for entry in dir_path.iterdir() if entry.stat().st_mtime < cutoff]
 
 
-def _parse_worktree_list(repo_root: Path) -> set[Path]:
-    """Return registered worktree paths via ``git worktree list --porcelain``.
+def _parse_worktree_list(repo_root: Path) -> tuple[set[Path], str | None]:
+    """Return ``(registered worktree paths, warning)`` via ``git worktree list --porcelain``.
 
     Parses ``worktree <path>`` lines by stripping the fixed prefix rather
     than splitting on whitespace, so paths containing spaces are handled
     correctly (a split-on-whitespace parse would truncate such a path and
     silently invert the orphan-protection check for it).
+
+    A non-zero exit, or output with no ``worktree <path>`` line at all
+    (a successful call always lists at least the primary checkout), returns
+    an empty set *with a warning*. Callers must not treat that the same as
+    "no worktrees registered" — doing so would make every subdirectory look
+    orphaned and delete active worktrees, including ones with uncommitted
+    work.
     """
     # Fixed command, repo_root is an internal path — not user input.
     result = subprocess.run(  # noqa: S603
@@ -162,10 +167,19 @@ def _parse_worktree_list(repo_root: Path) -> set[Path]:
         text=True,
         check=False,
     )
+    if result.returncode != 0:
+        return (
+            set(),
+            f"git worktree list failed (exit {result.returncode}) — skipping orphan sweep",
+        )
+
     prefix = "worktree "
-    return {
+    paths = {
         Path(line[len(prefix) :]) for line in result.stdout.splitlines() if line.startswith(prefix)
     }
+    if not paths:
+        return set(), "git worktree list returned no entries — skipping orphan sweep"
+    return paths, None
 
 
 def find_orphaned_worktrees(
@@ -173,14 +187,18 @@ def find_orphaned_worktrees(
     worktree_dirs: list[Path],
     grace_minutes: int = 30,
     now: datetime | None = None,
-) -> list[Path]:
-    """Return worktree-root subdirectories not registered with git.
+) -> tuple[list[Path], list[str]]:
+    """Return ``(orphaned worktree dirs, warnings)``.
 
     Excludes anything younger than *grace_minutes* — a directory can exist
     moments before ``git worktree add`` finishes registering it, so sweeping
     too eagerly races worktree creation.
     """
-    registered = {p.resolve() for p in _parse_worktree_list(repo_root)}
+    registered_paths, warning = _parse_worktree_list(repo_root)
+    if warning:
+        return [], [warning]
+
+    registered = {p.resolve() for p in registered_paths}
     reference = now or datetime.now(UTC)
     cutoff = reference.timestamp() - grace_minutes * 60
 
@@ -196,7 +214,7 @@ def find_orphaned_worktrees(
             if entry.stat().st_mtime >= cutoff:
                 continue
             orphaned.append(entry)
-    return orphaned
+    return orphaned, []
 
 
 def _path_size(path: Path) -> int:
@@ -323,12 +341,13 @@ def _prune_dev_caches(home: Path, repo_root: Path, *, dry_run: bool) -> int:
     return freed
 
 
-def _prune_orphaned_worktrees(repo_root: Path, *, dry_run: bool) -> int:
+def _prune_orphaned_worktrees(repo_root: Path, *, dry_run: bool) -> tuple[int, list[str]]:
     worktree_dirs = [repo_root / ".worktrees", repo_root / ".claude" / "worktrees"]
+    orphaned, warnings = find_orphaned_worktrees(repo_root, worktree_dirs)
     freed = 0
-    for path in find_orphaned_worktrees(repo_root, worktree_dirs):
+    for path in orphaned:
         freed += _remove_path(path, dry_run=dry_run)
-    return freed
+    return freed, warnings
 
 
 def run_disk_hygiene(
@@ -355,7 +374,9 @@ def run_disk_hygiene(
     vscode_freed, warnings = _prune_vscode_caches(home, dry_run=dry_run)
     freed = vscode_freed
     freed += _prune_dev_caches(home, repo_root, dry_run=dry_run)
-    freed += _prune_orphaned_worktrees(repo_root, dry_run=dry_run)
+    worktree_freed, worktree_warnings = _prune_orphaned_worktrees(repo_root, dry_run=dry_run)
+    freed += worktree_freed
+    warnings.extend(worktree_warnings)
 
     compress_result = compress_data_stragglers(dry_run=dry_run)
     check_usage_threshold()

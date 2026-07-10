@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wslcb_licensing_tracker.disk_hygiene import (
+    _parse_worktree_list,
     _remove_path,
     _run_subprocess_step,
     check_usage_threshold,
@@ -174,51 +175,93 @@ class TestFindOrphanedWorktrees:
         os.utime(d, (t, t))
         return d
 
+    def _patch_registered(self, registered):
+        return patch(
+            "wslcb_licensing_tracker.disk_hygiene._parse_worktree_list",
+            return_value=(registered, None),
+        )
+
     def test_orphaned_old_dir_is_selected(self, tmp_path):
         base = tmp_path / ".worktrees"
         orphan = self._make_worktree_dir(base, "stale-branch")
-        with patch("wslcb_licensing_tracker.disk_hygiene._parse_worktree_list", return_value=set()):
-            result = find_orphaned_worktrees(tmp_path, [base])
+        with self._patch_registered(set()):
+            result, warnings = find_orphaned_worktrees(tmp_path, [base])
         assert result == [orphan]
+        assert warnings == []
 
     def test_registered_dir_is_kept(self, tmp_path):
         base = tmp_path / ".worktrees"
         registered = self._make_worktree_dir(base, "active-branch")
-        with patch(
-            "wslcb_licensing_tracker.disk_hygiene._parse_worktree_list",
-            return_value={registered},
-        ):
-            result = find_orphaned_worktrees(tmp_path, [base])
+        with self._patch_registered({registered}):
+            result, warnings = find_orphaned_worktrees(tmp_path, [base])
         assert result == []
+        assert warnings == []
 
     def test_dir_with_spaces_in_name_matched_correctly(self, tmp_path):
         base = tmp_path / ".worktrees"
         registered = self._make_worktree_dir(base, "branch with spaces")
-        with patch(
-            "wslcb_licensing_tracker.disk_hygiene._parse_worktree_list",
-            return_value={registered},
-        ):
-            result = find_orphaned_worktrees(tmp_path, [base])
+        with self._patch_registered({registered}):
+            result, warnings = find_orphaned_worktrees(tmp_path, [base])
         assert result == []
+        assert warnings == []
 
     def test_young_orphan_kept_within_grace_window(self, tmp_path):
         base = tmp_path / ".worktrees"
         young_orphan = self._make_worktree_dir(base, "brand-new", age_minutes=5)
-        with patch("wslcb_licensing_tracker.disk_hygiene._parse_worktree_list", return_value=set()):
-            result = find_orphaned_worktrees(tmp_path, [base], grace_minutes=30)
+        with self._patch_registered(set()):
+            result, warnings = find_orphaned_worktrees(tmp_path, [base], grace_minutes=30)
         assert young_orphan not in result
+        assert warnings == []
 
     def test_old_orphan_removed_past_grace_window(self, tmp_path):
         base = tmp_path / ".worktrees"
         old_orphan = self._make_worktree_dir(base, "old-orphan", age_minutes=60)
-        with patch("wslcb_licensing_tracker.disk_hygiene._parse_worktree_list", return_value=set()):
-            result = find_orphaned_worktrees(tmp_path, [base], grace_minutes=30)
+        with self._patch_registered(set()):
+            result, warnings = find_orphaned_worktrees(tmp_path, [base], grace_minutes=30)
         assert old_orphan in result
+        assert warnings == []
 
     def test_missing_base_dir_skipped(self, tmp_path):
-        with patch("wslcb_licensing_tracker.disk_hygiene._parse_worktree_list", return_value=set()):
-            result = find_orphaned_worktrees(tmp_path, [tmp_path / "nope"])
+        with self._patch_registered(set()):
+            result, warnings = find_orphaned_worktrees(tmp_path, [tmp_path / "nope"])
         assert result == []
+        assert warnings == []
+
+    def test_git_failure_skips_sweep_entirely(self, tmp_path):
+        """A failed `git worktree list` must not be treated as 'nothing registered'.
+
+        Regression: silently defaulting to an empty registered set on git
+        failure would make every subdirectory look orphaned and delete
+        active worktrees, including ones with uncommitted work.
+        """
+        base = tmp_path / ".worktrees"
+        self._make_worktree_dir(base, "should-survive-git-failure")
+        with patch(
+            "wslcb_licensing_tracker.disk_hygiene._parse_worktree_list",
+            return_value=(set(), "git worktree list failed (exit 128) — skipping orphan sweep"),
+        ):
+            result, warnings = find_orphaned_worktrees(tmp_path, [base])
+        assert result == []
+        assert len(warnings) == 1
+        assert "git worktree list" in warnings[0]
+
+
+class TestParseWorktreeList:
+    """Tests for `_parse_worktree_list` — the git-failure guard itself."""
+
+    def test_non_git_dir_returns_warning_not_empty_success(self, tmp_path):
+        """Running against a directory that isn't a git repo must signal failure."""
+        registered, warning = _parse_worktree_list(tmp_path)
+        assert registered == set()
+        assert warning is not None
+        assert "git worktree list" in warning
+
+    def test_real_repo_returns_registered_paths_no_warning(self):
+        """Sanity check against this actual repo — should succeed with no warning."""
+        repo_root = Path(__file__).resolve().parents[1]
+        registered, warning = _parse_worktree_list(repo_root)
+        assert warning is None
+        assert len(registered) >= 1
 
 
 class TestRemovePath:
