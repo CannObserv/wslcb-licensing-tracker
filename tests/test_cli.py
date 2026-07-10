@@ -381,3 +381,54 @@ class TestCompressDiffs:
         assert result.exit_code == 0
         assert "orphaned" in result.output
         assert (d / f"{base}.txt").exists()
+
+
+class TestOpsGroup:
+    """Tests for `wslcb ops disk-hygiene`."""
+
+    def test_help(self):
+        result = CliRunner().invoke(main, ["ops", "--help"])
+        assert result.exit_code == 0
+        assert "disk-hygiene" in result.output
+
+    def test_dry_run_reports_freed_and_does_not_mutate(self):
+        summary = {
+            "freed_bytes": 0,
+            "warnings": [],
+            "compress": {"snapshots": None, "diffs": None},
+        }
+        with patch(
+            "wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary
+        ) as mock_run:
+            result = CliRunner().invoke(main, ["ops", "disk-hygiene", "--dry-run"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(dry_run=True)
+        assert "0.0 MB" in result.output
+
+    def test_reports_freed_bytes(self):
+        summary = {
+            "freed_bytes": 5_242_880,
+            "warnings": [],
+            "compress": {"snapshots": None, "diffs": None},
+        }
+        with patch("wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary):
+            result = CliRunner().invoke(main, ["ops", "disk-hygiene"])
+        assert result.exit_code == 0
+        assert "5.0 MB" in result.output
+
+    def test_warnings_echoed(self):
+        summary = {
+            "freed_bytes": 0,
+            "warnings": ["could not read keep-list from x/lru.json — skipping"],
+            "compress": {"snapshots": None, "diffs": None},
+        }
+        with patch("wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary):
+            result = CliRunner().invoke(main, ["ops", "disk-hygiene"])
+        assert result.exit_code == 0
+        assert "lru.json" in result.output
+
+    def test_top_level_alias(self):
+        summary = {"freed_bytes": 0, "warnings": [], "compress": {"snapshots": None, "diffs": None}}
+        with patch("wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary):
+            result = CliRunner().invoke(main, ["disk-hygiene", "--dry-run"])
+        assert result.exit_code == 0

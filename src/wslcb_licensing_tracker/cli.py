@@ -6,6 +6,7 @@ All operational commands are exposed as click subcommands grouped by domain:
   compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
 - ``admin``: add-user, list-users, remove-user
+- ``ops``: disk-hygiene
 
 Top-level aliases exist for backward compatibility with the systemd
 ``wslcb-task@%i`` template (which passes a single token).  Both forms
@@ -27,6 +28,7 @@ Usage::
     wslcb admin add-user EMAIL         # add admin user
     wslcb admin list-users             # list admin users
     wslcb admin remove-user EMAIL      # remove admin user
+    wslcb ops disk-hygiene [--dry-run] # weekly cache/worktree/data-straggler cleanup (#138)
 
 Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 """
@@ -45,6 +47,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .database import create_engine_from_env, get_db
+from .disk_hygiene import run_disk_hygiene
 from .log_config import setup_logging
 from .models import admin_users
 from .parser import SECTION_DIR_MAP
@@ -54,7 +57,7 @@ from .pg_address_validator import refresh_specific_addresses as pg_refresh_speci
 from .pg_admin_audit import log_action
 from .pg_backfill_diffs import backfill_diffs as pg_backfill_diffs
 from .pg_backfill_snapshots import backfill_from_snapshots as pg_backfill_snapshots
-from .pg_db import DATA_DIR
+from .pg_db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .pg_endorsements import reprocess_endorsements as pg_reprocess_endorsements
 from .pg_entities import reprocess_entities as pg_reprocess_entities
 from .pg_integrity import print_report
@@ -297,7 +300,7 @@ def compress_snapshots(dry_run: bool) -> None:
     removes the originals.  Safe to re-run — already-compressed files are
     skipped.
     """
-    html_files = sorted(DATA_DIR.glob("wslcb/licensinginfo/**/*.html"))
+    html_files = sorted(DATA_DIR.glob(SNAPSHOT_GLOB))
     if not html_files:
         click.echo("No uncompressed snapshots found.")
         return
@@ -316,7 +319,7 @@ def compress_diffs(dry_run: bool) -> None:
     removes the originals.  Safe to re-run — already-compressed files are
     skipped.  See #137.
     """
-    txt_files = sorted(DATA_DIR.glob("wslcb/licensinginfo-diffs/**/*.txt"))
+    txt_files = sorted(DATA_DIR.glob(DIFF_GLOB))
     if not txt_files:
         click.echo("No uncompressed diffs found.")
         return
@@ -545,6 +548,30 @@ def admin_remove_user(email: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ops group
+# ---------------------------------------------------------------------------
+
+
+@main.group()
+def ops() -> None:
+    """Operational maintenance commands (disk hygiene, etc.)."""
+
+
+@ops.command("disk-hygiene")
+@click.option("--dry-run", is_flag=True, help="Report what would be pruned without deleting.")
+def disk_hygiene(dry_run: bool) -> None:
+    """Prune VS Code/npm/uv/pre-commit caches, orphaned worktrees, and data stragglers.
+
+    Weekly scheduled maintenance job (see #138) — safe to run manually.
+    """
+    summary = run_disk_hygiene(dry_run=dry_run)
+    for warning in summary["warnings"]:
+        click.echo(f"WARNING: {warning}")
+    verb = "Would free" if dry_run else "Freed"
+    click.echo(f"{verb} {summary['freed_bytes'] / 1_048_576:.1f} MB.")
+
+
+# ---------------------------------------------------------------------------
 # Top-level aliases — backward compatibility with systemd wslcb-task@%i
 # ---------------------------------------------------------------------------
 # The systemd template unit passes %i (instance name) as a single CLI
@@ -562,6 +589,7 @@ _ALIASES = [
     (cleanup_redundant, "cleanup-redundant"),
     (reprocess_endorsements, "reprocess-endorsements"),
     (reprocess_entities, "reprocess-entities"),
+    (disk_hygiene, "disk-hygiene"),
 ]
 for _cmd, _name in _ALIASES:
     _alias = click.Command(

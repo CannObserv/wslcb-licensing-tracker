@@ -43,6 +43,12 @@ WSLCB_SOURCE_URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 # All persistent data (HTML snapshots etc.) lives under DATA_DIR.
 DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
 
+# Glob patterns for uncompressed archive files, relative to DATA_DIR.
+# Shared by cli.py's compress-snapshots/compress-diffs commands and
+# disk_hygiene.py's straggler detection — single source of truth.
+SNAPSHOT_GLOB = "wslcb/licensinginfo/**/*.html"
+DIFF_GLOB = "wslcb/licensinginfo-diffs/**/*.txt"
+
 # Source-role priority used when selecting the "best" source for display.
 # Lower value = higher priority.  Imported by display.py to avoid circular imports.
 SOURCE_ROLE_PRIORITY: dict[str, int] = {"first_seen": 0, "repaired": 1, "confirmed": 2}
