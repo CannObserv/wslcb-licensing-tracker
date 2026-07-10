@@ -31,18 +31,35 @@ VSIX_MAX_AGE_DAYS = 14
 NPX_MAX_AGE_DAYS = 30
 
 
-def is_vscode_server_running(name: str) -> bool:
-    """Return True if a process is actively running from cli/servers/<name>/."""
+def _pgrep_match(pattern: str) -> bool:
+    """Return True if any running process's command line matches *pattern*."""
     try:
-        # Fixed command, args built from an internal dir name — not user input.
+        # Fixed command; pattern is built from an internal path/dir name, not user input.
         result = subprocess.run(  # noqa: S603
-            ["pgrep", "-f", f"cli/servers/{name}/"],  # noqa: S607
+            ["pgrep", "-f", pattern],  # noqa: S607
             capture_output=True,
             check=False,
         )
     except OSError:
         return False
     return result.returncode == 0
+
+
+def is_vscode_server_running(name: str) -> bool:
+    """Return True if a process is actively running from cli/servers/<name>/."""
+    return _pgrep_match(f"cli/servers/{name}/")
+
+
+def is_extension_dir_in_use(path: Path) -> bool:
+    """Return True if any process has a command line referencing extension dir *path*.
+
+    Guards against pruning an "older" version that a running session hasn't
+    reloaded away from yet — an extension update on disk doesn't necessarily
+    mean the active process picked it up (found live on this VM: the running
+    Claude Code session's own native binary was still launched from the
+    version this function is meant to protect).
+    """
+    return _pgrep_match(str(path))
 
 
 def _read_lru_keep_list(lru_path: Path) -> list[str] | None:
@@ -86,13 +103,20 @@ def select_vscode_servers_to_prune(
     return to_remove, []
 
 
-def select_extensions_to_prune(ext_dir: Path) -> list[Path]:
+def select_extensions_to_prune(
+    ext_dir: Path,
+    is_running: Callable[[Path], bool] = is_extension_dir_in_use,
+) -> list[Path]:
     """Keep only the newest (parsed semver) version dir per extension family.
 
     Dir names look like ``publisher.name-1.2.3`` or
     ``publisher.name-1.2.3-linux-x64``. Dirs not matching that pattern are
     left alone. Mtime is only a tiebreak for equal versions — comparison is
     numeric on the parsed version tuple, not lexical or mtime-only.
+
+    An older version still referenced by a running process (an update on
+    disk that the active session hasn't reloaded away from) is never
+    pruned, regardless of version order.
     """
     if not ext_dir.is_dir():
         return []
@@ -110,7 +134,7 @@ def select_extensions_to_prune(ext_dir: Path) -> list[Path]:
     to_remove: list[Path] = []
     for entries in groups.values():
         entries.sort()
-        to_remove.extend(path for _, _, path in entries[:-1])
+        to_remove.extend(path for _, _, path in entries[:-1] if not is_running(path))
     return to_remove
 
 

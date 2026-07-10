@@ -118,6 +118,20 @@ class TestSelectExtensionsToPrune:
         self._touch(tmp_path / "not-a-version-dir")
         assert select_extensions_to_prune(tmp_path) == []
 
+    def test_running_older_version_is_preserved(self, tmp_path):
+        """A process actively running from an older version dir must not be pruned.
+
+        Regression: a real dry-run on this VM found the running Claude Code
+        session's own extension version (2.1.204, superseded on disk by
+        2.1.206 but not yet reloaded) flagged for removal.
+        """
+        old = tmp_path / "pub.ext-1.0.0"
+        new = tmp_path / "pub.ext-2.0.0"
+        self._touch(old)
+        self._touch(new)
+        result = select_extensions_to_prune(tmp_path, is_running=lambda path: path == old)
+        assert result == []
+
 
 class TestSelectAgedPaths:
     """Tests for `select_aged_paths`."""
