@@ -44,6 +44,10 @@ HTTP_OK = 200
 HTTP_TOO_MANY_REQUESTS = 429
 HTTP_INTERNAL_SERVER_ERROR = 500
 DEFAULT_RETRY_AFTER = 2.0
+# Upper bound on any single retry sleep. Bounds an adversarial or buggy
+# Retry-After header (and its backoff-multiplied product) so a single request
+# can never stall the batch/event loop for minutes. See issue #118.
+MAX_RETRY_AFTER = 60.0
 MAX_RETRIES = 3
 ISO_ALPHA2_LEN = 2
 
@@ -68,12 +72,25 @@ def _is_validation_enabled() -> bool:
 
 
 def _parse_retry_after(response: httpx.Response) -> float:
-    """Extract Retry-After seconds from a response, falling back to DEFAULT_RETRY_AFTER."""
+    """Extract Retry-After seconds from a response, clamped to [0.5, MAX_RETRY_AFTER].
+
+    Falls back to DEFAULT_RETRY_AFTER on a missing/unparseable header. A value
+    above MAX_RETRY_AFTER is clamped and logged — a Retry-After that large
+    signals a misbehaving upstream, not a transient blip.
+    """
     raw = response.headers.get("Retry-After", "")
     try:
-        return max(float(raw), 0.5)
+        parsed = max(float(raw), 0.5)
     except (ValueError, TypeError):
         return DEFAULT_RETRY_AFTER
+    if parsed > MAX_RETRY_AFTER:
+        logger.warning(
+            "Retry-After %.1fs exceeds cap; clamping to %.1fs (possible service issue)",
+            parsed,
+            MAX_RETRY_AFTER,
+        )
+        return MAX_RETRY_AFTER
+    return parsed
 
 
 async def _post_with_retry(
@@ -106,7 +123,9 @@ async def _post_with_retry(
             return None
 
         if response.status_code in (HTTP_TOO_MANY_REQUESTS, HTTP_INTERNAL_SERVER_ERROR):
-            wait = _parse_retry_after(response) * backoff_multiplier
+            # Cap the multiplied wait too — the backoff multiplier must not push
+            # an already-capped Retry-After back over the ceiling.
+            wait = min(_parse_retry_after(response) * backoff_multiplier, MAX_RETRY_AFTER)
             if response.status_code == HTTP_TOO_MANY_REQUESTS:
                 logger.warning(
                     "%s API returned 429 (rate limited by service, attempt %d/%d),"

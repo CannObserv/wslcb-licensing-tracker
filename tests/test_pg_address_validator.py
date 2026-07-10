@@ -13,6 +13,7 @@ from wslcb_licensing_tracker.pg_address_validator import (
     HTTP_INTERNAL_SERVER_ERROR,
     HTTP_TOO_MANY_REQUESTS,
     MAX_RETRIES,
+    MAX_RETRY_AFTER,
     _parse_retry_after,
     _post_with_retry,
     _validate_batch,
@@ -251,6 +252,24 @@ class TestParseRetryAfter:
         response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "0"})
         assert _parse_retry_after(response) == 0.5
 
+    def test_clamps_to_maximum(self):
+        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3600"})
+        assert _parse_retry_after(response) == MAX_RETRY_AFTER
+
+    def test_logs_warning_when_clamped_to_maximum(self, caplog):
+        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3600"})
+        with caplog.at_level("WARNING"):
+            _parse_retry_after(response)
+        assert any(
+            "exceeds cap" in r.message or "clamp" in r.message.lower() for r in caplog.records
+        )
+
+    def test_at_cap_is_not_clamped_below(self):
+        response = httpx.Response(
+            HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": str(MAX_RETRY_AFTER)}
+        )
+        assert _parse_retry_after(response) == MAX_RETRY_AFTER
+
 
 class TestPostWithRetry:
     @pytest.mark.asyncio(loop_scope="session")
@@ -316,6 +335,26 @@ class TestPostWithRetry:
         )
         assert result is None
         assert mock_client.post.call_count == MAX_RETRIES
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_backoff_wait_never_exceeds_max_retry_after(self):
+        # Adversarial Retry-After plus the doubling backoff multiplier must never
+        # sleep longer than MAX_RETRY_AFTER on any single retry.
+        retry_response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3600"})
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.return_value = retry_response
+
+        with patch(
+            "wslcb_licensing_tracker.pg_address_validator.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            result = await _post_with_retry(
+                "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+            )
+        assert result is None
+        assert mock_sleep.call_count == MAX_RETRIES
+        for call in mock_sleep.call_args_list:
+            assert call.args[0] <= MAX_RETRY_AFTER
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_on_timeout(self):
