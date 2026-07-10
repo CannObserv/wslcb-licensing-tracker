@@ -146,6 +146,7 @@ uv run wslcb scrape                         # manual scrape (add --rate-limit 0.
 uv run wslcb check [--fix]                  # integrity check
 uv run wslcb reprocess-endorsements         # [--code N] [--record-id N] [--dry-run]
 uv run wslcb rebuild-links                  # rebuilds record_links + backfills previous_location_id
+uv run wslcb ops disk-hygiene [--dry-run]   # weekly cache/worktree/data-straggler cleanup (#138)
 ```
 
 See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.

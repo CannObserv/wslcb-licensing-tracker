@@ -11,6 +11,7 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure |
 | `wslcb-address-validation.timer` | Weekly address backfill, Sunday 2:00 AM Pacific, ±5 min jitter |
+| `wslcb-disk-hygiene.timer` | Weekly cache/worktree/data-straggler cleanup, Sunday 3:00 AM Pacific, ±5 min jitter (#138) |
 
 ### Task service instances
 
@@ -21,7 +22,14 @@ wslcb-task@backfill-addresses
 wslcb-task@backfill-snapshots
 wslcb-task@backfill-provenance
 wslcb-task@rebuild-links
+wslcb-task@disk-hygiene
 ```
+
+`wslcb-task@disk-hygiene.service` additionally gets a
+`wslcb-task@disk-hygiene.service.d/override.conf` drop-in (`Nice=10`,
+`IOSchedulingClass=idle`) — this is genuinely idle-priority background
+work, scoped to just this instance so scrape/backfill-addresses keep
+default scheduling priority.
 
 ### Sudoers rule (install once)
 
@@ -36,10 +44,12 @@ Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`
 
 ```bash
 sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
-     infra/wslcb-address-validation.timer \
+     infra/wslcb-address-validation.timer infra/wslcb-disk-hygiene.timer \
      infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
+sudo cp -r infra/wslcb-task@disk-hygiene.service.d /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-address-validation.timer
+sudo systemctl enable --now wslcb-disk-hygiene.timer
 sudo systemctl enable --now wslcb-healthcheck.timer
 sudo systemctl restart wslcb-web.service
 ```
@@ -151,4 +161,8 @@ uv run wslcb cleanup-redundant
 wslcb admin add-user you@example.com
 wslcb admin list-users
 wslcb admin remove-user you@example.com
+
+# Disk hygiene (weekly cache/worktree/data-straggler cleanup, #138)
+uv run wslcb ops disk-hygiene --dry-run
+uv run wslcb ops disk-hygiene
 ```

@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly disk hygiene (prune caches, orphaned worktrees, compress data stragglers)
+
+[Timer]
+Unit=wslcb-task@disk-hygiene.service
+OnCalendar=Sun *-*-* 03:00:00 America/Los_Angeles
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
