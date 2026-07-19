@@ -1,6 +1,6 @@
 """Async PostgreSQL regulated substance CRUD.
 
-Async equivalent of substances.py. No admin_audit dependency — caller logs.
+No admin_audit dependency — audit logging is the caller's responsibility.
 """
 
 import logging

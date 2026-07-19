@@ -1,7 +1,6 @@
 """Async PostgreSQL endorsement seeding, repair, and backfill.
 
-Async equivalent of endorsements_seed.py. Ports all public functions to async
-SQLAlchemy Core. Uses table objects from models.py.
+Uses async SQLAlchemy Core with table objects from models.py.
 
 - ``seed_endorsements`` — populate endorsement_codes from SEED_CODE_MAP
 - ``merge_mixed_case_endorsements`` — repair mixed-case duplicates

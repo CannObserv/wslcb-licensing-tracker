@@ -1,6 +1,6 @@
 """Async PostgreSQL admin audit log helpers.
 
-Async equivalent of admin_audit.py. Uses SQLAlchemy Core + asyncpg.
+Uses SQLAlchemy Core + asyncpg.
 
 Public API
 ----------

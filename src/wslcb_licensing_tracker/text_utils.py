@@ -1,8 +1,8 @@
 """Pure-string text normalization utilities for the WSLCB licensing tracker.
 
 These helpers have no database dependency and are used by both the ingestion
-pipeline and schema migrations.  Extracted from ``db.py`` so they can be
-imported without pulling in SQLAlchemy or SQLite machinery.
+pipeline and schema migrations, so they can be imported without pulling in
+SQLAlchemy machinery.
 """
 
 import re

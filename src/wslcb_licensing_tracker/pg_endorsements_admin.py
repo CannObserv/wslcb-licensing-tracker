@@ -1,7 +1,6 @@
 """Async PostgreSQL endorsement admin helpers for WSLCB licensing tracker.
 
-Async equivalent of endorsements_admin.py. Ports all public functions to
-async SQLAlchemy Core. Uses table objects from models.py.
+Uses async SQLAlchemy Core with table objects from models.py.
 
 Functions:
 - ``endorsement_similarity`` — pure Python, not async

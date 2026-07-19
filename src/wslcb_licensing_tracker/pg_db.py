@@ -1,10 +1,10 @@
 """Async PostgreSQL database helpers for the WSLCB licensing tracker.
 
-Async equivalents of the location, source, and provenance helpers in db.py.
-Uses SQLAlchemy Core expressions against the table objects in models.py.
+Location, source, and provenance helpers using SQLAlchemy Core
+expressions against the table objects in models.py.
 
-Also re-exports shared constants (DATA_DIR, source type IDs, SOURCE_ROLE_PRIORITY,
-US_STATES) that were previously defined in db.py.
+Also owns shared constants (DATA_DIR, source type IDs, SOURCE_ROLE_PRIORITY,
+US_STATES).
 
 Also contains pipeline constants (DATA_GAP_CUTOFF, LINKABLE_TYPES,
 PENDING_CUTOFF_DAYS) and outcome_filter_sql() shared by pg_link_records
@@ -252,8 +252,7 @@ async def get_or_create_source(  # noqa: PLR0913
     (source_type_id, snapshot_path) unique constraint.
 
     When snapshot_path is None, PostgreSQL treats NULLs as distinct in
-    UNIQUE constraints, so we use manual lookup-before-insert logic
-    (same as the SQLite version in db.py).
+    UNIQUE constraints, so we use manual lookup-before-insert logic.
     """
     meta_json = json.dumps(metadata) if metadata else "{}"
 

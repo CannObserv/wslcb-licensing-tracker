@@ -1,10 +1,8 @@
 """Async database engine and connection management for PostgreSQL.
 
-Replaces the synchronous SQLite connection layer in db.py. Provides an
-AsyncEngine with connection pooling and a get_db() async context manager
-for use as a FastAPI dependency or standalone async caller.
-
-db.py is retained for constants and text utilities.
+Provides an AsyncEngine with connection pooling and a get_db() async
+context manager for use as a FastAPI dependency or standalone async
+caller.
 """
 
 import logging

@@ -1,7 +1,6 @@
 """Async PostgreSQL entity normalization for WSLCB licensing tracker.
 
-Async equivalent of entities.py. Ports all public functions to async
-SQLAlchemy Core. Uses table objects from models.py.
+Uses async SQLAlchemy Core with table objects from models.py.
 
 Manages the ``entities`` and ``record_entities`` tables — extracting
 individual people and organizations from semicolon-delimited applicant

@@ -1,7 +1,6 @@
 """Async PostgreSQL application-outcome record linking for WSLCB licensing tracker.
 
-Async equivalent of link_records.py. Uses SQLAlchemy Core expressions and
-the table objects from models.py.
+Uses SQLAlchemy Core expressions and the table objects from models.py.
 
 Links new_application records to their corresponding approved or discontinued
 outcome records using a bidirectional nearest-neighbor algorithm with a

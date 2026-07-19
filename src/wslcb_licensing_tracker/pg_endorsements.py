@@ -1,7 +1,6 @@
 """Async PostgreSQL endorsement pipeline for WSLCB licensing tracker.
 
-Async equivalent of endorsements.py. Ports all public functions to async
-SQLAlchemy Core. Uses table objects from models.py.
+Uses async SQLAlchemy Core with table objects from models.py.
 
 Handles three raw license_type formats:
 - Numeric code: ``"450,"`` → look up code in endorsement_codes
@@ -9,7 +8,6 @@ Handles three raw license_type formats:
 - Text names: ``"GROCERY STORE - BEER/WINE; SNACK BAR"`` → split on semicolons
 
 See Also:
-- ``endorsements`` — SQLite synchronous original
 - ``pg_pipeline`` — async ingestion pipeline (calls process_record)
 """
 

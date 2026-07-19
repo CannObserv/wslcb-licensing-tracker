@@ -1,7 +1,6 @@
 """PostgreSQL schema initialization and introspection helpers.
 
-Uses Alembic to run migrations. Replaces the SQLite PRAGMA user_version
-migration framework in schema.py.
+Uses Alembic to run migrations programmatically.
 """
 
 import logging

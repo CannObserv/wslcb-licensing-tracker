@@ -150,8 +150,7 @@ wslcb-licensing-tracker/
 ├── scripts/
 │   ├── build-css.sh            # Rebuild Tailwind output (run manually or via pre-commit)
 │   ├── download-tailwind.sh    # Download platform-specific Tailwind CLI binary
-│   ├── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
-│   └── sqlite_to_pg.py         # One-time SQLite→PostgreSQL data migration script
+│   └── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
 ├── alembic/                # Alembic schema migrations
 │   ├── alembic.ini
 │   └── versions/

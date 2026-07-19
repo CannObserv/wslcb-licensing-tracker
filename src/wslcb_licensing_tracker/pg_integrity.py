@@ -147,7 +147,7 @@ async def check_broken_fks(conn: AsyncConnection) -> list[dict]:
 
     Returns a list of dicts with ``record_id``, ``column``, ``bad_id``.
     PostgreSQL enforces FK constraints, so this should always return empty
-    in a healthy database. Included for parity with the SQLite integrity suite.
+    in a healthy database; kept as a belt-and-braces check.
     """
     results = []
     for col in ("location_id", "previous_location_id"):
@@ -186,7 +186,7 @@ async def check_entity_duplicates(conn: AsyncConnection) -> list[dict]:
 async def run_all_checks(conn: AsyncConnection, *, fix: bool = False) -> dict:
     """Run all integrity checks and optionally auto-fix safe issues.
 
-    Returns a structured report dict (same shape as SQLite integrity.py).
+    Returns a structured report dict keyed by check name.
     When ``fix=True``, commits internally after auto-fixes.
     """
     report: dict = {}
