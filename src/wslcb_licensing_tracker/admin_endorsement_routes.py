@@ -6,7 +6,7 @@ admin_routes.py (#140) to mirror the domain-module boundary
 (endorsements_admin.py).  Included into the main app via
 ``app.include_router(admin_endorsement_routes.router)`` in app.py; the
 shared ``tpl`` coroutine is read from ``request.app.state.tpl`` at
-render time via :func:`admin_routes._render`.
+render time via :func:`admin_routes.render_admin`.
 """
 
 import logging
@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 
 from .admin_audit import log_action
 from .admin_auth import require_admin
-from .admin_routes import _render
+from .admin_routes import render_admin
 from .endorsements import (
     process_record,
     remove_alias,
@@ -80,7 +80,7 @@ async def admin_endorsements(
             ],
             key=lambda e: e["name"],
         )
-    return await _render(
+    return await render_admin(
         request,
         "admin/endorsements.html",
         {

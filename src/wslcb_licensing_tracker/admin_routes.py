@@ -37,7 +37,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # ---------------------------------------------------------------------------
 
 
-async def _render(
+async def render_admin(
     request: Request,
     template: str,
     ctx: dict[str, Any],
@@ -127,7 +127,7 @@ async def admin_dashboard(
             await conn.execute(select(func.count()).select_from(admin_users_table))
         ).scalar_one()
 
-    return await _render(
+    return await render_admin(
         request,
         "admin/dashboard.html",
         {
@@ -182,7 +182,7 @@ async def admin_users(
             .mappings()
             .all()
         )
-    return await _render(
+    return await render_admin(
         request,
         "admin/users.html",
         {
@@ -312,7 +312,7 @@ async def admin_audit_log(  # noqa: PLR0913
         qs = urlencode(params)
         return f"/admin/audit-log{'?' + qs if qs else ''}"
 
-    return await _render(
+    return await render_admin(
         request,
         "admin/audit_log.html",
         {

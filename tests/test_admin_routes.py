@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.admin_routes import _render
+from wslcb_licensing_tracker.admin_routes import render_admin
 from wslcb_licensing_tracker.app import app
 
 # ---------------------------------------------------------------------------
@@ -238,14 +238,14 @@ class TestNoInitRouter:
         """Module-level _tpl mutable variable must not exist."""
         import wslcb_licensing_tracker.admin_routes as mod
 
-        # _render still exists as a helper, but _tpl as a module global should not
+        # render_admin still exists as a helper, but _tpl as a module global should not
         assert not hasattr(mod, "_tpl"), "_tpl module-level variable should be removed"
 
     def test_render_reads_from_app_state(self):
-        """_render should read tpl from request.app.state, not a module-level variable."""
+        """render_admin should read tpl from request.app.state, not a module-level variable."""
         import inspect
 
-        source = inspect.getsource(_render)
+        source = inspect.getsource(render_admin)
         assert "request.app.state" in source
 
 

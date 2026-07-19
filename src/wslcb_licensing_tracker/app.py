@@ -1,7 +1,9 @@
 """FastAPI web application for WSLCB licensing tracker.
 
-Public routes live here.  Admin routes (/admin/*) are in admin_routes.py,
-registered as an APIRouter and included at startup.
+Public routes live here.  Admin routes (/admin/*) are split across
+admin_routes.py (dashboard, users, audit log) and
+admin_endorsement_routes.py (endorsement curation), each an APIRouter
+included at startup.
 """
 
 import html
