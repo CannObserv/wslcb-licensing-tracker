@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.admin_routes import _get_db, _render
+from wslcb_licensing_tracker.admin_routes import _render
 from wslcb_licensing_tracker.app import app
 
 # ---------------------------------------------------------------------------
@@ -25,8 +25,6 @@ def _make_admin_client(mock_conn: AsyncMock) -> tuple[TestClient, list]:
 
     async def _fake_get_db() -> AsyncGenerator:
         yield mock_conn
-
-    app.dependency_overrides[_get_db] = _fake_get_db
 
     patches = [
         patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=admin_data),
@@ -42,7 +40,6 @@ def _make_admin_client(mock_conn: AsyncMock) -> tuple[TestClient, list]:
 
 def _stop(client: TestClient, patches: list) -> None:
     """Clean up dependency overrides and patches."""
-    app.dependency_overrides.pop(_get_db, None)
     for p in patches:
         p.stop()
 
@@ -266,19 +263,22 @@ class TestAdminEndorsementsPageLoads:
 
         # Patch pg module functions so no real DB calls happen
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=[],
             ),

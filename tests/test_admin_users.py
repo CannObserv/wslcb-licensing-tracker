@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.admin_routes import _get_db
 from wslcb_licensing_tracker.app import app
 
 # ---------------------------------------------------------------------------
@@ -25,8 +24,6 @@ def _make_client(admin_email: str = "admin@example.com") -> tuple[TestClient, li
 
     async def _fake_get_db():
         yield mock_conn
-
-    app.dependency_overrides[_get_db] = _fake_get_db
 
     patches = [
         patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=admin_data),
@@ -55,7 +52,6 @@ def _make_noauth_client() -> tuple[TestClient, list]:
 
 
 def _stop(patches: list) -> None:
-    app.dependency_overrides.pop(_get_db, None)
     for p in patches:
         p.stop()
 
@@ -563,24 +559,27 @@ class TestSuggestionsTabHTML:
         ]
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                "wslcb_licensing_tracker.admin_endorsement_routes.suggest_duplicate_endorsements",
                 new_callable=AsyncMock,
                 return_value=suggestions,
             ),
@@ -617,24 +616,27 @@ class TestSuggestionsTabHTML:
         ]
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                "wslcb_licensing_tracker.admin_endorsement_routes.suggest_duplicate_endorsements",
                 new_callable=AsyncMock,
                 return_value=suggestions,
             ),
@@ -667,24 +669,27 @@ class TestSuggestionsTabHTML:
         ]
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                "wslcb_licensing_tracker.admin_endorsement_routes.suggest_duplicate_endorsements",
                 new_callable=AsyncMock,
                 return_value=suggestions,
             ),
@@ -727,14 +732,18 @@ class TestEndorsementActionRedirects:
         """POST /alias with return_section=suggestions must redirect to ?section=suggestions."""
         with (
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=self._seed_pair_mocks(),
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                "wslcb_licensing_tracker.admin_endorsement_routes.set_canonical_endorsement",
                 new_callable=AsyncMock,
                 return_value=1,
             ),
-            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -756,14 +765,18 @@ class TestEndorsementActionRedirects:
         """POST /alias with return_section=endorsements must redirect to ?section=endorsements."""
         with (
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=self._seed_pair_mocks(),
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                "wslcb_licensing_tracker.admin_endorsement_routes.set_canonical_endorsement",
                 new_callable=AsyncMock,
                 return_value=1,
             ),
-            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -789,14 +802,18 @@ class TestEndorsementActionRedirects:
         """POST /alias without return_section defaults to section=endorsements."""
         with (
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=self._seed_pair_mocks(),
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                "wslcb_licensing_tracker.admin_endorsement_routes.set_canonical_endorsement",
                 new_callable=AsyncMock,
                 return_value=1,
             ),
-            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -819,11 +836,18 @@ class TestEndorsementActionRedirects:
     def test_dismiss_from_suggestions_tab_redirects_to_suggestions(self):
         """POST /dismiss-suggestion with return_section=suggestions → suggestions tab."""
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
             ),
-            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.dismiss_suggestion",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -845,14 +869,18 @@ class TestEndorsementActionRedirects:
         """POST /alias with unrecognised return_section falls back to endorsements."""
         with (
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_db", side_effect=self._seed_pair_mocks()
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=self._seed_pair_mocks(),
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.set_canonical_endorsement",
+                "wslcb_licensing_tracker.admin_endorsement_routes.set_canonical_endorsement",
                 new_callable=AsyncMock,
                 return_value=1,
             ),
-            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -879,11 +907,18 @@ class TestEndorsementActionRedirects:
     def test_dismiss_invalid_return_section_falls_back_to_endorsements(self):
         """POST /dismiss-suggestion with invalid return_section falls back to endorsements."""
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
             ),
-            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.dismiss_suggestion",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -906,11 +941,18 @@ class TestEndorsementActionRedirects:
     def test_dismiss_default_section_is_endorsements(self):
         """POST /dismiss-suggestion without return_section defaults to endorsements."""
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.dismiss_suggestion", new_callable=AsyncMock
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
             ),
-            patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.dismiss_suggestion",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -946,24 +988,27 @@ class TestEndorsementActionRedirects:
         ]
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                "wslcb_licensing_tracker.admin_endorsement_routes.suggest_duplicate_endorsements",
                 new_callable=AsyncMock,
                 return_value=suggestions,
             ),
@@ -997,24 +1042,27 @@ class TestEndorsementActionRedirects:
         ]
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.suggest_duplicate_endorsements",
+                "wslcb_licensing_tracker.admin_endorsement_routes.suggest_duplicate_endorsements",
                 new_callable=AsyncMock,
                 return_value=suggestions,
             ),
@@ -1046,19 +1094,22 @@ class TestCodeMappingsFilter:
         code_mappings = [{"code": "394", "endorsements": [{"id": 1, "name": "Cannabis Retailer"}]}]
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=code_mappings,
             ),
@@ -1080,19 +1131,22 @@ class TestCodeMappingsFilter:
         code_mappings = [{"code": "394", "endorsements": [{"id": 1, "name": "Cannabis Retailer"}]}]
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=code_mappings,
             ),
@@ -1115,19 +1169,22 @@ class TestCodeMappingsFilter:
         import os
 
         with (
-            patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_regulated_substances",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_fake_get_db_ctx,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_endorsement_list",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_endorsement_list",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.admin_routes.get_code_mappings",
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_code_mappings",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
