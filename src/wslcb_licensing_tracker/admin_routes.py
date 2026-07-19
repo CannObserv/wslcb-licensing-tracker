@@ -15,16 +15,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from .admin_audit import get_audit_log, log_action
 from .admin_auth import require_admin
-from .database import get_db
-from .models import (
-    admin_users as admin_users_table,
-)
-from .pg_admin_audit import get_audit_log, log_action
-from .pg_integrity import (
+from .engine import get_db
+from .integrity import (
     check_endorsement_anomalies,
     check_orphaned_locations,
     check_unenriched_records,
+)
+from .models import (
+    admin_users as admin_users_table,
 )
 
 logger = logging.getLogger(__name__)

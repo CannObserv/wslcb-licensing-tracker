@@ -3,9 +3,9 @@
 Pure transport layer — no database dependency.  Owns the shared
 connection pool, API-key/config reads, 429/500 retry policy, and the
 ``/standardize`` and ``/validate`` endpoint wrappers.  The DB-facing
-orchestration lives in pg_address_validator.py.
+orchestration lives in address_validator.py.
 
-Split from pg_address_validator.py (#141).
+Split from address_validator.py (#141).
 """
 
 import asyncio

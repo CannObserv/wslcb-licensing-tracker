@@ -3,7 +3,7 @@
 Endorsement-curation admin: regulated substances, endorsement
 aliasing/renaming, duplicate suggestions, and code mappings.  Split from
 admin_routes.py (#140) to mirror the domain-module boundary
-(pg_endorsements_admin.py).  Included into the main app via
+(endorsements_admin.py).  Included into the main app via
 ``app.include_router(admin_endorsement_routes.router)`` in app.py; the
 shared ``tpl`` coroutine is read from ``request.app.state.tpl`` at
 render time via :func:`admin_routes._render`.
@@ -16,25 +16,17 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 
+from .admin_audit import log_action
 from .admin_auth import require_admin
 from .admin_routes import _render
-from .database import get_db
-from .models import (
-    endorsement_aliases,
-    license_endorsements,
-    license_records,
-    record_endorsements,
-    regulated_substances,
-)
-from .pg_admin_audit import log_action
-from .pg_endorsements import (
+from .endorsements import (
     process_record,
     remove_alias,
     rename_endorsement,
     reprocess_endorsements,
     set_canonical_endorsement,
 )
-from .pg_endorsements_admin import (
+from .endorsements_admin import (
     add_code_mapping,
     create_code,
     dismiss_suggestion,
@@ -43,7 +35,15 @@ from .pg_endorsements_admin import (
     remove_code_mapping,
     suggest_duplicate_endorsements,
 )
-from .pg_substances import (
+from .engine import get_db
+from .models import (
+    endorsement_aliases,
+    license_endorsements,
+    license_records,
+    record_endorsements,
+    regulated_substances,
+)
+from .substances import (
     add_substance,
     get_regulated_substances,
     remove_substance,

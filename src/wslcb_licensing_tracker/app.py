@@ -26,17 +26,17 @@ from . import address_client, admin_endorsement_routes, admin_routes, api_routes
 from .admin_auth import AdminRedirectException, get_current_user
 from .config import get_build_id
 from .data_migration import run_pending_migrations
-from .database import create_engine_from_env, get_db
+from .db import DATA_DIR, get_record_sources
 from .display import format_outcome, summarize_provenance
+from .engine import create_engine_from_env, get_db
+from .entities import get_entity_by_id
+from .link_records import get_outcome_status, get_reverse_link_info
 from .log_config import setup_logging
 from .parser import extract_tbody_from_diff, extract_tbody_from_snapshot, strip_anchor_tags
-from .pg_db import DATA_DIR, get_record_sources
-from .pg_entities import get_entity_by_id
-from .pg_link_records import get_outcome_status, get_reverse_link_info
-from .pg_queries_entity import get_entities, get_entity_records
-from .pg_queries_filter import get_cities_for_state, get_filter_options
-from .pg_queries_hydrate import hydrate_records
-from .pg_queries_search import (
+from .queries_entity import get_entities, get_entity_records
+from .queries_filter import get_cities_for_state, get_filter_options
+from .queries_hydrate import hydrate_records
+from .queries_search import (
     get_record_by_id,
     get_record_link,
     get_record_source_link,
@@ -44,7 +44,7 @@ from .pg_queries_search import (
     get_source_by_id,
     search_records,
 )
-from .pg_queries_stats import get_stats
+from .queries_stats import get_stats
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,7 @@ async def record_detail(request: Request, record_id: int) -> HTMLResponse:
                 status_code=_HTTP_404,
             )
 
-        # API difference: pg_queries.get_related_records takes (conn, record: dict)
+        # API difference: queries_search.get_related_records takes (conn, record: dict)
         related_rows = await get_related_records(conn, record)
 
         # Hydrate record + related in a single batch

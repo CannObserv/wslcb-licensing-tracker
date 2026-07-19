@@ -2,7 +2,7 @@
 
 Covers UI consistency requirements such as shared placeholder text
 and dashboard section ordering.
-Uses FastAPI TestClient with async pg_queries functions mocked; no disk DB.
+Uses FastAPI TestClient with async queries_* functions mocked; no disk DB.
 """
 
 import copy

@@ -208,8 +208,8 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
     if not pg_url:
         pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
 
-    from wslcb_licensing_tracker.database import create_engine_from_env
-    from wslcb_licensing_tracker.pg_schema import init_db
+    from wslcb_licensing_tracker.engine import create_engine_from_env
+    from wslcb_licensing_tracker.schema import init_db
 
     original = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = pg_url
@@ -230,8 +230,8 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
             # so rows drifted by earlier eras of the test DB converge to canon.
             from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+            from wslcb_licensing_tracker.db import SOURCE_TYPE_ROWS
             from wslcb_licensing_tracker.models import source_types
-            from wslcb_licensing_tracker.pg_db import SOURCE_TYPE_ROWS
 
             upsert = pg_insert(source_types).values(SOURCE_TYPE_ROWS)
             await conn.execute(

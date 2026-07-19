@@ -1,6 +1,6 @@
 """Tests for admin substance management routes (/admin/endorsements/substances/*).
 
-Ported to async PostgreSQL mocking pattern.  Routes now call async pg_*
+Ported to async PostgreSQL mocking pattern.  Routes call async domain
 functions; tests verify routing behaviour (status codes, redirect locations,
 correct helper invocation) without a real database.
 """

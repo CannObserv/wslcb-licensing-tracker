@@ -19,7 +19,7 @@ import os
 from fastapi import HTTPException, Request
 from sqlalchemy import text
 
-from .database import get_db
+from .engine import get_db
 
 logger = logging.getLogger(__name__)
 

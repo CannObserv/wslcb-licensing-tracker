@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from .pg_db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
+from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 
 logger = logging.getLogger(__name__)
 

@@ -109,7 +109,7 @@ async def test_get_record_link_returns_none_when_no_row():
     result.mappings.return_value.one_or_none.return_value = None
     conn.execute.return_value = result
 
-    from wslcb_licensing_tracker.pg_queries_search import get_record_link
+    from wslcb_licensing_tracker.queries_search import get_record_link
 
     assert await get_record_link(conn, 999) is None
 
@@ -121,6 +121,6 @@ async def test_get_entity_by_id_returns_none_when_not_found():
     result.mappings.return_value.one_or_none.return_value = None
     conn.execute.return_value = result
 
-    from wslcb_licensing_tracker.pg_entities import get_entity_by_id
+    from wslcb_licensing_tracker.entities import get_entity_by_id
 
     assert await get_entity_by_id(conn, 12345) is None

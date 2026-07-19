@@ -28,8 +28,8 @@ class TestIngestGroup:
     """Commands under the ingest group."""
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_addresses", new_callable=AsyncMock)
-    @patch("wslcb_licensing_tracker.cli.pg_scrape", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_scrape", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_scrape(self, mock_engine, mock_scrape, mock_backfill, mock_gdb):
         mock_engine.return_value = mock_async_engine()
@@ -38,8 +38,8 @@ class TestIngestGroup:
         mock_scrape.assert_called_once()
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_addresses", new_callable=AsyncMock)
-    @patch("wslcb_licensing_tracker.cli.pg_scrape", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_scrape", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_scrape_rate_limit(self, mock_engine, mock_scrape, mock_backfill, mock_gdb):
         mock_engine.return_value = mock_async_engine()
@@ -48,7 +48,7 @@ class TestIngestGroup:
         mock_backfill.assert_called_once()
         assert mock_backfill.call_args.kwargs["rate_limit"] == 0.5
 
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_snapshots", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_snapshots", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_backfill_snapshots(self, mock_engine, mock_bf):
         mock_engine.return_value = mock_async_engine()
@@ -56,7 +56,7 @@ class TestIngestGroup:
         assert result.exit_code == 0
         mock_bf.assert_called_once()
 
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_diffs", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_diffs", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_backfill_diffs_dry_run(self, mock_engine, mock_bf):
         mock_engine.return_value = mock_async_engine()
@@ -69,7 +69,7 @@ class TestIngestGroup:
         assert "10" in result.output
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_backfill_addresses(self, mock_engine, mock_ba, mock_gdb):
         mock_engine.return_value = mock_async_engine()
@@ -78,7 +78,7 @@ class TestIngestGroup:
         mock_ba.assert_called_once()
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_refresh_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_refresh_addresses", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_refresh_addresses(self, mock_engine, mock_ra, mock_gdb):
         mock_engine.return_value = mock_async_engine()
@@ -92,7 +92,7 @@ class TestDbGroup:
 
     @patch("wslcb_licensing_tracker.cli.print_report", return_value=0)
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_run_all_checks", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_integrity_checks", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_check(self, mock_engine, mock_checks, mock_gdb, mock_print):
         mock_engine.return_value = mock_async_engine()
@@ -103,7 +103,7 @@ class TestDbGroup:
 
     @patch("wslcb_licensing_tracker.cli.print_report", return_value=0)
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_run_all_checks", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_integrity_checks", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_check_fix(self, mock_engine, mock_checks, mock_gdb, mock_print):
         mock_engine.return_value = mock_async_engine()
@@ -114,7 +114,7 @@ class TestDbGroup:
         assert call_kwargs["fix"] is True
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_build_all_links", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_build_all_links", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_rebuild_links(self, mock_engine, mock_links, mock_gdb):
         mock_engine.return_value = mock_async_engine()
@@ -122,7 +122,7 @@ class TestDbGroup:
         assert result.exit_code == 0
         mock_links.assert_called_once()
 
-    @patch("wslcb_licensing_tracker.cli.pg_cleanup_redundant", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_cleanup_redundant", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_cleanup_redundant(self, mock_engine, mock_cleanup):
         mock_engine.return_value = mock_async_engine()
@@ -132,7 +132,7 @@ class TestDbGroup:
         assert "Nothing to clean up" in result.output
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_reprocess_endorsements", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_reprocess_endorsements", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_reprocess_endorsements_dry_run(self, mock_engine, mock_rp, mock_gdb):
         mock_engine.return_value = mock_async_engine()
@@ -143,7 +143,7 @@ class TestDbGroup:
         assert "42" in result.output
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_reprocess_entities", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_reprocess_entities", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_reprocess_entities(self, mock_engine, mock_rp, mock_gdb):
         mock_engine.return_value = mock_async_engine()

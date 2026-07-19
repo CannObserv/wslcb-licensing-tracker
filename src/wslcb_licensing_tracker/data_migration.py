@@ -19,15 +19,15 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from .models import data_migrations
-from .pg_endorsements_seed import (
+from .endorsements_seed import (
     backfill,
     merge_mixed_case_endorsements,
     repair_code_name_endorsements,
     seed_endorsements,
 )
-from .pg_entities import backfill_entities
-from .pg_link_records import build_all_links
+from .entities import backfill_entities
+from .link_records import build_all_links
+from .models import data_migrations
 
 logger = logging.getLogger(__name__)
 

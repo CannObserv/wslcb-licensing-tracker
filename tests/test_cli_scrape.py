@@ -12,8 +12,8 @@ class TestCmdScrapeBackfill:
     """cmd_scrape calls backfill_addresses after scraping."""
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_addresses", new_callable=AsyncMock)
-    @patch("wslcb_licensing_tracker.cli.pg_scrape", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_scrape", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_backfill_called_after_scrape(
         self, mock_engine_factory, mock_scrape, mock_backfill, mock_get_db
@@ -27,8 +27,8 @@ class TestCmdScrapeBackfill:
         mock_engine_factory.return_value.dispose.assert_called_once()
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_addresses", new_callable=AsyncMock)
-    @patch("wslcb_licensing_tracker.cli.pg_scrape", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_scrape", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_backfill_uses_rate_limit(
         self, mock_engine_factory, mock_scrape, mock_backfill, mock_get_db
@@ -41,8 +41,8 @@ class TestCmdScrapeBackfill:
         assert mock_backfill.call_args.kwargs["rate_limit"] == 0.5
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
-    @patch("wslcb_licensing_tracker.cli.pg_backfill_addresses", new_callable=AsyncMock)
-    @patch("wslcb_licensing_tracker.cli.pg_scrape", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_scrape", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_backfill_failure_does_not_raise(
         self, mock_engine_factory, mock_scrape, mock_backfill, mock_get_db

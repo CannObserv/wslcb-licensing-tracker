@@ -29,17 +29,17 @@ class TestNoCacheFilterOptions:
 
         with (
             patch(
-                "wslcb_licensing_tracker.pg_queries_filter.get_endorsement_options",
+                "wslcb_licensing_tracker.queries_filter.get_endorsement_options",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
             patch(
-                "wslcb_licensing_tracker.pg_queries_filter.get_regulated_substances",
+                "wslcb_licensing_tracker.queries_filter.get_regulated_substances",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
         ):
-            from wslcb_licensing_tracker.pg_queries_filter import get_filter_options
+            from wslcb_licensing_tracker.queries_filter import get_filter_options
 
             await get_filter_options(conn)
             call_count_after_first = conn.execute.await_count
@@ -58,7 +58,7 @@ class TestNoCacheCities:
     async def test_consecutive_calls_hit_db_each_time(self):
         conn = _make_conn_mock()
 
-        from wslcb_licensing_tracker.pg_queries_filter import get_cities_for_state
+        from wslcb_licensing_tracker.queries_filter import get_cities_for_state
 
         await get_cities_for_state(conn, "WA")
         call_count_after_first = conn.execute.await_count
@@ -109,7 +109,7 @@ class TestNoCacheStats:
         ]
         conn.execute.return_value = result_mock
 
-        from wslcb_licensing_tracker.pg_queries_stats import get_stats
+        from wslcb_licensing_tracker.queries_stats import get_stats
 
         await get_stats(conn)
         call_count_after_first = conn.execute.await_count

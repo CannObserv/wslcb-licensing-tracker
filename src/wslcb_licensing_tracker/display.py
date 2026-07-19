@@ -9,7 +9,7 @@ Keeping presentation separate from domain logic ensures that adding a
 JSON API or different frontend doesn't require touching the domain layer.
 """
 
-from .pg_db import SOURCE_ROLE_PRIORITY as _ROLE_PRIORITY
+from .db import SOURCE_ROLE_PRIORITY as _ROLE_PRIORITY
 
 # -- Outcome status display ------------------------------------------------
 

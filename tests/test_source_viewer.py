@@ -1,6 +1,6 @@
 """Tests for the source viewer route GET /source/{source_id}/record/{record_id}.
 
-Uses FastAPI TestClient with async pg_queries and SQLAlchemy Core queries mocked.
+Uses FastAPI TestClient with async queries_* and SQLAlchemy Core queries mocked.
 Parser extraction functions are also mocked so tests run without real snapshot files.
 """
 

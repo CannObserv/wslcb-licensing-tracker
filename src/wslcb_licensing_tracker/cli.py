@@ -44,25 +44,25 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .database import create_engine_from_env, get_db
+from .address_validator import backfill_addresses as run_backfill_addresses
+from .address_validator import refresh_addresses as run_refresh_addresses
+from .address_validator import refresh_specific_addresses as run_refresh_specific_addresses
+from .admin_audit import log_action
+from .backfill_diffs import backfill_diffs as run_backfill_diffs
+from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
+from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
+from .endorsements import reprocess_endorsements as run_reprocess_endorsements
+from .engine import create_engine_from_env, get_db
+from .entities import reprocess_entities as run_reprocess_entities
+from .integrity import print_report
+from .integrity import run_all_checks as run_integrity_checks
+from .link_records import build_all_links as run_build_all_links
 from .log_config import setup_logging
 from .models import admin_users
 from .parser import SECTION_DIR_MAP
-from .pg_address_validator import backfill_addresses as pg_backfill_addresses
-from .pg_address_validator import refresh_addresses as pg_refresh_addresses
-from .pg_address_validator import refresh_specific_addresses as pg_refresh_specific_addresses
-from .pg_admin_audit import log_action
-from .pg_backfill_diffs import backfill_diffs as pg_backfill_diffs
-from .pg_backfill_snapshots import backfill_from_snapshots as pg_backfill_snapshots
-from .pg_db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
-from .pg_endorsements import reprocess_endorsements as pg_reprocess_endorsements
-from .pg_entities import reprocess_entities as pg_reprocess_entities
-from .pg_integrity import print_report
-from .pg_integrity import run_all_checks as pg_run_all_checks
-from .pg_link_records import build_all_links as pg_build_all_links
-from .pg_scraper import cleanup_redundant_scrapes as pg_cleanup_redundant
-from .pg_scraper import scrape as pg_scrape
+from .scraper import cleanup_redundant_scrapes as run_cleanup_redundant
+from .scraper import scrape as run_scrape
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +121,12 @@ def scrape(rate_limit: float) -> None:
     """Run a live scrape of the WSLCB page."""
 
     async def _run(engine: AsyncEngine) -> None:
-        await pg_scrape(engine)
+        await run_scrape(engine)
         # Post-scrape: standardize any new locations via the address API.
         # Failure here is non-fatal — the weekly timer catches stragglers.
         try:
             async with get_db(engine) as conn:
-                await pg_backfill_addresses(conn, rate_limit=rate_limit)
+                await run_backfill_addresses(conn, rate_limit=rate_limit)
         except Exception:  # noqa: BLE001 — intentionally broad; backfill failure is non-fatal
             logger.warning("Post-scrape address backfill failed", exc_info=True)
 
@@ -136,7 +136,7 @@ def scrape(rate_limit: float) -> None:
 @ingest.command("backfill-snapshots")
 def backfill_snapshots() -> None:
     """Ingest records from archived HTML snapshots."""
-    _run_with_engine(pg_backfill_snapshots)
+    _run_with_engine(run_backfill_snapshots)
 
 
 @ingest.command("backfill-diffs")
@@ -157,7 +157,7 @@ def backfill_diffs(
 ) -> None:
     """Ingest records from unified-diff archives."""
     result = _run_with_engine(
-        lambda engine: pg_backfill_diffs(
+        lambda engine: run_backfill_diffs(
             engine,
             section=section,
             single_file=single_file,
@@ -191,7 +191,7 @@ def backfill_addresses(rate_limit: float) -> None:
 
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
-            await pg_backfill_addresses(conn, rate_limit=rate_limit)
+            await run_backfill_addresses(conn, rate_limit=rate_limit)
 
     _run_with_engine(_run)
 
@@ -220,9 +220,9 @@ def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             if ids is not None:
-                await pg_refresh_specific_addresses(conn, ids, rate_limit=rate_limit)
+                await run_refresh_specific_addresses(conn, ids, rate_limit=rate_limit)
             else:
-                await pg_refresh_addresses(conn, rate_limit=rate_limit)
+                await run_refresh_addresses(conn, rate_limit=rate_limit)
 
     _run_with_engine(_run)
 
@@ -301,7 +301,7 @@ def check(fix: bool) -> None:
 
     async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
-            return await pg_run_all_checks(conn, fix=fix)
+            return await run_integrity_checks(conn, fix=fix)
 
     report = _run_with_engine(_run)
     issues = print_report(report)
@@ -315,7 +315,7 @@ def rebuild_links() -> None:
 
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
-            await pg_build_all_links(conn)
+            await run_build_all_links(conn)
             await conn.commit()
 
     _run_with_engine(_run)
@@ -326,7 +326,7 @@ def rebuild_links() -> None:
 def cleanup_redundant(keep_files: bool) -> None:
     """Remove data from scrapes that found no new records."""
     result = _run_with_engine(
-        lambda engine: pg_cleanup_redundant(engine, delete_files=not keep_files)
+        lambda engine: run_cleanup_redundant(engine, delete_files=not keep_files)
     )
     if result["scrape_logs"] == 0:
         click.echo("Nothing to clean up.")
@@ -346,7 +346,7 @@ def reprocess_endorsements(record_id: int | None, code: str | None, dry_run: boo
 
     async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
-            result = await pg_reprocess_endorsements(
+            result = await run_reprocess_endorsements(
                 conn,
                 record_id=record_id,
                 code=code,
@@ -374,7 +374,7 @@ def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
 
     async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
-            result = await pg_reprocess_entities(
+            result = await run_reprocess_entities(
                 conn,
                 record_id=record_id,
                 dry_run=dry_run,
