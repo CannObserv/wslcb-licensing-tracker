@@ -1,4 +1,4 @@
-"""Tests for pg_address_validator.py — async address validation DB layer."""
+"""Tests for the address validation stack: transport client and DB layer."""
 
 import os
 from unittest.mock import AsyncMock, patch
@@ -7,8 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import select, update
 
-from wslcb_licensing_tracker.models import locations
-from wslcb_licensing_tracker.pg_address_validator import (
+from wslcb_licensing_tracker.address_client import (
     DEFAULT_RETRY_AFTER,
     HTTP_INTERNAL_SERVER_ERROR,
     HTTP_TOO_MANY_REQUESTS,
@@ -16,11 +15,14 @@ from wslcb_licensing_tracker.pg_address_validator import (
     MAX_RETRY_AFTER,
     _parse_retry_after,
     _post_with_retry,
+    standardize,
+    validate,
+)
+from wslcb_licensing_tracker.models import locations
+from wslcb_licensing_tracker.pg_address_validator import (
     _validate_batch,
     process_location,
-    standardize,
     standardize_location,
-    validate,
     validate_location,
 )
 from wslcb_licensing_tracker.pg_db import get_or_create_location
@@ -143,7 +145,7 @@ class TestValidateLocation:
     async def test_returns_false_when_validation_disabled(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "456 OAK AVE, SPOKANE, WA 99201")
         with patch(
-            "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+            "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
             return_value=False,
         ):
             result = await validate_location(pg_conn, loc_id, "456 OAK AVE, SPOKANE, WA 99201")
@@ -166,7 +168,7 @@ class TestValidateLocation:
         }
         with (
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
                 return_value=True,
             ),
             patch(
@@ -187,7 +189,7 @@ class TestValidateLocation:
         loc_id = await get_or_create_location(pg_conn, "UNVALIDATABLE ADDRESS")
         with (
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
                 return_value=True,
             ),
             patch("wslcb_licensing_tracker.pg_address_validator.validate", return_value=None),
@@ -207,7 +209,7 @@ class TestValidateLocation:
         }
         with (
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
                 return_value=True,
             ),
             patch(
@@ -345,7 +347,7 @@ class TestPostWithRetry:
         mock_client.post.return_value = retry_response
 
         with patch(
-            "wslcb_licensing_tracker.pg_address_validator.asyncio.sleep",
+            "wslcb_licensing_tracker.address_client.asyncio.sleep",
             new_callable=AsyncMock,
         ) as mock_sleep:
             result = await _post_with_retry(
@@ -385,7 +387,7 @@ class TestStandardizeHTTP:
         with (
             patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
+                "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=mock_response,
             ) as mock_post,
         ):
@@ -406,7 +408,7 @@ class TestStandardizeHTTP:
         with (
             patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
+                "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=mock_response,
             ),
         ):
@@ -422,7 +424,7 @@ class TestValidateHTTP:
         with (
             patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
+                "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=mock_response,
             ) as mock_post,
         ):
@@ -441,7 +443,7 @@ class TestValidateHTTP:
         with (
             patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._post_with_retry",
+                "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=None,
             ),
         ):
@@ -477,7 +479,7 @@ class TestProcessLocation:
         loc_id = await get_or_create_location(pg_conn, "100 MAIN ST STE 1, OLYMPIA, WA 98501")
         with (
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
                 return_value=True,
             ),
             patch(
@@ -529,7 +531,7 @@ class TestProcessLocation:
         }
         with (
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
                 return_value=False,
             ),
             patch(
@@ -571,7 +573,7 @@ class TestProcessLocation:
         }
         with (
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
                 return_value=True,
             ),
             patch(
@@ -607,7 +609,7 @@ class TestProcessLocation:
         loc_id = await get_or_create_location(pg_conn, "300 FAIL ST, SEATTLE, WA 98101")
         with (
             patch(
-                "wslcb_licensing_tracker.pg_address_validator._is_validation_enabled",
+                "wslcb_licensing_tracker.pg_address_validator.is_validation_enabled",
                 return_value=True,
             ),
             patch(
