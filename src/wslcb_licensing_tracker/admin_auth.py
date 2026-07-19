@@ -36,12 +36,26 @@ class AdminRedirectException(Exception):  # noqa: N818
 
 
 def _extract_user(request: Request) -> tuple[str | None, str | None]:
-    """Return ``(email, user_id)`` from proxy headers or env-var fallback."""
+    """Return ``(email, user_id)`` from proxy headers or env-var fallback.
+
+    The ``ADMIN_DEV_EMAIL`` fallback is honored only for requests that did
+    not transit the exe.dev proxy (no ``X-Forwarded-Proto`` header), i.e.
+    direct hits on uvicorn during local development.  Unauthenticated
+    requests to a public proxy carry ``X-Forwarded-*`` but no
+    ``X-ExeDev-*`` headers — a leaked ``ADMIN_DEV_EMAIL`` in the
+    production environment must not turn those visitors into admins.
+    """
     email = request.headers.get("X-ExeDev-Email")
     user_id = request.headers.get("X-ExeDev-UserID")
-    if not email:
+    if not email and "X-Forwarded-Proto" not in request.headers:
         email = os.environ.get("ADMIN_DEV_EMAIL")
         user_id = os.environ.get("ADMIN_DEV_USERID", "dev")
+        if email:
+            logger.warning(
+                "Authenticating via ADMIN_DEV_EMAIL fallback as %s "
+                "(request did not transit the exe.dev proxy)",
+                email,
+            )
     return email, user_id
 
 

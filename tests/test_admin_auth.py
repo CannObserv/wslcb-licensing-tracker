@@ -106,6 +106,41 @@ async def test_get_current_user_dev_email_fallback():
 
 
 @pytest.mark.asyncio
+async def test_dev_fallback_ignored_for_proxied_requests():
+    """A request that transited the exe.dev proxy never uses the env fallback (#149).
+
+    Unauthenticated requests to a public proxy arrive with X-Forwarded-*
+    headers but no X-ExeDev-* headers — a leaked ADMIN_DEV_EMAIL in the
+    production env must not turn those visitors into admins.
+    """
+    conn = _make_conn(row=(1, "admin@example.com", "admin"))
+    req = _make_request(headers={"X-Forwarded-Proto": "https"}, conn=conn)
+    with patch.dict(
+        os.environ, {"ADMIN_DEV_EMAIL": "admin@example.com", "ADMIN_DEV_USERID": "dev"}
+    ):
+        with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
+            result = await get_current_user(req)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_dev_fallback_logs_warning(caplog):
+    """Authenticating via the env fallback emits a loud warning (#149)."""
+    import logging
+
+    conn = _make_conn(row=(1, "admin@example.com", "admin"))
+    req = _make_request(headers={}, conn=conn)
+    with patch.dict(
+        os.environ, {"ADMIN_DEV_EMAIL": "admin@example.com", "ADMIN_DEV_USERID": "dev"}
+    ):
+        with patch("wslcb_licensing_tracker.admin_auth.get_db", req._mock_get_db):
+            with caplog.at_level(logging.WARNING, logger="wslcb_licensing_tracker.admin_auth"):
+                result = await get_current_user(req)
+    assert result is not None
+    assert any("ADMIN_DEV_EMAIL" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_get_current_user_not_in_admin_table():
     conn = _make_conn(row=None)
     req = _make_request(
