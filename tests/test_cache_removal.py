@@ -118,18 +118,3 @@ class TestNoCacheStats:
         call_count_after_second = conn.execute.await_count
 
         assert call_count_after_second > call_count_after_first
-
-
-class TestInvalidateFunctionsExist:
-    """invalidate_filter_cache and invalidate_stats_cache still callable (no-ops)."""
-
-    def test_invalidate_filter_cache_is_callable(self):
-        from wslcb_licensing_tracker.pg_queries_filter import invalidate_filter_cache
-
-        # Should not raise
-        invalidate_filter_cache()
-
-    def test_invalidate_stats_cache_is_callable(self):
-        from wslcb_licensing_tracker.pg_queries_stats import invalidate_stats_cache
-
-        invalidate_stats_cache()

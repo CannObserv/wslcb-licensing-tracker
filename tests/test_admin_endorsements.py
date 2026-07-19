@@ -255,7 +255,6 @@ class TestSubstanceAdd:
                 return_value=42,
             ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -292,7 +291,6 @@ class TestSubstanceAdd:
                 return_value=42,
             ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -354,7 +352,6 @@ class TestSubstanceRemove:
                 return_value="Test Substance",
             ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -380,7 +377,6 @@ class TestSubstanceRemove:
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch("wslcb_licensing_tracker.admin_routes.remove_substance", mock_remove),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -409,7 +405,6 @@ class TestSubstanceRemove:
                 return_value="Test",
             ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -454,7 +449,6 @@ class TestSubstanceSetEndorsements:
                 new_callable=AsyncMock,
             ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -480,7 +474,6 @@ class TestSubstanceSetEndorsements:
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
             patch("wslcb_licensing_tracker.admin_routes.set_substance_endorsements", mock_set),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -512,7 +505,6 @@ class TestSubstanceSetEndorsements:
                 new_callable=AsyncMock,
             ),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -606,7 +598,6 @@ class TestAdminUnalias:
             patch("wslcb_licensing_tracker.admin_routes.remove_alias", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.process_record", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -637,7 +628,6 @@ class TestAdminUnalias:
             patch("wslcb_licensing_tracker.admin_routes.remove_alias", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.process_record", mock_process),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine
@@ -692,7 +682,6 @@ class TestAdminUnalias:
             patch("wslcb_licensing_tracker.admin_routes.remove_alias", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.process_record", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
-            patch("wslcb_licensing_tracker.admin_routes.invalidate_all_filter_caches"),
         ):
             mock_engine = MagicMock()
             app.state.engine = mock_engine

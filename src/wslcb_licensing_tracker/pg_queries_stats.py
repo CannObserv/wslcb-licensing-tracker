@@ -3,7 +3,6 @@
 Contains:
 - get_stats() — summary statistics (always live from DB)
 - _get_pipeline_stats() — application pipeline outcome breakdown
-- invalidate_stats_cache() — legacy no-op, retained for call-site compat
 
 No in-process caching (#99).  The underlying queries are indexed and
 run in <10 ms, so the TTL cache was removed to eliminate silent
@@ -20,13 +19,6 @@ from .pg_db import DATA_GAP_CUTOFF, LINKABLE_TYPES, PENDING_CUTOFF_DAYS
 logger = logging.getLogger(__name__)
 
 _LINKABLE_TYPES_CSV = ", ".join(f"'{t}'" for t in LINKABLE_TYPES)
-
-
-def invalidate_stats_cache() -> None:
-    """No-op retained for backward compatibility.
-
-    Previously cleared an in-process TTL cache.  Removed in #99.
-    """
 
 
 async def _get_pipeline_stats(conn: AsyncConnection) -> dict:

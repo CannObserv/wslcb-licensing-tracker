@@ -3,7 +3,6 @@
 Contains:
 - get_filter_options() — dropdown data for search page
 - get_cities_for_state() — city list for a given state
-- invalidate_filter_cache() — legacy no-op, retained for call-site compat
 
 No in-process caching (#99).  The underlying queries are indexed and
 run in <10 ms, so the TTL cache was removed to eliminate silent
@@ -17,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .pg_db import US_STATES
 from .pg_endorsements import get_endorsement_options
-from .pg_queries_stats import invalidate_stats_cache
 from .pg_substances import get_regulated_substances
 
 logger = logging.getLogger(__name__)
@@ -27,17 +25,6 @@ _LOCATION_IDS_SUBQUERY = (
     " UNION "
     "SELECT previous_location_id FROM license_records WHERE previous_location_id IS NOT NULL"
 )
-
-
-def invalidate_filter_cache() -> None:
-    """No-op retained for backward compatibility.
-
-    Previously cleared in-process TTL caches.  Caches were removed in
-    #99 — every call now hits the database directly.  Admin mutation
-    call-sites still invoke this; removing those calls is not worth the
-    churn.
-    """
-    invalidate_stats_cache()
 
 
 async def get_filter_options(conn: AsyncConnection) -> dict:
