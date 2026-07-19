@@ -3,6 +3,7 @@ name = "wslcb-licensing-tracker"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "click>=8.1,<9",
     "fastapi>=0.129.0,<1",
     "uvicorn>=0.41.0,<1",
     "Jinja2>=3.1.6,<4",
