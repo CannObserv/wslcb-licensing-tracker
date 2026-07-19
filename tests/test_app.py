@@ -146,3 +146,26 @@ def test_record_not_found_returns_404():
         with TestClient(app) as client:
             resp = client.get("/record/999999")
     assert resp.status_code == 404
+
+
+class TestNoExternalRuntimeAssets:
+    """All script/style assets must be served from /static — no CDN references (#148)."""
+
+    def test_templates_reference_no_external_scripts_or_styles(self):
+        import re
+        from pathlib import Path
+
+        template_dir = Path(__file__).resolve().parent.parent / "templates"
+        offenders = []
+        for tpl in template_dir.rglob("*.html"):
+            for tag in re.findall(r"<(?:script|link)\b[^>]*>", tpl.read_text()):
+                if re.search(r'(?:src|href)\s*=\s*["\']https?://', tag):
+                    offenders.append(f"{tpl.name}: {tag}")
+        assert offenders == []
+
+    def test_vendored_htmx_exists(self):
+        from pathlib import Path
+
+        htmx = Path(__file__).resolve().parent.parent / "static" / "js" / "htmx.min.js"
+        assert htmx.is_file()
+        assert htmx.stat().st_size > 10_000

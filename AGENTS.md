@@ -46,7 +46,7 @@ license_records → locations (FK: location_id, previous_location_id)
                 → record_endorsements → license_endorsements
 ```
 
-- No runtime build step. Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`; pre-commit hook runs this automatically. HTMX via CDN.
+- No runtime build step, no external runtime assets. Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`; pre-commit hook runs this automatically. HTMX vendored at `static/js/htmx.min.js` (#148).
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
 - PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
 - systemd unit/timer files in `infra/`. AI agent skills in `skills/`; vendor repos (git submodules) in `skills-vendor/`.
