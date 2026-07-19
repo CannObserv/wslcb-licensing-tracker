@@ -1,16 +1,12 @@
-"""PostgreSQL schema initialization and introspection helpers.
-
-Uses Alembic to run migrations programmatically.
-"""
+"""PostgreSQL schema initialization: run Alembic migrations programmatically."""
 
 import logging
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import text
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = logging.getLogger(__name__)
 
@@ -33,27 +29,3 @@ async def init_db(engine: AsyncEngine) -> None:
         await conn.run_sync(_run_upgrade)
         await conn.commit()
     logger.info("Database migrations complete")
-
-
-async def _table_exists(conn: AsyncConnection, name: str) -> bool:
-    """Return True if *name* is a table in the public schema."""
-    result = await conn.execute(
-        text(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = 'public' AND table_name = :name"
-        ),
-        {"name": name},
-    )
-    return result.first() is not None
-
-
-async def _column_exists(conn: AsyncConnection, table: str, column: str) -> bool:
-    """Return True if *column* exists on *table*. Returns False when *table* is absent."""
-    result = await conn.execute(
-        text(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_schema = 'public' AND table_name = :table AND column_name = :column"
-        ),
-        {"table": table, "column": column},
-    )
-    return result.first() is not None

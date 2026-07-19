@@ -208,25 +208,15 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
     if not pg_url:
         pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
 
-    from alembic import command
-    from alembic.config import Config
-
     from wslcb_licensing_tracker.database import create_engine_from_env
+    from wslcb_licensing_tracker.pg_schema import init_db
 
     original = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = pg_url
     engine = create_engine_from_env()
 
-    # Run Alembic migrations
-    def _run_upgrade(connection):
-        cfg = Config("alembic.ini")
-        cfg.attributes["connection"] = connection
-        command.upgrade(cfg, "head")
-
     try:
-        async with engine.connect() as conn:
-            await conn.run_sync(_run_upgrade)
-            await conn.commit()
+        await init_db(engine)
 
         # Truncate all test-writable tables for a clean slate each session.
         # Prevents stale committed data from previous runs causing false failures.

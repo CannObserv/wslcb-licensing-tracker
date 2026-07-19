@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 # Shared constants (previously in db.py)
 # ---------------------------------------------------------------------------
 
-# Source type constants (fixed IDs — must match seed data in pg_schema.py)
+# Source type constants (fixed IDs — must match the seed rows inserted by
+# alembic migration 0001 and reseeded by the pg_engine test fixture)
 SOURCE_TYPE_LIVE_SCRAPE = 1
 SOURCE_TYPE_CO_ARCHIVE = 2
 SOURCE_TYPE_INTERNET_ARCHIVE = 3
