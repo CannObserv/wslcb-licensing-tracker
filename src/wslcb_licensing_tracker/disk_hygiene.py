@@ -11,6 +11,7 @@ path failing to delete must never abort the rest of the run.
 See docs/plans/2026-07-09-disk-hygiene-design.md.
 """
 
+import gzip
 import json
 import logging
 import re
@@ -19,7 +20,7 @@ import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .pg_db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 
@@ -274,20 +275,57 @@ def check_usage_threshold(threshold_pct: int = 75, path: str = "/") -> None:
         logger.warning("Root filesystem at %.0f%% (threshold %d%%)", pct, threshold_pct)
 
 
-def compress_data_stragglers(*, dry_run: bool) -> dict[str, Any]:
-    """Detect and compress any leftover uncompressed snapshot/diff archive files.
+class CompressResult(NamedTuple):
+    """Summary counters returned by :func:`compress_files`."""
 
-    Reuses ``cli._compress_files`` directly rather than reimplementing
-    compression logic here — imported lazily to avoid a circular import
-    (``cli.py`` imports ``run_disk_hygiene`` from this module).
+    compressed: int
+    skipped: int
+    would_unlink: int
+    saved_bytes: int
+
+
+def compress_files(paths: list[Path], dry_run: bool) -> CompressResult:  # noqa: FBT001
+    """Gzip each of *paths* to a ``.gz`` sibling, removing the original.
+
+    Cleans up orphaned plain files whose ``.gz`` sibling already exists
+    (covers a previously-interrupted run).
     """
-    from .cli import _compress_files  # noqa: PLC0415
+    compressed = 0
+    skipped = 0
+    would_unlink = 0
+    saved_bytes = 0
 
+    for path in paths:
+        gz_path = path.parent / (path.name + ".gz")
+        if gz_path.exists():
+            if dry_run:
+                would_unlink += 1
+            else:
+                path.unlink()
+            skipped += 1
+            continue
+        original_size = path.stat().st_size
+        if dry_run:
+            logger.info("[dry-run] Would compress %s", path.name)
+            compressed += 1
+            continue
+        content = path.read_bytes()
+        gz_path.write_bytes(gzip.compress(content))
+        compressed_size = gz_path.stat().st_size
+        saved_bytes += original_size - compressed_size
+        path.unlink()
+        compressed += 1
+
+    return CompressResult(compressed, skipped, would_unlink, saved_bytes)
+
+
+def compress_data_stragglers(*, dry_run: bool) -> dict[str, Any]:
+    """Detect and compress any leftover uncompressed snapshot/diff archive files."""
     html_files = sorted(DATA_DIR.glob(SNAPSHOT_GLOB))
     txt_files = sorted(DATA_DIR.glob(DIFF_GLOB))
     return {
-        "snapshots": _compress_files(html_files, dry_run) if html_files else None,
-        "diffs": _compress_files(txt_files, dry_run) if txt_files else None,
+        "snapshots": compress_files(html_files, dry_run) if html_files else None,
+        "diffs": compress_files(txt_files, dry_run) if txt_files else None,
     }
 
 

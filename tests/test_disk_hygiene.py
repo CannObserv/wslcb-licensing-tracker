@@ -351,7 +351,7 @@ class TestCheckUsageThreshold:
 
 
 class TestCompressDataStragglers:
-    """Tests for `compress_data_stragglers` — reuses cli._compress_files, no new logic."""
+    """Tests for `compress_data_stragglers` — thin wrapper over compress_files, no new logic."""
 
     def _make_snapshot(self, tmp_path):
         d = tmp_path / "wslcb" / "licensinginfo" / "2026" / "2026_01_01"

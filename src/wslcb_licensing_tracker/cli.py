@@ -34,12 +34,10 @@ Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 """
 
 import asyncio
-import gzip
 import logging
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import NamedTuple
 
 import click
 from sqlalchemy import delete, func, select
@@ -47,7 +45,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .database import create_engine_from_env, get_db
-from .disk_hygiene import run_disk_hygiene
+from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
 from .log_config import setup_logging
 from .models import admin_users
 from .parser import SECTION_DIR_MAP
@@ -229,50 +227,8 @@ def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
     _run_with_engine(_run)
 
 
-class _CompressResult(NamedTuple):
-    compressed: int
-    skipped: int
-    would_unlink: int
-    saved_bytes: int
-
-
-def _compress_files(paths: list[Path], dry_run: bool) -> _CompressResult:
-    """Gzip each of *paths* to a ``.gz`` sibling, removing the original.
-
-    Cleans up orphaned plain files whose ``.gz`` sibling already exists
-    (covers a previously-interrupted run).
-    """
-    compressed = 0
-    skipped = 0
-    would_unlink = 0
-    saved_bytes = 0
-
-    for path in paths:
-        gz_path = path.parent / (path.name + ".gz")
-        if gz_path.exists():
-            if dry_run:
-                would_unlink += 1
-            else:
-                path.unlink()
-            skipped += 1
-            continue
-        original_size = path.stat().st_size
-        if dry_run:
-            click.echo(f"  [dry-run] Would compress {path.name}")
-            compressed += 1
-            continue
-        content = path.read_bytes()
-        gz_path.write_bytes(gzip.compress(content))
-        compressed_size = gz_path.stat().st_size
-        saved_bytes += original_size - compressed_size
-        path.unlink()
-        compressed += 1
-
-    return _CompressResult(compressed, skipped, would_unlink, saved_bytes)
-
-
 def _report_compress_result(
-    noun: str, orphan_ext: str, result: _CompressResult, dry_run: bool
+    noun: str, orphan_ext: str, result: CompressResult, dry_run: bool
 ) -> None:
     """Echo a summary line for a compress-* command, matching the compress-snapshots format."""
     if dry_run:
@@ -305,7 +261,7 @@ def compress_snapshots(dry_run: bool) -> None:
         click.echo("No uncompressed snapshots found.")
         return
 
-    result = _compress_files(html_files, dry_run)
+    result = compress_files(html_files, dry_run)
     _report_compress_result("snapshot", "html", result, dry_run)
 
 
@@ -324,7 +280,7 @@ def compress_diffs(dry_run: bool) -> None:
         click.echo("No uncompressed diffs found.")
         return
 
-    result = _compress_files(txt_files, dry_run)
+    result = compress_files(txt_files, dry_run)
     _report_compress_result("diff", "txt", result, dry_run)
 
 
