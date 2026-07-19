@@ -31,13 +31,49 @@ logger = logging.getLogger(__name__)
 # Shared constants (previously in db.py)
 # ---------------------------------------------------------------------------
 
-# Source type constants (fixed IDs — must match the seed rows inserted by
-# alembic migration 0001 and reseeded by the pg_engine test fixture)
+# Source type constants (fixed IDs)
 SOURCE_TYPE_LIVE_SCRAPE = 1
 SOURCE_TYPE_CO_ARCHIVE = 2
 SOURCE_TYPE_INTERNET_ARCHIVE = 3
 SOURCE_TYPE_CO_DIFF_ARCHIVE = 4
 SOURCE_TYPE_MANUAL = 5
+
+# Canonical source_types reference rows. Alembic migration 0001 seeded the
+# same values (frozen as history); the pg_engine test fixture reseeds from
+# this list after wiping the table. New source types are added here plus a
+# new alembic data migration.
+SOURCE_TYPE_ROWS = [
+    {
+        "id": SOURCE_TYPE_LIVE_SCRAPE,
+        "slug": "live_scrape",
+        "label": "Live Scrape",
+        "description": "Direct scrape of the WSLCB licensing page",
+    },
+    {
+        "id": SOURCE_TYPE_CO_ARCHIVE,
+        "slug": "co_archive",
+        "label": "CO Page Archive",
+        "description": "Cannabis Observer archived HTML snapshots",
+    },
+    {
+        "id": SOURCE_TYPE_INTERNET_ARCHIVE,
+        "slug": "internet_archive",
+        "label": "Internet Archive",
+        "description": "Wayback Machine snapshots",
+    },
+    {
+        "id": SOURCE_TYPE_CO_DIFF_ARCHIVE,
+        "slug": "co_diff_archive",
+        "label": "CO Diff Archive",
+        "description": "Cannabis Observer diff-detected change snapshots",
+    },
+    {
+        "id": SOURCE_TYPE_MANUAL,
+        "slug": "manual",
+        "label": "Manual Entry",
+        "description": "Manually entered or corrected records",
+    },
+]
 
 WSLCB_SOURCE_URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 

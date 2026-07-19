@@ -360,3 +360,51 @@ class TestPgGetRecordSources:
         assert results[0]["id"] == new_id
         assert results[1]["id"] == old_id
         assert isinstance(results[0]["metadata"], dict)
+
+
+class TestSourceTypeRows:
+    """SOURCE_TYPE_ROWS is the canonical source_types reference data."""
+
+    def test_rows_match_id_constants(self):
+        """Canonical rows agree with the SOURCE_TYPE_* ID constants by slug."""
+        from wslcb_licensing_tracker.pg_db import (
+            SOURCE_TYPE_CO_ARCHIVE,
+            SOURCE_TYPE_CO_DIFF_ARCHIVE,
+            SOURCE_TYPE_INTERNET_ARCHIVE,
+            SOURCE_TYPE_LIVE_SCRAPE,
+            SOURCE_TYPE_MANUAL,
+            SOURCE_TYPE_ROWS,
+        )
+
+        by_slug = {row["slug"]: row["id"] for row in SOURCE_TYPE_ROWS}
+        assert by_slug == {
+            "live_scrape": SOURCE_TYPE_LIVE_SCRAPE,
+            "co_archive": SOURCE_TYPE_CO_ARCHIVE,
+            "internet_archive": SOURCE_TYPE_INTERNET_ARCHIVE,
+            "co_diff_archive": SOURCE_TYPE_CO_DIFF_ARCHIVE,
+            "manual": SOURCE_TYPE_MANUAL,
+        }
+
+    def test_rows_have_complete_fields(self):
+        """Every canonical row carries id, slug, label, and description."""
+        from wslcb_licensing_tracker.pg_db import SOURCE_TYPE_ROWS
+
+        for row in SOURCE_TYPE_ROWS:
+            assert set(row) == {"id", "slug", "label", "description"}
+            assert all(row.values())
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_db_contents_match_canonical_rows(self, pg_conn):
+        """The source_types table contains exactly the canonical rows."""
+        from wslcb_licensing_tracker.pg_db import SOURCE_TYPE_ROWS
+
+        result = await pg_conn.execute(
+            select(
+                source_types.c.id,
+                source_types.c.slug,
+                source_types.c.label,
+                source_types.c.description,
+            ).order_by(source_types.c.id)
+        )
+        db_rows = [dict(r) for r in result.mappings()]
+        assert db_rows == SOURCE_TYPE_ROWS

@@ -223,25 +223,26 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
         async with engine.connect() as conn:
             for table in _PG_SESSION_TABLES:
                 await conn.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"))
-            # Reseed source_types reference data — the migration INSERT has no ON CONFLICT
-            # guard, so if the table was previously wiped it won't be repopulated by
-            # alembic upgrade (which skips already-applied migrations).
+            # Reseed source_types reference data from the canonical rows — the
+            # migration INSERT has no ON CONFLICT guard, so if the table was
+            # previously wiped it won't be repopulated by alembic upgrade
+            # (which skips already-applied migrations). Upsert (not DO NOTHING)
+            # so rows drifted by earlier eras of the test DB converge to canon.
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            from wslcb_licensing_tracker.models import source_types
+            from wslcb_licensing_tracker.pg_db import SOURCE_TYPE_ROWS
+
+            upsert = pg_insert(source_types).values(SOURCE_TYPE_ROWS)
             await conn.execute(
-                text("""
-                INSERT INTO source_types (id, slug, label, description)
-                VALUES
-                    (1, 'live_scrape', 'Live Scrape',
-                     'Direct scrape of the WSLCB licensing page'),
-                    (2, 'co_archive', 'CO Page Archive',
-                     'Cannabis Observer archived HTML snapshots'),
-                    (3, 'internet_archive', 'Internet Archive',
-                     'Wayback Machine snapshots'),
-                    (4, 'co_diff_archive', 'CO Diff Archive',
-                     'Cannabis Observer diff-detected change snapshots'),
-                    (5, 'manual', 'Manual Entry',
-                     'Manually entered or corrected records')
-                ON CONFLICT (id) DO NOTHING
-            """)
+                upsert.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "slug": upsert.excluded.slug,
+                        "label": upsert.excluded.label,
+                        "description": upsert.excluded.description,
+                    },
+                )
             )
             await conn.commit()
 
