@@ -7,7 +7,6 @@ registered as an APIRouter and included at startup.
 import html
 import json
 import logging
-import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -25,6 +24,7 @@ from starlette.responses import Response
 
 from . import admin_routes, api_routes, pg_address_validator
 from .admin_auth import AdminRedirectException, get_current_user
+from .config import get_build_id
 from .data_migration import run_pending_migrations
 from .database import create_engine_from_env, get_db
 from .display import format_outcome, summarize_provenance
@@ -92,11 +92,7 @@ app.include_router(api_routes.router)
 templates = Jinja2Templates(directory="templates")
 
 
-_BUILD_ID = os.environ.get("BUILD_ID")
-if not _BUILD_ID:
-    logger.warning("BUILD_ID not set; static asset cache-busting disabled")
-    _BUILD_ID = "dev"
-templates.env.globals["build_id"] = _BUILD_ID
+templates.env.globals["build_id"] = get_build_id()
 
 PER_PAGE = 50
 

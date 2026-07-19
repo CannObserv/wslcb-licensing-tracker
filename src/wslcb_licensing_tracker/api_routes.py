@@ -12,7 +12,6 @@ The CSV export endpoint (/api/v1/export) is exempt from the envelope
 import csv
 import io
 import logging
-import os
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
@@ -21,6 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .config import get_build_id
 from .database import get_db
 from .pg_db import US_STATES
 from .pg_queries_export import export_records_cursor
@@ -28,8 +28,6 @@ from .pg_queries_filter import get_cities_for_state
 from .pg_queries_stats import get_stats
 
 logger = logging.getLogger(__name__)
-
-_BUILD_ID = os.environ.get("BUILD_ID") or "dev"
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -115,7 +113,7 @@ async def api_health(request: Request) -> JSONResponse:
             {
                 "ok": True,
                 "message": "Healthy",
-                "data": {"db": "ok", "build": _BUILD_ID},
+                "data": {"db": "ok", "build": get_build_id()},
             },
             status_code=200,
         )
