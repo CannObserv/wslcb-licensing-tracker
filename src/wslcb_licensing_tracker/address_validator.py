@@ -170,6 +170,7 @@ async def validate_location(
 
     # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
     has_address = status in CONFIRMED_STATUSES
+    now = datetime.now(UTC)
 
     try:
         if has_address:
@@ -188,9 +189,9 @@ async def validate_location(
                     dpv_match_code=dpv,
                     latitude=result.get("latitude"),
                     longitude=result.get("longitude"),
-                    address_standardized_at=datetime.now(UTC),
-                    address_validated_at=datetime.now(UTC),
-                    address_validation_attempted_at=datetime.now(UTC),
+                    address_standardized_at=now,
+                    address_validated_at=now,
+                    address_validation_attempted_at=now,
                 )
             )
             return True
@@ -203,7 +204,7 @@ async def validate_location(
             .values(
                 validation_status=status,
                 dpv_match_code=dpv,
-                address_validation_attempted_at=datetime.now(UTC),
+                address_validation_attempted_at=now,
             )
         )
     except Exception:
@@ -251,6 +252,7 @@ async def process_location(
         dpv = validation.get("dpv_match_code")
         # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
         has_address = status in CONFIRMED_STATUSES
+        now = datetime.now(UTC)
 
         try:
             if has_address:
@@ -269,9 +271,9 @@ async def process_location(
                         dpv_match_code=dpv,
                         latitude=result.get("latitude"),
                         longitude=result.get("longitude"),
-                        address_standardized_at=datetime.now(UTC),
-                        address_validated_at=datetime.now(UTC),
-                        address_validation_attempted_at=datetime.now(UTC),
+                        address_standardized_at=now,
+                        address_validated_at=now,
+                        address_validation_attempted_at=now,
                     )
                 )
                 return True
@@ -284,7 +286,7 @@ async def process_location(
                 .values(
                     validation_status=status,
                     dpv_match_code=dpv,
-                    address_validation_attempted_at=datetime.now(UTC),
+                    address_validation_attempted_at=now,
                 )
             )
         except Exception:

@@ -33,7 +33,15 @@ def upgrade() -> None:
         "SET address_validation_attempted_at = address_validated_at "
         "WHERE address_validated_at IS NOT NULL"
     )
+    # Renewal selector filters/orders on this column and the daily-ceiling count
+    # scans it, all twice daily; index it since the table grows unboundedly.
+    op.create_index(
+        "idx_locations_attempted_at",
+        "locations",
+        ["address_validation_attempted_at"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("idx_locations_attempted_at", table_name="locations")
     op.drop_column("locations", "address_validation_attempted_at")

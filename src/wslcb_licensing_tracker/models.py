@@ -56,6 +56,7 @@ locations = Table(
     Index("idx_locations_zip", "zip_code"),
     Index("idx_locations_std_city", "std_city"),
     Index("idx_locations_std_postal_code", "std_postal_code"),
+    Index("idx_locations_attempted_at", "address_validation_attempted_at"),
 )
 
 license_endorsements = Table(
