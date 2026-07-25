@@ -10,7 +10,7 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter |
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure |
-| `wslcb-address-validation.timer` | Weekly address backfill, Sunday 2:00 AM Pacific, ±5 min jitter |
+| `wslcb-address-validation.timer` | Weekly address backfill + TTL renewal, Sunday 2:00 AM Pacific, ±5 min jitter |
 | `wslcb-disk-hygiene.timer` | Weekly cache/worktree/data-straggler cleanup, Sunday 3:00 AM Pacific, ±5 min jitter (#138) |
 
 ### Task service instances
@@ -71,10 +71,21 @@ External API at `https://address-validator.exe.xyz:8000`.
 - `ENABLE_ADDRESS_VALIDATION=true` enables DPV validation; otherwise only standardization runs
 - Services load env via `EnvironmentFile=/etc/wslcb-licensing-tracker/.env`
 
+### Renewal TTL (#150)
+
+Validated addresses are not frozen forever. `backfill-addresses` also renews any
+location whose `address_validated_at` is older than `VALIDATION_TTL_DAYS`
+(180 days, in `address_validator.py`), so upstream validator/USPS improvements get
+picked up by the weekly timer without manual intervention. The `address_validated_at`
+timestamp is **never cleared** to trigger renewal — a confirmed re-validation
+overwrites it in place, and a not_confirmed/unavailable response leaves the prior
+value intact. To renew on demand outside the TTL (e.g. a single known-stale row),
+use `refresh-addresses --location-ids`.
+
 ### Common address commands
 
 ```bash
-# Backfill un-processed locations
+# Backfill un-processed locations + renew TTL-stale validations
 # (runs automatically after every scrape; manual invocation for catch-up only)
 uv run wslcb backfill-addresses
 

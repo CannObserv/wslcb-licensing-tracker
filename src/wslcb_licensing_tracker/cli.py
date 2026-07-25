@@ -18,7 +18,7 @@ Usage::
     wslcb ingest scrape                # grouped form
     wslcb ingest backfill-snapshots    # replay archived HTML
     wslcb ingest backfill-diffs        # replay diff archives
-    wslcb ingest backfill-addresses    # validate un-validated locations
+    wslcb ingest backfill-addresses    # validate un-validated + TTL-stale locations
     wslcb ingest refresh-addresses     # re-validate all locations
     wslcb ingest compress-snapshots    # compress .html snapshots to .html.gz in place
     wslcb ingest compress-diffs        # compress diff archive .txt files to .txt.gz in place
@@ -187,7 +187,7 @@ def backfill_diffs(
     help="Seconds between API calls.",
 )
 def backfill_addresses(rate_limit: float) -> None:
-    """Validate un-validated locations via the address API."""
+    """Validate un-validated locations, and renew any validated past the TTL."""
 
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:

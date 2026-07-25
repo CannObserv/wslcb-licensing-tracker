@@ -18,7 +18,7 @@ periodic commits) because it is a long-running bulk operation.
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlalchemy import select, update
@@ -36,6 +36,14 @@ from .models import license_records, locations
 logger = logging.getLogger(__name__)
 
 ISO_ALPHA2_LEN = 2
+
+# Renewal TTL for validated addresses (#150). A location whose
+# address_validated_at is older than this is re-validated by the weekly
+# backfill so upstream validator/USPS improvements are picked up. The
+# validated_at timestamp is never cleared to trigger renewal — a successful
+# re-validation overwrites it in place; a failed one leaves the prior value
+# intact (see validate_location / process_location).
+VALIDATION_TTL_DAYS = 180
 
 
 def _sanitize_country(raw: str) -> str:
@@ -400,8 +408,14 @@ async def backfill_addresses(
 ) -> int:
     """Standardize (and optionally validate) locations that need processing.
 
-    Queries all locations where address_standardized_at IS NULL or
-    address_validated_at IS NULL.
+    Queries all locations that are either not yet fully processed
+    (address_standardized_at IS NULL or address_validated_at IS NULL) or whose
+    validation has aged past VALIDATION_TTL_DAYS and is due for renewal (#150).
+
+    Renewal reads address_validated_at to find stale rows; it never clears the
+    timestamp. process_location overwrites it on a confirmed re-validation and
+    leaves the prior value intact on a not_confirmed/unavailable response, so a
+    row's last-confirmed time is preserved until a fresh confirmation replaces it.
 
     Returns:
         Number of locations successfully standardized.
@@ -410,6 +424,7 @@ async def backfill_addresses(
         logger.error("No API key configured for address validation")
         return 0
 
+    ttl_cutoff = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS)
     rows = (
         (
             await conn.execute(
@@ -417,6 +432,7 @@ async def backfill_addresses(
                 .where(
                     (locations.c.address_standardized_at.is_(None))
                     | (locations.c.address_validated_at.is_(None))
+                    | (locations.c.address_validated_at < ttl_cutoff)
                 )
                 .where(locations.c.raw_address.isnot(None))
                 .where(locations.c.raw_address != "")

@@ -19,7 +19,9 @@ from wslcb_licensing_tracker.address_client import (
     validate,
 )
 from wslcb_licensing_tracker.address_validator import (
+    VALIDATION_TTL_DAYS,
     _validate_batch,
+    backfill_addresses,
     process_location,
     standardize_location,
     validate_location,
@@ -768,3 +770,69 @@ class TestValidateBatch:
         assert statuses[loc_before] is None  # rolled back
         assert statuses[loc_abort] is None  # never updated
         assert statuses[loc_after] == "recovered_ok"  # committed after recovery
+
+
+# ---------------------------------------------------------------------------
+# backfill_addresses — TTL-based renewal of already-validated locations (#150)
+# ---------------------------------------------------------------------------
+
+
+class TestBackfillTTL:
+    """The weekly backfill also renews validations older than VALIDATION_TTL_DAYS.
+
+    Uses pg_engine because backfill_addresses -> _validate_batch commits internally.
+    process_location is mocked to capture exactly which location ids the selector
+    surfaces, without hitting the address API.
+    """
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_selects_stale_and_null_skips_fresh(self, pg_engine):
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        now = datetime.now(UTC)
+        stale = now - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        fresh = now - timedelta(days=VALIDATION_TTL_DAYS - 1)
+
+        async with pg_engine.connect() as conn:
+            loc_stale = await get_or_create_location(conn, "1 STALE ST, SEATTLE, WA 98101")
+            loc_fresh = await get_or_create_location(conn, "2 FRESH ST, SEATTLE, WA 98102")
+            loc_null = await get_or_create_location(conn, "3 NEVER ST, SEATTLE, WA 98103")
+            # stale: fully processed but validated long ago -> must be renewed
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == loc_stale)
+                .values(address_standardized_at=stale, address_validated_at=stale)
+            )
+            # fresh: fully processed recently -> must be skipped
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == loc_fresh)
+                .values(address_standardized_at=fresh, address_validated_at=fresh)
+            )
+            # null: never validated -> must be selected (existing behavior)
+            await conn.commit()
+
+        processed: list[int] = []
+
+        async def mock_process(conn, location_id, address, client=None):
+            processed.append(location_id)
+            return True
+
+        async with pg_engine.connect() as conn:
+            with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.get_api_key",
+                    return_value="test-key",
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.process_location",
+                    side_effect=mock_process,
+                ),
+            ):
+                await backfill_addresses(conn, rate_limit=0)
+
+        assert loc_stale in processed  # renewed past TTL
+        assert loc_null in processed  # never validated
+        assert loc_fresh not in processed  # still within TTL
