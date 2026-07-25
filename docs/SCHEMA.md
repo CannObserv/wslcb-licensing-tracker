@@ -22,7 +22,8 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `dpv_match_code` — USPS DPV match code (e.g., `Y` = confirmed, `S` = correctable, `D` = missing secondary, `N` = not confirmed); NULL if not yet validated
 - `latitude` — WGS84 latitude from the address validator; NULL if not confirmed
 - `longitude` — WGS84 longitude from the address validator; NULL if not confirmed
-- `address_validated_at` — TIMESTAMPTZ of when the address was confirmed (i.e., provider returned `address_line_1`); NULL = not yet confirmed (includes `not_confirmed` and `unavailable` responses)
+- `address_validated_at` — TIMESTAMPTZ of the last time a `/validate` call **confirmed** this address (provenance). NULL = never confirmed. Written only on a confirmed response; never cleared or written on failure, so a later not_confirmed re-check does not blank it (#150)
+- `address_validation_attempted_at` — TIMESTAMPTZ of the last `/validate` call for this row, **regardless of outcome** (scheduling). This — not `address_validated_at` — is the TTL renewal key (`backfill_addresses` re-checks rows whose attempt is older than `VALIDATION_TTL_DAYS`), and its count since start-of-UTC-day is the exact daily call total used for the `DAILY_VALIDATION_LIMIT` ceiling. Not set by standardize-only (validation-disabled) runs. Added by Alembic revision `0005`; backfilled from `address_validated_at` (#150)
 - Most `std_*` columns default to empty string; `std_address_line_2` is nullable (NULL = no second line; query layer normalises via `COALESCE`). `validated_address`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are also nullable
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
 - `get_or_create_location()` in `db.py` handles the upsert logic (uses `_normalize_raw_address()` from `text_utils.py`)

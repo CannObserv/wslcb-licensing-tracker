@@ -49,6 +49,7 @@ locations = Table(
     Column("longitude", Float),
     Column("address_standardized_at", DateTime(timezone=True)),
     Column("address_validated_at", DateTime(timezone=True)),
+    Column("address_validation_attempted_at", DateTime(timezone=True)),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint("raw_address", name="uq_locations_raw_address"),
     Index("idx_locations_city", "city"),

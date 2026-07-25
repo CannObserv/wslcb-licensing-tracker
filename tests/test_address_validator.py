@@ -19,6 +19,7 @@ from wslcb_licensing_tracker.address_client import (
     validate,
 )
 from wslcb_licensing_tracker.address_validator import (
+    DAILY_VALIDATION_LIMIT,
     VALIDATION_TTL_DAYS,
     _validate_batch,
     backfill_addresses,
@@ -178,11 +179,19 @@ class TestValidateLocation:
             result = await validate_location(pg_conn, loc_id, "789 PINE ST, TACOMA, WA 98401")
         assert result is True
         row = (
-            await pg_conn.execute(
-                select(locations.c.address_validated_at).where(locations.c.id == loc_id)
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
             )
-        ).scalar_one()
-        assert row is not None
+            .mappings()
+            .one()
+        )
+        assert row["address_validated_at"] is not None
+        assert row["address_validation_attempted_at"] is not None
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_api_error(self, pg_conn):
@@ -219,9 +228,11 @@ class TestValidateLocation:
         row = (
             (
                 await pg_conn.execute(
-                    select(locations.c.validation_status, locations.c.address_validated_at).where(
-                        locations.c.id == loc_id
-                    )
+                    select(
+                        locations.c.validation_status,
+                        locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
                 )
             )
             .mappings()
@@ -229,6 +240,7 @@ class TestValidateLocation:
         )
         assert row["validation_status"] == "not_confirmed"
         assert row["address_validated_at"] is None
+        assert row["address_validation_attempted_at"] is not None
 
 
 class TestParseRetryAfter:
@@ -500,6 +512,7 @@ class TestProcessLocation:
                         locations.c.latitude,
                         locations.c.address_standardized_at,
                         locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
                     ).where(locations.c.id == loc_id)
                 )
             )
@@ -513,6 +526,7 @@ class TestProcessLocation:
         assert row["latitude"] == 47.0379
         assert row["address_standardized_at"] is not None
         assert row["address_validated_at"] is not None
+        assert row["address_validation_attempted_at"] is not None
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_validation_off_calls_standardize_only(self, pg_conn):
@@ -549,6 +563,7 @@ class TestProcessLocation:
                         locations.c.validation_status,
                         locations.c.address_standardized_at,
                         locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
                     ).where(locations.c.id == loc_id)
                 )
             )
@@ -559,6 +574,8 @@ class TestProcessLocation:
         assert row["validation_status"] == "standardized"
         assert row["address_standardized_at"] is not None
         assert row["address_validated_at"] is None  # not set when validation off
+        # standardize is not a validation attempt — attempted_at stays NULL
+        assert row["address_validation_attempted_at"] is None
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_not_confirmed_writes_status_only(self, pg_conn):
@@ -587,6 +604,7 @@ class TestProcessLocation:
                     select(
                         locations.c.validation_status,
                         locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
                     ).where(locations.c.id == loc_id)
                 )
             )
@@ -595,6 +613,75 @@ class TestProcessLocation:
         )
         assert row["validation_status"] == "not_confirmed"
         assert row["address_validated_at"] is None
+        # a validation was attempted even though it did not confirm
+        assert row["address_validation_attempted_at"] is not None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_renewal_not_confirmed_is_non_destructive(self, pg_conn):
+        """Re-checking an already-confirmed row that now returns not_confirmed must
+        preserve std_* and address_validated_at, update status/dpv, and bump
+        address_validation_attempted_at (#150)."""
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        loc_id = await get_or_create_location(pg_conn, "1 CONFIRMED WAY, SEATTLE, WA 98101")
+        old = datetime.now(UTC) - timedelta(days=200)
+        # Seed a prior good confirmation.
+        await pg_conn.execute(
+            update(locations)
+            .where(locations.c.id == loc_id)
+            .values(
+                std_address_line_1="1 CONFIRMED WAY",
+                std_address_string="1 CONFIRMED WAY, SEATTLE WA 98101",
+                validation_status="confirmed",
+                dpv_match_code="Y",
+                address_standardized_at=old,
+                address_validated_at=old,
+                address_validation_attempted_at=old,
+            )
+        )
+        mock_result = {
+            "address_line_1": "",  # not_confirmed on re-check
+            "validation": {"status": "not_confirmed", "dpv_match_code": "N"},
+        }
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.address_validator.validate",
+                return_value=mock_result,
+            ),
+        ):
+            result = await process_location(pg_conn, loc_id, "1 CONFIRMED WAY, SEATTLE, WA 98101")
+        assert result is False
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.std_address_line_1,
+                        locations.c.std_address_string,
+                        locations.c.validation_status,
+                        locations.c.dpv_match_code,
+                        locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        # non-destructive: prior confirmation data preserved
+        assert row["std_address_line_1"] == "1 CONFIRMED WAY"
+        assert row["std_address_string"] == "1 CONFIRMED WAY, SEATTLE WA 98101"
+        assert row["address_validated_at"] == old
+        # re-check outcome recorded
+        assert row["validation_status"] == "not_confirmed"
+        assert row["dpv_match_code"] == "N"
+        # attempted_at bumped so the row backs off a full TTL instead of churning
+        assert row["address_validation_attempted_at"] > old
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
@@ -778,15 +865,26 @@ class TestValidateBatch:
 
 
 class TestBackfillTTL:
-    """The weekly backfill also renews validations older than VALIDATION_TTL_DAYS.
+    """backfill_addresses renews validations older than VALIDATION_TTL_DAYS, keyed
+    on address_validation_attempted_at, mode-aware, and bounded by a daily ceiling.
 
     Uses pg_engine because backfill_addresses -> _validate_batch commits internally.
-    process_location is mocked to capture exactly which location ids the selector
-    surfaces, without hitting the address API.
+    process_location is mocked to capture which location ids the selector surfaces
+    (and to leave attempted_at untouched, so the ceiling math is deterministic).
     """
 
+    @staticmethod
+    def _capture():
+        processed: list[int] = []
+
+        async def mock_process(conn, location_id, address, client=None):
+            processed.append(location_id)
+            return True
+
+        return processed, mock_process
+
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_selects_stale_and_null_skips_fresh(self, pg_engine):
+    async def test_enabled_selects_stale_and_null_skips_fresh(self, pg_engine):
         from datetime import timedelta
 
         from wslcb_licensing_tracker.address_validator import UTC, datetime
@@ -799,29 +897,28 @@ class TestBackfillTTL:
             loc_stale = await get_or_create_location(conn, "1 STALE ST, SEATTLE, WA 98101")
             loc_fresh = await get_or_create_location(conn, "2 FRESH ST, SEATTLE, WA 98102")
             loc_null = await get_or_create_location(conn, "3 NEVER ST, SEATTLE, WA 98103")
-            # stale: fully processed but validated long ago -> must be renewed
+            # stale: attempted long ago -> must be renewed
             await conn.execute(
                 update(locations)
                 .where(locations.c.id == loc_stale)
-                .values(address_standardized_at=stale, address_validated_at=stale)
+                .values(address_standardized_at=stale, address_validation_attempted_at=stale)
             )
-            # fresh: fully processed recently -> must be skipped
+            # fresh: attempted recently -> must be skipped
             await conn.execute(
                 update(locations)
                 .where(locations.c.id == loc_fresh)
-                .values(address_standardized_at=fresh, address_validated_at=fresh)
+                .values(address_standardized_at=fresh, address_validation_attempted_at=fresh)
             )
-            # null: never validated -> must be selected (existing behavior)
+            # null: never attempted -> must be selected
             await conn.commit()
 
-        processed: list[int] = []
-
-        async def mock_process(conn, location_id, address, client=None):
-            processed.append(location_id)
-            return True
-
+        processed, mock_process = self._capture()
         async with pg_engine.connect() as conn:
             with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                    return_value=True,
+                ),
                 patch(
                     "wslcb_licensing_tracker.address_validator.get_api_key",
                     return_value="test-key",
@@ -834,5 +931,191 @@ class TestBackfillTTL:
                 await backfill_addresses(conn, rate_limit=0)
 
         assert loc_stale in processed  # renewed past TTL
-        assert loc_null in processed  # never validated
+        assert loc_null in processed  # never attempted
         assert loc_fresh not in processed  # still within TTL
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_enabled_ignores_stale_standardized_when_recently_attempted(self, pg_engine):
+        """A not_confirmed row (std_at NULL) with a recent attempt must NOT re-select
+        while validation is enabled — attempted_at, not standardized_at, is the key."""
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        recent = datetime.now(UTC) - timedelta(days=1)
+        async with pg_engine.connect() as conn:
+            loc = await get_or_create_location(conn, "9 NOSTD RD, SEATTLE, WA 98199")
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == loc)
+                .values(
+                    validation_status="not_confirmed",
+                    address_standardized_at=None,
+                    address_validation_attempted_at=recent,
+                )
+            )
+            await conn.commit()
+
+        processed, mock_process = self._capture()
+        async with pg_engine.connect() as conn:
+            with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                    return_value=True,
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.get_api_key",
+                    return_value="test-key",
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.process_location",
+                    side_effect=mock_process,
+                ),
+            ):
+                await backfill_addresses(conn, rate_limit=0)
+
+        assert loc not in processed  # no churn despite std_at NULL
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_disabled_selects_on_standardized_at(self, pg_engine):
+        """Validation disabled: key on standardized_at IS NULL, not attempted_at."""
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        async with pg_engine.connect() as conn:
+            loc_unstd = await get_or_create_location(conn, "4 UNSTD ST, SEATTLE, WA 98104")
+            loc_std = await get_or_create_location(conn, "5 STD ST, SEATTLE, WA 98105")
+            # std done + attempt stale: irrelevant to disabled mode -> must be skipped
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == loc_std)
+                .values(address_standardized_at=stale, address_validation_attempted_at=stale)
+            )
+            await conn.commit()
+
+        processed, mock_process = self._capture()
+        async with pg_engine.connect() as conn:
+            with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                    return_value=False,
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.get_api_key",
+                    return_value="test-key",
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.process_location",
+                    side_effect=mock_process,
+                ),
+            ):
+                await backfill_addresses(conn, rate_limit=0)
+
+        assert loc_unstd in processed  # never standardized
+        assert loc_std not in processed  # standardized already; attempted_at irrelevant
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_daily_ceiling_clamps_to_remaining_budget(self, pg_engine):
+        from datetime import timedelta
+
+        from sqlalchemy import func
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        async with pg_engine.connect() as conn:
+            used_before = (
+                await conn.execute(
+                    select(func.count())
+                    .select_from(locations)
+                    .where(locations.c.address_validation_attempted_at >= day_start)
+                )
+            ).scalar_one()
+            eligible = []
+            for i in range(5):
+                addr = f"{600 + i} CEIL ST, SEATTLE, WA 981{i:02}"
+                lid = await get_or_create_location(conn, addr)
+                await conn.execute(
+                    update(locations)
+                    .where(locations.c.id == lid)
+                    .values(address_standardized_at=stale, address_validation_attempted_at=stale)
+                )
+                eligible.append(lid)
+            await conn.commit()
+
+        cap = 3
+        processed, mock_process = self._capture()
+        async with pg_engine.connect() as conn:
+            with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                    return_value=True,
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.get_api_key",
+                    return_value="test-key",
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.process_location",
+                    side_effect=mock_process,
+                ),
+            ):
+                # budget = daily_limit - used_before = cap
+                await backfill_addresses(conn, rate_limit=0, daily_limit=used_before + cap)
+
+        assert len(processed) == cap  # LIMIT clamped to remaining budget
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_daily_ceiling_zero_budget_processes_nothing(self, pg_engine):
+        from datetime import timedelta
+
+        from sqlalchemy import func
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        async with pg_engine.connect() as conn:
+            lid = await get_or_create_location(conn, "700 ZERO ST, SEATTLE, WA 98107")
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == lid)
+                .values(address_standardized_at=stale, address_validation_attempted_at=stale)
+            )
+            await conn.commit()
+            used_before = (
+                await conn.execute(
+                    select(func.count())
+                    .select_from(locations)
+                    .where(locations.c.address_validation_attempted_at >= day_start)
+                )
+            ).scalar_one()
+
+        processed, mock_process = self._capture()
+        async with pg_engine.connect() as conn:
+            with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                    return_value=True,
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.get_api_key",
+                    return_value="test-key",
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.process_location",
+                    side_effect=mock_process,
+                ),
+            ):
+                await backfill_addresses(conn, rate_limit=0, daily_limit=used_before)
+
+        assert processed == []  # zero budget -> nothing processed
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_default_daily_limit_is_constant(self):
+        assert DAILY_VALIDATION_LIMIT == 5000

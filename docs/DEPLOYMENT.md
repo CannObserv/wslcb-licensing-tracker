@@ -71,16 +71,33 @@ External API at `https://address-validator.exe.xyz:8000`.
 - `ENABLE_ADDRESS_VALIDATION=true` enables DPV validation; otherwise only standardization runs
 - Services load env via `EnvironmentFile=/etc/wslcb-licensing-tracker/.env`
 
-### Renewal TTL (#150)
+### Renewal TTL + pacing (#150)
 
-Validated addresses are not frozen forever. `backfill-addresses` also renews any
-location whose `address_validated_at` is older than `VALIDATION_TTL_DAYS`
-(180 days, in `address_validator.py`), so upstream validator/USPS improvements get
-picked up by the weekly timer without manual intervention. The `address_validated_at`
-timestamp is **never cleared** to trigger renewal — a confirmed re-validation
-overwrites it in place, and a not_confirmed/unavailable response leaves the prior
-value intact. To renew on demand outside the TTL (e.g. a single known-stale row),
-use `refresh-addresses --location-ids`.
+Validated addresses are not frozen forever. `backfill-addresses` runs **after
+every scrape (twice daily)** and on the **weekly timer**; it renews any location
+whose `address_validation_attempted_at` is older than `VALIDATION_TTL_DAYS`
+(180 days, in `address_validator.py`), oldest first, so upstream validator/USPS
+improvements are picked up without manual intervention.
+
+Scheduling keys on `address_validation_attempted_at` (stamped on every `/validate`
+call, pass or fail), **not** `address_validated_at` (which stays pure
+"last confirmed" provenance). So each row is re-checked at most once per TTL, and a
+not_confirmed/unavailable re-check is **non-destructive** — it leaves `std_*` and
+`address_validated_at` intact and simply records the attempt.
+
+**Pacing + daily ceiling** keep us inside upstream limits (USPS 10K/day; a 429 falls
+over to Google at 160/day):
+
+- `--rate-limit` defaults to **1.0** (1 req/s).
+- `DAILY_VALIDATION_LIMIT = 5000` caps `/validate` calls per UTC day across all
+  automatic runs combined (both scrape hooks + the weekly timer). The cap is
+  measured by counting rows with `attempted_at >= start-of-UTC-day`, so a manual
+  `refresh-addresses` run the same day also counts against it.
+
+Because the initial ~59K validated rows come due in a tight window, the ceiling
+spreads the first renewal wave over ~12 days rather than one giant run. To renew on
+demand outside the TTL (e.g. a single known-stale row), use
+`refresh-addresses --location-ids` (manual, **not** daily-capped).
 
 ### Common address commands
 

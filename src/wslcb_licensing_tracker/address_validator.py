@@ -21,7 +21,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .address_client import (
@@ -38,12 +38,20 @@ logger = logging.getLogger(__name__)
 ISO_ALPHA2_LEN = 2
 
 # Renewal TTL for validated addresses (#150). A location whose
-# address_validated_at is older than this is re-validated by the weekly
-# backfill so upstream validator/USPS improvements are picked up. The
-# validated_at timestamp is never cleared to trigger renewal — a successful
-# re-validation overwrites it in place; a failed one leaves the prior value
-# intact (see validate_location / process_location).
+# address_validation_attempted_at is older than this is re-validated by the
+# backfill (post-scrape, twice daily, and the weekly timer) so upstream
+# validator/USPS improvements are picked up. Scheduling keys on attempted_at,
+# not validated_at, so a row is re-checked at most once per TTL whether the
+# check confirms or not — and a failed re-check never degrades the prior
+# confirmation (see validate_location / process_location).
 VALIDATION_TTL_DAYS = 180
+
+# Upper bound on /validate calls per UTC day across all automatic backfill runs
+# (both twice-daily post-scrape hooks and the weekly timer share it). Kept well
+# under the upstream USPS 10K/day cap so we never 429 into the Google fallback
+# (160/day). attempted_at is stamped on every call, so counting rows with
+# attempted_at >= start-of-day is an exact same-day call count. #150.
+DAILY_VALIDATION_LIMIT = 5000
 
 
 def _sanitize_country(raw: str) -> str:
@@ -124,9 +132,11 @@ async def validate_location(
     the flag is off.
 
     On confirmed/corrected response: overlays std_* columns, validation_status,
-    dpv_match_code, latitude, longitude, and sets address_validated_at.
-    On not_confirmed/unavailable: writes validation_status and dpv_match_code
-    only, leaves address_validated_at NULL for retry.
+    dpv_match_code, latitude, longitude, and sets both address_validated_at and
+    address_validation_attempted_at.
+    On not_confirmed/unavailable: writes validation_status, dpv_match_code, and
+    address_validation_attempted_at only — std_* and address_validated_at are
+    left intact so a failed re-check never degrades a prior confirmation (#150).
 
     Does NOT commit — the caller is responsible for committing.
 
@@ -180,15 +190,21 @@ async def validate_location(
                     longitude=result.get("longitude"),
                     address_standardized_at=datetime.now(UTC),
                     address_validated_at=datetime.now(UTC),
+                    address_validation_attempted_at=datetime.now(UTC),
                 )
             )
             return True
 
-        # not_confirmed or unavailable — store status, leave address_validated_at NULL
+        # not_confirmed or unavailable — record the attempt and status, but leave
+        # std_* and address_validated_at intact (non-destructive; #150).
         await conn.execute(
             update(locations)
             .where(locations.c.id == location_id)
-            .values(validation_status=status, dpv_match_code=dpv)
+            .values(
+                validation_status=status,
+                dpv_match_code=dpv,
+                address_validation_attempted_at=datetime.now(UTC),
+            )
         )
     except Exception:
         logger.exception("Failed to update location %d during validate", location_id)
@@ -205,10 +221,12 @@ async def process_location(
     """Smart dispatcher: standardize and/or validate a location in one API call.
 
     When ENABLE_ADDRESS_VALIDATION is on, calls ``/validate`` which returns a
-    superset of ``/standardize`` — writing all std_* columns, validation fields,
-    and both timestamps in a single round-trip.
+    superset of ``/standardize``. address_validation_attempted_at is always
+    stamped on the /validate call; a confirmed result also overlays std_* and
+    address_validated_at, while a not_confirmed/unavailable result leaves those
+    intact (non-destructive re-check; #150).
 
-    When validation is off, calls ``/standardize`` only.
+    When validation is off, calls ``/standardize`` only (no attempted_at).
 
     Does NOT commit — the caller is responsible for committing.
 
@@ -253,15 +271,21 @@ async def process_location(
                         longitude=result.get("longitude"),
                         address_standardized_at=datetime.now(UTC),
                         address_validated_at=datetime.now(UTC),
+                        address_validation_attempted_at=datetime.now(UTC),
                     )
                 )
                 return True
 
-            # not_confirmed or unavailable — store status only
+            # not_confirmed or unavailable — record the attempt and status, but leave
+            # std_* and address_validated_at intact (non-destructive; #150).
             await conn.execute(
                 update(locations)
                 .where(locations.c.id == location_id)
-                .values(validation_status=status, dpv_match_code=dpv)
+                .values(
+                    validation_status=status,
+                    dpv_match_code=dpv,
+                    address_validation_attempted_at=datetime.now(UTC),
+                )
             )
         except Exception:
             logger.exception("Failed to update location %d during process", location_id)
@@ -404,18 +428,26 @@ async def _validate_batch(
 async def backfill_addresses(
     conn: AsyncConnection,
     batch_size: int = 100,
-    rate_limit: float = 0.5,
+    rate_limit: float = 1.0,
+    daily_limit: int = DAILY_VALIDATION_LIMIT,
 ) -> int:
     """Standardize (and optionally validate) locations that need processing.
 
-    Queries all locations that are either not yet fully processed
-    (address_standardized_at IS NULL or address_validated_at IS NULL) or whose
-    validation has aged past VALIDATION_TTL_DAYS and is due for renewal (#150).
+    Mode-aware selection (#150):
 
-    Renewal reads address_validated_at to find stale rows; it never clears the
-    timestamp. process_location overwrites it on a confirmed re-validation and
-    leaves the prior value intact on a not_confirmed/unavailable response, so a
-    row's last-confirmed time is preserved until a fresh confirmation replaces it.
+    * Validation enabled — selects rows never attempted
+      (address_validation_attempted_at IS NULL) or whose last attempt has aged
+      past VALIDATION_TTL_DAYS, oldest first, capped at the remaining daily
+      budget. Scheduling keys on attempted_at (not std/validated_at) so a row is
+      re-checked at most once per TTL and a not_confirmed re-check does not churn.
+    * Validation disabled — selects rows never standardized
+      (address_standardized_at IS NULL); attempted_at is never written in this
+      mode so it cannot be the scheduling key.
+
+    The daily ceiling (validation-enabled path only) bounds /validate calls per
+    UTC day across all automatic runs to stay within upstream limits. attempted_at
+    is stamped on every call, so counting rows attempted since start-of-day is an
+    exact same-day call count shared with any manual refresh run.
 
     Returns:
         Number of locations successfully standardized.
@@ -424,23 +456,43 @@ async def backfill_addresses(
         logger.error("No API key configured for address validation")
         return 0
 
-    ttl_cutoff = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS)
-    rows = (
-        (
-            await conn.execute(
-                select(locations.c.id, locations.c.raw_address)
-                .where(
-                    (locations.c.address_standardized_at.is_(None))
-                    | (locations.c.address_validated_at.is_(None))
-                    | (locations.c.address_validated_at < ttl_cutoff)
-                )
-                .where(locations.c.raw_address.isnot(None))
-                .where(locations.c.raw_address != "")
-            )
-        )
-        .mappings()
-        .all()
+    base = select(locations.c.id, locations.c.raw_address).where(
+        locations.c.raw_address.isnot(None), locations.c.raw_address != ""
     )
+
+    if not is_validation_enabled():
+        # Standardize-only: attempted_at is never set here, so key on std_at.
+        stmt = base.where(locations.c.address_standardized_at.is_(None))
+    else:
+        now = datetime.now(UTC)
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        used_today = (
+            await conn.execute(
+                select(func.count())
+                .select_from(locations)
+                .where(locations.c.address_validation_attempted_at >= day_start)
+            )
+        ).scalar_one()
+        budget = max(0, daily_limit - used_today)
+        if budget == 0:
+            logger.info(
+                "Daily validation limit reached (%d used of %d); skipping backfill",
+                used_today,
+                daily_limit,
+            )
+            return 0
+
+        ttl_cutoff = now - timedelta(days=VALIDATION_TTL_DAYS)
+        stmt = (
+            base.where(
+                (locations.c.address_validation_attempted_at.is_(None))
+                | (locations.c.address_validation_attempted_at < ttl_cutoff)
+            )
+            .order_by(locations.c.address_validation_attempted_at.asc().nulls_first())
+            .limit(budget)
+        )
+
+    rows = (await conn.execute(stmt)).mappings().all()
 
     return await _validate_batch(
         conn,
