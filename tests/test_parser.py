@@ -663,6 +663,17 @@ class TestDiffMergeBoundary:
     def _by_license(self, recs, lic):
         return next((r for r in recs if r["license_number"] == lic), None)
 
+    @staticmethod
+    def _table_from_rows(rows):
+        """Build a <table> of two-cell <tr> label/value rows, as the diff parser
+        sees a changed-only line stream (see parse_html_lines)."""
+        html = (
+            "<table>"
+            + "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
+            + "</table>"
+        )
+        return BeautifulSoup(html, "lxml").find("table")
+
     def test_no_hybrid_record(self):
         """No record pairs block A's business name with block B's license."""
         recs = self._records()
@@ -709,13 +720,7 @@ class TestDiffMergeBoundary:
             ("License Number:", "222222"),
             ("Contact Phone:", "2065550222"),
         ]
-        html = (
-            "<table>"
-            + "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
-            + "</table>"
-        )
-        table = BeautifulSoup(html, "lxml").find("table")
-        recs = parse_records_from_table(table, "approved")
+        recs = parse_records_from_table(self._table_from_rows(rows), "approved")
         # No record may pair block A's name with block B's license.
         assert not [
             r
@@ -743,14 +748,9 @@ class TestDiffMergeBoundary:
             ("Application Type:", "ADDED/CHANGE OF CLASS/IN LIEU"),
             ("Contact Phone:", "2065550222"),
         ]
-        html = (
-            "<table>"
-            + "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
-            + "</table>"
-        )
-        table = BeautifulSoup(html, "lxml").find("table")
-        recs = parse_records_from_table(table, "approved")
-        a = next(r for r in recs if r["license_number"] == "111111")
+        recs = parse_records_from_table(self._table_from_rows(rows), "approved")
+        a = self._by_license(recs, "111111")
+        assert a is not None
         assert a["business_location"] == "111 FIRST ST,  SEATTLE, WA 98101"
         assert a["license_type"] == "391, CANNABIS PRODUCER TIER 2"
         assert a["city"] == "SEATTLE"
@@ -776,13 +776,7 @@ class TestDiffMergeBoundary:
             ("License Number:", "078123"),
             ("Contact Phone:", "2065550178"),
         ]
-        html = (
-            "<table>"
-            + "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
-            + "</table>"
-        )
-        table = BeautifulSoup(html, "lxml").find("table")
-        recs = parse_records_from_table(table, "new_application")
+        recs = parse_records_from_table(self._table_from_rows(rows), "new_application")
         assert len(recs) == 1
         r = recs[0]
         assert r["business_name"] == "NEW LEAF DISPENSARY"
