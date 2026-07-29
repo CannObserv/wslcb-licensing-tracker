@@ -168,7 +168,9 @@ def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dis
         # value means a new block began without its date row (dropped diff
         # context). Flush the completed block (if it reached a license number)
         # and restart so the two blocks don't merge into a hybrid. Incomplete
-        # fragments are recovered by the supplemental with-context pass.
+        # fragments are recovered by the supplemental with-context pass. The
+        # comparison is exact-string: WSLCB emits each field once per block with
+        # a stable value, so this never fires spuriously within one real block.
         prim = _PRIMARY_FIELD.get(label)
         if prim and current.get(prim) and current[prim] != value:
             if current.get("license_number"):
@@ -423,6 +425,13 @@ def extract_records_from_diff(filepath: Path, section_type: str) -> list[dict]:
     docstring.  The supplemental (with-context) pass is only run when the
     primary pass produced incomplete records at hunk boundaries, keeping
     overall parse time low.
+
+    ``parse_records_from_table`` also emits boundary-split fragments: when a
+    later block's date/name rows were unchanged context (absent from the
+    changed-only stream), its remaining fields are detected as a new block via
+    field-overwrite rather than being merged into the preceding record. The
+    dateless fragment is invalid on the primary pass and recovered here by the
+    supplemental pass. See ``parse_records_from_table`` for the mechanism.
 
     Transparently falls back to a ``.txt.gz`` sibling when *filepath* itself
     doesn't exist, mirroring ``_read_snapshot``'s compression tolerance.

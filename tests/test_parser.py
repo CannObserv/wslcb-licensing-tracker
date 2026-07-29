@@ -723,6 +723,74 @@ class TestDiffMergeBoundary:
             if r["business_name"] == "AAA PRODUCERS LLC" and r["license_number"] == "222222"
         ]
 
+    def test_class_b_location_and_type_not_borrowed(self):
+        """Class-B case: block B's differing location/type must NOT overwrite
+        block A when block B carries no second License Number (its own date,
+        name and license rows were unchanged context). Block A must keep its own
+        location and type; nothing may pair block A's license with block B's
+        location/type."""
+        rows = [
+            ("Approved Date:", "6/15/2025"),
+            ("Business Name:", "AAA PRODUCERS LLC"),
+            ("Business Location:", "111 FIRST ST,  SEATTLE, WA 98101"),
+            ("License Type:", "391, CANNABIS PRODUCER TIER 2"),
+            ("Application Type:", "ADDED FEES"),
+            ("License Number:", "111111"),
+            ("Contact Phone:", "2065550111"),
+            # block B: only its later fields present (date/name/license context):
+            ("Business Location:", "222 SECOND AVE,  BELLINGHAM, WA 98226"),
+            ("License Type:", "394, CANNABIS RETAILER"),
+            ("Application Type:", "ADDED/CHANGE OF CLASS/IN LIEU"),
+            ("Contact Phone:", "2065550222"),
+        ]
+        html = (
+            "<table>"
+            + "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
+            + "</table>"
+        )
+        table = BeautifulSoup(html, "lxml").find("table")
+        recs = parse_records_from_table(table, "approved")
+        a = next(r for r in recs if r["license_number"] == "111111")
+        assert a["business_location"] == "111 FIRST ST,  SEATTLE, WA 98101"
+        assert a["license_type"] == "391, CANNABIS PRODUCER TIER 2"
+        assert a["city"] == "SEATTLE"
+        assert not [
+            r
+            for r in recs
+            if r["license_number"] == "111111" and r["license_type"] == "394, CANNABIS RETAILER"
+        ]
+
+    def test_new_current_pairs_do_not_split_a_single_block(self):
+        """The New/Current field pairs map to distinct keys, so an ASSUMPTION
+        block (which legitimately carries both) is parsed as ONE record even
+        though the same logical position appears twice — the overwrite boundary
+        check must not fire on them."""
+        rows = [
+            ("Notification Date:", "6/15/2025"),
+            ("New Business Name:", "NEW LEAF DISPENSARY"),
+            ("Current Business Name:", "OLD SMOKE SHOP"),
+            ("New Applicant(s):", "NEW LEAF DISPENSARY; CAROL NEWBY"),
+            ("Current Applicant(s):", "OLD SMOKE SHOP; ALICE OLDEN"),
+            ("License Type:", "CANNABIS RETAILER"),
+            ("Application Type:", "ASSUMPTION"),
+            ("License Number:", "078123"),
+            ("Contact Phone:", "2065550178"),
+        ]
+        html = (
+            "<table>"
+            + "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
+            + "</table>"
+        )
+        table = BeautifulSoup(html, "lxml").find("table")
+        recs = parse_records_from_table(table, "new_application")
+        assert len(recs) == 1
+        r = recs[0]
+        assert r["business_name"] == "NEW LEAF DISPENSARY"
+        assert r["previous_business_name"] == "OLD SMOKE SHOP"
+        assert r["applicants"] == "NEW LEAF DISPENSARY; CAROL NEWBY"
+        assert r["previous_applicants"] == "OLD SMOKE SHOP; ALICE OLDEN"
+        assert r["license_number"] == "078123"
+
 
 class TestExtractRecordsFromDiffGz:
     def test_reads_gz_directly(self, tmp_path):
