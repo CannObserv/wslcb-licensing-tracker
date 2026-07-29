@@ -644,6 +644,86 @@ class TestParseDiffTimestamp:
 # ── extract_records_from_diff (.gz support) ──────────────────────────
 
 
+class TestDiffMergeBoundary:
+    """Regression tests for the cross-record merge bug (#150 follow-up).
+
+    When a diff's changed-lines-only stream omits a later block's
+    ``Approved Date:`` / ``Business Name:`` rows (because they were unchanged
+    context), that block's remaining changed fields must NOT be merged into the
+    preceding record's accumulator. Doing so produced hybrid records: one
+    entity's name/date glued onto another license's number/type/location
+    (e.g. real record 31982 — 'TTL HOLDINGS LLC' stamped on the '2020 CANNABIS
+    SOLUTIONS' retailer license 355469).
+    """
+
+    def _records(self):
+        src = FIXTURES_DIR / "diff_merge_hybrid.txt"
+        return extract_records_from_diff(src, "approved")
+
+    def _by_license(self, recs, lic):
+        return next((r for r in recs if r["license_number"] == lic), None)
+
+    def test_no_hybrid_record(self):
+        """No record pairs block A's business name with block B's license."""
+        recs = self._records()
+        hybrids = [
+            r
+            for r in recs
+            if r["license_number"] == "222222" and r["business_name"] == "AAA PRODUCERS LLC"
+        ]
+        assert hybrids == [], f"hybrid record leaked: {hybrids}"
+
+    def test_block_a_intact(self):
+        """Block A keeps its own license and fields."""
+        a = self._by_license(self._records(), "111111")
+        assert a is not None
+        assert a["business_name"] == "AAA PRODUCERS LLC"
+        assert a["record_date"] == "2025-06-15"
+        assert a["license_type"] == "391, CANNABIS PRODUCER TIER 2"
+
+    def test_block_b_recovered_correctly(self):
+        """Block B is recovered via the context pass with its own name."""
+        b = self._by_license(self._records(), "222222")
+        assert b is not None
+        assert b["business_name"] == "BBB RETAIL INC"
+        assert b["record_date"] == "2025-06-14"
+
+    def test_no_merge_when_block_a_license_is_context(self):
+        """Boundary is detected even when block A's own License Number row was
+        unchanged context (dropped from the changed-only stream), so the trigger
+        can't rely on license_number being set. An overwritten field (here the
+        business location) marks the new block."""
+        # Simulates the added-line stream: block A has no License Number row
+        # (it was context), block B follows with only its later fields present.
+        rows = [
+            ("Approved Date:", "6/15/2025"),
+            ("Business Name:", "AAA PRODUCERS LLC"),
+            ("Business Location:", "111 FIRST ST,  SEATTLE, WA 98101"),
+            ("License Type:", "391, CANNABIS PRODUCER TIER 2"),
+            ("Application Type:", "ADDED FEES"),
+            ("Contact Phone:", "2065550111"),
+            # block B (date/name were context, dropped):
+            ("Business Location:", "222 SECOND AVE,  BELLINGHAM, WA 98226"),
+            ("License Type:", "394, CANNABIS RETAILER"),
+            ("Application Type:", "ADDED/CHANGE OF CLASS/IN LIEU"),
+            ("License Number:", "222222"),
+            ("Contact Phone:", "2065550222"),
+        ]
+        html = (
+            "<table>"
+            + "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
+            + "</table>"
+        )
+        table = BeautifulSoup(html, "lxml").find("table")
+        recs = parse_records_from_table(table, "approved")
+        # No record may pair block A's name with block B's license.
+        assert not [
+            r
+            for r in recs
+            if r["business_name"] == "AAA PRODUCERS LLC" and r["license_number"] == "222222"
+        ]
+
+
 class TestExtractRecordsFromDiffGz:
     def test_reads_gz_directly(self, tmp_path):
         """extract_records_from_diff reads a .txt.gz file when given its path."""
