@@ -283,6 +283,19 @@ def _read_text_strict(path: Path) -> str:
     return resolved.read_text(encoding="utf-8")
 
 
+def read_replay_extract(path: Path) -> str | None:
+    """Read a replay-generated provenance extract (#154), or None if missing.
+
+    Extracts are already-isolated ``<tbody>`` fragments written by
+    ``replay_extracts.generate_replay_extracts``; the ``.gz``-sibling
+    fallback contract of ``_read_snapshot`` applies.
+    """
+    try:
+        return _read_snapshot(path)
+    except OSError:
+        return None
+
+
 def glob_with_gz(dir_path: Path, pattern: str) -> list[Path]:
     """Return files matching *pattern* under *dir_path*, plus its gzipped variant.
 

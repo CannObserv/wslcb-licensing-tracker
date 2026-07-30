@@ -368,6 +368,22 @@ class TestReadSnapshot:
             _read_snapshot(p)
 
 
+class TestReadReplayExtract:
+    def test_reads_gz_extract(self, tmp_path):
+        """`read_replay_extract` returns the decompressed extract content."""
+        from wslcb_licensing_tracker.parser import read_replay_extract
+
+        p = tmp_path / "994002-new-application.html.gz"
+        p.write_bytes(gzip.compress(b"<tbody><tr><td>x</td></tr></tbody>"))
+        assert read_replay_extract(p) == "<tbody><tr><td>x</td></tr></tbody>"
+
+    def test_missing_extract_returns_none(self, tmp_path):
+        """`read_replay_extract` returns None (not raises) for a missing file."""
+        from wslcb_licensing_tracker.parser import read_replay_extract
+
+        assert read_replay_extract(tmp_path / "missing.html.gz") is None
+
+
 class TestSnapshotPaths:
     def test_finds_html_files(self, tmp_path):
         d = tmp_path / "wslcb" / "licensinginfo" / "2025" / "2025_12_01"

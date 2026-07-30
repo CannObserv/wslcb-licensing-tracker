@@ -34,7 +34,12 @@ from .engine import create_engine_from_env, get_db
 from .entities import get_entity_by_id
 from .link_records import get_outcome_status, get_reverse_link_info
 from .log_config import setup_logging
-from .parser import extract_tbody_from_diff, extract_tbody_from_snapshot, strip_anchor_tags
+from .parser import (
+    extract_tbody_from_diff,
+    extract_tbody_from_snapshot,
+    read_replay_extract,
+    strip_anchor_tags,
+)
 from .queries_entity import get_entities, get_entity_records
 from .queries_filter import get_cities_for_state, get_filter_options
 from .queries_hydrate import hydrate_records
@@ -368,7 +373,10 @@ async def source_viewer(
         # Dispatch on the file, not source_type: replay-backfilled diff
         # sources (#151) are stamped co_archive, and the frozen provenance
         # contract forbids retagging them (#154).
-        if snapshot_path.endswith((".txt", ".txt.gz")):
+        if source["source_type"] == "co_replay":
+            # Replay extracts are already-isolated <tbody> fragments.
+            tbody_html = read_replay_extract(path)
+        elif snapshot_path.endswith((".txt", ".txt.gz")):
             tbody_html = extract_tbody_from_diff(
                 path,
                 record["section_type"],

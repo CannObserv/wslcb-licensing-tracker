@@ -71,6 +71,15 @@ _MISSTAMPED_DIFF_SOURCE = {
     "snapshot_path": "wslcb/licensinginfo-diffs/approvals/2024_01_01-approvals-diff.txt.gz",
 }
 
+_REPLAY_SOURCE = {
+    **_SAMPLE_SOURCE,
+    "source_type": "co_replay",
+    "source_label": "CO Replay Extract",
+    "snapshot_path": (
+        "wslcb/licensinginfo-replay/approvals/2025-06-15/078001-new-application.html.gz"
+    ),
+}
+
 
 def _make_client(source_row=None, record=None, link_row=True):
     """Return (client, patches) with conn.execute mocked for source_viewer queries.
@@ -214,6 +223,38 @@ class TestSourceViewerRoute:
             assert resp.status_code == 200
             mock_diff.assert_called_once()
             assert "srcdoc" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_co_replay_source_serves_extract_directly(self):
+        """co_replay sources serve the extract file content, no re-extraction."""
+        client, patches = _make_client(source_row=_REPLAY_SOURCE, record=_SAMPLE_RECORD)
+        try:
+            with patch(
+                "wslcb_licensing_tracker.app.read_replay_extract",
+                return_value="<tbody><tr><td>Business Name:</td><td>ACME</td></tr></tbody>",
+            ) as mock_read:
+                resp = client.get("/source/1/record/1")
+
+            assert resp.status_code == 200
+            mock_read.assert_called_once()
+            assert "srcdoc" in resp.text
+            assert "ACME" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_co_replay_missing_extract_renders_not_found(self):
+        """A missing extract file degrades to the not-available notice."""
+        client, patches = _make_client(source_row=_REPLAY_SOURCE, record=_SAMPLE_RECORD)
+        try:
+            with patch(
+                "wslcb_licensing_tracker.app.read_replay_extract",
+                return_value=None,
+            ):
+                resp = client.get("/source/1/record/1")
+
+            assert resp.status_code == 200
+            assert "not found" in resp.text.lower() or "not available" in resp.text.lower()
         finally:
             _stop(patches)
 
