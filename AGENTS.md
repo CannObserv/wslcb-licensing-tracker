@@ -37,9 +37,10 @@ Prefetch query: `select:mcp__plugin_socraticode_socraticode__codebase_search,mcp
 ## Architecture
 
 ```
-scraper.py ─┐
-backfill_snapshots.py ─┼─→ pipeline.py ─→ PostgreSQL (tsvector + pg_trgm) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
+scraper.py ─────────────┐
+backfill_snapshots.py ──┼─→ pipeline.py ─→ PostgreSQL (tsvector + pg_trgm) ←─ app.py (FastAPI) ─→ templates/ (Jinja2 + HTMX)
 backfill_diffs.py ──────┘                                                       ←─ display.py (presentation)
+   ↳ diff_replay.py (chain replay)
                              ↘ data/wslcb/licensinginfo/[yyyy]/[date]/*.html.gz
 
 license_records → locations (FK: location_id, previous_location_id)
@@ -48,6 +49,7 @@ license_records → locations (FK: location_id, previous_location_id)
 
 - No runtime build step, no external runtime assets. Tailwind pre-built via `scripts/build-css.sh` → `static/css/tailwind.css`; pre-commit hook runs this automatically. HTMX vendored at `static/js/htmx.min.js` (#148).
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
+- Diff-archive ingestion replays each section's unified-diff chain into full page states (`diff_replay.py`, #151) — never parse a diff's changed-only line stream for ingestion; it mis-pairs labels/values across records (`parser.extract_records_from_diff` remains for standalone single-diff inspection only).
 - PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
 - systemd unit/timer files in `infra/`. AI agent skills in `skills/`; vendor repos (git submodules) in `skills-vendor/`.
 

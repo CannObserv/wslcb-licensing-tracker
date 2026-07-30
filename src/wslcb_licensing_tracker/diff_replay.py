@@ -37,6 +37,7 @@ valid.
 
 import logging
 import re
+import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -193,7 +194,8 @@ class _Replayer:
         self._next += 1
         if nid < self._reused:
             return nid
-        self.store.append(text)
+        # Intern: the corpus is dominated by identical boilerplate lines.
+        self.store.append(sys.intern(text) if text is not None else None)
         return nid
 
     def prepare(self, hunks: list[Hunk]) -> None:
@@ -275,13 +277,13 @@ class _Replayer:
                 cur = self.store[lid]
                 if bl.startswith("-"):
                     if cur is None:
-                        self.store[lid] = text
+                        self.store[lid] = sys.intern(text)
                         self.stats["learned"] += 1
                     elif cur != text:
                         self.stats["mismatches"] += 1
                         file_mm += 1
                 elif cur is None:
-                    self.store[lid] = text
+                    self.store[lid] = sys.intern(text)
                     self.stats["learned"] += 1
                     confirmed.add(lid)
                     new_ids.append(lid)
@@ -323,6 +325,8 @@ def _blocks_overlapping(  # noqa: C901, PLR0912  # boundary-guarded scan; splitt
     Hitting an unknown line anywhere aborts, so a partially-known block can
     never be emitted.
     """
+    if not lines or start >= len(lines):
+        return
     lo: int | None = None
     i = start
     while i >= 0:
@@ -456,6 +460,7 @@ class _Collector:
     def __init__(self, section_type: str) -> None:
         self.section_type = section_type
         self.records: dict[tuple, dict] = {}
+        self.skipped_partial_spans = 0
 
     def add_lines(
         self,
@@ -487,6 +492,7 @@ class _Collector:
         for lo, hi in spans:
             seg = lines[lo:hi]
             if any(t is None for t in seg):
+                self.skipped_partial_spans += 1
                 continue
             groups.append(seg)
         self.add_lines(groups, ts, fname, origin)
@@ -623,6 +629,7 @@ def replay_diff_chain(  # noqa: C901, PLR0912  # per-diff source dispatch; see m
 
     stats = dict(learn.stats)
     stats["reset_files"] = learn.reset_files
+    stats["skipped_partial_spans"] = collector.skipped_partial_spans
     logger.info(
         "Replayed %d diffs (%s): %d records, %d resets, %d mismatches, %d forks",
         stats["applied"],
