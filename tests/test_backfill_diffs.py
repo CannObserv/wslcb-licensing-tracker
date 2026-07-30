@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import text
 
-from wslcb_licensing_tracker.backfill_diffs import _diff_section_dirs, backfill_diffs
+from wslcb_licensing_tracker.backfill_diffs import backfill_diffs, diff_section_dirs
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -88,37 +88,37 @@ def diff_data_dir(tmp_path):
     return tmp_path
 
 
-# ── _diff_section_dirs ────────────────────────────────────────────────
+# ── diff_section_dirs ────────────────────────────────────────────────
 
 
-def test_diff_section_dirs_empty_for_nonexistent_root(tmp_path):
+def testdiff_section_dirs_empty_for_nonexistent_root(tmp_path):
     """Returns [] when no diffs root directory exists on disk."""
-    assert _diff_section_dirs(tmp_path) == []
+    assert diff_section_dirs(tmp_path) == []
 
 
-def test_diff_section_dirs_returns_existing_sections(tmp_path):
+def testdiff_section_dirs_returns_existing_sections(tmp_path):
     """Returns only section dirs that exist, with correct section_type."""
     (tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications").mkdir(parents=True)
-    result = _diff_section_dirs(tmp_path)
+    result = diff_section_dirs(tmp_path)
     assert len(result) == 1
     section_type, section_dir = result[0]
     assert section_type == "new_application"
     assert section_dir.name == "notifications"
 
 
-def test_diff_section_dirs_filters_by_section(tmp_path):
+def testdiff_section_dirs_filters_by_section(tmp_path):
     """section= restricts results to the matching directory."""
     for name in ("notifications", "approvals", "discontinued"):
         (tmp_path / "wslcb" / "licensinginfo-diffs" / name).mkdir(parents=True)
-    result = _diff_section_dirs(tmp_path, section="approvals")
+    result = diff_section_dirs(tmp_path, section="approvals")
     assert len(result) == 1
     assert result[0][0] == "approved"
 
 
-def test_diff_section_dirs_unknown_section_returns_empty(tmp_path):
+def testdiff_section_dirs_unknown_section_returns_empty(tmp_path):
     """Non-existent section name returns []."""
     (tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications").mkdir(parents=True)
-    assert _diff_section_dirs(tmp_path, section="nonexistent") == []
+    assert diff_section_dirs(tmp_path, section="nonexistent") == []
 
 
 # ── dry_run ───────────────────────────────────────────────────────────

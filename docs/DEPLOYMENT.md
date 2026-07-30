@@ -183,6 +183,10 @@ uv run wslcb reprocess-entities [--record-id 12345] [--dry-run]
 # Backfill
 uv run wslcb backfill-snapshots
 uv run wslcb backfill-diffs [--section notifications] [--limit 100] [--dry-run]
+# Replay-generated provenance extracts (#154). ~43 min for the full corpus
+# (chain replay dominates). Idempotent; regenerate after a #151-style
+# remediation pass or any diff_replay change that alters reconstructed state.
+uv run wslcb ingest generate-replay-extracts [--section notifications] [--dry-run]
 uv run wslcb cleanup-redundant
 
 # Admin users

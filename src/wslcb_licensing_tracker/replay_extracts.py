@@ -13,15 +13,16 @@ rows themselves are frozen provenance once written. See
 """
 
 import gzip
+import json
 import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from .backfill_diffs import _diff_section_dirs
+from .backfill_diffs import diff_section_dirs
 from .db import (
     DATA_DIR,
     SOURCE_TYPE_CO_REPLAY,
@@ -31,7 +32,7 @@ from .db import (
 )
 from .diff_replay import replay_diff_chain
 from .engine import get_db
-from .models import license_records
+from .models import license_records, sources
 from .parser import SECTION_DIR_MAP, glob_with_gz
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,16 @@ def extract_rel_path(rec: dict) -> str:
     section_dir = _DIR_BY_SECTION[rec["section_type"]]
     fname = f"{_slug(rec['license_number'])}-{_slug(rec['application_type'])}.html.gz"
     return f"{REPLAY_SUBDIR}/{section_dir}/{rec['record_date']}/{fname}"
+
+
+def _natural_key(rec: dict) -> tuple:
+    """The record's identity tuple — section, date, license, application type."""
+    return (
+        rec["section_type"],
+        rec["record_date"],
+        rec["license_number"],
+        rec["application_type"],
+    )
 
 
 def _write_extract(path: Path, raw_lines: list[str]) -> None:
@@ -96,11 +107,18 @@ async def generate_replay_extracts(
     With *dry_run*, replays and counts only; no files or rows are written.
 
     Returns totals: ``records``, ``written``, ``linked``, ``unmatched``,
-    ``errors``.
+    ``collisions``, ``errors``.
     """
-    totals = {"records": 0, "written": 0, "linked": 0, "unmatched": 0, "errors": 0}
+    totals = {
+        "records": 0,
+        "written": 0,
+        "linked": 0,
+        "unmatched": 0,
+        "collisions": 0,
+        "errors": 0,
+    }
 
-    for section_type, section_dir in _diff_section_dirs(DATA_DIR, section):
+    for section_type, section_dir in diff_section_dirs(DATA_DIR, section):
         files = glob_with_gz(section_dir, "*.txt")
         if not files:
             continue
@@ -113,6 +131,12 @@ async def generate_replay_extracts(
             continue
 
         generated_at = datetime.now(UTC).isoformat()
+        # Natural-key path is unique per record by construction, but distinct
+        # keys can slug to the same path (e.g. '994 070' vs '994-070'). Guard
+        # against silently overwriting one record's extract with another's:
+        # first key wins, later collisions are logged and skipped (absence
+        # over a provenance falsehood).
+        seen_paths: dict[str, tuple] = {}
         async with get_db(engine) as conn:
             pending = 0
             for rec in result.records:
@@ -121,19 +145,40 @@ async def generate_replay_extracts(
                     totals["unmatched"] += 1
                     continue
                 rel_path = extract_rel_path(rec)
+                key = _natural_key(rec)
+                prior = seen_paths.get(rel_path)
+                if prior is not None and prior != key:
+                    logger.error(
+                        "Extract path collision at %s: kept %s, skipped %s",
+                        rel_path,
+                        prior,
+                        key,
+                    )
+                    totals["collisions"] += 1
+                    continue
+                seen_paths[rel_path] = key
                 _write_extract(DATA_DIR / rel_path, rec["raw_lines"])
                 totals["written"] += 1
+                metadata = {
+                    "origin": rec["origin"],
+                    "evidencing_file": rec["source_file"],
+                    "generated_at": generated_at,
+                }
                 source_id = await get_or_create_source(
                     conn,
                     SOURCE_TYPE_CO_REPLAY,
                     snapshot_path=rel_path,
                     url=WSLCB_SOURCE_URL,
                     captured_at=rec["scraped_at"],
-                    metadata={
-                        "origin": rec["origin"],
-                        "evidencing_file": rec["source_file"],
-                        "generated_at": generated_at,
-                    },
+                    metadata=metadata,
+                )
+                # get_or_create_source is ON CONFLICT DO NOTHING, so on a
+                # regeneration the existing row keeps its old metadata. Refresh
+                # it explicitly to track the latest replay attribution.
+                await conn.execute(
+                    update(sources)
+                    .where(sources.c.id == source_id)
+                    .values(captured_at=rec["scraped_at"], metadata=json.dumps(metadata))
                 )
                 await link_record_source(conn, record_id, source_id, role=LINK_ROLE)
                 totals["linked"] += 1

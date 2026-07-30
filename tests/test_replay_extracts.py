@@ -213,6 +213,83 @@ async def test_generate_is_idempotent(pg_engine, tmp_path):
 
 @_needs_db
 @pytest.mark.asyncio(loop_scope="session")
+async def test_regeneration_refreshes_source_metadata(pg_engine, tmp_path):
+    """A stale co_replay source metadata blob is refreshed on re-run."""
+    _write_chain(tmp_path, _two_record_states())
+    with patch("wslcb_licensing_tracker.backfill_diffs.DATA_DIR", tmp_path):
+        await backfill_diffs(pg_engine)
+    with patch("wslcb_licensing_tracker.replay_extracts.DATA_DIR", tmp_path):
+        await generate_replay_extracts(pg_engine)
+
+    path = "wslcb/licensinginfo-replay/approvals/2025-02-02/994002-new-application.html.gz"
+    # Corrupt the stored metadata to simulate drift from a prior generation.
+    async with pg_engine.connect() as conn:
+        await conn.execute(
+            text("UPDATE sources SET metadata = '{}' WHERE snapshot_path = :p"),
+            {"p": path},
+        )
+        await conn.commit()
+
+    with patch("wslcb_licensing_tracker.replay_extracts.DATA_DIR", tmp_path):
+        await generate_replay_extracts(pg_engine)
+
+    async with pg_engine.connect() as conn:
+        meta = (
+            await conn.execute(
+                text("SELECT metadata::text FROM sources WHERE snapshot_path = :p"),
+                {"p": path},
+            )
+        ).scalar_one()
+    assert "origin" in meta
+    assert "entry" in meta
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_path_collision_counted_and_second_skipped(pg_engine, tmp_path):
+    """Two distinct natural keys slugging to one path: first wins, second flagged."""
+    # '994 070' (space) and '994-070' (hyphen) both slug to '994-070'. Both
+    # must enter via diffs (not sit in the unknown base) to be evidenced, so
+    # seed a base record and add each colliding record in a later diff.
+    seed = _block("2/1/2025", "REPLAY SEED", "990000")
+    a = _block("2/1/2025", "REPLAY COLA", "994 070")
+    b = _block("2/1/2025", "REPLAY COLB", "994-070")
+    _write_chain(tmp_path, [_page(seed), _page(seed, a), _page(seed, a, b)])
+    with patch("wslcb_licensing_tracker.backfill_diffs.DATA_DIR", tmp_path):
+        await backfill_diffs(pg_engine)
+    with patch("wslcb_licensing_tracker.replay_extracts.DATA_DIR", tmp_path):
+        totals = await generate_replay_extracts(pg_engine)
+
+    assert totals["collisions"] >= 1
+    # Exactly one extract exists at the colliding path; only one link to it.
+    collide = (
+        tmp_path
+        / "wslcb"
+        / "licensinginfo-replay"
+        / "approvals"
+        / "2025-02-01"
+        / "994-070-new-application.html.gz"
+    )
+    assert collide.exists()
+    async with pg_engine.connect() as conn:
+        links = (
+            await conn.execute(
+                text(
+                    "SELECT count(*) FROM record_sources rs "
+                    "JOIN sources s ON s.id = rs.source_id "
+                    "WHERE s.snapshot_path = :p AND rs.role = 'replay_extract'"
+                ),
+                {
+                    "p": "wslcb/licensinginfo-replay/approvals/2025-02-01/"
+                    "994-070-new-application.html.gz"
+                },
+            )
+        ).scalar_one()
+    assert links == 1
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
 async def test_unmatched_records_skipped_without_writes(pg_engine, tmp_path):
     """Replayed records absent from license_records produce no extract or source."""
     s1 = _page(_block("2/1/2025", "REPLAY GHOST", "994999"))

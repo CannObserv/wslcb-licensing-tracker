@@ -29,7 +29,7 @@ from .pipeline import IngestOptions, ingest_batch
 logger = logging.getLogger(__name__)
 
 
-def _diff_section_dirs(data_dir: Path, section: str | None = None) -> list[tuple[str, Path]]:
+def diff_section_dirs(data_dir: Path, section: str | None = None) -> list[tuple[str, Path]]:
     """Return (section_type, dir_path) pairs for diff archives to process."""
     diffs_root = data_dir / "wslcb" / "licensinginfo-diffs"
     results = []
@@ -76,7 +76,7 @@ def _build_work(
 
     work: list[tuple[str, list[Path]]] = []
     remaining = limit
-    for section_type, section_dir in _diff_section_dirs(DATA_DIR, section):
+    for section_type, section_dir in diff_section_dirs(DATA_DIR, section):
         files = glob_with_gz(section_dir, "*.txt")
         if remaining is not None:
             files = files[:remaining]

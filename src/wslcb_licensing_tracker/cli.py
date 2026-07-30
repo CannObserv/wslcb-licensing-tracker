@@ -2,8 +2,8 @@
 
 All operational commands are exposed as click subcommands grouped by domain:
 
-- ``ingest``: scrape, backfill-snapshots, backfill-diffs, backfill-addresses, refresh-addresses,
-  compress-snapshots, compress-diffs
+- ``ingest``: scrape, backfill-snapshots, backfill-diffs, generate-replay-extracts,
+  backfill-addresses, refresh-addresses, compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
 - ``admin``: add-user, list-users, remove-user
 - ``ops``: disk-hygiene
@@ -18,6 +18,7 @@ Usage::
     wslcb ingest scrape                # grouped form
     wslcb ingest backfill-snapshots    # replay archived HTML
     wslcb ingest backfill-diffs        # replay diff archives
+    wslcb ingest generate-replay-extracts  # write per-record provenance extracts (#154)
     wslcb ingest backfill-addresses    # validate un-validated + TTL-stale locations
     wslcb ingest refresh-addresses     # re-validate all locations
     wslcb ingest compress-snapshots    # compress .html snapshots to .html.gz in place
