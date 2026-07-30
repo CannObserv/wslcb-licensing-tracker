@@ -46,7 +46,9 @@ def _infer_section_type(filename: str) -> str | None:
     """Infer the section type from a diff filename.
 
     Archive files embed their section directory name, e.g.
-    ``2022_09_07-00_15_00-approvals-diff.txt.gz``.
+    ``2022_09_07-00_15_00-approvals-diff.txt.gz``. Matching is by substring
+    in ``SECTION_DIR_MAP`` iteration order — archive names carry exactly one
+    section token, so precedence never matters in practice.
     """
     for dir_name, section_type in SECTION_DIR_MAP.items():
         if dir_name in filename:

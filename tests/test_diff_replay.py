@@ -349,6 +349,53 @@ class TestReplayExtraction:
         assert result.stats["read_errors"] == 1
         assert "100002" in _by_license(result.records)
 
+    def test_oracle_desync_stat_present_and_zero(self, tmp_path):
+        # Sweep-2 allocation parity with sweep 1 is load-bearing; the stat
+        # must exist and be 0 on any normal chain.
+        s1 = _page(_block("1/1/2025", "ALPHA", "100001"))
+        s2 = _page(_block("1/1/2025", "ALPHA", "100001"), _block("1/2/2025", "BRAVO", "100002"))
+        files = _write_chain(tmp_path, [s1, s2])
+        result = replay_diff_chain(files, "approved")
+        assert result.stats["oracle_desync"] == 0
+
+    def test_partially_known_blocks_are_counted(self, tmp_path):
+        # BRAVO is inserted ABOVE the unknown-base ALPHA block, so the diff's
+        # trailing context teaches only ALPHA's first lines: its block start
+        # becomes known while its interior stays unknown. The state parses
+        # must skip that block AND count the skip — silent truncation is not
+        # acceptable.
+        s1 = _page(_block("1/1/2025", "ALPHA", "100001"))
+        s2 = _page(_block("1/2/2025", "BRAVO", "100002"), _block("1/1/2025", "ALPHA", "100001"))
+        files = _write_chain(tmp_path, [s1, s2])
+        result = replay_diff_chain(files, "approved")
+        assert set(_by_license(result.records)) == {"100002"}
+        assert result.stats["skipped_partial_spans"] > 0
+
+    def test_blocks_overlapping_out_of_range_yields_nothing(self):
+        from wslcb_licensing_tracker.diff_replay import _blocks_overlapping
+
+        assert list(_blocks_overlapping([], 0, 1)) == []
+        lines = ["<tbody>", "x", "</tbody>"]
+        assert list(_blocks_overlapping(lines, 3, 5)) == []
+
+    def test_mutation_suppressed_on_context_mismatch_file(self, tmp_path):
+        # A file whose context disagrees with the carried document (a diff
+        # was lost) must not emit mutation records — its old-side positions
+        # may hold stale content.
+        s0 = _page(_block("1/1/2025", "ALPHA V0", "100001"), _block("1/2/2025", "BRAVO", "100002"))
+        s1 = _page(_block("1/1/2025", "ALPHA V1", "100001"), _block("1/2/2025", "BRAVO", "100002"))
+        s2 = _page(_block("1/1/2025", "ALPHA V2", "100001"), _block("1/2/2025", "BRAVO", "100002"))
+        s3 = _page(_block("1/1/2025", "ALPHA V3", "100001"), _block("1/9/2025", "BRAVO", "100002"))
+        files = _write_chain(tmp_path, [s0, s1, s2, s3])
+        files[1].unlink()  # lose the s1->s2 diff; s2->s3 renames ALPHA + mutates BRAVO's date
+        remaining = [files[0], files[2]]
+        result = replay_diff_chain(remaining, "approved")
+        assert result.stats["mismatches"] > 0
+        bad_file = files[2].name
+        assert not any(
+            r["origin"] == "mutation" and r["source_file"] == bad_file for r in result.records
+        )
+
     def test_stats_report_applied_and_mismatches(self, tmp_path):
         s1 = _page(_block("1/1/2025", "ALPHA", "100001"))
         s2 = _page(_block("1/2/2025", "BRAVO", "100002"))

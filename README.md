@@ -82,6 +82,7 @@ wslcb-licensing-tracker/
 ├── cli.py                  # Unified CLI entry point (click groups: ingest, db, admin)
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
+├── diff_replay.py          # Chain replay of CO diff archives (#151; no DB, no side effects)
 ├── text_utils.py           # Pure-string text normalization (clean_entity_name, strip_duplicate_marker, …)
 ├── engine.py               # Async SQLAlchemy engine factory (DATABASE_URL env var)
 ├── models.py               # SQLAlchemy Core Table definitions (all 20 tables)

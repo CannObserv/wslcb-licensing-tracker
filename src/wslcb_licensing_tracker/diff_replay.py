@@ -316,14 +316,15 @@ class _Replayer:
 
 
 def _blocks_overlapping(  # noqa: C901, PLR0912  # boundary-guarded scan; splitting obscures it
-    lines: list[str | None], start: int, end: int
+    lines: list[str | None], start: int, end: int, skips: list[int] | None = None
 ) -> Iterator[tuple[int, int]]:
     """Yield complete ``<tbody>``..``</tbody>`` spans overlapping [start, end).
 
     A range may begin mid-block (expand upward to the block start), contain
     several whole blocks, or end mid-block (expand forward to the block end).
     Hitting an unknown line anywhere aborts, so a partially-known block can
-    never be emitted.
+    never be emitted; each block abandoned mid-assembly increments
+    ``skips[0]`` when a counter is given.
     """
     if not lines or start >= len(lines):
         return
@@ -360,20 +361,30 @@ def _blocks_overlapping(  # noqa: C901, PLR0912  # boundary-guarded scan; splitt
             while j < n:
                 tj = lines[j]
                 if tj is None:
+                    if skips is not None:
+                        skips[0] += 1
                     return
                 if "</tbody>" in tj.lower():
                     yield i, j + 1
                     break
                 j += 1
             else:
+                if skips is not None:
+                    skips[0] += 1
                 return
             i = j + 1
         else:
             i += 1
 
 
-def _iter_known_blocks(lines: list[str | None]) -> Iterator[tuple[int, int]]:
-    """Yield (lo, hi) spans of fully-known ``<tbody>``..``</tbody>`` blocks."""
+def _iter_known_blocks(
+    lines: list[str | None], skips: list[int] | None = None
+) -> Iterator[tuple[int, int]]:
+    """Yield (lo, hi) spans of fully-known ``<tbody>``..``</tbody>`` blocks.
+
+    Blocks containing an unknown line are skipped; each skip increments
+    ``skips[0]`` when a counter is given.
+    """
     n = len(lines)
     i = 0
     while i < n:
@@ -393,6 +404,10 @@ def _iter_known_blocks(lines: list[str | None]) -> Iterator[tuple[int, int]]:
                 yield i, j + 1
                 i = j + 1
                 continue
+            if skips is not None:
+                skips[0] += 1
+            i = j + 1
+            continue
         i += 1
 
 
@@ -533,7 +548,7 @@ def _learn_sweep(files: list[Path]) -> _Replayer:
     return rep
 
 
-def replay_diff_chain(  # noqa: C901, PLR0912  # per-diff source dispatch; see module docstring
+def replay_diff_chain(  # noqa: C901, PLR0912, PLR0915  # per-diff source dispatch; see module docstring
     files: list[Path], section_type: str
 ) -> ReplayResult:
     """Replay a section's diff chain and extract all recoverable records.
@@ -555,6 +570,8 @@ def replay_diff_chain(  # noqa: C901, PLR0912  # per-diff source dispatch; see m
     # old- and new-side states materialise fully known.
     collector = _Collector(section_type)
     rep = _Replayer(oracle=store)
+    oracle_len = len(store)
+    partial_skips = [0]
     fresh_epoch = False
     first_file = True
     last_applied: tuple[str, datetime] | None = None
@@ -585,7 +602,10 @@ def replay_diff_chain(  # noqa: C901, PLR0912  # per-diff source dispatch; see m
                 old_start = (h.old_start - 1) if h.old_count > 0 else h.old_start
                 spans.extend(
                     _blocks_overlapping(
-                        old_lines, old_start, min(old_start + h.old_count, len(old_lines))
+                        old_lines,
+                        old_start,
+                        min(old_start + h.old_count, len(old_lines)),
+                        partial_skips,
                     )
                 )
             collector.add_spans(old_lines, spans, parsed.old_ts, path.name, "mutation")
@@ -593,21 +613,29 @@ def replay_diff_chain(  # noqa: C901, PLR0912  # per-diff source dispatch; see m
         # state: chain base (before the first diff) — fully-known blocks.
         if first_file:
             collector.add_spans(
-                old_lines, _iter_known_blocks(old_lines), parsed.old_ts, path.name, "state"
+                old_lines,
+                _iter_known_blocks(old_lines, partial_skips),
+                parsed.old_ts,
+                path.name,
+                "state",
             )
             first_file = False
 
         # state: first state of a fresh epoch after a reset.
         if fresh_epoch:
             collector.add_spans(
-                new_lines, _iter_known_blocks(new_lines), parsed.new_ts, path.name, "state"
+                new_lines,
+                _iter_known_blocks(new_lines, partial_skips),
+                parsed.new_ts,
+                path.name,
+                "state",
             )
             fresh_epoch = False
 
         # entry: blocks around added lines, every line observed in THIS diff.
         spans = []
         for s, e in added:
-            for lo, hi in _blocks_overlapping(new_lines, s, min(e, len(new_lines))):
+            for lo, hi in _blocks_overlapping(new_lines, s, min(e, len(new_lines)), partial_skips):
                 if any(rep.ids[i] not in confirmed for i in range(lo, hi)):
                     continue
                 if spans and lo <= spans[-1][0]:
@@ -624,12 +652,26 @@ def replay_diff_chain(  # noqa: C901, PLR0912  # per-diff source dispatch; see m
     if last_applied is not None:
         lines = rep.materialize()
         collector.add_spans(
-            lines, _iter_known_blocks(lines), last_applied[1], last_applied[0], "final"
+            lines,
+            _iter_known_blocks(lines, partial_skips),
+            last_applied[1],
+            last_applied[0],
+            "final",
         )
 
     stats = dict(learn.stats)
     stats["reset_files"] = learn.reset_files
-    stats["skipped_partial_spans"] = collector.skipped_partial_spans
+    stats["skipped_partial_spans"] = partial_skips[0] + collector.skipped_partial_spans
+    # Allocation-parity guard: sweep 2 must allocate exactly the IDs sweep 1
+    # did — a desync means materialised content can no longer be trusted.
+    stats["oracle_desync"] = abs(rep._next - oracle_len)  # noqa: SLF001
+    if stats["oracle_desync"]:
+        logger.error(
+            "Oracle desync replaying %s: sweep-2 allocated %d ids, sweep-1 %d",
+            section_type,
+            rep._next,  # noqa: SLF001
+            oracle_len,
+        )
     logger.info(
         "Replayed %d diffs (%s): %d records, %d resets, %d mismatches, %d forks",
         stats["applied"],
