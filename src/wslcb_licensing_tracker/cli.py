@@ -172,8 +172,9 @@ def backfill_diffs(
     )
     if dry_run:
         click.echo(
-            f"[dry-run] Would insert {result['inserted']:,} record(s)"
-            f" from {result['files_processed']:,} file(s)."
+            f"[dry-run] Replayed {result['inserted']:,} record(s)"
+            f" from {result['files_processed']:,} file(s);"
+            " records already ingested are skipped on a live run."
         )
     else:
         click.echo(

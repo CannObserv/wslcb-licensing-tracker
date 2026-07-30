@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from email.utils import format_datetime
 
 from wslcb_licensing_tracker.diff_replay import (
+    _blocks_overlapping,
     parse_unified_diff,
     replay_diff_chain,
 )
@@ -372,8 +373,6 @@ class TestReplayExtraction:
         assert result.stats["skipped_partial_spans"] > 0
 
     def test_blocks_overlapping_out_of_range_yields_nothing(self):
-        from wslcb_licensing_tracker.diff_replay import _blocks_overlapping
-
         assert list(_blocks_overlapping([], 0, 1)) == []
         lines = ["<tbody>", "x", "</tbody>"]
         assert list(_blocks_overlapping(lines, 3, 5)) == []

@@ -324,7 +324,9 @@ def _blocks_overlapping(  # noqa: C901, PLR0912  # boundary-guarded scan; splitt
     several whole blocks, or end mid-block (expand forward to the block end).
     Hitting an unknown line anywhere aborts, so a partially-known block can
     never be emitted; each block abandoned mid-assembly increments
-    ``skips[0]`` when a counter is given.
+    ``skips[0]`` when a counter is given. The counter tallies skip *events*,
+    not distinct blocks — the same partial block is counted every time a
+    scan encounters it.
     """
     if not lines or start >= len(lines):
         return
@@ -383,7 +385,9 @@ def _iter_known_blocks(
     """Yield (lo, hi) spans of fully-known ``<tbody>``..``</tbody>`` blocks.
 
     Blocks containing an unknown line are skipped; each skip increments
-    ``skips[0]`` when a counter is given.
+    ``skips[0]`` when a counter is given. The counter tallies skip *events*,
+    not distinct blocks — the same partial block is counted at every state
+    parse that encounters it.
     """
     n = len(lines)
     i = 0
@@ -661,6 +665,8 @@ def replay_diff_chain(  # noqa: C901, PLR0912, PLR0915  # per-diff source dispat
 
     stats = dict(learn.stats)
     stats["reset_files"] = learn.reset_files
+    # Event count, not a census: a persistently-partial block is counted at
+    # each boundary-state parse that scans it.
     stats["skipped_partial_spans"] = partial_skips[0] + collector.skipped_partial_spans
     # Allocation-parity guard: sweep 2 must allocate exactly the IDs sweep 1
     # did — a desync means materialised content can no longer be trusted.
