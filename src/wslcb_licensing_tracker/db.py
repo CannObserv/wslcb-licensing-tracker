@@ -37,6 +37,7 @@ SOURCE_TYPE_CO_ARCHIVE = 2
 SOURCE_TYPE_INTERNET_ARCHIVE = 3
 SOURCE_TYPE_CO_DIFF_ARCHIVE = 4
 SOURCE_TYPE_MANUAL = 5
+SOURCE_TYPE_CO_REPLAY = 6
 
 # Canonical source_types reference rows. Alembic migration 0001 seeded the
 # same values (frozen as history); the pg_engine test fixture reseeds from
@@ -72,6 +73,12 @@ SOURCE_TYPE_ROWS = [
         "slug": "manual",
         "label": "Manual Entry",
         "description": "Manually entered or corrected records",
+    },
+    {
+        "id": SOURCE_TYPE_CO_REPLAY,
+        "slug": "co_replay",
+        "label": "CO Replay Extract",
+        "description": "Reconstructed from CO diff chain replay",
     },
 ]
 

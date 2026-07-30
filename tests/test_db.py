@@ -370,6 +370,7 @@ class TestSourceTypeRows:
         from wslcb_licensing_tracker.db import (
             SOURCE_TYPE_CO_ARCHIVE,
             SOURCE_TYPE_CO_DIFF_ARCHIVE,
+            SOURCE_TYPE_CO_REPLAY,
             SOURCE_TYPE_INTERNET_ARCHIVE,
             SOURCE_TYPE_LIVE_SCRAPE,
             SOURCE_TYPE_MANUAL,
@@ -383,6 +384,7 @@ class TestSourceTypeRows:
             "internet_archive": SOURCE_TYPE_INTERNET_ARCHIVE,
             "co_diff_archive": SOURCE_TYPE_CO_DIFF_ARCHIVE,
             "manual": SOURCE_TYPE_MANUAL,
+            "co_replay": SOURCE_TYPE_CO_REPLAY,
         }
 
     def test_rows_have_complete_fields(self):

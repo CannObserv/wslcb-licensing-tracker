@@ -213,6 +213,23 @@ class TestSummarizeProvenance:
         assert "icon" in ia
         assert "label" in ia
 
+    def test_co_replay_has_own_display_entry(self):
+        """co_replay sources get a dedicated badge, not the 'Other' fallback."""
+        from wslcb_licensing_tracker.display import summarize_provenance
+
+        sources = [
+            {
+                "source_type": "co_replay",
+                "captured_at": "2024-01-01T00:00:00",
+                "role": "replay_extract",
+            },
+        ]
+        result = summarize_provenance(sources)
+
+        replay = result["groups"]["co_replay"]
+        assert replay["label"] != "Other"
+        assert replay["icon"] != "•"
+
     def test_null_captured_at_ignored(self):
         """Sources without captured_at should not break date computation."""
         from wslcb_licensing_tracker.display import summarize_provenance

@@ -91,6 +91,13 @@ _SOURCE_TYPE_DISPLAY: dict[str, dict[str, str]] = {
         "css_text": "text-co-purple",
         "css_border": "border-co-purple-100",
     },
+    "co_replay": {
+        "icon": "🧩",
+        "label": "CO Replay Extract",
+        "css_bg": "bg-co-purple-50",
+        "css_text": "text-co-purple",
+        "css_border": "border-co-purple-100",
+    },
     "internet_archive": {
         "icon": "🏛️",
         "label": "Internet Archive",
