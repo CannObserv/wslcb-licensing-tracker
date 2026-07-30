@@ -297,7 +297,8 @@ record_sources = Table(
         primary_key=True,
     ),
     CheckConstraint(
-        "role IN ('first_seen', 'confirmed', 'repaired')", name="ck_record_sources_role"
+        "role IN ('first_seen', 'confirmed', 'repaired', 'replay_extract')",
+        name="ck_record_sources_role",
     ),
     Index("idx_rs_source", "source_id"),
 )

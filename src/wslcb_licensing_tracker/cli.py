@@ -61,6 +61,7 @@ from .link_records import build_all_links as run_build_all_links
 from .log_config import setup_logging
 from .models import admin_users
 from .parser import SECTION_DIR_MAP
+from .replay_extracts import generate_replay_extracts as run_generate_replay_extracts
 from .scraper import cleanup_redundant_scrapes as run_cleanup_redundant
 from .scraper import scrape as run_scrape
 
@@ -181,6 +182,29 @@ def backfill_diffs(
             f"Processed {result['files_processed']:,} file(s): "
             f"{result['inserted']:,} inserted, {result['skipped']:,} skipped, "
             f"{result['errors']:,} errors."
+        )
+
+
+@ingest.command("generate-replay-extracts")
+@click.option(
+    "--section",
+    type=click.Choice(list(SECTION_DIR_MAP.keys())),
+    default=None,
+    help="Process only this section subdirectory.",
+)
+@click.option("--dry-run", is_flag=True, help="Replay and count, no writes.")
+def generate_replay_extracts(section: str | None, dry_run: bool) -> None:
+    """Generate replay-derived provenance extracts + co_replay sources (#154)."""
+    result = _run_with_engine(
+        lambda engine: run_generate_replay_extracts(engine, section=section, dry_run=dry_run)
+    )
+    if dry_run:
+        click.echo(f"[dry-run] Replayed {result['records']:,} record(s); nothing written.")
+    else:
+        click.echo(
+            f"Replayed {result['records']:,} record(s): "
+            f"{result['written']:,} extract(s) written, {result['linked']:,} linked, "
+            f"{result['unmatched']:,} unmatched, {result['errors']:,} errors."
         )
 
 

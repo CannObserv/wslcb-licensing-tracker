@@ -68,6 +68,25 @@ class TestIngestGroup:
         assert "dry-run" in result.output
         assert "10" in result.output
 
+    @patch("wslcb_licensing_tracker.cli.run_generate_replay_extracts", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_generate_replay_extracts(self, mock_engine, mock_gen):
+        mock_engine.return_value = mock_async_engine()
+        mock_gen.return_value = {
+            "records": 5,
+            "written": 4,
+            "linked": 4,
+            "unmatched": 1,
+            "errors": 0,
+        }
+        result = CliRunner().invoke(
+            main, ["ingest", "generate-replay-extracts", "--section", "approvals"]
+        )
+        assert result.exit_code == 0
+        mock_gen.assert_called_once()
+        assert mock_gen.call_args.kwargs["section"] == "approvals"
+        assert "4" in result.output
+
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
     @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
