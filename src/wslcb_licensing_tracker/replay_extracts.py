@@ -95,6 +95,9 @@ async def _upsert_replay_source(
             metadata=meta_json,
         )
         .on_conflict_do_update(
+            # Refresh only the replay-derived fields; ``ingested_at`` is left at
+            # its first-write value on purpose (a "first recorded" stamp, not a
+            # replay output, so it should not churn on regeneration).
             constraint="uq_sources_type_path",
             set_={"captured_at": captured_at, "metadata": meta_json},
         )
