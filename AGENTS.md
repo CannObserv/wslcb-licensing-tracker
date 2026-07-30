@@ -74,8 +74,11 @@ backed up under `data/remediation-backups/`. Ad-hoc edits remain forbidden.
 | `license_records.resolved_endorsements` | `endorsements.reprocess_endorsements()` | `wslcb reprocess-endorsements` |
 | `record_entities` | `entities.reprocess_entities()` | `wslcb reprocess-entities` |
 | `record_links` | `link_records.build_all_links()` | `wslcb rebuild-links` |
+| `data/wslcb/licensinginfo-replay/` extract files | `replay_extracts.generate_replay_extracts()` | `wslcb ingest generate-replay-extracts` |
 
 `reprocess_endorsements()` is idempotent — deletes existing rows before inserting fresh ones. `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL.
+
+Replay-extract boundary (#154): the extract *files* are derived (natural-key paths, regenerated in place), but the `co_replay` `sources` rows pointing at them are frozen provenance.
 
 ## Conventions
 

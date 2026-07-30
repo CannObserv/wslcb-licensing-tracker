@@ -171,9 +171,10 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed or scrape was `unchanged`
 
 ### `source_types` (provenance enum)
-- Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`
+- Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`, `6=co_replay`
 - Python constants in `db.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc.
 - Seeded by `init_db()` via `INSERT OR IGNORE`
+- `co_replay` (Alembic `0006`, #154) — replay-generated provenance extracts: per-record reconstructed `<tbody>` files under `data/wslcb/licensinginfo-replay/`, written by `wslcb ingest generate-replay-extracts`
 
 ### `sources` (provenance artifacts)
 - One row per source artifact (a specific HTML snapshot file or scrape run)
@@ -189,7 +190,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 
 ### `record_sources` (provenance junction)
 - M:M junction linking `license_records` ↔ `sources`
-- `role` — `'first_seen'` (introduced by this source), `'confirmed'` (already existed, corroborated), `'repaired'` (data fixed from this source); enforced by CHECK constraint
+- `role` — `'first_seen'` (introduced by this source), `'confirmed'` (already existed, corroborated), `'repaired'` (data fixed from this source), `'replay_extract'` (replay-generated provenance extract, Alembic `0007`, #154); enforced by CHECK constraint
 - Composite PK `(record_id, source_id, role)` — a record can have multiple roles for the same source (e.g., `first_seen` + `repaired`)
 - `link_record_source()` in `db.py` handles idempotent insert
 - `ON DELETE CASCADE` on both FKs
