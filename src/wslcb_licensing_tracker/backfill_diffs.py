@@ -1,10 +1,18 @@
 """Async backfill of records from unified-diff archives into PostgreSQL.
 
-Async port of backfill_diffs.py. The two-pass diff parsing and CSV export
-logic are pure Python and re-used from backfill_diffs unchanged.
+Since #151, each section's archive is ingested by *replaying* its diff chain
+(``diff_replay.replay_diff_chain``) instead of parsing each diff's
+changed-only line stream. Replay reconstructs the full page state at every
+capture, which eliminates the cross-record "bleed" hybrids the two-pass
+parser produced, and recovers records the changed-only stream loses.
 
-Safe to re-run — duplicates are detected by the UNIQUE constraint and skipped.
-Address validation is deferred; run ``wslcb backfill-addresses`` afterward.
+Each record is stamped with the diff file that evidenced it (its ``entry`` /
+``exit`` / ``mutation`` / boundary-state file), so provenance stays
+per-file even though parsing is per-chain.
+
+Safe to re-run — duplicates are detected by the UNIQUE constraint and
+skipped. Address validation is deferred; run ``wslcb backfill-addresses``
+afterward.
 """
 
 import logging
@@ -13,8 +21,9 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .db import DATA_DIR, SOURCE_TYPE_CO_ARCHIVE, WSLCB_SOURCE_URL, get_or_create_source
+from .diff_replay import ReplayResult, replay_diff_chain
 from .engine import get_db
-from .parser import SECTION_DIR_MAP, extract_records_from_diff, glob_with_gz
+from .parser import SECTION_DIR_MAP, glob_with_gz
 from .pipeline import IngestOptions, ingest_batch
 
 logger = logging.getLogger(__name__)
@@ -33,6 +42,94 @@ def _diff_section_dirs(data_dir: Path, section: str | None = None) -> list[tuple
     return results
 
 
+def _infer_section_type(filename: str) -> str | None:
+    """Infer the section type from a diff filename.
+
+    Archive files embed their section directory name, e.g.
+    ``2022_09_07-00_15_00-approvals-diff.txt.gz``.
+    """
+    for dir_name, section_type in SECTION_DIR_MAP.items():
+        if dir_name in filename:
+            return section_type
+    return None
+
+
+def _build_work(
+    section: str | None,
+    single_file: str | None,
+    limit: int | None,
+) -> tuple[list[tuple[str, list[Path]]], int]:
+    """Resolve (section_type, chain files) work items.
+
+    Returns ``(work, errors)`` — *errors* counts files that could not be
+    assigned a section (single-file mode with an unrecognizable name).
+    """
+    if single_file:
+        path = Path(single_file)
+        section_type = _infer_section_type(path.name)
+        if section_type is None:
+            logger.error("Cannot infer section from diff filename: %s", path.name)
+            return [], 1
+        return [(section_type, [path])], 0
+
+    work: list[tuple[str, list[Path]]] = []
+    remaining = limit
+    for section_type, section_dir in _diff_section_dirs(DATA_DIR, section):
+        files = glob_with_gz(section_dir, "*.txt")
+        if remaining is not None:
+            files = files[:remaining]
+            remaining -= len(files)
+        if files:
+            work.append((section_type, files))
+        if remaining == 0:
+            break
+    return work, 0
+
+
+async def _ingest_replay_result(
+    engine: AsyncEngine,
+    result: ReplayResult,
+    files: list[Path],
+    totals: dict[str, int],
+) -> None:
+    """Ingest one section's replayed records, grouped by evidencing file."""
+    path_by_name = {p.name: p for p in files}
+    by_file: dict[str, list[dict]] = {}
+    for rec in result.records:
+        by_file.setdefault(rec["source_file"], []).append(rec)
+
+    async with get_db(engine) as conn:
+        for fname in sorted(by_file):
+            path = path_by_name.get(fname)
+            if path is None:  # cannot happen: source_file comes from *files*
+                logger.error("Replay record references unknown file %s", fname)
+                totals["errors"] += len(by_file[fname])
+                continue
+            try:
+                rel_path = str(path.relative_to(DATA_DIR))
+            except ValueError:
+                rel_path = str(path)
+            source_id = await get_or_create_source(
+                conn,
+                SOURCE_TYPE_CO_ARCHIVE,
+                snapshot_path=rel_path,
+                url=WSLCB_SOURCE_URL,
+                captured_at=None,
+            )
+            opts = IngestOptions(link_outcomes=False, source_id=source_id)
+            batch_result = await ingest_batch(conn, by_file[fname], opts)
+            await conn.commit()
+            totals["inserted"] += batch_result.inserted
+            totals["skipped"] += batch_result.skipped
+            totals["errors"] += batch_result.errors
+            logger.debug(
+                "%s: inserted=%d skipped=%d",
+                fname,
+                batch_result.inserted,
+                batch_result.skipped,
+            )
+
+
 async def backfill_diffs(
     engine: AsyncEngine,
     *,
@@ -41,77 +138,33 @@ async def backfill_diffs(
     limit: int | None = None,
     dry_run: bool = False,
 ) -> dict[str, int]:
-    """Ingest records from CO diff archives into PostgreSQL.
+    """Ingest records from CO diff archives into PostgreSQL via chain replay.
 
     Args:
         engine: AsyncEngine connected to the PostgreSQL database.
         section: If set, only process diffs for this section (e.g. "notifications").
-        single_file: If set, process only this single diff file path.
-        limit: If set, process at most N diff files.
-        dry_run: If True, parse but do not write to the database.
+        single_file: If set, replay only this diff file (section inferred
+            from its name).
+        limit: If set, replay at most N diff files (truncating the chain).
+        dry_run: If True, replay but do not write to the database.
 
     Returns a dict with ``inserted``, ``skipped``, ``errors``, ``files_processed``.
     """
     totals: dict[str, int] = {"inserted": 0, "skipped": 0, "errors": 0, "files_processed": 0}
 
-    if single_file:
-        diff_files: list[tuple[str | None, Path]] = [(None, Path(single_file))]
-    else:
-        diff_files = []
-        for section_type, section_dir in _diff_section_dirs(DATA_DIR, section):
-            for f in glob_with_gz(section_dir, "*.txt"):
-                diff_files.append((section_type, f))
+    work, unassigned = _build_work(section, single_file, limit)
+    totals["errors"] += unassigned
 
-    if limit:
-        diff_files = diff_files[:limit]
+    for section_type, files in work:
+        result = replay_diff_chain(files, section_type)
+        totals["files_processed"] += len(files) - result.stats["read_errors"]
+        totals["errors"] += result.stats["read_errors"]
 
-    if dry_run:
-        for section_type, diff_path in diff_files:
-            try:
-                records = extract_records_from_diff(diff_path, section_type)
-                totals["inserted"] += len(records)
-                totals["files_processed"] += 1
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Error parsing %s: %s", diff_path, exc)
-                totals["errors"] += 1
-        return totals
+        if dry_run:
+            totals["inserted"] += len(result.records)
+            continue
 
-    async with get_db(engine) as conn:
-        for section_type, diff_path in diff_files:
-            try:
-                records = extract_records_from_diff(diff_path, section_type)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Error parsing %s: %s", diff_path, exc)
-                totals["errors"] += 1
-                continue
-
-            rel_path = str(diff_path.relative_to(DATA_DIR))
-            source_id = await get_or_create_source(
-                conn,
-                SOURCE_TYPE_CO_ARCHIVE,
-                snapshot_path=rel_path,
-                url=WSLCB_SOURCE_URL,
-                captured_at=None,
-            )
-
-            opts = IngestOptions(
-                link_outcomes=False,
-                source_id=source_id,
-            )
-            batch_result = await ingest_batch(conn, records, opts)
-            await conn.commit()
-
-            totals["inserted"] += batch_result.inserted
-            totals["skipped"] += batch_result.skipped
-            totals["errors"] += batch_result.errors
-            totals["files_processed"] += 1
-
-            logger.debug(
-                "%s: inserted=%d skipped=%d",
-                diff_path.name,
-                batch_result.inserted,
-                batch_result.skipped,
-            )
+        await _ingest_replay_result(engine, result, files, totals)
 
     logger.info(
         "Diff backfill complete: files=%d inserted=%d skipped=%d errors=%d",

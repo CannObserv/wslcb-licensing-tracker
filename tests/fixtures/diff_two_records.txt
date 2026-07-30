@@ -1,6 +1,6 @@
 --- @	Sun, 14 Jun 2025 00:05:06 -0700
 +++ @	Mon, 15 Jun 2025 00:15:05 -0700
-@@ -100,5 +100,50 @@
+@@ -100,36 +100,36 @@
  <tr style="background: White"><td> </td><td> </td></tr>
 +                   <tbody width="100%" style="Font-size: .80em; background: lightgrey; border: Thick groove Steelblue; font-family: Arial, sans-serif; color:black">
 +                      <tr>
