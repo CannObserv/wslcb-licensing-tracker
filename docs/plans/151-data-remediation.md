@@ -1,6 +1,6 @@
 # #151 Data Remediation — replay-driven cleanup of diff-era records
 
-Status: DRAFT — awaiting review before execution
+Status: APPROVED 2026-07-30 — decisions: (1) corrections add a `manual` source row; (2) transient date-variants are kept as separate records; (3) diff archive is FROZEN after this pass (no periodic backfill-diffs re-runs)
 Prereq: chain-replay ingestion merged (17bfd36). Follow-on: #154 (provenance extracts) runs after this.
 
 ## Problem
@@ -67,11 +67,10 @@ dependent rows.
   classify → backup → mutate, each phase gated by `--phase` and `--dry-run`.
 - Backup TSVs kept alongside prior ones; paths posted to #151.
 
-## Open questions
+## Decisions (were open questions)
 
-1. Should the 46+17 name corrections also add a `manual` source row (like
-   the earlier 107-correction pass) for auditability?
-2. For the ~878 transient-validated records: keep both date-variants as
-   separate records (both were genuinely on the page) — confirm.
-3. Post-remediation, should backfill-diffs be re-run periodically, or is
-   the diff archive now considered fully ingested (frozen)?
+1. **Yes** — name corrections add a `manual` source row for auditability.
+2. **Yes** — both date-variants of transient records are kept; both were
+   genuinely on the page.
+3. **Frozen** — the diff archive is fully ingested after this pass;
+   `backfill-diffs` is not re-run periodically.
