@@ -146,8 +146,13 @@ def backfill_snapshots() -> None:
     default=None,
     help="Process only this section subdirectory.",
 )
-@click.option("--file", "single_file", default=None, help="Process a single diff file.")
-@click.option("--limit", type=int, default=None, help="Process at most N diff files.")
+@click.option(
+    "--file",
+    "single_file",
+    default=None,
+    help="Replay a single diff file (section inferred from its name).",
+)
+@click.option("--limit", type=int, default=None, help="Replay at most N diff files.")
 @click.option("--dry-run", is_flag=True, help="Parse and count, no writes.")
 def backfill_diffs(
     section: str | None,
@@ -155,7 +160,7 @@ def backfill_diffs(
     limit: int | None,
     dry_run: bool,
 ) -> None:
-    """Ingest records from unified-diff archives."""
+    """Ingest records from unified-diff archives via chain replay (#151)."""
     result = _run_with_engine(
         lambda engine: run_backfill_diffs(
             engine,
@@ -167,8 +172,9 @@ def backfill_diffs(
     )
     if dry_run:
         click.echo(
-            f"[dry-run] Would insert {result['inserted']:,} record(s)"
-            f" from {result['files_processed']:,} file(s)."
+            f"[dry-run] Replayed {result['inserted']:,} record(s)"
+            f" from {result['files_processed']:,} file(s);"
+            " records already ingested are skipped on a live run."
         )
     else:
         click.echo(

@@ -421,10 +421,15 @@ def is_valid_record(record: dict) -> bool:
 def extract_records_from_diff(filepath: Path, section_type: str) -> list[dict]:
     """Extract deduplicated, validated records from a single diff file.
 
-    Uses the two-pass strategy described in the ``backfill_diffs`` module
-    docstring.  The supplemental (with-context) pass is only run when the
-    primary pass produced incomplete records at hunk boundaries, keeping
-    overall parse time low.
+    Two-pass strategy: a primary pass over the changed-only line stream,
+    plus a supplemental with-context pass that only runs when the primary
+    pass produced incomplete records at hunk boundaries, keeping overall
+    parse time low.
+
+    .. note:: Archive *ingestion* no longer uses this function — chain
+       replay (``diff_replay.replay_diff_chain``, #151) supersedes it,
+       because the changed-only stream can mis-pair labels and values
+       across records. This remains for standalone single-diff inspection.
 
     ``parse_records_from_table`` also emits boundary-split fragments: when a
     later block's date/name rows were unchanged context (absent from the
