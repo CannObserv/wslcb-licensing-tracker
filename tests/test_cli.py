@@ -77,6 +77,7 @@ class TestIngestGroup:
             "written": 4,
             "linked": 4,
             "unmatched": 1,
+            "collisions": 0,
             "errors": 0,
         }
         result = CliRunner().invoke(

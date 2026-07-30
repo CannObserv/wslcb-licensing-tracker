@@ -205,7 +205,8 @@ def generate_replay_extracts(section: str | None, dry_run: bool) -> None:
         click.echo(
             f"Replayed {result['records']:,} record(s): "
             f"{result['written']:,} extract(s) written, {result['linked']:,} linked, "
-            f"{result['unmatched']:,} unmatched, {result['errors']:,} errors."
+            f"{result['unmatched']:,} unmatched, {result['collisions']:,} collisions, "
+            f"{result['errors']:,} errors."
         )
 
 

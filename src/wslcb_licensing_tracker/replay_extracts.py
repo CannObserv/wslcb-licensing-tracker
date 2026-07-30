@@ -19,7 +19,8 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from .backfill_diffs import diff_section_dirs
@@ -27,7 +28,6 @@ from .db import (
     DATA_DIR,
     SOURCE_TYPE_CO_REPLAY,
     WSLCB_SOURCE_URL,
-    get_or_create_source,
     link_record_source,
 )
 from .diff_replay import replay_diff_chain
@@ -71,6 +71,37 @@ def _write_extract(path: Path, raw_lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(raw_lines) + "\n"
     path.write_bytes(gzip.compress(content.encode()))
+
+
+async def _upsert_replay_source(
+    conn: AsyncConnection, rel_path: str, captured_at: datetime | None, metadata: dict
+) -> int:
+    """Insert or refresh the ``co_replay`` source for *rel_path*; return its id.
+
+    Unlike the shared ``get_or_create_source`` (``ON CONFLICT DO NOTHING``, to
+    keep frozen provenance immutable), this upserts: on regeneration it
+    refreshes ``captured_at`` + ``metadata`` so replayed attribution stays
+    current, in a single statement. ``RETURNING`` yields the id on both insert
+    and update (the DO-NOTHING fallback-SELECT dance is unnecessary here).
+    """
+    meta_json = json.dumps(metadata)
+    stmt = (
+        pg_insert(sources)
+        .values(
+            source_type_id=SOURCE_TYPE_CO_REPLAY,
+            snapshot_path=rel_path,
+            url=WSLCB_SOURCE_URL,
+            captured_at=captured_at,
+            metadata=meta_json,
+        )
+        .on_conflict_do_update(
+            constraint="uq_sources_type_path",
+            set_={"captured_at": captured_at, "metadata": meta_json},
+        )
+        .returning(sources.c.id)
+    )
+    result = await conn.execute(stmt)
+    return result.scalar_one()
 
 
 async def _lookup_record_id(conn: AsyncConnection, rec: dict) -> int | None:
@@ -164,22 +195,7 @@ async def generate_replay_extracts(
                     "evidencing_file": rec["source_file"],
                     "generated_at": generated_at,
                 }
-                source_id = await get_or_create_source(
-                    conn,
-                    SOURCE_TYPE_CO_REPLAY,
-                    snapshot_path=rel_path,
-                    url=WSLCB_SOURCE_URL,
-                    captured_at=rec["scraped_at"],
-                    metadata=metadata,
-                )
-                # get_or_create_source is ON CONFLICT DO NOTHING, so on a
-                # regeneration the existing row keeps its old metadata. Refresh
-                # it explicitly to track the latest replay attribution.
-                await conn.execute(
-                    update(sources)
-                    .where(sources.c.id == source_id)
-                    .values(captured_at=rec["scraped_at"], metadata=json.dumps(metadata))
-                )
+                source_id = await _upsert_replay_source(conn, rel_path, rec["scraped_at"], metadata)
                 await link_record_source(conn, record_id, source_id, role=LINK_ROLE)
                 totals["linked"] += 1
                 pending += 1
@@ -189,11 +205,13 @@ async def generate_replay_extracts(
             await conn.commit()
 
     logger.info(
-        "Replay extracts complete: records=%d written=%d linked=%d unmatched=%d errors=%d",
+        "Replay extracts complete: records=%d written=%d linked=%d unmatched=%d "
+        "collisions=%d errors=%d",
         totals["records"],
         totals["written"],
         totals["linked"],
         totals["unmatched"],
+        totals["collisions"],
         totals["errors"],
     )
     return totals
