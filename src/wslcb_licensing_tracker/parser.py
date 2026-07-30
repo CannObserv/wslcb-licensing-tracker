@@ -81,6 +81,61 @@ def normalize_date(date_str: str) -> str:
 
 _CELL_COUNT = 2
 
+# Maps each record-field label to the primary dict key it populates. A single
+# WSLCB block sets each of these at most once, so re-setting an already-populated
+# field to a *different* value means a new block has begun. This detects record
+# boundaries in diff-derived streams where a block's date/name (and sometimes
+# license-number) rows were unchanged context — and thus stripped from the
+# changed-only line stream. Without it, the second block's fields overwrite the
+# first block's accumulator, producing a hybrid record (one entity's name/date
+# glued onto another license's number/type/location). See tests/test_parser.py
+# ::TestDiffMergeBoundary and real record 31982.
+#
+# The New/Current pairs deliberately map to *different* keys (business_name vs
+# previous_business_name, etc.) so ASSUMPTION and CHANGE OF LOCATION records —
+# which legitimately carry both — never trip the boundary check.
+_PRIMARY_FIELD = {
+    "Business Name:": "business_name",
+    "New Business Name:": "business_name",
+    "Current Business Name:": "previous_business_name",
+    "Business Location:": "business_location",
+    "New Business Location:": "business_location",
+    "Current Business Location:": "previous_business_location",
+    "Applicant(s):": "applicants",
+    "New Applicant(s):": "applicants",
+    "Current Applicant(s):": "previous_applicants",
+    "License Type:": "license_type",
+    "Application Type:": "application_type",
+    "\\Application Type:": "application_type",
+    "License Number:": "license_number",
+    "Contact Phone:": "contact_phone",
+}
+
+
+def _empty_record(section_type: str, scraped_at: datetime, record_date: str = "") -> dict:
+    """Return a fresh record dict with all fields zeroed."""
+    return {
+        "section_type": section_type,
+        "record_date": record_date,
+        "business_name": "",
+        "business_location": "",
+        "applicants": "",
+        "license_type": "",
+        "application_type": "",
+        "license_number": "",
+        "contact_phone": "",
+        "city": "",
+        "state": "WA",
+        "zip_code": "",
+        "previous_business_name": "",
+        "previous_applicants": "",
+        "previous_business_location": "",
+        "previous_city": "",
+        "previous_state": "",
+        "previous_zip_code": "",
+        "scraped_at": scraped_at,
+    }
+
 
 def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dispatch; not worth splitting
     table: "BeautifulSoup",
@@ -89,9 +144,9 @@ def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dis
     """Parse all records from a section table."""
     records = []
     rows = table.find_all("tr")
-    current = {}
     date_field = DATE_FIELD_MAP[section_type]
     scraped_at = datetime.now(UTC)
+    current = _empty_record(section_type, scraped_at)
 
     for row in rows:
         cells = row.find_all("td")
@@ -106,28 +161,23 @@ def parse_records_from_table(  # noqa: C901, PLR0912, PLR0915  # WSLCB field dis
             # Start of a new record — save previous if complete
             if current.get("license_number"):
                 records.append(current)
-            current = {
-                "section_type": section_type,
-                "record_date": normalize_date(value),
-                "business_name": "",
-                "business_location": "",
-                "applicants": "",
-                "license_type": "",
-                "application_type": "",
-                "license_number": "",
-                "contact_phone": "",
-                "city": "",
-                "state": "WA",
-                "zip_code": "",
-                "previous_business_name": "",
-                "previous_applicants": "",
-                "previous_business_location": "",
-                "previous_city": "",
-                "previous_state": "",
-                "previous_zip_code": "",
-                "scraped_at": scraped_at,
-            }
-        elif label == "Business Name:":
+            current = _empty_record(section_type, scraped_at, normalize_date(value))
+            continue
+
+        # Implicit boundary: re-setting an already-populated field to a different
+        # value means a new block began without its date row (dropped diff
+        # context). Flush the completed block (if it reached a license number)
+        # and restart so the two blocks don't merge into a hybrid. Incomplete
+        # fragments are recovered by the supplemental with-context pass. The
+        # comparison is exact-string: WSLCB emits each field once per block with
+        # a stable value, so this never fires spuriously within one real block.
+        prim = _PRIMARY_FIELD.get(label)
+        if prim and current.get(prim) and current[prim] != value:
+            if current.get("license_number"):
+                records.append(current)
+            current = _empty_record(section_type, scraped_at)
+
+        if label == "Business Name:":
             current["business_name"] = value
         elif label == "New Business Name:":
             # ASSUMPTION records: buyer's business name
@@ -375,6 +425,13 @@ def extract_records_from_diff(filepath: Path, section_type: str) -> list[dict]:
     docstring.  The supplemental (with-context) pass is only run when the
     primary pass produced incomplete records at hunk boundaries, keeping
     overall parse time low.
+
+    ``parse_records_from_table`` also emits boundary-split fragments: when a
+    later block's date/name rows were unchanged context (absent from the
+    changed-only stream), its remaining fields are detected as a new block via
+    field-overwrite rather than being merged into the preceding record. The
+    dateless fragment is invalid on the primary pass and recovered here by the
+    supplemental pass. See ``parse_records_from_table`` for the mechanism.
 
     Transparently falls back to a ``.txt.gz`` sibling when *filepath* itself
     doesn't exist, mirroring ``_read_snapshot``'s compression tolerance.
