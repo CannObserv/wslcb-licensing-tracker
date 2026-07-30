@@ -62,6 +62,15 @@ _DIFF_SOURCE = {
     "snapshot_path": "path/diff.txt",
 }
 
+# Replay-backfilled sources (#151) are stamped co_archive but point at diff
+# files — dispatch must follow the file, not the source_type (#154 defect 1).
+_MISSTAMPED_DIFF_SOURCE = {
+    **_SAMPLE_SOURCE,
+    "source_type": "co_archive",
+    "source_label": "CO Page Archive",
+    "snapshot_path": "wslcb/licensinginfo-diffs/approvals/2024_01_01-approvals-diff.txt.gz",
+}
+
 
 def _make_client(source_row=None, record=None, link_row=True):
     """Return (client, patches) with conn.execute mocked for source_viewer queries.
@@ -179,6 +188,22 @@ class TestSourceViewerRoute:
     def test_diff_source_uses_diff_extractor(self):
         """co_diff_archive sources dispatch to extract_tbody_from_diff."""
         client, patches = _make_client(source_row=_DIFF_SOURCE, record=_SAMPLE_RECORD)
+        try:
+            with patch(
+                "wslcb_licensing_tracker.app.extract_tbody_from_diff",
+                return_value="<tbody><tr><td>License Number:</td><td>078001</td></tr></tbody>",
+            ) as mock_diff:
+                resp = client.get("/source/1/record/1")
+
+            assert resp.status_code == 200
+            mock_diff.assert_called_once()
+            assert "srcdoc" in resp.text
+        finally:
+            _stop(patches)
+
+    def test_co_archive_stamped_diff_path_uses_diff_extractor(self):
+        """co_archive-stamped sources with a .txt.gz path dispatch to the diff extractor."""
+        client, patches = _make_client(source_row=_MISSTAMPED_DIFF_SOURCE, record=_SAMPLE_RECORD)
         try:
             with patch(
                 "wslcb_licensing_tracker.app.extract_tbody_from_diff",

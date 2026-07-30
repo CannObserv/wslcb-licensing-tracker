@@ -365,7 +365,10 @@ async def source_viewer(
     snapshot_path = source.get("snapshot_path")
     if snapshot_path:
         path = DATA_DIR / snapshot_path
-        if source["source_type"] == "co_diff_archive":
+        # Dispatch on the file, not source_type: replay-backfilled diff
+        # sources (#151) are stamped co_archive, and the frozen provenance
+        # contract forbids retagging them (#154).
+        if snapshot_path.endswith((".txt", ".txt.gz")):
             tbody_html = extract_tbody_from_diff(
                 path,
                 record["section_type"],
