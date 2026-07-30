@@ -191,6 +191,33 @@ class TestReplayExtraction:
         assert bravo["origin"] == "entry"
         assert bravo["scraped_at"] == _ts(2)
 
+    def test_keep_raw_retains_evidencing_block_lines(self, tmp_path):
+        """keep_raw=True attaches the reconstructed <tbody> lines to each record."""
+        s1 = _page(_block("1/1/2025", "ALPHA", "100001"))
+        s2 = _page(
+            _block("1/1/2025", "ALPHA", "100001"),
+            _block("1/2/2025", "BRAVO", "100002"),
+        )
+        files = _write_chain(tmp_path, [s1, s2])
+        result = replay_diff_chain(files, "approved", keep_raw=True)
+        recs = _by_license(result.records)
+        (bravo,) = recs["100002"]
+        raw = bravo["raw_lines"]
+        assert "<tbody" in raw[0].lower()
+        assert "</tbody>" in raw[-1].lower()
+        assert any("BRAVO" in ln for ln in raw)
+
+    def test_raw_lines_absent_by_default(self, tmp_path):
+        """Without keep_raw, records carry no raw_lines key (ingest path unchanged)."""
+        s1 = _page(_block("1/1/2025", "ALPHA", "100001"))
+        s2 = _page(
+            _block("1/1/2025", "ALPHA", "100001"),
+            _block("1/2/2025", "BRAVO", "100002"),
+        )
+        files = _write_chain(tmp_path, [s1, s2])
+        result = replay_diff_chain(files, "approved")
+        assert all("raw_lines" not in r for r in result.records)
+
     def test_final_state_record_extracted(self, tmp_path):
         # CHARLIE enters via a diff whose block is fully observed, but ALPHA
         # sits in the unknown base and never exits: only the final-state parse

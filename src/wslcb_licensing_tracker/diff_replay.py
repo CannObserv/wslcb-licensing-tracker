@@ -476,8 +476,9 @@ def _natural_key(rec: dict) -> tuple:
 class _Collector:
     """Dedup records by natural key, first source wins."""
 
-    def __init__(self, section_type: str) -> None:
+    def __init__(self, section_type: str, *, keep_raw: bool = False) -> None:
         self.section_type = section_type
+        self.keep_raw = keep_raw
         self.records: dict[tuple, dict] = {}
         self.skipped_partial_spans = 0
 
@@ -497,6 +498,8 @@ class _Collector:
                     rec["scraped_at"] = ts
                     rec["source_file"] = fname
                     rec["origin"] = origin
+                    if self.keep_raw:
+                        rec["raw_lines"] = list(group)
                     self.records[key] = rec
 
     def add_spans(
@@ -553,7 +556,7 @@ def _learn_sweep(files: list[Path]) -> _Replayer:
 
 
 def replay_diff_chain(  # noqa: C901, PLR0912, PLR0915  # per-diff source dispatch; see module docstring
-    files: list[Path], section_type: str
+    files: list[Path], section_type: str, *, keep_raw: bool = False
 ) -> ReplayResult:
     """Replay a section's diff chain and extract all recoverable records.
 
@@ -561,7 +564,9 @@ def replay_diff_chain(  # noqa: C901, PLR0912, PLR0915  # per-diff source dispat
     sorted by name, which is chronological for the archive's naming scheme.
     Returns records in the standard parsed-record shape plus ``scraped_at``
     (capture timestamp evidencing the record), ``source_file`` (diff file
-    name) and ``origin`` (entry/exit/mutation/state/final).
+    name) and ``origin`` (entry/exit/mutation/state/final). With *keep_raw*,
+    each record also carries ``raw_lines`` — the reconstructed evidencing
+    ``<tbody>`` block, used for provenance extracts (#154).
     """
     files = sorted(files, key=lambda p: p.name)
 
@@ -572,7 +577,7 @@ def replay_diff_chain(  # noqa: C901, PLR0912, PLR0915  # per-diff source dispat
     # Sweep 2 shares sweep 1's store as oracle: every ID it allocates (in the
     # same deterministic order) resolves to the fully-learned content, so
     # old- and new-side states materialise fully known.
-    collector = _Collector(section_type)
+    collector = _Collector(section_type, keep_raw=keep_raw)
     rep = _Replayer(oracle=store)
     oracle_len = len(store)
     partial_skips = [0]
