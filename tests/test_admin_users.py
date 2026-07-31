@@ -4,6 +4,7 @@ Ported to async PostgreSQL mocking pattern.  Tests verify routing behaviour
 (status codes, redirect locations, helper invocations) without a real database.
 """
 
+import inspect
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -696,6 +697,22 @@ class TestEndorsementActionRedirects:
             yield conn
 
         return _ctx
+
+    async def test_seed_pair_mocks_scalar_is_not_a_coroutine(self):
+        """Regression guard (#158): the mocked ``scalar_one_or_none`` must be a
+        plain callable, not an AsyncMock.
+
+        The routes call ``(await conn.execute(...)).scalar_one_or_none()``
+        synchronously. If the mock chain lets AsyncMock-ness propagate to
+        ``scalar_one_or_none``, that call returns an un-awaited coroutine — the
+        route silently mis-behaves and a ``RuntimeWarning`` is emitted at GC
+        time (too late for a per-test ``filterwarnings`` marker to catch).
+        Assert the value directly instead.
+        """
+        async with self._seed_pair_mocks()(engine=None) as conn:
+            value = (await conn.execute("SELECT 1")).scalar_one_or_none()
+        assert not inspect.iscoroutine(value)
+        assert value == "ENDORSEMENT NAME"
 
     # -- /alias ---------------------------------------------------------------
 
