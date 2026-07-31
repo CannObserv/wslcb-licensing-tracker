@@ -51,6 +51,11 @@ _MIGRATIONS: list[tuple[str, Callable[[AsyncConnection], Awaitable[None]]]] = [
     ("0004_backfill_endorsements", backfill),
     ("0005_backfill_entities", backfill_entities),
     ("0006_build_record_links", _run_build_all_links),
+    # Re-seed endorsement codes so seed_code_map.json additions (e.g. #159's 12
+    # code→label mappings) reach databases that already ran 0001. Idempotent:
+    # on_conflict_do_nothing + placeholder merge, so it is a no-op where the
+    # codes already exist.
+    ("0007_reseed_endorsement_codes", seed_endorsements),
 ]
 
 
