@@ -787,6 +787,40 @@ class TestEndorsementActionRedirects:
         assert resp.status_code == 303
         assert "section=endorsements" in resp.headers["location"]
 
+    def test_alias_calls_set_canonical_with_correct_signature(self):
+        """POST /alias must pass kwargs matching set_canonical_endorsement's real signature.
+
+        The other alias tests mock the function with a plain AsyncMock, which
+        swallows any kwargs and hides signature drift. autospec=True enforces the
+        real parameter names, so a wrong kwarg raises TypeError → 500 (#157).
+        """
+        with (
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=self._seed_pair_mocks(),
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.set_canonical_endorsement",
+                autospec=True,
+                return_value=1,
+            ),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
+                new_callable=AsyncMock,
+            ),
+        ):
+            client, patches, _ = _make_client()
+            try:
+                resp = client.post(
+                    "/admin/endorsements/alias",
+                    data={"canonical_id": "1", "variant_ids": "2"},
+                    follow_redirects=False,
+                )
+            finally:
+                _stop(patches)
+
+        assert resp.status_code == 303
+
     # -- /dismiss-suggestion --------------------------------------------------
 
     def test_dismiss_from_suggestions_tab_redirects_to_suggestions(self):

@@ -217,7 +217,7 @@ async def admin_alias_endorsement(
         written = await set_canonical_endorsement(
             conn,
             canonical_id=canonical_id,
-            variant_ids=variant_ids,
+            endorsement_ids=variant_ids,
             created_by=admin["email"],
         )
         await log_action(
