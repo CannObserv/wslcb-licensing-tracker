@@ -686,7 +686,13 @@ class TestEndorsementActionRedirects:
         @asynccontextmanager
         async def _ctx(engine):
             conn = AsyncMock()
-            conn.execute.return_value.scalar_one_or_none.return_value = "ENDORSEMENT NAME"
+            # execute() is awaited; its result's scalar_one_or_none() is called
+            # synchronously. Use a MagicMock result so scalar_one_or_none is a plain
+            # (non-coroutine) callable — an AsyncMock here would dangle an un-awaited
+            # coroutine and emit a RuntimeWarning (#158).
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = "ENDORSEMENT NAME"
+            conn.execute = AsyncMock(return_value=result)
             yield conn
 
         return _ctx
