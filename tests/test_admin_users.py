@@ -803,7 +803,7 @@ class TestEndorsementActionRedirects:
                 "wslcb_licensing_tracker.admin_endorsement_routes.set_canonical_endorsement",
                 autospec=True,
                 return_value=1,
-            ),
+            ) as mock_set_canonical,
             patch(
                 "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
                 new_callable=AsyncMock,
@@ -819,7 +819,13 @@ class TestEndorsementActionRedirects:
             finally:
                 _stop(patches)
 
+        # A 303 here is only reachable if the autospec'd call matched the real
+        # signature; assert the exact kwargs so the guard is explicit, not implied.
         assert resp.status_code == 303
+        mock_set_canonical.assert_called_once()
+        call_kwargs = mock_set_canonical.call_args.kwargs
+        assert call_kwargs["canonical_id"] == 1
+        assert call_kwargs["endorsement_ids"] == [2]
 
     # -- /dismiss-suggestion --------------------------------------------------
 
