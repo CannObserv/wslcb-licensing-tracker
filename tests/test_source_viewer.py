@@ -8,9 +8,42 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+_UNSET = object()
+
+
+@pytest.fixture(autouse=True)
+def _stamp_engine():
+    """Stamp app.state.engine so this module is self-contained.
+
+    _make_client builds a bare TestClient(app) that never drives the lifespan
+    (app.py:66-67), so app.state.engine is never set here. Without this fixture
+    the file only passes when test_app.py has already run its `with TestClient`
+    lifespan and left a mock engine on the shared `app` singleton — a
+    collection-order dependency (#155). The value is never dereferenced (get_db
+    is patched to ignore it); the route just needs the attribute to exist.
+
+    Saves and restores any prior value so we don't leak a mock onto the
+    process-wide `app` singleton for whatever test module runs next.
+    """
+    prev = getattr(app.state, "engine", _UNSET)
+    app.state.engine = MagicMock()
+    try:
+        yield
+    finally:
+        if prev is _UNSET:
+            delattr(app.state, "engine")
+        else:
+            app.state.engine = prev
+
 
 # ---------------------------------------------------------------------------
 # Helpers
