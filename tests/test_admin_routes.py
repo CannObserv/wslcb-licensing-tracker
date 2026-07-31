@@ -9,25 +9,14 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.admin_routes import render_admin
 from wslcb_licensing_tracker.app import app
 
-from ._support import stamped_engine
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _stamp_engine():
-    """Stamp app.state.engine for every test — routes read it without a lifespan (#155)."""
-    with stamped_engine():
-        yield
-
+# Autouse fixture: stamps app.state.engine for every test — routes read it
+# without a lifespan (#155). Imported for its pytest side effect.
+from ._support import _stamp_engine  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Helpers

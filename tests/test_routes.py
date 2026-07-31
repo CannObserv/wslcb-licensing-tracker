@@ -8,24 +8,18 @@ Uses FastAPI TestClient with async queries_* functions mocked; no disk DB.
 import copy
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
 
-from ._support import stamped_engine
+# Autouse fixture: stamps app.state.engine for every test — routes read it
+# without a lifespan (#155). Imported for its pytest side effect.
+from ._support import _stamp_engine  # noqa: F401
 
 # The canonical placeholder that both search inputs must display.
 SEARCH_PLACEHOLDER = "Search business name, license #, location, applicant..."
-
-
-@pytest.fixture(autouse=True)
-def _stamp_engine():
-    """Stamp app.state.engine for every test — routes read it without a lifespan (#155)."""
-    with stamped_engine():
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +89,6 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
         entity_result = {"entities": [], "total": 0}
 
     mock_conn = AsyncMock()
-    engine = MagicMock()
-    engine.dispose = AsyncMock()
 
     async def _get_stats(conn):
         return stats
@@ -113,9 +105,10 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
     async def _get_entities(conn, **kwargs):
         return entity_result
 
+    # No create_engine_from_env / run_pending_migrations patches: a bare
+    # TestClient(app) never drives the lifespan, so neither is ever called.
+    # app.state.engine is stamped by the autouse _stamp_engine fixture.
     patches = (
-        patch("wslcb_licensing_tracker.app.create_engine_from_env", return_value=engine),
-        patch("wslcb_licensing_tracker.app.run_pending_migrations", new_callable=AsyncMock),
         patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None),
         patch("wslcb_licensing_tracker.app.get_db", side_effect=_async_db_ctx(mock_conn)),
         patch("wslcb_licensing_tracker.app.get_stats", new=_get_stats),
@@ -541,8 +534,6 @@ class TestAdditionalNamesNotice:
     def _make_client_for_record(self, record_dict):
         """Return a (client, patches) pair with get_record_by_id mocked."""
         mock_conn = AsyncMock()
-        engine = MagicMock()
-        engine.dispose = AsyncMock()
 
         async def _get_record_by_id(conn, record_id):
             return record_dict
@@ -569,9 +560,10 @@ class TestAdditionalNamesNotice:
         async def _db_ctx(eng):
             yield mock_conn
 
+        # No create_engine_from_env / run_pending_migrations patches: a bare
+        # TestClient(app) never drives the lifespan, so neither is ever called.
+        # app.state.engine is stamped by the autouse _stamp_engine fixture.
         patches = (
-            patch("wslcb_licensing_tracker.app.create_engine_from_env", return_value=engine),
-            patch("wslcb_licensing_tracker.app.run_pending_migrations", new_callable=AsyncMock),
             patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None),
             patch("wslcb_licensing_tracker.app.get_db", side_effect=_db_ctx),
             patch("wslcb_licensing_tracker.app.get_record_by_id", new=_get_record_by_id),

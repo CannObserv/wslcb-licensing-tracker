@@ -272,15 +272,10 @@ class TestHealthEndpoint:
         # data/wslcb.db it returns 503.  Either is acceptable — the assertion
         # only rules out 401/403, which is the actual invariant under test.
         #
-        # Patch lifespan engine creation + migrations to avoid real PG connection.
-        _mock_engine = MagicMock()
-        _mock_engine.dispose = AsyncMock()
-
-        with (
-            patch("wslcb_licensing_tracker.app.create_engine_from_env", return_value=_mock_engine),
-            patch("wslcb_licensing_tracker.app.run_pending_migrations", new_callable=AsyncMock),
-            patch("wslcb_licensing_tracker.api_routes.get_db") as mock_get_db,
-        ):
+        # get_db is patched to raise so no real PG connection is attempted; a
+        # bare TestClient never drives the lifespan, so no engine-creation patch
+        # is needed (the route catches the missing engine and returns 503).
+        with patch("wslcb_licensing_tracker.api_routes.get_db") as mock_get_db:
 
             @asynccontextmanager
             async def _fail_ctx(engine):

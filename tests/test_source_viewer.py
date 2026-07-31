@@ -8,32 +8,14 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
 
-from ._support import stamped_engine
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _stamp_engine():
-    """Stamp app.state.engine so this module is self-contained (#155).
-
-    _make_client builds a bare TestClient(app) that never drives the lifespan
-    (app.py:66-67), so app.state.engine is never set here. Without this the file
-    only passed when test_app.py had already run its `with TestClient` lifespan
-    and left a mock engine on the shared `app` singleton — a collection-order
-    dependency. The value is never dereferenced (get_db is patched); the route
-    just needs the attribute to exist.
-    """
-    with stamped_engine():
-        yield
-
+# Autouse fixture: stamps app.state.engine so this module is self-contained —
+# _make_client builds a bare TestClient(app) that never drives the lifespan
+# that sets it (#155). Imported for its pytest side effect.
+from ._support import _stamp_engine  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -11,6 +11,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
+import pytest
+
 from wslcb_licensing_tracker.app import app
 
 _UNSET = object()
@@ -38,3 +40,16 @@ def stamped_engine(engine=None) -> Iterator[object]:
             delattr(app.state, "engine")
         else:
             app.state.engine = prev
+
+
+@pytest.fixture(autouse=True)
+def _stamp_engine():
+    """Autouse: stamp app.state.engine for every test in the importing module.
+
+    Import it (``from ._support import _stamp_engine  # noqa: F401``) into any
+    module whose routes read ``app.state.engine`` without driving the lifespan
+    (#155). pytest activates autouse fixtures visible in a module's namespace,
+    so the bare import is enough — no per-module redefinition.
+    """
+    with stamped_engine():
+        yield
