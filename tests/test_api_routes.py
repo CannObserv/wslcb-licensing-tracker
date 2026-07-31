@@ -265,16 +265,12 @@ class TestHealthEndpoint:
 
     def test_no_auth_required(self):
         """Health endpoint must respond without any auth headers."""
-        # Intentionally uses a bare TestClient with no DB patch so we prove
-        # the endpoint returns a response with no credentials at all — not
-        # that the DB call succeeds.  The real on-disk DB is used here: on
-        # this VM it returns 200; on a fresh CI environment without
-        # data/wslcb.db it returns 503.  Either is acceptable — the assertion
-        # only rules out 401/403, which is the actual invariant under test.
-        #
-        # get_db is patched to raise so no real PG connection is attempted; a
-        # bare TestClient never drives the lifespan, so no engine-creation patch
-        # is needed (the route catches the missing engine and returns 503).
+        # Invariant under test: /health needs no credentials (rules out 401/403).
+        # A bare TestClient never drives the lifespan, and get_db is patched to
+        # raise, so no real PG connection is attempted — the route catches the
+        # failure and always returns 503. We assert 503 exactly: a 401/403 would
+        # mean auth crept onto the endpoint, and a 200 would mean the patch
+        # stopped taking effect (the real DB got hit).
         with patch("wslcb_licensing_tracker.api_routes.get_db") as mock_get_db:
 
             @asynccontextmanager
@@ -285,7 +281,7 @@ class TestHealthEndpoint:
             mock_get_db.side_effect = _fail_ctx
             plain_client = TestClient(app)
             resp = plain_client.get("/api/v1/health")
-        assert resp.status_code in (200, 503)
+        assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------

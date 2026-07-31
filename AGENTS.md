@@ -98,6 +98,7 @@ Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/
 
 - No network calls, no disk DB. PostgreSQL tests use `pg_conn` / `pg_engine` fixtures (require `TEST_DATABASE_URL`).
 - Match `test_<module>.py` to the module being changed. Sample fixtures in `conftest.py`.
+- Route tests that build a bare `TestClient(app)` (no `with`) don't drive the lifespan that sets `app.state.engine`. Stamp it via the shared helper in `tests/_support.py`: `from ._support import _stamp_engine  # noqa: F401` (autouse; covers the whole module), or `with stamped_engine(mock_engine):` for a scoped stamp (#155).
 
 ### Templates
 - HTMX for partial updates; `/search` detects `HX-Request` header.
