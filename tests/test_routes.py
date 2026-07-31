@@ -10,12 +10,22 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
 
+from ._support import stamped_engine
+
 # The canonical placeholder that both search inputs must display.
 SEARCH_PLACEHOLDER = "Search business name, license #, location, applicant..."
+
+
+@pytest.fixture(autouse=True)
+def _stamp_engine():
+    """Stamp app.state.engine for every test — routes read it without a lifespan (#155)."""
+    with stamped_engine():
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -124,8 +134,6 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
     for p in patches:
         p.start()
 
-    # Set engine on app.state so routes can access it without running lifespan
-    app.state.engine = engine
     client = TestClient(app, raise_server_exceptions=True)
     return client, patches
 
@@ -577,8 +585,6 @@ class TestAdditionalNamesNotice:
         for p in patches:
             p.start()
 
-        # Set engine directly so routes can access app.state.engine without lifespan
-        app.state.engine = engine
         client = TestClient(app, raise_server_exceptions=True)
         return client, patches
 

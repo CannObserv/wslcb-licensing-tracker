@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from wslcb_licensing_tracker.api_routes import _get_db
 from wslcb_licensing_tracker.app import app
 
-from .conftest import stamped_engine
+from ._support import stamped_engine
 
 # ---------------------------------------------------------------------------
 # Async helpers

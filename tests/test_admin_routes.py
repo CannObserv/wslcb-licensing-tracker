@@ -9,10 +9,25 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.admin_routes import render_admin
 from wslcb_licensing_tracker.app import app
+
+from ._support import stamped_engine
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _stamp_engine():
+    """Stamp app.state.engine for every test — routes read it without a lifespan (#155)."""
+    with stamped_engine():
+        yield
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -134,14 +149,11 @@ class TestAdminDashboard:
                 return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches = _make_admin_client(mock_conn)
             try:
                 resp = client.get("/admin/")
             finally:
                 _stop(client, patches)
-                del app.state.engine
 
         assert resp.status_code == 200
 
@@ -207,14 +219,11 @@ class TestAdminDashboard:
                 return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches = _make_admin_client(mock_conn)
             try:
                 resp = client.get("/admin/")
             finally:
                 _stop(client, patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "9999" in resp.text
@@ -283,13 +292,10 @@ class TestAdminEndorsementsPageLoads:
                 return_value=[],
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches = _make_admin_client(mock_conn)
             try:
                 resp = client.get("/admin/endorsements")
             finally:
                 _stop(client, patches)
-                del app.state.engine
 
         assert resp.status_code == 200

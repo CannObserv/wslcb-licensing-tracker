@@ -8,9 +8,24 @@ correct helper invocation) without a real database.
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
+
+from ._support import stamped_engine
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _stamp_engine():
+    """Stamp app.state.engine for every test — routes read it without a lifespan (#155)."""
+    with stamped_engine():
+        yield
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -90,14 +105,11 @@ class TestAdminEndorsementsGet:
                 return_value=[],
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements", follow_redirects=True)
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "Regulated Substances" in resp.text
@@ -124,14 +136,11 @@ class TestAdminEndorsementsGet:
                 return_value=[],
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=substances", follow_redirects=True)
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "Regulated Substances" in resp.text
@@ -158,14 +167,11 @@ class TestAdminEndorsementsGet:
                 return_value=[],
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=endorsements", follow_redirects=True)
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "Endorsement List" in resp.text
@@ -197,14 +203,11 @@ class TestAdminEndorsementsGet:
                 return_value=[],
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=suggestions", follow_redirects=True)
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
 
@@ -230,14 +233,11 @@ class TestAdminEndorsementsGet:
                 return_value=[{"code": "394", "endorsements": []}],
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=codes", follow_redirects=True)
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "Code Mappings" in resp.text
@@ -270,8 +270,6 @@ class TestSubstanceAdd:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -281,7 +279,6 @@ class TestSubstanceAdd:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "section=substances" in resp.headers["location"]
@@ -306,8 +303,6 @@ class TestSubstanceAdd:
             ),
             patch("wslcb_licensing_tracker.admin_endorsement_routes.log_action", mock_log_action),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -317,7 +312,6 @@ class TestSubstanceAdd:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         mock_log_action.assert_called_once()
         call_kwargs = mock_log_action.call_args
@@ -373,8 +367,6 @@ class TestSubstanceRemove:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -384,7 +376,6 @@ class TestSubstanceRemove:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "substance_removed" in resp.headers["location"]
@@ -404,8 +395,6 @@ class TestSubstanceRemove:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -415,7 +404,6 @@ class TestSubstanceRemove:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         mock_remove.assert_called_once()
 
@@ -435,8 +423,6 @@ class TestSubstanceRemove:
             ),
             patch("wslcb_licensing_tracker.admin_endorsement_routes.log_action", mock_log_action),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -446,7 +432,6 @@ class TestSubstanceRemove:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         mock_log_action.assert_called_once()
 
@@ -485,8 +470,6 @@ class TestSubstanceSetEndorsements:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -496,7 +479,6 @@ class TestSubstanceSetEndorsements:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "substance_updated" in resp.headers["location"]
@@ -519,8 +501,6 @@ class TestSubstanceSetEndorsements:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -530,7 +510,6 @@ class TestSubstanceSetEndorsements:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         # called with substance_id=5 and empty list
         mock_set.assert_called_once()
@@ -553,8 +532,6 @@ class TestSubstanceSetEndorsements:
             ),
             patch("wslcb_licensing_tracker.admin_endorsement_routes.log_action", mock_log_action),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -564,7 +541,6 @@ class TestSubstanceSetEndorsements:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         mock_log_action.assert_called_once()
 
@@ -655,8 +631,6 @@ class TestAdminUnalias:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -666,7 +640,6 @@ class TestAdminUnalias:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "flash=unaliased" in resp.headers["location"]
@@ -691,8 +664,6 @@ class TestAdminUnalias:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -702,7 +673,6 @@ class TestAdminUnalias:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert mock_process.call_count >= 1
 
@@ -716,8 +686,6 @@ class TestAdminUnalias:
         with (
             patch("wslcb_licensing_tracker.admin_endorsement_routes.get_db", side_effect=_ctx),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -727,7 +695,6 @@ class TestAdminUnalias:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 422
 
@@ -751,8 +718,6 @@ class TestAdminUnalias:
             ),
             patch("wslcb_licensing_tracker.admin_endorsement_routes.log_action", mock_log_action),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -762,7 +727,6 @@ class TestAdminUnalias:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         mock_log_action.assert_called_once()
 

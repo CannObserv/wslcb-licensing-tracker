@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
 
-from .conftest import stamped_engine
+from ._support import stamped_engine
 
 # ---------------------------------------------------------------------------
 # Fixtures

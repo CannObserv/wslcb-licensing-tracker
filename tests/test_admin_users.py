@@ -8,9 +8,24 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
+
+from ._support import stamped_engine
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _stamp_engine():
+    """Stamp app.state.engine for every test — routes read it without a lifespan (#155)."""
+    with stamped_engine():
+        yield
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,14 +115,11 @@ class TestAdminUsersGet:
         with (
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/users", follow_redirects=False)
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "admin@example.com" in resp.text
@@ -151,8 +163,6 @@ class TestAdminUsersAdd:
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -162,7 +172,6 @@ class TestAdminUsersAdd:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code in (302, 303)
         assert "/admin/users" in resp.headers["location"]
@@ -185,8 +194,6 @@ class TestAdminUsersAdd:
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -196,7 +203,6 @@ class TestAdminUsersAdd:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         mock_log_action.assert_called_once()
 
@@ -212,8 +218,6 @@ class TestAdminUsersAdd:
             yield conn
 
         with patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -223,7 +227,6 @@ class TestAdminUsersAdd:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code in (302, 303)
         assert "error" in resp.headers["location"]
@@ -251,8 +254,6 @@ class TestAdminUsersRemove:
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
             patch("wslcb_licensing_tracker.admin_routes.log_action", new_callable=AsyncMock),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -262,7 +263,6 @@ class TestAdminUsersRemove:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code in (302, 303)
         assert "/admin/users" in resp.headers["location"]
@@ -284,8 +284,6 @@ class TestAdminUsersRemove:
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_ctx),
             patch("wslcb_licensing_tracker.admin_routes.log_action", mock_log_action),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 client.post(
@@ -295,7 +293,6 @@ class TestAdminUsersRemove:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         mock_log_action.assert_called_once()
 
@@ -372,14 +369,11 @@ class TestAdminDashboard:
                 return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "Records" in resp.text
@@ -409,14 +403,11 @@ class TestAdminDashboard:
                 return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
 
@@ -465,14 +456,11 @@ class TestAdminDashboard:
                 return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "2" in resp.text  # total record count
@@ -522,14 +510,11 @@ class TestAdminDashboard:
                 return_value={"unresolved_codes": 0, "placeholder_endorsements": 0},
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "1" in resp.text
@@ -584,14 +569,11 @@ class TestSuggestionsTabHTML:
                 return_value=suggestions,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=suggestions")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         start = resp.text.find("Candidate A")
@@ -641,14 +623,11 @@ class TestSuggestionsTabHTML:
                 return_value=suggestions,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=suggestions")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "overflow-x-auto" in resp.text
@@ -694,14 +673,11 @@ class TestSuggestionsTabHTML:
                 return_value=suggestions,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=suggestions")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "right-0" in resp.text
@@ -745,8 +721,6 @@ class TestEndorsementActionRedirects:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -756,7 +730,6 @@ class TestEndorsementActionRedirects:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "section=suggestions" in resp.headers["location"]
@@ -778,8 +751,6 @@ class TestEndorsementActionRedirects:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -793,7 +764,6 @@ class TestEndorsementActionRedirects:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "section=endorsements" in resp.headers["location"]
@@ -815,8 +785,6 @@ class TestEndorsementActionRedirects:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -826,7 +794,6 @@ class TestEndorsementActionRedirects:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "section=endorsements" in resp.headers["location"]
@@ -849,8 +816,6 @@ class TestEndorsementActionRedirects:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -860,7 +825,6 @@ class TestEndorsementActionRedirects:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "section=suggestions" in resp.headers["location"]
@@ -882,8 +846,6 @@ class TestEndorsementActionRedirects:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -897,7 +859,6 @@ class TestEndorsementActionRedirects:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         location = resp.headers["location"]
@@ -920,8 +881,6 @@ class TestEndorsementActionRedirects:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -931,7 +890,6 @@ class TestEndorsementActionRedirects:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         location = resp.headers["location"]
@@ -954,8 +912,6 @@ class TestEndorsementActionRedirects:
                 new_callable=AsyncMock,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.post(
@@ -965,7 +921,6 @@ class TestEndorsementActionRedirects:
                 )
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 303
         assert "section=endorsements" in resp.headers["location"]
@@ -1013,14 +968,11 @@ class TestEndorsementActionRedirects:
                 return_value=suggestions,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=suggestions")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert 'name="return_section"' in resp.text
@@ -1067,14 +1019,11 @@ class TestEndorsementActionRedirects:
                 return_value=suggestions,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=suggestions")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert 'name="return_section"' in resp.text
@@ -1114,14 +1063,11 @@ class TestCodeMappingsFilter:
                 return_value=code_mappings,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=codes")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "data-names=" in resp.text
@@ -1151,14 +1097,11 @@ class TestCodeMappingsFilter:
                 return_value=code_mappings,
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=codes")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "cannabis retailer" in resp.text.lower()
@@ -1189,14 +1132,11 @@ class TestCodeMappingsFilter:
                 return_value=[],
             ),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/endorsements?section=codes")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "admin-endorsements.js" in resp.text
@@ -1236,14 +1176,11 @@ class TestAdminAuditLog:
             ),
             patch("wslcb_licensing_tracker.admin_routes.get_db", side_effect=_fake_get_db_ctx),
         ):
-            mock_engine = MagicMock()
-            app.state.engine = mock_engine
             client, patches, _ = _make_client()
             try:
                 resp = client.get("/admin/audit-log")
             finally:
                 _stop(patches)
-                del app.state.engine
 
         assert resp.status_code == 200
         assert "2025-03-10 14:30:45" in resp.text
