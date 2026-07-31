@@ -9,16 +9,51 @@ which require TEST_DATABASE_URL to be set in the environment.
 """
 
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from wslcb_licensing_tracker.app import app
+
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+
+# ---------------------------------------------------------------------------
+# app.state helpers
+# ---------------------------------------------------------------------------
+
+_UNSET = object()
+
+
+@contextmanager
+def stamped_engine(engine=None) -> Iterator[object]:
+    """Stamp ``app.state.engine`` for the block, restoring the prior value on exit.
+
+    Bare ``TestClient(app)`` calls (no ``with``) never drive the lifespan that
+    sets ``app.state.engine`` (app.py:66-67), so routes that dereference it fail
+    standalone (#155). Tests that don't run the lifespan use this to stamp the
+    attribute directly. ``app`` is a process-wide singleton, so the prior value
+    is saved and restored — no mock leaks onto whatever test module runs next.
+
+    engine: value to stamp (defaults to a fresh ``MagicMock`` when the routes
+    under test never dereference it — ``get_db`` is typically patched).
+    """
+    prev = getattr(app.state, "engine", _UNSET)
+    app.state.engine = MagicMock() if engine is None else engine
+    try:
+        yield app.state.engine
+    finally:
+        if prev is _UNSET:
+            delattr(app.state, "engine")
+        else:
+            app.state.engine = prev
+
 
 # Tables wiped at the start of each PostgreSQL test session, in FK-safe order.
 # Keeps committed data from one run from poisoning the next.

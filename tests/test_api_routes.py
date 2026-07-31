@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 from wslcb_licensing_tracker.api_routes import _get_db
 from wslcb_licensing_tracker.app import app
 
+from .conftest import stamped_engine
+
 # ---------------------------------------------------------------------------
 # Async helpers
 # ---------------------------------------------------------------------------
@@ -97,18 +99,16 @@ def client(mock_conn, mock_engine):
     mock_export.return_value = _async_empty_gen()
     mock_get_db.side_effect = _healthy_db_ctx
 
-    # Set engine on app.state directly — no lifespan needed
-    app.state.engine = mock_engine
-    tc = TestClient(app, raise_server_exceptions=True)
+    # Stamp engine on app.state directly — no lifespan needed. The helper
+    # restores the prior value on exit so nothing leaks onto the shared
+    # `app` singleton (#155).
+    with stamped_engine(mock_engine):
+        tc = TestClient(app, raise_server_exceptions=True)
+        yield tc
 
-    yield tc
-
-    for p in patches:
-        p.stop()
-    app.dependency_overrides.pop(_get_db, None)
-    # Clean up state
-    if hasattr(app.state, "engine"):
-        del app.state.engine
+        for p in patches:
+            p.stop()
+        app.dependency_overrides.pop(_get_db, None)
 
 
 # ---------------------------------------------------------------------------

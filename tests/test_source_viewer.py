@@ -13,36 +13,26 @@ from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
 
+from .conftest import stamped_engine
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_UNSET = object()
-
 
 @pytest.fixture(autouse=True)
 def _stamp_engine():
-    """Stamp app.state.engine so this module is self-contained.
+    """Stamp app.state.engine so this module is self-contained (#155).
 
     _make_client builds a bare TestClient(app) that never drives the lifespan
-    (app.py:66-67), so app.state.engine is never set here. Without this fixture
-    the file only passes when test_app.py has already run its `with TestClient`
-    lifespan and left a mock engine on the shared `app` singleton — a
-    collection-order dependency (#155). The value is never dereferenced (get_db
-    is patched to ignore it); the route just needs the attribute to exist.
-
-    Saves and restores any prior value so we don't leak a mock onto the
-    process-wide `app` singleton for whatever test module runs next.
+    (app.py:66-67), so app.state.engine is never set here. Without this the file
+    only passed when test_app.py had already run its `with TestClient` lifespan
+    and left a mock engine on the shared `app` singleton — a collection-order
+    dependency. The value is never dereferenced (get_db is patched); the route
+    just needs the attribute to exist.
     """
-    prev = getattr(app.state, "engine", _UNSET)
-    app.state.engine = MagicMock()
-    try:
+    with stamped_engine():
         yield
-    finally:
-        if prev is _UNSET:
-            delattr(app.state, "engine")
-        else:
-            app.state.engine = prev
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +112,6 @@ def _make_client(source_row=None, record=None, link_row=True):
     link_row: truthy → link exists; falsy → not linked (404)
     """
     mock_conn = AsyncMock()
-    engine = MagicMock()
-    engine.dispose = AsyncMock()
 
     # Mock conn.execute to return appropriate results for each query
     source_mapping_result = MagicMock()
@@ -143,9 +131,10 @@ def _make_client(source_row=None, record=None, link_row=True):
     async def _db_ctx(eng):
         yield mock_conn
 
+    # No create_engine_from_env / run_pending_migrations patches: a bare
+    # TestClient(app) never drives the lifespan, so neither is ever called.
+    # app.state.engine is stamped by the module's autouse _stamp_engine fixture.
     patches = (
-        patch("wslcb_licensing_tracker.app.create_engine_from_env", return_value=engine),
-        patch("wslcb_licensing_tracker.app.run_pending_migrations", new_callable=AsyncMock),
         patch("wslcb_licensing_tracker.admin_auth._lookup_admin", return_value=None),
         patch("wslcb_licensing_tracker.app.get_db", side_effect=_db_ctx),
         patch("wslcb_licensing_tracker.app.get_record_by_id", new=_get_record_by_id),
