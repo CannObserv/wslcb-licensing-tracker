@@ -7,6 +7,7 @@ Guidance for AI agents working on this project.
 **Live instance:** https://wslcb-licensing-tracker.exe.xyz:8000/
 **Repo:** https://github.com/CannObserv/wslcb-licensing-tracker
 
+<!-- BEGIN socraticode-policy -->
 ## Code Exploration Policy
 
 SocratiCode MCP tools are deferred — schemas aren't loaded until you call `ToolSearch`. The `SessionStart` hook emits a reminder at session open; run `ToolSearch` with the prefetch query below before any code exploration task.
@@ -33,6 +34,7 @@ Prefetch query: `select:mcp__plugin_socraticode_socraticode__codebase_search,mcp
 | Verify index is up to date | `codebase_status` |
 | Discover what project knowledge is available | `codebase_context` |
 | Find database tables, API endpoints, infra configs | `codebase_context_search` |
+<!-- END socraticode-policy -->
 
 ## Architecture
 
