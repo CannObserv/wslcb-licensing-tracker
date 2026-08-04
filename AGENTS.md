@@ -178,6 +178,7 @@ See **Code Exploration Policy** above.
 | `brainstorming` | New feature without a prior design discussion |
 | `dispatching-parallel-agents` | 2+ independent tasks with no shared state |
 | `enforcing-architecture` | "add a fitness function", "enforce this contract", "lock this rule" (also invoked by `reviewing-architecture` on a `fitness` directive) |
+| `init-socraticode` | "init socraticode", "set up code search", "index this project" — installs/enables the SocratiCode plugin + Qdrant and runs a full index |
 | `managing-skills` | Add/update/remove skill repos (submodule + symlink) |
 | `orchestrating-issue-backlog` | Prioritize backlog, design parallel execution plan |
 | `reviewing-architecture` | Say "AR" or "architecture review" |

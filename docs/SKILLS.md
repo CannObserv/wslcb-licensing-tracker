@@ -22,6 +22,12 @@ Graduates an accepted architecture-review finding into an executable fitness fun
 
 **Trigger:** "add a fitness function", "enforce this contract", "lock this rule".
 
+## init-socraticode
+
+Installs, configures, and indexes SocratiCode semantic code search on the project: Docker/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + SessionStart prefetch hook, a context-artifacts manifest, and a full blocking index that waits for embeddings, graph, and artifacts to complete. Its Phase 4 also prescribes the re-index after `.socraticodeignore` changes.
+
+**Trigger:** "init socraticode", "set up code search", "index this project", "socraticode setup".
+
 ## managing-skills
 
 Manages external skill repos using the git submodule + symlink pattern. Adds skill repos as submodules under `skills-vendor/`, symlinks individual skills into `skills/` and `.claude/skills/` for discovery, handles updates and removal.
