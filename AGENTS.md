@@ -92,6 +92,7 @@ Replay-extract boundary (#154): the extract *files* are derived (natural-key pat
 - Each module: `logger = logging.getLogger(__name__)`.
 - Entry points call `setup_logging()` from `log_config.py` before doing any work.
 - Use `%s`/`%d` style in log calls (not f-strings).
+- **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json`, or uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` lines bypass the JSON formatter and journald gets mixed plain-text/JSON logs (#162). That file and `setup_logging()` share one formatter via `build_json_formatter()` — change the JSON schema in that factory only.
 
 ### Testing
 Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/ -v` must pass before committing.

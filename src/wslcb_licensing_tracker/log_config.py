@@ -8,6 +8,13 @@ Behaviour:
 - **Non-TTY** (systemd / pipe): JSON lines via *python-json-logger* for
   machine-parseable output that integrates cleanly with ``journalctl``.
 
+Under uvicorn, ``--log-config log_config.json`` configures the whole logging
+tree at boot so uvicorn's own ``uvicorn`` / ``uvicorn.access`` / ``uvicorn.error``
+loggers emit the same JSON schema from the first boot line onward — otherwise
+they ship with ``propagate=False`` and plain-text handlers that never reach the
+root logger, mixing formats in journald (GH #162). That file and this module
+share one formatter via :func:`build_json_formatter`.
+
 All project modules should obtain their logger with::
 
     import logging
@@ -23,6 +30,25 @@ import sys
 from pythonjsonlogger.json import JsonFormatter
 
 _configured = False
+
+
+def build_json_formatter() -> JsonFormatter:
+    """The single JSON formatter definition for the whole process.
+
+    Referenced by BOTH ``setup_logging()``'s non-TTY branch and the uvicorn
+    ``--log-config`` file (``log_config.json``, via the dictConfig ``"()"``
+    factory key), so app records and uvicorn's own access/error lines serialize
+    with one identical schema — no drift, one place to change (GH #162).
+
+    Keys must be named in the fmt: a bare ``JsonFormatter()`` defaults to
+    ``"%(message)s"`` and emits records with no level, logger, or timestamp
+    (skills#69). Produces ``{level, logger, message, timestamp}``.
+    """
+    return JsonFormatter(
+        "%(levelname)s %(name)s %(message)s",
+        timestamp=True,
+        rename_fields={"levelname": "level", "name": "logger"},
+    )
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -50,15 +76,15 @@ def setup_logging(level: int = logging.INFO) -> None:
             datefmt="%Y-%m-%d %H:%M:%S",
         )
     else:
-        # JSON lines for systemd journal / log collectors
-        formatter = JsonFormatter(
-            "%(asctime)s %(levelname)s %(name)s %(message)s",
-            rename_fields={"asctime": "timestamp", "levelname": "level"},
-            datefmt="%Y-%m-%dT%H:%M:%S",
-        )
+        # JSON lines for systemd journal / log collectors — same factory the
+        # uvicorn --log-config file references, so every line shares one schema.
+        formatter = build_json_formatter()
 
     handler.setFormatter(formatter)
-    root.addHandler(handler)
+    # Replace rather than append: under the service, uvicorn's --log-config has
+    # already installed a root handler at boot; appending here would double-emit
+    # every app record.
+    root.handlers = [handler]
 
     # Reclaim uvicorn's loggers so they flow through our root handler.
     # Uvicorn's default dictConfig creates separate handlers on

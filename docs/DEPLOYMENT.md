@@ -165,7 +165,7 @@ Set automatically by `wslcb-web.service` at startup — `ExecStartPre` writes th
 | Service file change (new timer added) | above + `sudo systemctl enable --now <timer-name>.timer` for each new timer |
 | CSS change | `scripts/build-css.sh` (pre-commit hook does this automatically) |
 | DB schema change | `uv run alembic upgrade head` (no service restart needed) |
-| Test in a worktree | `uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8001` |
+| Test in a worktree | `uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8001 --log-config src/wslcb_licensing_tracker/log_config.json` |
 | Stale process on port 8000 | `sudo systemctl restart wslcb-web.service` — never kill manually |
 
 ### Application commands

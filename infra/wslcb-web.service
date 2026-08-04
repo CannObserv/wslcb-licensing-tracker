@@ -8,7 +8,7 @@ User=exedev
 WorkingDirectory=/home/exedev/wslcb-licensing-tracker
 # '+' prefix runs as root (bypasses User=); safe.directory needed because repo is owned by exedev.
 ExecStartPre=+/bin/bash -c '/usr/bin/git config --global --add safe.directory /home/exedev/wslcb-licensing-tracker 2>/dev/null; echo BUILD_ID=$(/usr/bin/git -C /home/exedev/wslcb-licensing-tracker rev-parse --short HEAD) > /run/wslcb-build-id'
-ExecStart=/home/exedev/wslcb-licensing-tracker/.venv/bin/uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8000
+ExecStart=/home/exedev/wslcb-licensing-tracker/.venv/bin/uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8000 --log-config /home/exedev/wslcb-licensing-tracker/src/wslcb_licensing_tracker/log_config.json
 # Retry loop: poll /api/v1/health up to 20 times (60 s) after start.
 # Fails the unit if the app never becomes healthy, triggering Restart=always.
 ExecStartPost=/bin/bash -c 'for i in $(seq 1 20); do sleep 3 && /usr/bin/curl -sf http://localhost:8000/api/v1/health && exit 0; done; exit 1'

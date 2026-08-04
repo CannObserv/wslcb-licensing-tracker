@@ -263,8 +263,10 @@ This fetches the current 30-day report, inserts records into the PostgreSQL data
 ### Start the web application
 
 ```bash
-uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8000
+uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8000 --log-config src/wslcb_licensing_tracker/log_config.json
 ```
+
+`--log-config` routes uvicorn's own access/error lines through the app's JSON formatter so journald never mixes plain-text and JSON records (GH #162).
 
 Then visit [http://localhost:8000](http://localhost:8000).
 
