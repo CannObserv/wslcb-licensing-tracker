@@ -112,7 +112,7 @@ wslcb-licensing-tracker/
 ├── log_config.py           # Centralized logging configuration
 ├── config.py               # Runtime config helpers (get_build_id); env vars in .env.example
 ├── seed_code_map.json      # Seed data: WSLCB numeric code → endorsement name(s)
-├── .env                    # Dev env vars: DATABASE_URL, GH_TOKEN, ADMIN_DEV_EMAIL (gitignored)
+├── .env                    # Dev env vars: DATABASE_URL, ADMIN_DEV_EMAIL, etc. (gitignored)
 ├── templates/
 │   ├── base.html           # Base layout template
 │   ├── index.html          # Dashboard with stats

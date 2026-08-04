@@ -150,7 +150,7 @@ scripts/build-css.sh        # manual CSS rebuild if changing templates or tailwi
 | File | Content |
 |---|---|
 | `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION` |
-| `.env` (repo root, gitignored) | Dev/agent: `GH_TOKEN`, `GH_TOKEN_GF_SKILLS`, `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL` |
+| `.env` (repo root, gitignored) | Dev/agent: `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL`, plus GitHub PATs for the `gh` CLI |
 | `.env.example` (committed) | Canonical list of every env var the project consumes, with comments |
 
 ## Common Tasks
