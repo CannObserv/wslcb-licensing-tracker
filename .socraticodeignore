@@ -1,0 +1,14 @@
+# SocratiCode semantic-index exclusions (gitignore syntax).
+# Layered on top of SocratiCode's built-in defaults + .gitignore.
+#
+# Exclude the vendored skill trees. skills-vendor/ holds the git-submodule
+# skill repos (~hundreds of files); indexing them inflates embedding time and
+# lets vendored skill prose outrank this repo's own code in codebase_search.
+# .claude/skills/ holds only symlinks (into skills/), so it carries no real
+# content of its own.
+# skills/ is deliberately NOT excluded: SocratiCode does not follow symlinks, so
+# the vendor symlinks under it index nothing, while the repo's own first-party
+# skill overrides (real dirs under skills/, e.g. shipping-work-python-fastapi)
+# stay indexed. See GH #160.
+skills-vendor/
+.claude/skills/
