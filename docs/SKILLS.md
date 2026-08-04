@@ -16,6 +16,12 @@ Routes 2+ independent tasks to parallel subagents using the Agent tool. Handles 
 
 **Trigger:** 2+ clearly independent tasks that can proceed without shared state or sequential dependencies.
 
+## enforcing-architecture
+
+Graduates an accepted architecture-review finding into an executable fitness function — picks the stack's tool (import-linter, dependency-cruiser, deptrac, module-size gate, or an OpenAPI drift guard), encodes the specific rule the finding fixed, adds the dev dependency, documents the contract in AGENTS.md, and wires it into the project's check surface as a reviewable diff. `reviewing-architecture` delegates here when a finding is accepted with a `fix + fitness` or bare `fitness` directive.
+
+**Trigger:** "add a fitness function", "enforce this contract", "lock this rule".
+
 ## managing-skills
 
 Manages external skill repos using the git submodule + symlink pattern. Adds skill repos as submodules under `skills-vendor/`, symlinks individual skills into `skills/` and `.claude/skills/` for discovery, handles updates and removal.
