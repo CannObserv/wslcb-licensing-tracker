@@ -15,16 +15,27 @@
 # `git submodule update --init --recursive` if any dangle, and prints a
 # clear actionable error if self-healing fails.
 #
-# Designed for use as a Phase 1 preflight in every reviewing-* / shipping-*
-# SKILL.md invocation:
+# Because the installed copy is a copy, it re-syncs itself from the vendored
+# source whenever that source is reachable — see sync_self below.
 #
-#   bash .skills/doctor.sh
-#   bash scripts/gather-context.sh
+# Designed for use as a Phase 1 preflight in every reviewing-* / shipping-*
+# SKILL.md invocation. The doctor runs first so that the resolution loop that
+# follows sees a freshly healed symlink chain (issue #63):
+#
+#   { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
+#   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+#     [ -f "$d/$S" ] && { SD="$d"; break; }
+#   done
+#   bash "$SD/$S"
 #
 # Usage: bash .skills/doctor.sh [--check-only] [--verbose] [--no-preflight] [--help]
 set -euo pipefail
 
-VERSION="2026-05-28-6"
+# Diagnostic stamp only — reported by --version so a bug report can name the
+# copy that produced it. Nothing branches on it: sync_self keeps the installed
+# copy equal to the vendored source, which makes drift transient and a
+# version-comparison mechanism unnecessary.
+VERSION="2026-08-04-2"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -46,6 +57,12 @@ present, runs 'git submodule update --init --recursive' and re-checks.
 Exits 0 silently when healthy. Exits non-zero with an actionable error
 when self-healing fails or is not possible (e.g. no .git directory).
 
+Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
+when the two differ, so upstream fixes reach consumers that did not
+install the auto-refresh hook. Best-effort — never affects the exit code;
+failures are reported only under --verbose. The refresh applies from the
+following run. Skipped entirely under --check-only, which makes no writes.
+
 When submodule init fails with a well-known SSH/HTTPS auth signature
 (Permission denied, Could not read from remote repository, Authentication
 failed for 'https://'), a targeted remediation block is printed instead
@@ -55,14 +72,15 @@ the agent isn't reachable from this shell. A separate remediation block
 covers host-key-verification failures (ssh-keyscan-based fix).
 
 Options:
-  --check-only    Report broken symlinks but do not run submodule init
-                  (overridden by the archive-checkout path when .git is
-                  absent — the archive case prints its own diagnosis).
+  --check-only    Report broken symlinks but make no changes: no submodule
+                  init, no self-sync. (The archive-checkout path when .git
+                  is absent overrides the reporting, printing its own
+                  diagnosis — it makes no changes either.)
   --no-preflight  Skip the SSH pre-flight ping. Useful when the operator
                   knows the agent state and doesn't want the 3-second
                   ConnectTimeout on every invocation.
   --verbose, -v   Print resolution details even when healthy.
-  --version       Print script version and exit.
+  --version       Print the script's diagnostic version stamp and exit.
   --help, -h      Show this help and exit.
 
 Exit codes:
@@ -85,6 +103,83 @@ done
 # root, but we tolerate being called from a subdirectory.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
+
+# Re-sync the installed copy of this script from the vendored source.
+#
+# The doctor is installed as a real file rather than a symlink so it stays
+# reachable when the vendor submodule is uninitialized — the exact state it
+# exists to repair. The cost of that choice is drift: upstream fixes reach a
+# consumer only when something re-runs install-doctor.sh. The auto-refresh
+# hook does that each session, but consumers that declined the hook would
+# otherwise run a stale doctor indefinitely (issue #84). Since every
+# reviewing-* / shipping-* preflight invokes the doctor, this is the one code
+# path guaranteed to run in a hook-less consumer.
+#
+# The vendored copy is authoritative and CONTENT decides, not mtime. Git sets
+# mtimes at checkout time, so a freshly-initialized submodule always looks
+# "newer" and a deliberate submodule rollback always looks "older" — an mtime
+# comparison misfires in both directions. Content equality also gives pinning
+# the right semantics: a consumer pinned to an older submodule gets that
+# older doctor, which is what pinning means.
+#
+# Wholly best-effort. A missing vendor, a missing installer, a destination
+# the installer refuses to clobber, or a failed copy must all leave this
+# script's exit code untouched: Phase 1 preflights invoke the doctor with
+# `|| exit 1`, so a self-sync failure would otherwise block a review over
+# something cosmetic.
+sync_self() {
+  # --check-only is contractually non-mutating — it is the mode a CI health
+  # probe reaches for, and .skills/doctor.sh is a tracked file, so a write
+  # here would dirty the working tree and trip a `git diff --exit-code`
+  # cleanliness gate on the next submodule bump, with nothing connecting the
+  # failure back to the bump.
+  if [ "$CHECK_ONLY" = "1" ]; then
+    return 0
+  fi
+
+  local self="$ROOT/.skills/doctor.sh"
+  # Only refresh an already-installed doctor — never create one. Installation
+  # is Step 2c's job (and the hook's); a preflight shouldn't materialize files
+  # the operator didn't ask for. In the preflight path this always exists,
+  # since that path tests `-x .skills/doctor.sh` before invoking us.
+  [ -f "$self" ] || return 0
+
+  local src installer out rc
+  # First matching vendor wins, matching skills-submodule-update.sh's `break`.
+  # When skills-vendor/ is absent the glob stays unexpanded and the -f test
+  # rejects the literal string, so the loop falls through to `return 0`.
+  for src in skills-vendor/*/skills/managing-skills/scripts/doctor.sh; do
+    [ -f "$src" ] || continue
+    if cmp -s "$src" "$self"; then
+      return 0
+    fi
+    installer="$(dirname "$src")/install-doctor.sh"
+    [ -f "$installer" ] || return 0
+
+    # Capture rather than discard. A permanently-failing sync is otherwise
+    # invisible: a consumer with a user-authored file at .skills/doctor.sh
+    # can never receive doctor updates, and the installer's precise
+    # explanation of why would go to /dev/null on every preflight forever.
+    # Surfaced only under --verbose so the default path stays quiet.
+    # `--quiet` means a successful run produces no output, so `out` is
+    # non-empty only when something went wrong.
+    rc=0
+    out="$(bash "$installer" --quiet 2>&1)" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      echo "doctor: refreshed .skills/doctor.sh from $src — the update applies from the next run" >&2
+    elif [ "$VERBOSE" = "1" ]; then
+      echo "doctor: self-sync failed (rc=$rc); the installed copy is unchanged:" >&2
+      printf '%s\n' "$out" >&2
+    fi
+    return 0
+  done
+  return 0
+}
+
+# Call site 1 of 2: the healthy path exits early a few lines below, which is
+# the overwhelming majority of invocations. A self-sync placed after the heal
+# logic would almost never run.
+sync_self
 
 # Nothing to check if the consumer doesn't use the skills/ pattern.
 if [ ! -d skills ]; then
@@ -328,6 +423,10 @@ if [ "$RC" -ne 0 ]; then
   fi
   exit 1
 fi
+
+# Call site 2 of 2: the vendor tree may have only just become readable — call
+# site 1 ran before the init and would have found nothing to sync against.
+sync_self
 
 # Re-check after self-heal.
 scan_broken

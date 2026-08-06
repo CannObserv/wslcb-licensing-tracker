@@ -1,0 +1,1 @@
+../../skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/skills-submodule-update.sh
