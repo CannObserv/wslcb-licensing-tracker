@@ -51,6 +51,29 @@ def build_json_formatter() -> JsonFormatter:
     )
 
 
+class ColorMessageFilter(logging.Filter):
+    """Drop uvicorn's ``color_message`` extra before anything serializes it.
+
+    uvicorn logs its lifecycle lines with an ANSI-coloured duplicate of the
+    message attached as ``extra={"color_message": ...}``, for its own
+    colour-aware default formatter. Every extra reaches the JSON payload, so
+    sharing the formatter alone still leaks a ``color_message`` key full of
+    escape bytes into journald (GH #163).
+
+    Attached to the uvicorn *loggers* in ``log_config.json`` rather than to the
+    stdout handler or the formatter's ``reserved_attrs``: stripping at the
+    record itself is sink-independent, so a handler that builds its payload
+    straight from ``record.__dict__`` (OpenTelemetry's ``LoggingHandler`` does,
+    against a reserved list that doesn't cover ``color_message``) can't
+    resurrect the field the day the sink changes.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Strip the extra if present. Never drops a record."""
+        record.__dict__.pop("color_message", None)
+        return True
+
+
 def setup_logging(level: int = logging.INFO) -> None:
     """Configure the root logger for the application.
 

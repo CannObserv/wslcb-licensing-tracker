@@ -4,6 +4,9 @@
   "formatters": {
     "json": { "()": "wslcb_licensing_tracker.log_config.build_json_formatter" }
   },
+  "filters": {
+    "strip_color_message": { "()": "wslcb_licensing_tracker.log_config.ColorMessageFilter" }
+  },
   "handlers": {
     "stdout": {
       "class": "logging.StreamHandler",
@@ -13,8 +16,23 @@
   },
   "root": { "level": "INFO", "handlers": ["stdout"] },
   "loggers": {
-    "uvicorn": { "level": "INFO", "handlers": ["stdout"], "propagate": false },
-    "uvicorn.error": { "level": "INFO", "handlers": ["stdout"], "propagate": false },
-    "uvicorn.access": { "level": "INFO", "handlers": ["stdout"], "propagate": false }
+    "uvicorn": {
+      "level": "INFO",
+      "handlers": ["stdout"],
+      "filters": ["strip_color_message"],
+      "propagate": false
+    },
+    "uvicorn.error": {
+      "level": "INFO",
+      "handlers": ["stdout"],
+      "filters": ["strip_color_message"],
+      "propagate": false
+    },
+    "uvicorn.access": {
+      "level": "INFO",
+      "handlers": ["stdout"],
+      "filters": ["strip_color_message"],
+      "propagate": false
+    }
   }
 }

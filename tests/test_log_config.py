@@ -9,6 +9,8 @@ Pin two contracts:
    ``logging.config.dictConfig`` and routes uvicorn's own loggers through that
    *same* factory, so access/error lines never regress to plain text alongside
    JSON app records.
+3. uvicorn's ``color_message`` extra is stripped **on the loggers**, at the
+   record itself, so no sink can resurrect it (GH #163, backport of skills#82).
 """
 
 import importlib.resources
@@ -19,9 +21,11 @@ import logging.config
 from pythonjsonlogger.json import JsonFormatter
 
 from wslcb_licensing_tracker import log_config
-from wslcb_licensing_tracker.log_config import build_json_formatter
+from wslcb_licensing_tracker.log_config import ColorMessageFilter, build_json_formatter
 
 FACTORY_REF = "wslcb_licensing_tracker.log_config.build_json_formatter"
+FILTER_REF = "wslcb_licensing_tracker.log_config.ColorMessageFilter"
+UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 
 
 def _load_log_config() -> dict:
@@ -80,21 +84,66 @@ def test_uvicorn_log_config_is_valid_and_shares_formatter():
         assert name in config["loggers"]
         assert config["loggers"][name]["propagate"] is False
 
-    names = ("", "uvicorn", "uvicorn.error", "uvicorn.access")
+    names = ("", *UVICORN_LOGGERS)
+    # ``.filters`` is saved alongside the rest: dictConfig attaches the
+    # color_message filter to the live uvicorn loggers, and without a restore
+    # it leaks into every later test in the session (GH #163).
     saved = {
         n: (
             logging.getLogger(n).handlers[:],
             logging.getLogger(n).propagate,
             logging.getLogger(n).level,
+            logging.getLogger(n).filters[:],
         )
         for n in names
     }
     try:
         logging.config.dictConfig(config)  # raises on a malformed config
     finally:
-        for n, (handlers, propagate, level) in saved.items():
+        for n, (handlers, propagate, level, filters) in saved.items():
             lg = logging.getLogger(n)
-            lg.handlers, lg.propagate, lg.level = handlers, propagate, level
+            lg.handlers, lg.propagate, lg.level, lg.filters = handlers, propagate, level, filters
+
+
+def test_color_message_extra_is_stripped_from_the_record():
+    """uvicorn attaches an ANSI-coloured duplicate of its lifecycle messages as
+    ``extra={"color_message": ...}`` for its own colour-aware formatter. The
+    filter drops it from the record itself — not merely from one formatter's
+    output — so a sink that builds its payload from ``record.__dict__`` (e.g.
+    OpenTelemetry's ``LoggingHandler``) can't resurrect it (GH #163)."""
+    record = logging.LogRecord(
+        name="uvicorn.error",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="Started server process [%d]",
+        args=(4066888,),
+        exc_info=None,
+    )
+    record.color_message = "Started server process [\033[36m%d\033[0m]"
+
+    assert ColorMessageFilter().filter(record) is True, "the filter must never drop a record"
+    assert not hasattr(record, "color_message")
+
+    parsed = json.loads(build_json_formatter().format(record))
+    assert parsed["message"] == "Started server process [4066888]"
+    assert "color_message" not in parsed
+    assert "\033" not in json.dumps(parsed)
+
+
+def test_uvicorn_log_config_strips_color_message_on_every_logger():
+    """Pins *placement*, not just effect. The filter belongs on all three
+    loggers: a logger's filters run only in ``Logger.handle()`` for records
+    logged through that logger — propagation walks ancestors' handlers, never
+    their filters — so a filter on ``uvicorn`` alone would never see a
+    ``uvicorn.error`` record (GH #163)."""
+    config = _load_log_config()
+
+    assert any(f.get("()") == FILTER_REF for f in config["filters"].values())
+    for name in UVICORN_LOGGERS:
+        assert "strip_color_message" in config["loggers"][name]["filters"], (
+            f"{name} must strip color_message itself — inheriting a parent's filter never happens"
+        )
 
 
 def test_setup_logging_non_tty_uses_shared_json_formatter(monkeypatch):
