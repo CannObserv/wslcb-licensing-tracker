@@ -175,6 +175,8 @@ See **Code Exploration Policy** above.
 
 ### Project skills
 
+Vendored skills refresh via the `SessionStart` hook `.claude/hooks/skills-submodule-update.sh` (a symlink into `skills-vendor/gregoryfoster-skills`, so upstream fixes to the hook itself propagate). It is `main`-only, gated to once per UTC day by `.git/skills-update.lock`, logs to `.git/skills-update.log`, and re-installs `.skills/doctor.sh` on every session. Don't add a second updater — an inline `UserPromptSubmit` one-liner used to do this and raced the same submodule while never refreshing the doctor (#164).
+
 | Skill | When to use |
 |---|---|
 | `brainstorming` | New feature without a prior design discussion |
