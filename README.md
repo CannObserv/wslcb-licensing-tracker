@@ -213,8 +213,12 @@ wslcb-licensing-tracker/
 └── docs/                   # Operations and architecture documentation
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
     ├── SCHEMA.md            # Full table/column reference and migration history
+    ├── SKILLS.md            # AI agent skill inventory and trigger phrases
     ├── SOURCE_PAGE.md       # WSLCB source page structure and field label quirks
-    └── STYLE.md             # Brand colors and CSS conventions
+    ├── STYLE.md             # Brand colors and CSS conventions
+    ├── plans/               # Dated implementation plans (archive)
+    ├── research/            # Dated analyses and audits (archive)
+    └── specs/               # Dated design specs (archive)
 ```
 
 ## Setup
@@ -255,7 +259,7 @@ uv run alembic upgrade head
 ### Run the initial scrape
 
 ```bash
-uv run wslcb scrape
+uv run wslcb ingest scrape
 ```
 
 This fetches the current 30-day report, inserts records into the PostgreSQL database, and archives a copy of the source HTML under `data/wslcb/licensinginfo/`.
@@ -371,13 +375,13 @@ Each location is standardized via an external address validation API into struct
 Locations are validated at scrape time. When a new record references an already-known address, it reuses the existing location row and skips the API call. Un-validated locations can be backfilled:
 
 ```bash
-uv run wslcb backfill-addresses
+uv run wslcb ingest backfill-addresses
 ```
 
 To re-validate all locations (e.g., after the validation service is updated):
 
 ```bash
-uv run wslcb refresh-addresses
+uv run wslcb ingest refresh-addresses
 ```
 
 This is safe to interrupt — progress is committed in batches and each location's timestamp is updated individually.
@@ -471,14 +475,14 @@ Provenance is displayed on record detail pages as collapsed summary badges (e.g.
 To ingest historical records and repair broken data from archived HTML snapshots:
 
 ```bash
-uv run wslcb backfill-snapshots
+uv run wslcb ingest backfill-snapshots
 ```
 
 This runs a two-phase process:
 1. **Ingest** — insert new records from all archived snapshots (duplicates are safely skipped)
 2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
-Safe to re-run at any time. Address validation is deferred; run `uv run wslcb backfill-addresses` afterward to validate new locations.
+Safe to re-run at any time. Address validation is deferred; run `uv run wslcb ingest backfill-addresses` afterward to validate new locations.
 
 ## Testing
 

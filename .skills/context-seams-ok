@@ -1,0 +1,16 @@
+# Seam hits judged legitimate — one entry per line, re-judged when the line changes.
+# Form: PATH :: CONTENT (both halves matched independently). See check-seams.sh --help.
+
+# Navigation, not a content claim: AGENTS.md still carries ## Architecture.
+docs/SCHEMA.md :: For high-level architecture and module descriptions, see
+
+# curating-context names AGENTS.md because AGENTS.md is what it curates — the
+# mentions below are the skill's own subject and trigger phrases, not pointers
+# at relocated content.
+docs/SKILLS.md :: | `curating-context` | Say "curate context", "context budget", or "trim AGENTS.md"
+docs/SKILLS.md :: Curates the agent-context surface
+docs/SKILLS.md :: **Trigger:** "curate context", "context budget", "hone AGENTS.md"
+
+# enforcing-architecture writes its contract into AGENTS.md; that is the skill's
+# described behaviour, not a stale reference.
+docs/SKILLS.md :: Graduates an accepted architecture-review finding

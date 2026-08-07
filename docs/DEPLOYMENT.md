@@ -71,9 +71,9 @@ External API at `https://address-validator.exe.xyz:8000`.
 - `ENABLE_ADDRESS_VALIDATION=true` enables DPV validation; otherwise only standardization runs
 - Services load env via `EnvironmentFile=/etc/wslcb-licensing-tracker/.env`
 
-### Renewal TTL + pacing (#150)
+### Renewal TTL + pacing
 
-Validated addresses are not frozen forever. `backfill-addresses` runs **after
+Validated addresses are not frozen forever (#150). `backfill-addresses` runs **after
 every scrape (twice daily)** and on the **weekly timer**; it renews any location
 whose `address_validation_attempted_at` is older than `VALIDATION_TTL_DAYS`
 (180 days, in `address_validator.py`), oldest first, so upstream validator/USPS
@@ -104,13 +104,13 @@ demand outside the TTL (e.g. a single known-stale row), use
 ```bash
 # Backfill un-processed locations + renew TTL-stale validations
 # (runs automatically after every scrape; manual invocation for catch-up only)
-uv run wslcb backfill-addresses
+uv run wslcb ingest backfill-addresses
 
 # Re-standardize all locations
 sudo systemctl start 'wslcb-task@refresh-addresses.service'
 journalctl -u 'wslcb-task@refresh-addresses.service' -f
 # or manually:
-uv run wslcb refresh-addresses
+uv run wslcb ingest refresh-addresses
 ```
 
 ## Testing
@@ -172,22 +172,22 @@ Set automatically by `wslcb-web.service` at startup — `ExecStartPre` writes th
 
 ```bash
 # Integrity
-uv run wslcb check
-uv run wslcb check --fix
+uv run wslcb db check
+uv run wslcb db check --fix
 
 # Data repair
-uv run wslcb rebuild-links
-uv run wslcb reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
-uv run wslcb reprocess-entities [--record-id 12345] [--dry-run]
+uv run wslcb db rebuild-links
+uv run wslcb db reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
+uv run wslcb db reprocess-entities [--record-id 12345] [--dry-run]
 
 # Backfill
-uv run wslcb backfill-snapshots
-uv run wslcb backfill-diffs [--section notifications] [--limit 100] [--dry-run]
+uv run wslcb ingest backfill-snapshots
+uv run wslcb ingest backfill-diffs [--section notifications] [--limit 100] [--dry-run]
 # Replay-generated provenance extracts (#154). ~43 min for the full corpus
 # (chain replay dominates). Idempotent; regenerate after a #151-style
 # remediation pass or any diff_replay change that alters reconstructed state.
 uv run wslcb ingest generate-replay-extracts [--section notifications] [--dry-run]
-uv run wslcb cleanup-redundant
+uv run wslcb db cleanup-redundant
 
 # Admin users
 wslcb admin add-user you@example.com
