@@ -16,7 +16,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/skills-submodule-update.sh"
+            "command": "bash -c 'H=\"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\"; [ -f \"$H\" ] && exec bash \"$H\"; exit 0'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'H=\"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/context-budget-guard.sh\"; [ -f \"$H\" ] && exec bash \"$H\"; exit 0'",
+            "timeout": 10
           }
         ]
       }

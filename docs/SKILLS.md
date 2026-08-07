@@ -4,11 +4,39 @@ Project skills available via the Skill tool or `/skill-name` in Claude Code. Imp
 
 Invoke a skill by name when the trigger phrase matches — the skill provides structured prompts, anti-patterns, and step sequences that guide the work.
 
+## Quick reference
+
+| Skill | When to use |
+|---|---|
+| `brainstorming` | New feature without a prior design discussion |
+| `curating-context` | Say "curate context", "context budget", or "trim AGENTS.md" — also the weekly maintenance run |
+| `dispatching-parallel-agents` | 2+ independent tasks with no shared state |
+| `enforcing-architecture` | "add a fitness function", "enforce this contract", "lock this rule" (also invoked by `reviewing-architecture` on a `fitness` directive) |
+| `init-socraticode` | "init socraticode", "set up code search", "index this project" — installs/enables the SocratiCode plugin + Qdrant and runs a full index |
+| `managing-skills` | Add/update/remove skill repos (submodule + symlink) |
+| `orchestrating-issue-backlog` | Prioritize backlog, design parallel execution plan |
+| `reviewing-architecture` | Say "AR" or "architecture review" |
+| `reviewing-code-python-fastapi` | Say "CR" or "code review" |
+| `shipping-work-python-fastapi` | Say "ship it", "push GH", or "wrap up" |
+| `subagent-driven-development` | Execute plans with independent tasks in current session |
+| `systematic-debugging` | Any bug, test failure, or unexpected behavior |
+| `test-driven-development` | Before writing implementation code |
+| `using-git-worktrees` | Feature isolation or before executing plans |
+| `verification-before-completion` | Before claiming work complete or committing |
+| `writing-plans` | Have spec/requirements, before touching code |
+| `writing-skills` | Create, edit, or verify skills |
+
 ## brainstorming
 
 Explores user intent, requirements, and design before any implementation. Produces structured questions, trade-off analysis, and a design sketch before writing code.
 
 **Trigger:** User says "brainstorm", "design this", "let's design", or proposes a new feature without a prior design discussion.
+
+## curating-context
+
+Curates the agent-context surface — `AGENTS.md` plus the reference docs it links — against a 6,000-token budget. Measures exactly via the Anthropic `count_tokens` endpoint (needs an Anthropic API credential in the repo-root `.env`; the skill's Phase 0 preflight names the variable), verifies falsifiable claims before removing them, classifies each section keep/demote/tighten/delete, relocates rather than deletes, then appends a telemetry row to `.skills/context-metrics.jsonl`.
+
+**Trigger:** "curate context", "context budget", "hone AGENTS.md", "trim AGENTS.md", "prune context"; also the weekly maintenance run.
 
 ## dispatching-parallel-agents
 
