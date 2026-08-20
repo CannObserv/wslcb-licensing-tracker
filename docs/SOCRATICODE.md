@@ -30,8 +30,9 @@ The project's non-code knowledge reachable through `codebase_context_search` is
 whatever `.socraticodecontextartifacts.json` lists — currently
 [`docs/SCHEMA.md`](SCHEMA.md), [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
 [`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md), [`docs/STYLE.md`](STYLE.md),
-[`docs/architecture-review.md`](architecture-review.md), `docs/research/`,
-`infra/`, and this file.
+`docs/research/` (which carries
+[`architecture-review.md`](research/architecture-review.md) and is indexed
+recursively), `infra/`, and this file.
 
 ## Prefetch
 

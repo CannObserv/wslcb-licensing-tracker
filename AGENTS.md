@@ -182,3 +182,4 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases
 - [`docs/SOURCE_PAGE.md`](docs/SOURCE_PAGE.md) — WSLCB source page structure and field label quirks (needed when touching `parser.py`)
 - [`docs/STYLE.md`](docs/STYLE.md) — brand colors and CSS conventions
 - [`docs/SKILLS.md`](docs/SKILLS.md) — project skill descriptions and trigger phrases
+- [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md) — full code-exploration tool table, prefetch query, graph-health notes
