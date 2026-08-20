@@ -10,30 +10,24 @@ Guidance for AI agents working on this project.
 <!-- BEGIN socraticode-policy -->
 ## Code Exploration Policy
 
-SocratiCode MCP tools are deferred — schemas aren't loaded until you call `ToolSearch`. The `SessionStart` hook emits a reminder at session open; run `ToolSearch` with the prefetch query below before any code exploration task.
+SocratiCode is the preferred semantic-search tool here once indexed (local
+Qdrant store + on-disk graph; manifest `.socraticodecontextartifacts.json`).
+Its MCP tools are **deferred** — schemas load only after the `ToolSearch`
+prefetch that `.claude/hooks/socraticode-reminder.sh` prints each session.
 
-Prefetch query: `select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_graph_circular,mcp__plugin_socraticode_socraticode__codebase_graph_stats,mcp__plugin_socraticode_socraticode__codebase_graph_visualize,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search`
-
-**Negative rule.** Broad semantic questions (where a feature lives, what a module does) → SocratiCode. `grep`/`ripgrep` → exact strings and regex only. Explore subagent → path-pattern file walks only, not semantic search.
+**Negative rule.** Use SocratiCode MCP tools first for semantic questions
+("where is X", "how does Y work", "what depends on Z"). Reach for `grep`/`rg`
+only on exact strings (error messages, log lines, known symbols). Reserve the
+Explore subagent for path-pattern walks (`*.py` under
+`src/wslcb_licensing_tracker/`), not semantic search.
 
 | Goal | Tool |
-|---|---|
-| Understand what a codebase does / where a feature lives | `codebase_search` (broad query) |
-| Find a specific function, constant, or type | `codebase_search` (exact name) or grep |
-| Find exact error messages, log strings, or regex patterns | grep / ripgrep |
-| See what a file imports or what depends on it | `codebase_graph_query` |
-| Check blast radius before modifying or deleting a file | `codebase_impact` (symbol) or `codebase_graph_query` (file) |
-| What breaks if I change function X? | `codebase_impact target=X` |
-| What does this entry point actually do? | `codebase_flow entrypoint=X` |
-| List entry points in this codebase | `codebase_flow` (no args) |
-| Who calls this function and what does it call? | `codebase_symbol name=X` |
-| What functions/classes exist in this file? | `codebase_symbols file=path` |
-| Search for symbols by name across the project | `codebase_symbols query=X` |
-| Spot architectural problems | `codebase_graph_circular`, `codebase_graph_stats` |
-| Visualise module structure | `codebase_graph_visualize` |
-| Verify index is up to date | `codebase_status` |
-| Discover what project knowledge is available | `codebase_context` |
-| Find database tables, API endpoints, infra configs | `codebase_context_search` |
+|------|------|
+| Where is X defined / how does Y work / what touches Z | `codebase_search` |
+| Exact string or regex (errors, log lines, known symbols) | `grep` / `rg` |
+| Imports/dependents of a file · blast radius of a change | `codebase_graph_query` / `codebase_impact` |
+
+Full tool table, prefetch query, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
 <!-- END socraticode-policy -->
 
 ## Architecture

@@ -19,6 +19,16 @@
             "command": "bash -c 'H=\"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\"; [ -f \"$H\" ] && exec bash \"$H\"; exit 0'"
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-health.sh\" # socraticode-health",
+            "timeout": 90
+          }
+        ]
       }
     ],
     "PostToolUse": [

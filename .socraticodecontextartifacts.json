@@ -26,14 +26,14 @@
       "description": "systemd unit and timer files for all services (web, scraper, address validation, healthcheck). Consult when modifying service configuration or adding new scheduled tasks."
     },
     {
-      "name": "architecture-review",
-      "path": "docs/architecture-review.md",
-      "description": "Architectural review findings and design decisions. Consult before proposing structural changes or making decisions that prior AR findings may already address."
-    },
-    {
       "name": "research",
       "path": "docs/research/",
-      "description": "Domain research: entity classification, template analysis, data audits, and record linking analysis. Relevant for work on entities, record linking, and data quality."
+      "description": "Architectural review findings and design decisions (architecture-review.md — consult before proposing structural changes), plus domain research: entity classification, template analysis, data audits, and record linking analysis. Relevant for work on entities, record linking, and data quality."
+    },
+    {
+      "name": "socraticode",
+      "path": "docs/SOCRATICODE.md",
+      "description": "Code exploration reference: the full SocratiCode tool table, the ToolSearch prefetch string, per-tool notes, graph-health and index-scope guidance. The on-demand half of the Code Exploration Policy block in AGENTS.md."
     }
   ]
 }
