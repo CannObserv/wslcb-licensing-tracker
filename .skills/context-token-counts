@@ -1,0 +1,12 @@
+# <bytes> <tokens> <path> — per-file token calibration (#145)
+# Written by measure-context.sh --exact; regenerate rather than hand-edit.
+# The offline estimators prefer a file's own last exact measurement to the
+# repo-wide figure in .skills/context-token-ratio, falling back to it for a
+# file never counted exactly or since drifted far from the size recorded here.
+12283 5108 AGENTS.md
+8421 3654 docs/DEPLOYMENT.md
+22732 9013 docs/SCHEMA.md
+8415 3002 docs/SKILLS.md
+6307 2504 docs/SOCRATICODE.md
+1668 689 docs/SOURCE_PAGE.md
+6053 2667 docs/STYLE.md

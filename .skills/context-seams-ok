@@ -14,3 +14,12 @@ docs/SKILLS.md :: **Trigger:** "curate context", "context budget", "hone AGENTS.
 # enforcing-architecture writes its contract into AGENTS.md; that is the skill's
 # described behaviour, not a stale reference.
 docs/SKILLS.md :: Graduates an accepted architecture-review finding
+
+# docs/SOCRATICODE.md is the on-demand half of the Code Exploration Policy: the
+# AGENTS.md block carries the rule, this file carries the table. Naming AGENTS.md
+# is the split's whole point, not a pointer at content that moved away from it.
+# Nothing here refers to a relocated block — the policy block is still in
+# AGENTS.md, which is exactly what these three lines say.
+docs/SOCRATICODE.md :: Detail doc for the `## Code Exploration Policy` block in
+docs/SOCRATICODE.md :: this file wholesale. Repo-specific exploration notes belong in
+docs/SOCRATICODE.md :: `AGENTS.md` block should be on its degraded variant.
