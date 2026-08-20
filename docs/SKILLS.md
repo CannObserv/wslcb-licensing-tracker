@@ -52,7 +52,9 @@ Graduates an accepted architecture-review finding into an executable fitness fun
 
 ## init-socraticode
 
-Installs, configures, and indexes SocratiCode semantic code search on the project: Docker/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + SessionStart prefetch hook, a context-artifacts manifest, and a full blocking index that waits for embeddings, graph, and artifacts to complete. Its Phase 4 also prescribes the re-index after `.socraticodeignore` changes.
+Installs, configures, and indexes SocratiCode semantic code search on the project: Docker/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + [`docs/SOCRATICODE.md`](SOCRATICODE.md), **two** SessionStart hooks (prefetch reminder and a once-per-day health check), a context-artifacts manifest, and a full blocking index verified by graph **edge yield** rather than by graph status — `READY` is reachable over a graph that resolved almost nothing. Its Phase 4 also prescribes the re-index after `.socraticodeignore` changes.
+
+Re-running it on a project that already has SocratiCode **is** the audit: every phase is idempotent, and Phase 6 re-measures the yield.
 
 **Trigger:** "init socraticode", "set up code search", "index this project", "socraticode setup".
 
@@ -82,7 +84,9 @@ Structured code and documentation review using a severity-tiered findings format
 
 ## shipping-work-python-fastapi
 
-Finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Tuned for Python FastAPI projects (uv + ruff + pytest); sources `$PROJECT_ROOT/env` before tests.
+Finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Tuned for Python FastAPI projects (uv + ruff + pytest).
+
+Vendored except for `scripts/pre-ship.sh`, which is this project's one real fork: it **parses** `$PROJECT_ROOT/.env` line by line before delegating to the vendored gate, so the PostgreSQL tests see `TEST_DATABASE_URL` instead of silently skipping (168 of them). It never *sources* that file — `source` executes it, and `.env` holds live PATs.
 
 **Trigger:** "ship it", "push GH", "close GH", "wrap up".
 

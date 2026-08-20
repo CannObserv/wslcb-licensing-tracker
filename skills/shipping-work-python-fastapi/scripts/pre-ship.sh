@@ -48,6 +48,10 @@ done
 # included — into the ship-gate transcript. A malformed line is skipped rather
 # than fatal: a bad line in a secrets file must not decide whether the gate runs.
 load_env() {
+  # Declared local so the function is safe to reuse from an interactive shell
+  # or another script — upstream's snippet omits this and clobbers three very
+  # common variable names in its caller.
+  local line key val
   [ -r "$1" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line#"${line%%[![:space:]]*}"}        # drop leading blanks

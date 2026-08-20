@@ -214,6 +214,7 @@ wslcb-licensing-tracker/
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
     ├── SCHEMA.md            # Full table/column reference and migration history
     ├── SKILLS.md            # AI agent skill inventory and trigger phrases
+    ├── SOCRATICODE.md       # Code-exploration tool table, prefetch query, graph health
     ├── SOURCE_PAGE.md       # WSLCB source page structure and field label quirks
     ├── STYLE.md             # Brand colors and CSS conventions
     ├── plans/               # Dated implementation plans (archive)

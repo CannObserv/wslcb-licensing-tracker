@@ -171,6 +171,8 @@ See **Code Exploration Policy** above.
 
 Vendored skills refresh via the `SessionStart` hook `.claude/hooks/skills-submodule-update.sh` (a symlink into `skills-vendor/gregoryfoster-skills`, so upstream fixes to the hook itself propagate). It is `main`-only, gated to once per UTC day by `.git/skills-update.lock`, logs to `.git/skills-update.log`, and re-installs `.skills/doctor.sh` on every session. Don't add a second updater — an inline `UserPromptSubmit` one-liner used to do this and raced the same submodule while never refreshing the doctor (#164).
 
+`init-socraticode` owns two more `SessionStart` hooks, both symlinks into `skills-vendor/` for the same reason (#186): `.claude/hooks/socraticode-reminder.sh` prints the deferred-tool prefetch each session, and `.claude/hooks/socraticode-health.sh` runs a once-per-day infra check gated by `.git/socraticode-health.lock`, logging to `.git/socraticode-health.log`. The health hook **reports only** — it never re-indexes, starts Docker, or edits a file. It currently reports `graph unresolved 76.1%` on every run: a known upstream resolver limitation with this repo's `uv`/hatch src layout, not a new regression.
+
 `curating-context` owns this file's 6,000-token budget (#165). Its `PostToolUse` guard `.claude/hooks/context-budget-guard.sh` warns — never blocks — when an edit pushes `AGENTS.md` or a live `docs/*.md` further over budget; budgets live in `.skills/context-budget` and `.skills/context-doc-budget`, run history in `.skills/context-metrics.jsonl`. Dated analyses go under `docs/research/`, `docs/plans/`, or `docs/specs/`, which are excluded from the live surface.
 
 See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases.
