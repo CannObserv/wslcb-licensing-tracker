@@ -8,6 +8,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 
 | Skill | When to use |
 |---|---|
+| `auditing-ci-cost` | "audit CI", "CI cost", "Actions spend" — no GitHub Actions here yet, so it is vendored ahead of need |
 | `brainstorming` | New feature without a prior design discussion |
 | `curating-context` | Say "curate context", "context budget", or "trim AGENTS.md" — also the weekly maintenance run |
 | `dispatching-parallel-agents` | 2+ independent tasks with no shared state |
@@ -25,6 +26,14 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 | `verification-before-completion` | Before claiming work complete or committing |
 | `writing-plans` | Have spec/requirements, before touching code |
 | `writing-skills` | Create, edit, or verify skills |
+
+## auditing-ci-cost
+
+Audits a repository's GitHub Actions spend by measuring its cost shape first: a per-job billed-minute census computed from job timestamps, platform-incident days separated from the structural baseline, then a prescription that branches on whether the spend is job **count** or job **duration** — the levers for one are actively wrong for the other. Emits severity-tiered findings with a measured-or-estimated confidence label per finding, a path-filter replay gated on zero false skips, and a required non-levers section, then hands an accepted filter to `enforcing-architecture`. Needs an authenticated `gh` and `jq`.
+
+This project has no hosted CI at all — no `.github/` tree; the scheduled work in `infra/` is host-side systemd timers (scrape, healthcheck, disk hygiene), which Actions billing never sees. The skill is linked so it is available the day that changes; until then it has no subject to measure.
+
+**Trigger:** "audit CI", "CI cost", "Actions spend", "optimize CI", "why is CI so expensive".
 
 ## brainstorming
 
