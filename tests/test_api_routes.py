@@ -7,6 +7,7 @@ no network calls.
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -188,6 +189,44 @@ class TestStatsEndpoint:
         resp = client.get("/api/v1/stats")
         date_range = resp.json()["data"]["date_range"]
         assert date_range is None or isinstance(date_range, list)
+
+    def test_last_scrape_datetimes_are_serialized(self, client):
+        """A real scrape_log row carries tz-aware datetimes (#170).
+
+        The envelope must render them as ISO strings instead of blowing up
+        in json.dumps, which is what took /api/v1/stats to a 500 in prod.
+        """
+        started = datetime(2026, 8, 25, 13, 33, 28, tzinfo=UTC)
+        finished = datetime(2026, 8, 25, 13, 33, 52, tzinfo=UTC)
+        with patch(
+            "wslcb_licensing_tracker.api_routes.get_stats", new_callable=AsyncMock
+        ) as mock_stats:
+            mock_stats.return_value = {
+                "total_records": 1,
+                "new_application_count": 1,
+                "approved_count": 0,
+                "discontinued_count": 0,
+                "unique_businesses": 1,
+                "unique_licenses": 1,
+                "unique_entities": 1,
+                "pipeline": {},
+                "date_range": ("2026-08-01", "2026-08-25"),
+                "last_scrape": {
+                    "id": 7,
+                    "started_at": started,
+                    "finished_at": finished,
+                    "created_at": started,
+                    "status": "success",
+                    "records_new": 191,
+                },
+            }
+            resp = client.get("/api/v1/stats")
+
+        assert resp.status_code == 200
+        last_scrape = resp.json()["data"]["last_scrape"]
+        assert last_scrape["started_at"].startswith("2026-08-25T13:33:28")
+        assert last_scrape["finished_at"].startswith("2026-08-25T13:33:52")
+        assert last_scrape["records_new"] == 191
 
 
 # ---------------------------------------------------------------------------

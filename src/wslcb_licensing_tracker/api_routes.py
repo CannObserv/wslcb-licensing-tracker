@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -42,8 +43,13 @@ Conn = Annotated[AsyncConnection, Depends(_get_db)]
 
 
 def _ok(data: object, message: str = "OK") -> JSONResponse:
-    """Return a 200 envelope response."""
-    return JSONResponse({"ok": True, "message": message, "data": data})
+    """Return a 200 envelope response.
+
+    Runs the payload through ``jsonable_encoder`` first — ``JSONResponse``
+    renders with plain ``json.dumps``, which chokes on the tz-aware datetimes
+    that reach /stats via the scrape_log row (#170).
+    """
+    return JSONResponse({"ok": True, "message": message, "data": jsonable_encoder(data)})
 
 
 # ---------------------------------------------------------------------------
