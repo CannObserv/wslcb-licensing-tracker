@@ -1,12 +1,17 @@
 """Tests for queries_* modules — async search and read queries."""
 
+import json
+from datetime import UTC, datetime
+
 import pytest
+from fastapi.encoders import jsonable_encoder
 
 from wslcb_licensing_tracker.db import (
     SOURCE_TYPE_LIVE_SCRAPE,
     get_or_create_source,
     link_record_source,
 )
+from wslcb_licensing_tracker.models import scrape_log
 from wslcb_licensing_tracker.pipeline import insert_record
 from wslcb_licensing_tracker.queries_entity import get_entity_records
 from wslcb_licensing_tracker.queries_export import export_records, export_records_cursor
@@ -111,6 +116,33 @@ class TestGetStats:
         stats = await get_stats(pg_conn)
         assert "total_records" in stats
         assert stats["total_records"] >= 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_stats_survive_the_api_encoder(self, pg_conn, standard_new_application):
+        """Every value get_stats returns must reach JSON through /api/v1/stats (#170).
+
+        Bound to the real schema rather than a mocked stats dict: last_scrape is
+        SELECT * over scrape_log, so a column added there — or a Decimal from a
+        future aggregate — reintroduces the 500 that route-level mocks cannot see.
+        """
+        started = datetime(2026, 8, 25, 13, 33, 28, tzinfo=UTC)
+        finished = datetime(2026, 8, 25, 13, 33, 52, tzinfo=UTC)
+        standard_new_application["license_number"] = "query_006b"
+        await insert_record(pg_conn, standard_new_application)
+        await pg_conn.execute(
+            scrape_log.insert().values(
+                started_at=started,
+                finished_at=finished,
+                status="success",
+                records_new=191,
+            )
+        )
+
+        stats = await get_stats(pg_conn)
+
+        assert stats["last_scrape"]["records_new"] == 191
+        encoded = json.dumps(jsonable_encoder(stats))
+        assert "2026-08-25T13:33:28" in encoded
 
 
 class TestGetRecordById:

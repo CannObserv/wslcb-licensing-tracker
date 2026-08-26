@@ -7,13 +7,13 @@ no network calls.
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from wslcb_licensing_tracker.api_routes import _get_db
+from wslcb_licensing_tracker.api_routes import _get_db, _ok
 from wslcb_licensing_tracker.app import app
 
 from ._support import stamped_engine
@@ -157,6 +157,41 @@ class TestCitiesEndpoint:
         resp = client.get("/api/v1/cities?state=WA")
         assert "cache-control" in resp.headers
 
+    def test_data_is_encoded_like_the_stats_envelope(self, client):
+        """/cities must share the encoding path /stats uses (#170).
+
+        get_cities_for_state returns plain strings today, so the date below is
+        contrived — the guard is that both endpoints build their envelope through
+        the same helper, rather than /cities hand-rolling JSONResponse and
+        silently reintroducing the raw json.dumps that broke /stats.
+        """
+        with patch(
+            "wslcb_licensing_tracker.api_routes.get_cities_for_state",
+            new_callable=AsyncMock,
+        ) as mock_cities:
+            mock_cities.return_value = [date(2026, 8, 25)]
+            resp = client.get("/api/v1/cities?state=WA")
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] == ["2026-08-25"]
+        assert "cache-control" in resp.headers
+
+
+# ---------------------------------------------------------------------------
+# _ok() envelope helper
+# ---------------------------------------------------------------------------
+
+
+class TestOkHelper:
+    def test_forwards_headers(self):
+        """_ok must carry headers so header-bearing routes can share it (#170)."""
+        resp = _ok([], "OK", headers={"Cache-Control": "public, max-age=300"})
+        assert resp.headers["cache-control"] == "public, max-age=300"
+
+    def test_encodes_non_native_types(self):
+        resp = _ok({"when": datetime(2026, 8, 25, 13, 33, 28, tzinfo=UTC)})
+        assert b"2026-08-25T13:33:28" in resp.body
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/stats
@@ -227,6 +262,26 @@ class TestStatsEndpoint:
         assert last_scrape["started_at"].startswith("2026-08-25T13:33:28")
         assert last_scrape["finished_at"].startswith("2026-08-25T13:33:52")
         assert last_scrape["records_new"] == 191
+        assert resp.json()["data"]["date_range"] == ["2026-08-01", "2026-08-25"]
+
+    def test_empty_corpus_date_range_is_null(self, client):
+        """An empty corpus yields (None, None) from get_stats — a truthy tuple.
+
+        The endpoint must still report null rather than [null, null].
+        """
+        with patch(
+            "wslcb_licensing_tracker.api_routes.get_stats", new_callable=AsyncMock
+        ) as mock_stats:
+            mock_stats.return_value = {
+                "total_records": 0,
+                "pipeline": {},
+                "date_range": (None, None),
+                "last_scrape": None,
+            }
+            resp = client.get("/api/v1/stats")
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["date_range"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +356,31 @@ class TestHealthEndpoint:
         _assert_envelope(body, ok=False)
         assert body["data"]["db"] == "error"
         assert "detail" in body["data"]
+
+    def test_db_error_detail_does_not_leak_exception_text(self, client, caplog):
+        """/health is public (systemd + uptime monitors), so the 503 body must not
+        echo the driver error — asyncpg renders host/port/user/database into it."""
+        dsn_ish = (
+            "connection to server at 10.0.0.7 port 5432 failed: "
+            "password authentication failed for user 'wslcb'"
+        )
+
+        with patch("wslcb_licensing_tracker.api_routes.get_db") as mock_get_db:
+
+            @asynccontextmanager
+            async def _broken_get_db_ctx(engine):
+                raise Exception(dsn_ish)
+                yield  # unreachable — required by @asynccontextmanager
+
+            mock_get_db.side_effect = _broken_get_db_ctx
+            with caplog.at_level("WARNING"):
+                resp = client.get("/api/v1/health")
+
+        assert resp.status_code == 503
+        assert dsn_ish not in resp.text
+        assert "10.0.0.7" not in resp.text
+        assert resp.json()["data"]["detail"] == "database unreachable"
+        assert dsn_ish in caplog.text  # operators still get the real cause
 
     def test_no_auth_required(self):
         """Health endpoint must respond without any auth headers."""

@@ -42,14 +42,24 @@ async def _get_db(request: Request) -> AsyncGenerator[AsyncConnection, None]:
 Conn = Annotated[AsyncConnection, Depends(_get_db)]
 
 
-def _ok(data: object, message: str = "OK") -> JSONResponse:
+def _ok(
+    data: object,
+    message: str = "OK",
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
     """Return a 200 envelope response.
 
     Runs the payload through ``jsonable_encoder`` first — ``JSONResponse``
     renders with plain ``json.dumps``, which chokes on the tz-aware datetimes
     that reach /stats via the scrape_log row (#170).
+
+    Every envelope-producing route builds its response here, ``headers`` included,
+    so no endpoint hand-rolls JSONResponse and drops back to raw ``json.dumps``.
     """
-    return JSONResponse({"ok": True, "message": message, "data": jsonable_encoder(data)})
+    return JSONResponse(
+        {"ok": True, "message": message, "data": jsonable_encoder(data)},
+        headers=headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -67,16 +77,11 @@ async def api_cities(
     Used by the search form to populate the city dropdown dynamically.
     Returns an empty list for unknown or missing state codes.
     """
+    cache = {"Cache-Control": "public, max-age=300"}
     if not state or state not in US_STATES:
-        return JSONResponse(
-            {"ok": True, "message": "No cities for state", "data": []},
-            headers={"Cache-Control": "public, max-age=300"},
-        )
+        return _ok([], "No cities for state", headers=cache)
     cities = await get_cities_for_state(conn, state)
-    return JSONResponse(
-        {"ok": True, "message": f"Cities for {state}", "data": cities},
-        headers={"Cache-Control": "public, max-age=300"},
-    )
+    return _ok(cities, f"Cities for {state}", headers=cache)
 
 
 # ---------------------------------------------------------------------------
@@ -90,9 +95,10 @@ async def api_stats(
 ) -> JSONResponse:
     """Return aggregate statistics about the licensing record database."""
     stats = await get_stats(conn)
-    if stats.get("date_range"):
-        stats["date_range"] = list(stats["date_range"])
-    else:
+    # An empty corpus yields (None, None) — a truthy tuple — so test it by
+    # content, not truthiness. A populated tuple needs no conversion here:
+    # _ok()'s encoder renders it as a JSON list.
+    if not any(stats.get("date_range") or ()):
         stats["date_range"] = None
     if stats.get("last_scrape"):
         stats["last_scrape"] = dict(stats["last_scrape"])
@@ -125,11 +131,14 @@ async def api_health(request: Request) -> JSONResponse:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Health check failed: %s", exc)
+        # /health is unauthenticated by design (systemd + uptime monitors), so the
+        # body carries a fixed string: driver errors render host/port/user/database
+        # into their text. The real cause goes to the log line above.
         return JSONResponse(
             {
                 "ok": False,
                 "message": "Database unreachable",
-                "data": {"db": "error", "detail": str(exc)},
+                "data": {"db": "error", "detail": "database unreachable"},
             },
             status_code=503,
         )
