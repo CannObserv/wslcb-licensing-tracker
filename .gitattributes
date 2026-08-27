@@ -1,0 +1,12 @@
+
+# Append-only telemetry: concurrent appends must union-merge, or a
+# scheduled measurement racing a human commit conflicts and is lost.
+.skills/context-metrics.jsonl merge=union
+
+# Calibration is regenerated, never reconciled: on a collision keep
+# the branch's copy and let the next --exact run recompute it.
+.skills/context-token-ratio merge=ours
+
+# The per-file calibration merges per row (#237): on a collision each
+# path keeps the row whose bytes match the file in the tree.
+.skills/context-token-counts merge=context-counts
