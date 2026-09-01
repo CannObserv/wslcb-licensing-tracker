@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-27-2"
+VERSION="2026-08-31-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -109,6 +109,18 @@ commit for vendors that ship no version) has fallen behind the vendor
 copy. Drift is advisory in every mode including --check-only, and
 nothing is ever auto-merged: the point of an override is that upstream
 text cannot be applied blindly.
+
+A vendored file committed as a REGULAR FILE where the vendor ships one of
+the same name is reported as silently forked (#256) — it stops tracking
+upstream forever and nothing else detects it. Only inside a skills/<name>
+that is a real directory: a whole-directory symlink cannot fork, and a
+declared override is local by definition. The walk covers the skill's own
+*.md plus one level under each of scripts/, references/ and assets/ — a
+fork nested deeper than that is not seen. pre-ship.sh is exempt by name
+(consumers are expected to supply their own), and any other deliberate
+divergence is declared one repo-relative path per line in
+.skills/forked-ok. Advisory in every mode, and never healed: a fork is
+sometimes the right answer, so the operator decides.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -568,6 +580,141 @@ check_override_drift() {
 }
 
 check_override_drift
+
+# #256 — a vendored file committed as a REGULAR FILE where a symlink was
+# expected stops tracking upstream forever, and nothing detected it: not this
+# doctor, not managing-skills, not the consumer's own tooling.
+#
+# Two vendoring shapes are in use across the cohort and they look identical
+# from a shell, which is why this survived several sweeps:
+#
+#   - a whole-directory symlink at skills/<name> — everything beneath it is
+#     upstream by construction, and nothing can drift;
+#   - a real directory of PER-FILE symlinks — a change reaches it file by
+#     file, so any one file committed as 100644/100755 silently opts out.
+#
+# The cost, measured: cannabis.observer-wordpress carried
+# skills/shipping-work-php/scripts/doc-check.sh as a regular file among five
+# symlinked siblings, still running the pre-#252 matcher, with its own tailored
+# path list matching nothing — the exact bug #252 fixed, sitting undetected in
+# the repo that had tailored the list most carefully. Three others carried a
+# forked SKILL.md, so their scripts updated and the instructions describing
+# them did not.
+#
+# Reported, never healed. A project-local divergence is sometimes deliberate,
+# so the remedy is named and the operator decides. Two ways to say "deliberate":
+# pre-ship.sh by name (upstream ships a stub for the bare variant, and
+# docs/STYLE.md blesses a project-supplied wrapper), and a .skills/forked-ok
+# list for anything else.
+#
+# Warn-only in every mode, including --check-only — same call as the override
+# drift above it (#238). A fork is sync debt an operator pays down on their
+# schedule, and a probe that failed on it would push consumers toward deleting
+# the local file rather than declaring it.
+
+# Basenames a consumer is expected to supply itself. Space-delimited, matched
+# whole.
+FORK_EXEMPT_NAMES=" pre-ship.sh "
+
+# A declared-deliberate fork, one repo-relative path per line, `#` comments and
+# blank lines ignored. Same shape and the same no-trailing-newline guard as
+# doc-check.sh's .skills/doc-sensitive-paths.
+fork_declared() {
+  local want="$1" line
+  [ -f .skills/forked-ok ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ "$line" = "$want" ] && return 0
+  done < .skills/forked-ok
+  return 1
+}
+
+# FORKED is check_silent_forks' output channel, declared at top scope for the
+# same reason BROKEN and UNINIT are. One remedy block for the whole list, not
+# one per file: the three repos that forked a SKILL.md would otherwise print
+# the same six lines for every file they link.
+#
+# Two parallel arrays rather than one "path (vendor: path)" string, because the
+# consumer path is the exact text .skills/forked-ok has to hold. The combined
+# form printed a line that could not be pasted into the ack file — the obvious
+# and only implied workflow — and the paste then declared nothing, silently,
+# with the doctor reporting the same fork again next run (#256 CR round 1). An
+# escape hatch that quietly does not apply is the defect it exists to declare.
+declare -a FORKED=()
+declare -a FORKED_VENDOR=()
+
+report_forked() {
+  local i
+  echo "doctor: silently forked — regular files where the vendor ships one:" >&2
+  for i in "${!FORKED[@]}"; do
+    echo "  ${FORKED[$i]}" >&2
+    echo "      (upstream: ${FORKED_VENDOR[$i]})" >&2
+  done
+  echo "doctor: they will never receive upstream fixes, and nothing else" >&2
+  echo "doctor: detects that. Replace each with a relative symlink into" >&2
+  echo "doctor: skills-vendor/ (wrap, don't fork — docs/STYLE.md), or declare" >&2
+  echo "doctor: it deliberate in .skills/forked-ok — one path per line, copied" >&2
+  echo "doctor: exactly as listed above and nothing else on the line; the" >&2
+  echo "doctor: (upstream: …) line is context, not part of the path (#256)." >&2
+  echo "doctor: Advisory: nothing is changed for you." >&2
+}
+
+check_silent_forks() {
+  FORKED=()
+  FORKED_VENDOR=()
+  [ -d skills ] || return 0
+  local dir name vendor_dir vendor_file rel local_file
+  for dir in skills/*; do
+    # A whole-directory symlink cannot fork. A declared override is local by
+    # definition — its drift is check_override_drift's business, not this
+    # one's, and reporting every file in it would bury the real finding.
+    [ -L "$dir" ] && continue
+    [ -d "$dir" ] || continue
+    if [ -f "$dir/SKILL.md" ] \
+      && [ -n "$(frontmatter_value "$dir/SKILL.md" overrides)" ]; then
+      continue
+    fi
+    name="${dir#skills/}"
+    for vendor_dir in skills-vendor/*/skills/"$name"; do
+      [ -d "$vendor_dir" ] || continue
+      # The three directories the spec defines, plus the SKILL.md itself.
+      # Enumerated by glob rather than by `find` so this needs no subprocess
+      # and no exit code to check: an unmatched glob stays literal and the
+      # -f test rejects it.
+      for vendor_file in "$vendor_dir"/*.md "$vendor_dir"/scripts/* \
+        "$vendor_dir"/references/* "$vendor_dir"/assets/*; do
+        [ -f "$vendor_file" ] || continue
+        rel="${vendor_file#"$vendor_dir"/}"
+        case "$FORK_EXEMPT_NAMES" in *" ${rel##*/} "*) continue ;; esac
+        local_file="$dir/$rel"
+        # Absent is not forked: a consumer that links only some of a skill's
+        # files is using less of it, not diverging from it.
+        [ -e "$local_file" ] || continue
+        [ -L "$local_file" ] && continue
+        [ -f "$local_file" ] || continue
+        fork_declared "$local_file" && continue
+        FORKED+=("$local_file")
+        FORKED_VENDOR+=("$vendor_file")
+      done
+      # First matching vendor wins, as everywhere else in this script.
+      break
+    done
+  done
+  if [ "${#FORKED[@]}" -gt 0 ]; then
+    report_forked
+  fi
+  return 0
+}
+
+# Call site 1 of 2. A fresh clone has no vendor tree to compare against, so
+# this pass is silent there and the one below — after the heal, where the tree
+# has only just become readable — is the one that reports. Same two-call shape
+# sync_self uses, for the same reason: the check that needs the vendor content
+# cannot run before the content exists, and a fresh clone or a new worktree is
+# exactly where a consumer runs the doctor first (#256 CR round 1).
+check_silent_forks
 
 # #231 — the audience split, enforced. The unregistered-hook state was detected
 # (#224) and still ungated: every review preflight runs the default invocation,
@@ -1029,6 +1176,7 @@ fi
 # site 1 ran before the init and would have found nothing to sync against.
 sync_self
 
+
 # Re-check after self-heal.
 scan_broken
 if [ "${#BROKEN[@]}" -gt 0 ]; then
@@ -1066,6 +1214,14 @@ if [ "${#UNHELD[@]}" -gt 0 ]; then
   printf '  %s\n' "${UNHELD[@]}" >&2
   exit 1
 fi
+
+# Call site 2 of 2, for the same reason (#256): before the init there was no
+# vendored skill to compare a consumer's regular file against.
+#
+# BELOW the post-heal gates, not above them. This report is advisory and the
+# two checks above exit 1; printing a fork list ahead of a hard failure buries
+# the failure under output the operator does not have to act on today.
+check_silent_forks
 
 [ "$VERBOSE" = "1" ] && echo "doctor: self-healed; all scanned symlinks resolve" >&2
 exit 0
