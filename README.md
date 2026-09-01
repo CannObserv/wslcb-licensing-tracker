@@ -92,6 +92,7 @@ wslcb-licensing-tracker/
 ├── scraper.py              # Async scraper (WSLCB page fetch, archive, ingest)
 ├── backfill_snapshots.py   # Async backfill from archived HTML snapshots
 ├── backfill_diffs.py       # Async backfill from CO diff archives
+├── replay_extracts.py      # Replay-generated provenance extracts (#154)
 ├── integrity.py            # Async integrity checks (run_all_checks, fix_orphaned_locations)
 ├── endorsements.py         # Async endorsement pipeline
 ├── endorsements_seed.py    # Async endorsement seeding and repair
@@ -109,6 +110,7 @@ wslcb-licensing-tracker/
 ├── admin_audit.py          # Async admin audit log
 ├── substances.py           # Async regulated substance CRUD
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
+├── disk_hygiene.py         # Weekly cache/worktree/data-straggler cleanup (#138)
 ├── log_config.py           # Centralized logging configuration
 ├── config.py               # Runtime config helpers (get_build_id); env vars in .env.example
 ├── seed_code_map.json      # Seed data: WSLCB numeric code → endorsement name(s)
@@ -155,13 +157,18 @@ wslcb-licensing-tracker/
 │   ├── build-css.sh            # Rebuild Tailwind output (run manually or via pre-commit)
 │   ├── download-tailwind.sh    # Download platform-specific Tailwind CLI binary
 │   └── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
+├── alembic.ini             # Alembic config (repo root, not inside alembic/)
 ├── alembic/                # Alembic schema migrations
-│   ├── alembic.ini
+│   ├── env.py
+│   ├── script.py.mako
 │   └── versions/
 │       ├── 0001_baseline_postgresql_schema.py
 │       ├── 0002_fts.py
 │       ├── 0003_timestamp_columns.py
-│       └── 0004_nullable_std_address_line_2.py
+│       ├── 0004_nullable_std_address_line_2.py
+│       ├── 0005_address_validation_attempted_at.py
+│       ├── 0006_co_replay_source_type.py
+│       └── 0007_replay_extract_role.py
 ├── infra/                  # systemd unit and timer files (copy to /etc/systemd/system/)
 │   ├── wslcb-web.service           # Web app service
 │   ├── wslcb-task@.service         # Oneshot task template
@@ -176,17 +183,24 @@ wslcb-licensing-tracker/
 │   └── obra-superpowers/       # obra/superpowers submodule
 ├── tests/                  # Test suite
 │   ├── conftest.py              # Shared fixtures (sample record dicts)
+│   ├── _support.py              # Directly-imported helpers (engine stamping for bare TestClient)
+│   ├── cli_helpers.py           # Shared helpers for the CLI test modules
 │   ├── test_parser.py           # Parser function tests
+│   ├── test_diff_replay.py      # Chain replay of unified-diff archives (#151)
 │   ├── test_text_utils.py       # Pure-string normalization tests
 │   ├── test_display.py          # Presentation formatting tests
 │   ├── test_models.py           # SQLAlchemy Table definition tests
 │   ├── test_app.py              # App lifespan and startup tests
+│   ├── test_config.py           # Runtime config helper tests (get_build_id)
+│   ├── test_log_config.py       # Structured-logging regression tests (#162)
 │   ├── test_routes.py           # Public route tests
 │   ├── test_api_routes.py       # Versioned API route tests
 │   ├── test_source_viewer.py    # Source viewer route tests
 │   ├── test_admin_auth.py       # Admin authentication tests
 │   ├── test_admin_routes.py     # Admin route tests
 │   ├── test_admin_users.py      # Admin user management route tests
+│   ├── test_admin_auth_pg.py    # Admin user CLI DB logic (require TEST_DATABASE_URL)
+│   ├── test_admin_users_pg.py   # Admin user route DB logic (require TEST_DATABASE_URL)
 │   ├── test_admin_endorsements.py # Admin endorsement/substance route tests
 │   ├── test_data_migration.py   # Run-once data migration framework tests
 │   ├── test_engine.py      # Async engine factory tests
@@ -201,12 +215,18 @@ wslcb-licensing-tracker/
 │   ├── test_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
 │   ├── test_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
 │   ├── test_scraper.py       # Scraper hash deduplication tests
+│   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
+│   ├── test_backfill_diffs.py   # Diff-archive scanning, dry-run, and live ingest
+│   ├── test_replay_extracts.py  # Replay-generated provenance extracts (#154)
 │   ├── test_address_validator.py # Address validation DB layer tests
 │   ├── test_admin_audit.py   # Admin audit log tests
 │   ├── test_substances.py    # Regulated substance CRUD tests
 │   ├── test_cli.py              # Click CLI group and subcommand tests
 │   ├── test_cli_scrape.py       # Scrape CLI subcommand tests
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
+│   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
+│   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
+│   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths against inert entries (#172)
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests

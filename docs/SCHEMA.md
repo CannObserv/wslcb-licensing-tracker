@@ -1,6 +1,6 @@
 # Database Schema Reference
 
-Detailed reference for all SQLite tables, columns, constraints, and the migration framework.
+Detailed reference for all PostgreSQL tables, columns, constraints, and the Alembic migration chain.
 For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS.md).
 
 ## Tables
@@ -198,23 +198,39 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 
 ## Migration Framework
 
-- `PRAGMA user_version` tracks the current schema version; each migration bumps it
-- `MIGRATIONS` list in `schema.py`: `(version, name, function)` tuples run in order
-- Fresh databases run all migrations starting from 0 (baseline creates the full schema)
-- Existing databases (tables present, `user_version == 0`) are stamped to `_EXISTING_DB_STAMP_VERSION = 1` — the last version subsumed by their pre-framework schema — then the migration loop runs everything above it
-- Migration 001 (`baseline`): full initial schema (all tables, indexes, seed data)
-- Migration 002 (`enrichment_tracking`): adds `record_enrichments` table, adds `raw_*` shadow columns to `license_records` (conditionally via `PRAGMA table_info`), backfills `raw_* = cleaned values` for existing records
-- Migration 003 (`content_hash`): adds `content_hash TEXT` column to `scrape_log` for SHA-256 deduplication of fetched HTML
-- Migration 004 (`address_validator_v1`): renames `std_state`→`std_region`, `std_zip`→`std_postal_code`, adds `std_country`; backfills `'US'` for validated rows
-- Migration 005 (`admin_users`): adds `admin_users` table
-- Migration 006 (`admin_audit_log`): adds `admin_audit_log` table
-- Migration 007 (`endorsement_aliases`): adds `endorsement_aliases` table with `UNIQUE(endorsement_id)` constraint
-- Migration 008 (`endorsement_dismissed_suggestions`): adds `endorsement_dismissed_suggestions` table with `CHECK (endorsement_id_a < endorsement_id_b)` constraint and `ON DELETE CASCADE` FKs
-- Migration 009 (`regulated_substances`): adds `regulated_substances` and `regulated_substance_endorsements` tables
-- Migration 010 (`additional_names_flag`): adds `has_additional_names INTEGER NOT NULL DEFAULT 0` to `license_records`; backfills from `applicants`/`previous_applicants`; deletes spurious `ADDITIONAL NAMES ON FILE` and `ADDTIONAL NAMES ON FILE` entity rows (cascade removes `record_entities` links) with `idx_rse_endorsement` index; seeds Cannabis and Alcohol substance rows and their endorsement associations from existing `license_endorsements` data
-- Migration 011 (`clean_duplicate_markers`): strips WSLCB `DUPLICATE` annotation tokens from `applicants` and `previous_applicants` columns in `license_records` (frozen `raw_*` shadow columns are left untouched); deletes all `entities` rows whose `name LIKE '%DUPLICATE%'`; `record_entities` cascade-deletes automatically; after this migration run `cli.py reprocess-entities` to rebuild entity links from the cleaned strings
-- Migration 012 (`entities_name_index`): adds `idx_entities_name` index on `entities(name)` for faster entity lookup and deduplication queries
-- Migration 013 (`address_validator_v2`): renames `address_line_1`→`std_address_line_1` and `address_line_2`→`std_address_line_2` (consistent with the `std_` prefix on other standardized columns); adds five new columns to store results from `POST /api/v1/validate`: `validated_address TEXT`, `validation_status TEXT`, `dpv_match_code TEXT`, `latitude REAL`, `longitude REAL`
-- Migration 014 (`address_standardize_pipeline`): renames `validated_address`→`std_address_string`; adds `address_standardized_at TEXT`; backfills `address_standardized_at` from `address_validated_at` for rows already DPV-validated
-- Migration 015 (`resolved_endorsements`): adds `resolved_endorsements TEXT NOT NULL DEFAULT ''` to `license_records`; backfills from `record_endorsements` (semicolon-joined, alphabetically ordered endorsement names); also included in FTS via `_FTS_COLUMNS` and the `license_records_fts_content` view
-- To add a new migration: write a function, append a `(version, name, fn)` tuple to `MIGRATIONS`; include the new columns/tables in `_m001_baseline()` as well (for fresh installs)
+Schema is managed by **Alembic** against PostgreSQL. Revisions live in
+`alembic/versions/`; `alembic.ini` is at the **repo root**, not inside
+`alembic/`.
+
+- `alembic_version` (one row) tracks the applied head. Alembic skips revisions
+  already recorded there, so `upgrade head` is idempotent.
+- `schema.init_db()` runs `command.upgrade(cfg, "head")` programmatically on an
+  existing connection. It is safe to call on every startup. There is no
+  `create_all` anywhere — the migration chain is the only path that creates
+  schema.
+- Fresh databases replay the chain from `0001`, which is a full baseline: it
+  creates every table, index, and seed row in one revision.
+
+| Revision | Adds |
+|---|---|
+| `0001_baseline_postgresql_schema` | Full initial PostgreSQL schema — all tables, indexes, seed data. Subsumes the 15 migrations of the retired SQLite `PRAGMA user_version` framework, so their individual numbering no longer exists anywhere in the tree. |
+| `0002_fts` | `pg_trgm` extension, `search_vector` column, FTS trigger |
+| `0003_timestamp_columns` | Timestamp columns `TEXT` → `TIMESTAMPTZ` |
+| `0004_nullable_std_address_line_2` | Makes `locations.std_address_line_2` nullable |
+| `0005_address_validation_attempted_at` | `locations.address_validation_attempted_at`, backfilled from `address_validated_at` (#150) |
+| `0006_co_replay_source_type` | Seeds the `co_replay` source type (#154) |
+| `0007_replay_extract_role` | Allows the `replay_extract` `record_sources` role (#154) |
+
+Each revision's `down_revision` points at the previous number, so the chain is
+strictly linear — no branches or merge points.
+
+**To add a migration:** change `models.py`, then
+`uv run alembic revision --autogenerate -m "<description>"`, review the
+generated file (autogenerate misses server defaults, CHECK constraints, and
+data backfills), and verify with `uv run alembic upgrade head` against an empty
+database. Do **not** hand-edit `0001` to carry new columns — that was the
+SQLite-era pattern and it breaks every database already past the baseline.
+
+**Not to be confused with** `data_migration.py`, the run-once *data* migration
+framework (#85). That one reshapes rows, tracks its own completion, and is
+independent of the Alembic schema chain.
