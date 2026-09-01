@@ -19,7 +19,7 @@
 # loop probes ONE directory using pre-ship.sh and reuses it for every later
 # step, so a wrapper in `scripts/` resolves SKILL_SCRIPTS=scripts and then
 # push.sh / check-status.sh / comment-issue.sh / close-issue.sh are all missing
-# (this repo's `scripts/` carries only its own tooling plus a doc-check fork).
+# (this repo's `scripts/` carries only its own Tailwind tooling).
 # Keeping the wrapper inside the skill's own scripts/ dir is what makes all six
 # steps resolve — and it means the `skills/` path is occupied by this file, so
 # the delegate has to be the vendor path. It is globbed, not hand-substituted,

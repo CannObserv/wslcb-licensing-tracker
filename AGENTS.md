@@ -175,6 +175,8 @@ Vendored skills refresh via the `SessionStart` hook `.claude/hooks/skills-submod
 
 `curating-context` owns this file's 6,000-token budget (#165). Its `PostToolUse` guard `.claude/hooks/context-budget-guard.sh` warns — never blocks — when an edit pushes `AGENTS.md` or a live `docs/*.md` further over budget; budgets live in `.skills/context-budget` and `.skills/context-doc-budget`, run history in `.skills/context-metrics.jsonl`. Dated analyses go under `docs/research/`, `docs/plans/`, or `docs/specs/`, which are excluded from the live surface.
 
+`shipping-work-python-fastapi`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172).
+
 See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases.
 
 ## Reference

@@ -1,0 +1,62 @@
+# doc-sensitive-paths — sensitive-path list for the vendored doc-check.sh
+# (shipping-work-python-fastapi Step 1.5). One path per line; blank lines and
+# `#`-comments ignored. This file REPLACES the script's built-in defaults
+# rather than extending them (gregoryfoster/skills#252, #172).
+#
+# Entries match whole path SEGMENTS at any depth, not just the start of the
+# path. Do not re-anchor them; over-matching a spot-check that asks a human to
+# look is the cheap failure, under-matching is the expensive one.
+#
+# Inclusion rule: a path belongs here when its *inventory* — the names,
+# existence, or structure of its files — is mirrored in a doc that would go
+# stale if it changed. tests/test_doc_sensitive_paths.py asserts that every
+# entry present here matches at least one tracked file at test time, which is
+# what stops individual entries going inert the way 6 of the 12 upstream
+# defaults had in this tree. It does not police what the list omits.
+#
+# When this check fires, spot-check the doc sections that own the changed path:
+#
+#   AGENTS.md            architecture diagram, frozen/derived table,
+#                        conventions, infra + env tables, common tasks, skills
+#   README.md            Project Structure tree, test-file table, CLI list,
+#                        features, API endpoint tables
+#   docs/SCHEMA.md       table/column reference + migration history
+#                        (alembic/versions/)
+#   docs/DEPLOYMENT.md   systemd services and ops reference (infra/)
+#   docs/SKILLS.md       skill descriptions and trigger phrases (skills/)
+#   docs/STYLE.md        brand colors and CSS conventions (static/, templates/)
+
+# --- Root inventory + config files --------------------------------------------
+AGENTS.md
+README.md
+pyproject.toml
+uv.lock
+package.json
+.env.example
+.pre-commit-config.yaml
+
+# --- Trees whose file inventory is documented ---------------------------------
+src/wslcb_licensing_tracker/
+templates/
+static/
+tests/
+# NB: segment-matched, so scripts/ also catches the skill wrappers under
+# skills/*/scripts/, which README does not inventory. Comments must be
+# whole-line — doc-check.sh does not strip trailing ones, so an inline comment
+# becomes part of the entry and silently matches nothing.
+scripts/
+infra/
+alembic/versions/
+
+# --- Agent-context surface (AGENTS.md + docs/SKILLS.md name these by file) ----
+skills/
+.claude/hooks/
+
+# Deliberately omitted, with reasons — do not re-add without one:
+#   docs/          the docs are what this gate points AT, and docs/plans|research|specs
+#                  are dated archives excluded from the live context surface (#165)
+#   .skills/       context-metrics.jsonl is appended by an automated weekly
+#                  cadence commit; tripping on it is noise, not drift
+#   skills-vendor/ submodule pointer bumps are vendor state, not this repo's layout
+#   CHANGELOG.md / schema.sql / deploy/ / src/api|models|core/
+#                  upstream defaults that match nothing in this tree (#172)

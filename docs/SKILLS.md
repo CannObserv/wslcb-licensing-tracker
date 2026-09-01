@@ -95,7 +95,9 @@ Structured code and documentation review using a severity-tiered findings format
 
 Finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Tuned for Python FastAPI projects (uv + ruff + pytest).
 
-Vendored except for `scripts/pre-ship.sh`, which is this project's one real fork: it **parses** `$PROJECT_ROOT/.env` line by line before delegating to the vendored gate, so the PostgreSQL tests see `TEST_DATABASE_URL` instead of silently skipping (168 of them). It never *sources* that file — `source` executes it, and `.env` holds live PATs.
+Vendored except for `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`, which is this project's one real fork. It lives inside the skill's own `scripts/` dir, **not** at the repo's `scripts/pre-ship.sh`: Step 1 resolves ONE directory from wherever it finds `pre-ship.sh` and reuses it for every later step, so a wrapper at `scripts/` would point steps 2–6 at a directory holding only this repo's Tailwind tooling. What it does: it **parses** `$PROJECT_ROOT/.env` line by line before delegating to the vendored gate, so the PostgreSQL tests see `TEST_DATABASE_URL` instead of silently skipping (168 of them). It never *sources* that file — `source` executes it, and `.env` holds live PATs.
+
+Step 1.5's doc gate (`doc-check.sh`) is vendored, not forked: the sensitive-path list lives in `.skills/doc-sensitive-paths` at the repo root (#172). Entries match whole path *segments* at any depth, and the file replaces the script's defaults rather than extending them — 6 of the 12 upstream defaults matched nothing in this tree. `tests/test_doc_sensitive_paths.py` asserts every entry still matches a tracked file, so the list cannot go inert as the layout moves. A list where *no* entry matches anything makes the script exit 2 rather than print a clean green (gregoryfoster/skills#252).
 
 **Trigger:** "ship it", "push GH", "close GH", "wrap up".
 
