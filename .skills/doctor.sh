@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-31-1"
+VERSION="2026-09-04-3"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -483,27 +483,65 @@ frontmatter_value() {
 }
 
 # The two voices of the drift check (#238), shared so every case below agrees
-# about the diagnosis. Drift names both sides and the re-sync DIRECTION —
-# reapplying upstream changes onto the old fork instead of local deltas onto
-# the new upstream text is the easy inversion, and it quietly discards every
-# release between the two. Un-assessable is its own warning rather than a
-# silent skip: an override nothing can compare is the same failure as not
-# detecting drift at all.
-report_override_drift() {
+# about the diagnosis. Drift names both sides, the re-sync DIRECTION and the
+# CHECK. Reapplying upstream changes onto the old fork instead of local deltas
+# onto the new upstream text is the easy inversion, and it quietly discards
+# every release between the two. The check is named here because this message
+# is where an operator meets the re-sync at all, and the obvious verification
+# — grep the merged file for what you expected — cannot see a local delta the
+# merge dropped (#267); only a diff of the pre-merge override can, which is
+# why the copy has to be taken before the merge overwrites it. Un-assessable
+# is its own warning rather than a silent skip: an override nothing can
+# compare is the same failure as not detecting drift at all.
+#
+# Both voices collect and report after the loop, for the reason FORKED and the
+# content checks do: one remedy for the whole list, not one per finding. The
+# remedy is the long half of each message and identical every time, so per-file
+# printing buries the only lines that differ: three drifted overrides printed
+# 27 lines of which 24 were the same paragraph. Un-assessable is the worse of
+# the two to repeat — its likeliest cause is an uninitialized submodule, which
+# makes EVERY override unassessable at once — and the per-case "why" carries
+# the interpolated path, so it belongs on its own entry line rather than
+# spliced into a hand-wrapped sentence.
+declare -a DRIFTED=()
+declare -a UNASSESSED=()
+
+# One formatter per class, so the call sites cannot word the same fact
+# differently: drift is recorded from the version comparison and from the
+# synced-from commit comparison, un-assessable from six distinct causes.
+record_override_drift() {
   local dir="$1" target="$2" have="$3" now="$4"
-  echo "doctor: $dir overrides $target and has fallen behind: last synced" >&2
-  echo "doctor: at $have, vendor now at $now. Re-sync by reapplying the" >&2
-  echo "doctor: local deltas onto the newer upstream text — never upstream" >&2
-  echo "doctor: changes onto the old fork — then bump the override's" >&2
-  echo "doctor: version:/synced-from: to what was just synced. Advisory:" >&2
-  echo "doctor: nothing is auto-merged." >&2
+  DRIFTED+=("$dir overrides $target: last synced at $have, vendor now at $now")
 }
 
-report_override_unassessed() {
+record_override_unassessed() {
   local dir="$1" target="$2" why="$3"
-  echo "doctor: $dir overrides $target but its drift cannot be assessed:" >&2
-  echo "doctor: $why. An override nothing can compare is the same failure" >&2
-  echo "doctor: as not detecting drift at all (#238)." >&2
+  UNASSESSED+=("$dir overrides $target: $why")
+}
+
+report_drifted_overrides() {
+  local i
+  echo "doctor: an override has fallen behind its vendor:" >&2
+  for i in "${!DRIFTED[@]}"; do
+    echo "  ${DRIFTED[$i]}" >&2
+  done
+  echo "doctor: copy each override aside BEFORE merging, then re-sync by" >&2
+  echo "doctor: reapplying the local deltas onto the newer upstream text —" >&2
+  echo "doctor: never upstream changes onto the old fork — and bump the" >&2
+  echo "doctor: override's version:/synced-from: to what was just synced." >&2
+  echo "doctor: Last, diff that copy against the merged file and account for" >&2
+  echo "doctor: every removed line: a presence-only check cannot see a local" >&2
+  echo "doctor: delta the merge dropped. Advisory: nothing is auto-merged." >&2
+}
+
+report_unassessed_overrides() {
+  local i
+  echo "doctor: an override's drift cannot be assessed:" >&2
+  for i in "${!UNASSESSED[@]}"; do
+    echo "  ${UNASSESSED[$i]}" >&2
+  done
+  echo "doctor: an override nothing can compare is the same failure as not" >&2
+  echo "doctor: detecting drift at all (#238)." >&2
 }
 
 # #260 — version equality is a check on the STAMP, not on the content.
@@ -538,24 +576,148 @@ report_override_unassessed() {
 # dropping it. Absent a fence anywhere in the vendor file, this contributes
 # nothing and says nothing: an upstream that marks nothing required is making no
 # claim, which is different from an override that satisfies every claim made.
+#
+# #265 — the marker may name the fragment:
+#
+#   <!-- skill:required id=skill-scripts -->
+#
+# because an override can omit a fragment ON PURPOSE and the check had no way to
+# hear that. A CannObserv/cli override of using-git-worktrees ships no scripts/
+# at all — the project fixes the worktree root and enforces it from its own
+# script — so the <SKILL_SCRIPTS> resolution loop resolves nothing there. Both
+# offered remedies made that file worse: pasting the fragment back in puts a
+# fence that cannot succeed into a skill file, which is the #63 shape arriving
+# through the remedy, and "drop the override for per-file symlinks" has nothing
+# to apply to when the whole delta IS SKILL.md. Meanwhile the check was already
+# satisfiable by dead text — it is a whole-file substring search, so pasting the
+# block under a "not used here" heading silenced it. The declaration is the
+# honest version of that move, and check_silent_forks' .skills/forked-ok is the
+# same escape hatch one check away.
+#
+# The id is what keeps the declaration from becoming a blanket mute: a
+# declaration names the ONE fragment it excuses, so a fragment armed in a later
+# release still reports against a file that already carries one. An un-idded
+# marker cannot be declared at all — its vendor adds an id first. Each line is
+# "<id>\t<fragment>", tab-delimited because the fragment is whitespace-collapsed
+# and so can contain no tab of its own.
+# The one arming form, shared with malformed_markers below so the two cannot
+# drift into disagreeing about what a marker is.
+MARKER_RE='^[[:space:]]*<!--[[:space:]]*skill:required([[:space:]]+id=[A-Za-z0-9][A-Za-z0-9._-]*)?[[:space:]]*-->[[:space:]]*$'
+
+# #265 CR round 2 — code-fence bookkeeping, shared by both scanners for the
+# same reason MARKER_RE is: they answer the same question about the same file.
+#
+# Each tracked fences only far enough for its own job, and a marker inside a
+# FENCED EXAMPLE was live text to both. A vendor SKILL.md documenting this very
+# convention therefore armed a fragment nobody claimed — every override of it
+# was told it had dropped the sample — and a "never write this" note showing the
+# malformed form was reported as committing it. Both are the shape #260 CR round
+# 1 already paid for once: the false positive landing on the most careful file
+# there is.
+#
+# The fence is keyed on its FULL RUN, and closes on a run of the same character
+# at least as long, alone on its line — CommonMark's rule, and the only one
+# under which a ```` block quoting ``` is not cut short at the quote.
+AWK_FENCE='
+  function fence_run(line,   t) {
+    t = line
+    sub(/^[[:space:]]*/, "", t)
+    if (match(t, /^`+/) || match(t, /^~+/)) return substr(t, RSTART, RLENGTH)
+    return ""
+  }
+  # 3 = this line opened a fence, 2 = closed one, 1 = inside one, 0 = outside.
+  function fence_scan(line,   run) {
+    run = fence_run(line)
+    if (incode) {
+      if (run != "" \
+          && substr(run, 1, 1) == substr(openfence, 1, 1) \
+          && length(run) >= length(openfence) \
+          && line ~ ("^[[:space:]]*" run "[[:space:]]*$")) {
+        incode = 0
+        return 2
+      }
+      return 1
+    }
+    if (length(run) >= 3) {
+      incode = 1; openfence = run; openline = NR; opentext = line
+      return 3
+    }
+    return 0
+  }
+'
+
 required_fragments() {
-  awk '
-    # The marker arms; a second one before any fence just re-arms.
-    /^[[:space:]]*<!--[[:space:]]*skill:required[[:space:]]*-->[[:space:]]*$/ {
-      armed = 1; next
+  awk -v marker="$MARKER_RE" "$AWK_FENCE"'
+    {
+      state = fence_scan($0)
+      # A fence opens: it is the armed block only if a marker armed before it.
+      if (state == 3) { if (armed) { infence = 1; buf = "" } next }
+      if (state == 2) {
+        if (infence) {
+          infence = 0; armed = 0
+          gsub(/[[:space:]]+/, " ", buf)
+          sub(/^ /, "", buf); sub(/ $/, "", buf)
+          if (buf != "") printf "%s\t%s\n", fid, buf
+          fid = ""
+        }
+        next
+      }
+      if (state == 1) { if (infence) buf = buf " " $0; next }
+      # Outside every fence, which is the only place a marker is a claim rather
+      # than an example. A second marker before any fence just re-arms.
+      if ($0 ~ marker) {
+        armed = 1
+        fid = ""
+        if (match($0, /id=[A-Za-z0-9][A-Za-z0-9._-]*/)) {
+          fid = substr($0, RSTART + 3, RLENGTH - 3)
+        }
+        next
+      }
+      # An armed marker followed by prose rather than a fence is a malformed
+      # mark, not a licence to claim the next fence further down the file.
+      if (armed && $0 !~ /^[[:space:]]*$/) { armed = 0; fid = "" }
     }
-    armed && !infence && /^[[:space:]]*```/ { infence = 1; buf = ""; next }
-    infence && /^[[:space:]]*```/ {
-      infence = 0; armed = 0
-      gsub(/[[:space:]]+/, " ", buf)
-      sub(/^ /, "", buf); sub(/ $/, "", buf)
-      if (buf != "") print buf
-      next
+  ' "$1"
+}
+
+# #265 CR round 1 — a marker that misses the arming form arms NOTHING, and the
+# silence is total: the vendor's strongest claim about its own file degrades
+# into a comment, and neither side is told. `id=` with no slug after it,
+# `id=two words`, a stray attribute — the id syntax #265 added is the reason
+# there are now more ways to write one wrong, and this repo's suite can only
+# hold its OWN markers.
+#
+# Only a line OUTSIDE every code fence that OPENS with `<!--` counts as an
+# attempt, so neither a SKILL.md discussing the convention mid-sentence nor one
+# showing the wrong form inside a fenced example is accused of malforming one.
+malformed_markers() {
+  awk -v marker="$MARKER_RE" "$AWK_FENCE"'
+    {
+      if (fence_scan($0) != 0) next
+      if ($0 ~ /^[[:space:]]*<!--/ && $0 ~ /skill:required/ && $0 !~ marker) {
+        printf "%d\t%s\n", NR, $0
+      }
     }
-    infence { buf = buf " " $0; next }
-    # An armed marker followed by prose rather than a fence is a malformed
-    # mark, not a licence to claim the next fence further down the file.
-    armed && $0 !~ /^[[:space:]]*$/ { armed = 0 }
+  ' "$1"
+}
+
+# #265 CR round 3 — a fence with no closing line runs to EOF, which is
+# CommonMark's rule and therefore the right parse of a wrong file. What is not
+# right is losing what that swallows in silence: in a vendor, every
+# <!-- skill:required --> below the open fence is inert, so a guarantee is gone
+# to a missing line and nothing says so; in an override, the mirror — prose
+# below it is read as an instruction to execute.
+#
+# The END of the file is the only place this is DECIDABLE, and the check claims
+# no more than that. A marker sitting inside a fence is textually identical
+# whether it was quoted as an example (which #265 CR round 2 made deliberately
+# inert) or swallowed by a fence someone failed to close mid-file; nothing can
+# separate the two, and guessing would either re-arm every documented sample or
+# accuse every honest one. A file that ENDS inside a fence is not ambiguous.
+unclosed_fence() {
+  awk "$AWK_FENCE"'
+    { fence_scan($0) }
+    END { if (incode) printf "%d\t%s\n", openline, opentext }
   ' "$1"
 }
 
@@ -578,26 +740,98 @@ flatten_md() {
   ' "$1"
 }
 
-# Output channels for the two content checks, at top scope for the same reason
-# FORKED is: one remedy block for the whole list, not one per finding.
+# Output channels for the three content checks, at top scope for the same reason
+# FORKED is: one remedy block for the whole list, not one per finding. The two
+# drift voices have their own channels — DRIFTED and UNASSESSED, declared beside
+# the reporters that drain them — so this block is three of five, not the list.
 declare -a MISSING_FRAGMENT=()
+declare -a MISSING_FRAGMENT_ID=()
 declare -a MISSING_FRAGMENT_TEXT=()
 declare -a BARE_SCRIPT_PATH=()
+declare -a BARE_SCRIPT_UNRESOLVED=()
+declare -a STALE_DECLARATION=()
+declare -a MALFORMED_MARKER=()
+declare -a UNCLOSED_FENCE=()
+# Vendor files already scanned, so two overrides of one target report its
+# markers once. Space-delimited, matched whole, like FORK_EXEMPT_NAMES.
+MALFORMED_SEEN=" "
 
 report_missing_fragments() {
   local i
   echo "doctor: an override omits text its vendor marks as required:" >&2
   for i in "${!MISSING_FRAGMENT[@]}"; do
     echo "  ${MISSING_FRAGMENT[$i]}" >&2
-    echo "      missing: ${MISSING_FRAGMENT_TEXT[$i]}" >&2
+    echo "      missing (${MISSING_FRAGMENT_ID[$i]}): ${MISSING_FRAGMENT_TEXT[$i]}" >&2
   done
-  echo "doctor: upstream fences these with <!-- skill:required --> because" >&2
+  echo "doctor: upstream fences these with <!-- skill:required id=… --> as" >&2
   echo "doctor: dropping one reintroduces a fixed failure. An override is" >&2
   echo "doctor: SUPPOSED to differ, so this is not a diff — it is the small" >&2
   echo "doctor: set the vendor says is not optional, and a version: stamp" >&2
   echo "doctor: cannot see it: #63 came back a second time under a version" >&2
-  echo "doctor: that matched exactly (#260). Re-sync the fragment, or drop" >&2
-  echo "doctor: the override in favour of per-file symlinks. Advisory." >&2
+  echo "doctor: that matched exactly (#260). Re-sync the fragment. If it" >&2
+  echo "doctor: genuinely cannot apply here — the override ships none of the" >&2
+  echo "doctor: scripts the block resolves, say — declare that rather than" >&2
+  echo "doctor: pasting back a fence that cannot run (#265):" >&2
+  echo "doctor:   metadata:" >&2
+  echo "doctor:     omits-required: \"<id>: why it cannot apply here\"" >&2
+  echo "doctor: naming the id printed above. A declaration excuses that one" >&2
+  echo "doctor: fragment, so a newly armed one still reports; one printed as" >&2
+  echo "doctor: 'no id' cannot be declared until its vendor names it." >&2
+  echo "doctor: Advisory: nothing is changed for you." >&2
+}
+
+# #265 — a declaration that excuses nothing is worse than no declaration: it
+# reads, to the next person, as a decision already taken. The two ways to get
+# there are a vendor that renamed or dropped the fragment since the line was
+# written, and an override that has since re-synced the fragment it excuses.
+# Both leave a mute in the frontmatter with nothing under it.
+report_stale_declarations() {
+  local i
+  echo "doctor: an override's omits-required: excuses nothing:" >&2
+  for i in "${!STALE_DECLARATION[@]}"; do
+    echo "  ${STALE_DECLARATION[$i]}" >&2
+  done
+  echo "doctor: the declaration names the id on a vendor's <!-- skill:required" >&2
+  echo "doctor: id=<slug> --> marker, then the reason after a colon:" >&2
+  echo "doctor:   omits-required: \"skill-scripts: this project ships none\"" >&2
+  echo "doctor: A line matching no armed fragment still reads as a decision" >&2
+  echo "doctor: taken while excusing nothing, and the next fragment the vendor" >&2
+  echo "doctor: arms will not be covered by it either (#265). Correct the id," >&2
+  echo "doctor: or drop the line. Advisory: nothing is changed for you." >&2
+}
+
+report_malformed_markers() {
+  local i
+  echo "doctor: a vendor marks a fragment required in a form that arms" >&2
+  echo "doctor: nothing, so the claim is not checked against any override:" >&2
+  for i in "${!MALFORMED_MARKER[@]}"; do
+    echo "  ${MALFORMED_MARKER[$i]}" >&2
+  done
+  echo "doctor: write it exactly, naming the fragment:" >&2
+  echo "doctor:   <!-- skill:required id=<slug> -->" >&2
+  echo "doctor: The bare <!-- skill:required --> also arms, but a consumer for" >&2
+  echo "doctor: whom that fragment cannot apply then has no way to declare it" >&2
+  echo "doctor: — the id is what a declaration names (#265). Anything else is" >&2
+  echo "doctor: a comment: the block it meant to arm is compared against" >&2
+  echo "doctor: nothing, and nothing said so until now. The file is the" >&2
+  echo "doctor: VENDOR'S — fix it upstream, or report it there; a consumer" >&2
+  echo "doctor: cannot repair a claim it does not own. Advisory." >&2
+}
+
+report_unclosed_fences() {
+  local i
+  echo "doctor: a file ends inside a code fence, so everything below the" >&2
+  echo "doctor: fence is read as code:" >&2
+  for i in "${!UNCLOSED_FENCE[@]}"; do
+    echo "  ${UNCLOSED_FENCE[$i]}" >&2
+  done
+  echo "doctor: in a vendor that makes every <!-- skill:required --> marker" >&2
+  echo "doctor: below it inert — a guarantee lost to a missing line, and no" >&2
+  echo "doctor: override is checked against it. In an override it is the" >&2
+  echo "doctor: mirror: prose below the fence reads as an instruction to" >&2
+  echo "doctor: execute. An unclosed fence runs to the end of the file, so" >&2
+  echo "doctor: the parse is right and the file is wrong (#265): close the" >&2
+  echo "doctor: fence. Advisory: nothing is changed for you." >&2
 }
 
 report_bare_script_paths() {
@@ -606,6 +840,11 @@ report_bare_script_paths() {
   echo "doctor: resolves from nowhere:" >&2
   for i in "${!BARE_SCRIPT_PATH[@]}"; do
     echo "  ${BARE_SCRIPT_PATH[$i]}" >&2
+    # Only when the line carries more than one invocation: there the finding is
+    # about a path the reader cannot pick out, and the exemption below reads as
+    # if it had covered the whole line (#265 CR round 2).
+    [ -z "${BARE_SCRIPT_UNRESOLVED[$i]}" ] ||
+      echo "      unresolved: ${BARE_SCRIPT_UNRESOLVED[$i]}" >&2
   done
   echo "doctor: the agent's cwd is the PROJECT root, and a skill's scripts/" >&2
   echo "doctor: ships inside the skill — so 'bash scripts/X.sh' fails with" >&2
@@ -614,6 +853,8 @@ report_bare_script_paths() {
   echo "doctor: resolves the root it OPERATES on, not the path bash uses to" >&2
   echo "doctor: OPEN the file. Use the resolved placeholder form instead:" >&2
   echo "doctor:   bash \"<SKILL_SCRIPTS>/X.sh\"" >&2
+  echo "doctor: A path that EXISTS at the project root is the project's own" >&2
+  echo "doctor: script, not the skill's, and is not listed here (#266)." >&2
   echo "doctor: The vendor's own suite gates this; nothing gated a consumer's" >&2
   echo "doctor: override until #260. Advisory: nothing is changed for you." >&2
 }
@@ -623,23 +864,120 @@ report_bare_script_paths() {
 # stamp had been kept honest, and the second one had.
 check_override_content() {
   local dir="$1" target="$2" vendor_md="$3" md="$4"
-  local flat frag line
+  local flat line fid frag label decl ids reason declared armed excused tok
+  local n rest paths text unresolved
+  local invalid unknown unknown_n carried seen declared_n
+  local -a toks=()
+  local -a plist=()
+  # Findings already on the channel from earlier overrides. A declaration that
+  # is broken in more than one way is one finding, not a pile: the missing
+  # warrant is only worth saying when the ids themselves are sound.
+  local before="${#STALE_DECLARATION[@]}"
+
+  # #265 — the override's declaration, parsed before the fragments it excuses.
+  # Grammar: "<id>[, <id>…]: <why>". Ids FIRST, because frontmatter_value reads
+  # a single line and a reason long enough to be worth writing gets folded
+  # across two — the ids stay parseable, the tail of the prose is for people.
+  # A declaration with no reason is honoured and reported: the ids are what the
+  # check needs, and an unexplained mute is the thing that rots.
+  declared=" "
+  decl="$(frontmatter_value "$md" omits-required)"
+  if [ -n "$decl" ]; then
+    ids="${decl%%:*}"
+    reason=""
+    [ "$ids" != "$decl" ] && reason="${decl#*:}"
+    reason="${reason#"${reason%%[![:space:]]*}"}"
+    IFS=', ' read -r -a toks <<<"$ids"
+    invalid=""
+    for tok in ${toks[@]+"${toks[@]}"}; do
+      [ -n "$tok" ] || continue
+      # A fragment id is a slug. Validating rejects the shapes that would
+      # otherwise be matched as one — a stray quote, a glob, half a sentence.
+      case "$tok" in
+        *[!A-Za-z0-9._-]*)
+          invalid="${invalid:+$invalid, }$tok"
+          continue
+          ;;
+      esac
+      declared="$declared$tok "
+    done
+    # One line for the whole value, not one per token: a declaration written as
+    # prose splits into a word per finding, and the reader learns to skim
+    # (#265 CR round 1).
+    if [ -n "$invalid" ]; then
+      STALE_DECLARATION+=("$dir/SKILL.md: omits-required: names what is not a fragment id: $invalid")
+    fi
+    if [ "$declared" = " " ] && [ -z "$invalid" ]; then
+      STALE_DECLARATION+=("$dir/SKILL.md: omits-required: \"$decl\" names no id before its colon")
+    fi
+  fi
 
   flat="$(flatten_md "$md")"
-  while IFS= read -r frag; do
+  armed=" "
+  excused=" "
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    fid="${line%%$'\t'*}"
+    frag="${line#*$'\t'}"
     [ -n "$frag" ] || continue
+    [ -n "$fid" ] && armed="$armed$fid "
     # Quoted inside the pattern, so every glob character in the fragment is
     # matched literally — a required block is code, and code is full of them.
-    case "$flat" in
-      *"$frag"*) ;;
-      *)
-        MISSING_FRAGMENT+=("$dir/SKILL.md (overrides $target)")
-        MISSING_FRAGMENT_TEXT+=("$(printf '%.100s' "$frag")…")
-        ;;
-    esac
+    case "$flat" in *"$frag"*) continue ;; esac
+    if [ -n "$fid" ]; then
+      case "$declared" in
+        *" $fid "*) excused="$excused$fid "; continue ;;
+      esac
+    fi
+    label="no id"
+    [ -n "$fid" ] && label="id=$fid"
+    MISSING_FRAGMENT+=("$dir/SKILL.md (overrides $target)")
+    MISSING_FRAGMENT_ID+=("$label")
+    MISSING_FRAGMENT_TEXT+=("$(printf '%.100s' "$frag")…")
   done <<EOF
 $(required_fragments "$vendor_md")
 EOF
+
+  # A declared id that excused nothing — see report_stale_declarations. Checked
+  # after the fragments rather than during, because "the override carries that
+  # fragment" is only knowable once every armed block has been looked for.
+  unknown=""
+  unknown_n=0
+  carried=""
+  declared_n=0
+  seen=" "
+  for tok in ${toks[@]+"${toks[@]}"}; do
+    [ -n "$tok" ] || continue
+    case "$declared" in *" $tok "*) ;; *) continue ;; esac
+    # A repeated id is one declaration, however many times it is written.
+    case "$seen" in *" $tok "*) continue ;; esac
+    seen="$seen$tok "
+    declared_n=$((declared_n + 1))
+    case "$armed" in
+      *" $tok "*)
+        case "$excused" in
+          *" $tok "*) ;;
+          *) carried="${carried:+$carried, }$tok" ;;
+        esac
+        ;;
+      *) unknown="${unknown:+$unknown, }$tok"; unknown_n=$((unknown_n + 1)) ;;
+    esac
+  done
+  if [ -n "$unknown" ]; then
+    STALE_DECLARATION+=("$dir/SKILL.md: id=$unknown — the vendor arms no such fragment")
+    # Nothing matched, and there is more than one token: the likeliest cause is
+    # a reason written where the ids go, which splits into a word per id.
+    if [ "$unknown_n" -eq "$declared_n" ] && [ "$unknown_n" -gt 1 ]; then
+      STALE_DECLARATION+=("      (a reason written before the colon parses as ids — the grammar is \"<id>[, <id>…]: <why>\")")
+    fi
+  fi
+  if [ -n "$carried" ]; then
+    STALE_DECLARATION+=("$dir/SKILL.md: id=$carried — already carried by the override")
+  fi
+  if [ -n "$decl" ] && [ -z "$reason" ] && [ "$declared" != " " ] \
+    && [ "${#STALE_DECLARATION[@]}" -eq "$before" ]; then
+    STALE_DECLARATION+=("$dir/SKILL.md: omits-required: \"$decl\" carries no reason after the id")
+  fi
 
   # The #63 shape itself, checked directly rather than only through a fence.
   # It costs the vendor nothing to mark, and this catches it in an override of
@@ -654,19 +992,114 @@ EOF
   # there is, and a brand-new advisory detector that cries wolf on its first
   # encounter is one operators learn to skim.
   #
-  # `N:text` from awk, split here rather than glued into one string: the fork
-  # and seam reports print copy-pasteable `path:line` locators, and `path: N:`
-  # was neither.
+  # #266 — and NOT when the named path exists at the project root, because
+  # `scripts/` there is also where a consumer keeps its OWN scripts and the
+  # check read both as the skill's. CannObserv/cli's override names
+  # `scripts/setup-worktree.sh`, a project-owned script committed at that repo's
+  # root, from a step that has just cd'd into a worktree — correct as written,
+  # reported anyway, and with no correct substitution to offer, since
+  # <SKILL_SCRIPTS> resolves to a skill directory and that override ships no
+  # scripts/ at all. The doctor's cwd is the project root, so the
+  # distinguishing fact is directly testable and precise in both directions: a
+  # skill's scripts/X.sh does not exist at the project root, so #63's shape
+  # still reports; a project's does, so a correct instruction stays quiet. It
+  # also covers the copy the vendor already blesses — using-git-worktrees says
+  # "a project-local scripts/ copy wins if one exists", which is a consumer copy
+  # this check would have flagged the moment anyone spelled it out.
+  #
+  # It makes the check state-dependent — delete the project script later and the
+  # line starts reporting — and that is the right signal rather than a cost: the
+  # instruction really did break, and a declared exemption would have gone on
+  # asserting a file that is no longer there.
+  #
+  # `N\tpaths\ttext` from awk, split here rather than glued into one string: the
+  # fork and seam reports print copy-pasteable `path:line` locators, and
+  # `path: N:` was neither.
+  #
+  # EVERY invocation on the line, not just the first (#265 CR round 1). A single
+  # match per line meant the exemption was line-scoped where the instruction is
+  # what it judges: `bash scripts/present.sh && bash scripts/absent.sh` was
+  # decided entirely by `present.sh`, so a project-owned script at the head of a
+  # line silently laundered a broken one behind it — a false negative this
+  # exemption INTRODUCED, since the line reported unconditionally before it.
+  # The line is reported once if any of its paths resolves nowhere.
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    BARE_SCRIPT_PATH+=("$dir/SKILL.md:${line%%:*}  ${line#*:}")
+    n="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    paths="${rest%%$'\t'*}"
+    text="${rest#*$'\t'}"
+    # read -a rather than word splitting: a path is unquoted here and a fenced
+    # `scripts/*.sh` would otherwise be expanded against the project tree.
+    IFS=' ' read -r -a plist <<<"$paths"
+    unresolved=""
+    for path in ${plist[@]+"${plist[@]}"}; do
+      [ -f "$path" ] || unresolved="${unresolved:+$unresolved, }$path"
+    done
+    [ -n "$unresolved" ] || continue
+    BARE_SCRIPT_PATH+=("$dir/SKILL.md:$n  $text")
+    # One invocation on the line is its own locator; naming it again would be
+    # the same string twice.
+    if [ "${#plist[@]}" -gt 1 ]; then
+      BARE_SCRIPT_UNRESOLVED+=("$unresolved")
+    else
+      BARE_SCRIPT_UNRESOLVED+=("")
+    fi
   done <<EOF
-$(awk '
-    /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
-    infence && /bash[[:space:]]+scripts\/[^[:space:]]+\.sh/ {
-      printf "%d:%s\n", NR, $0
+$(awk "$AWK_FENCE"'
+    {
+      # state 1 is INSIDE a fence — not its opening or closing line, and not
+      # the prose around it. #265 CR round 3: this scanner kept a fence model
+      # of its own, keyed on three characters, and a ```` block quoting an odd
+      # number of ``` lines inverted the state for the rest of the file. That
+      # reported prose WARNING against the pattern as committing it, which is
+      # the false positive #260 CR round 1 removed, reachable again through the
+      # one scanner round 2 did not convert. One model, three callers.
+      if (fence_scan($0) != 1) next
+      rest = $0; paths = ""
+      while (match(rest, /bash[[:space:]]+scripts\/[^[:space:]]+\.sh/)) {
+        p = substr(rest, RSTART, RLENGTH)
+        sub(/^bash[[:space:]]+/, "", p)
+        paths = paths " " p
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      if (paths != "") {
+        sub(/^ /, "", paths)
+        printf "%d\t%s\t%s\n", NR, paths, $0
+      }
     }
   ' "$md")
+EOF
+
+  # The vendor's own markers, reported against the vendor file because that is
+  # where the repair belongs. Once per vendor file, however many overrides
+  # target it.
+  case "$MALFORMED_SEEN" in
+    *" $vendor_md "*) ;;
+    *)
+      MALFORMED_SEEN="$MALFORMED_SEEN$vendor_md "
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        MALFORMED_MARKER+=("$vendor_md:${line%%$'\t'*}  ${line#*$'\t'}")
+      done <<EOF
+$(malformed_markers "$vendor_md")
+EOF
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        UNCLOSED_FENCE+=("$vendor_md:${line%%$'\t'*}  ${line#*$'\t'}")
+      done <<EOF
+$(unclosed_fence "$vendor_md")
+EOF
+      ;;
+  esac
+
+  # The override too: an unclosed fence there is what makes the scan above read
+  # the tail of the file as code.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    UNCLOSED_FENCE+=("$md:${line%%$'\t'*}  ${line#*$'\t'}")
+  done <<EOF
+$(unclosed_fence "$md")
 EOF
 }
 
@@ -698,9 +1131,17 @@ EOF
 # an auto-merge — upstream text cannot be applied to a fork blindly.
 check_override_drift() {
   [ -d skills ] || return 0
+  DRIFTED=()
+  UNASSESSED=()
   MISSING_FRAGMENT=()
+  MISSING_FRAGMENT_ID=()
   MISSING_FRAGMENT_TEXT=()
   BARE_SCRIPT_PATH=()
+  BARE_SCRIPT_UNRESOLVED=()
+  STALE_DECLARATION=()
+  MALFORMED_MARKER=()
+  MALFORMED_SEEN=" "
+  UNCLOSED_FENCE=()
   local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
   for dir in skills/*; do
     # A regular directory carrying a SKILL.md whose frontmatter names an
@@ -718,7 +1159,7 @@ check_override_drift() {
     skill_rel="skills/${target#*/}"
     vendor_md="$repo_dir/$skill_rel/SKILL.md"
     if [ ! -f "$vendor_md" ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "no vendor copy at $vendor_md (uninitialized submodule, or the skill moved upstream)"
       continue
     fi
@@ -734,10 +1175,10 @@ check_override_drift() {
     o_ver="$(frontmatter_value "$md" version)"
     if [ -n "$v_ver" ]; then
       if [ -z "$o_ver" ]; then
-        report_override_unassessed "$dir" "$target" \
+        record_override_unassessed "$dir" "$target" \
           "the vendor is at version $v_ver and the override records no version: (the vendor version last synced from)"
       elif [ "$o_ver" != "$v_ver" ]; then
-        report_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+        record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
       fi
       continue
     fi
@@ -745,19 +1186,19 @@ check_override_drift() {
     # Unversioned upstream: the synced-from fallback.
     synced="$(frontmatter_value "$md" synced-from)"
     if [ -z "$synced" ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "the vendor ships no version: and the override records no synced-from: (\"<repo> <tag> (<commit>)\")"
       continue
     fi
     rec="${synced##*(}"
     rec="${rec%%)*}"
     if [ "$rec" = "$synced" ] || [ -z "$rec" ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "synced-from: \"$synced\" carries no (commit) to compare against"
       continue
     fi
     if ! git -C "$repo_dir" rev-parse --verify --quiet "$rec^{commit}" >/dev/null 2>&1; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "the recorded commit $rec is not in the vendor's history (shallow clone?)"
       continue
     fi
@@ -766,15 +1207,20 @@ check_override_drift() {
     rc=0
     git -C "$repo_dir" diff --quiet "$rec" HEAD -- "$skill_rel" 2>/dev/null || rc=$?
     if [ "$rc" -eq 1 ]; then
-      report_override_drift "$dir" "$target" "commit $rec" "a vendor tree that has since changed $skill_rel"
+      record_override_drift "$dir" "$target" "commit $rec" "a vendor tree that has since changed $skill_rel"
     elif [ "$rc" -ne 0 ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "'git diff $rec HEAD -- $skill_rel' failed in $repo_dir"
     fi
   done
   # After the loop, so a repo with several overrides gets one remedy block per
   # class rather than one per file — the shape check_silent_forks settled on.
+  [ "${#DRIFTED[@]}" -eq 0 ] || report_drifted_overrides
+  [ "${#UNASSESSED[@]}" -eq 0 ] || report_unassessed_overrides
   [ "${#MISSING_FRAGMENT[@]}" -eq 0 ] || report_missing_fragments
+  [ "${#STALE_DECLARATION[@]}" -eq 0 ] || report_stale_declarations
+  [ "${#MALFORMED_MARKER[@]}" -eq 0 ] || report_malformed_markers
+  [ "${#UNCLOSED_FENCE[@]}" -eq 0 ] || report_unclosed_fences
   [ "${#BARE_SCRIPT_PATH[@]}" -eq 0 ] || report_bare_script_paths
   return 0
 }
