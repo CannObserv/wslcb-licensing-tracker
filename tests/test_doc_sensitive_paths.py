@@ -138,51 +138,91 @@ def test_section_names_a_tracked_doc(section):
     assert doc.strip() in _tracked_files(), f"{doc.strip()!r} is not a tracked file"
 
 
+def _scratch_env() -> dict[str, str]:
+    """Environment for every process that touches a scratch repo.
+
+    Drops all inherited GIT_* variables: under a git hook or `rebase -x`,
+    GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE name the OUTER repo, and would
+    redirect scratch-repo writes into it. Then isolates from the developer's
+    git config, so a global hooksPath or signing setting cannot leak in either.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return {**env, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
 def _git(cwd: Path, *args: str) -> None:
     git = shutil.which("git")
     if git is None:
         pytest.skip("git not on PATH")
-    # Isolate from the developer's git config: a global hooksPath or signing
-    # setting must not leak into the scratch repo.
-    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
     subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
         [git, "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
         cwd=cwd,
-        env=env,
+        env=_scratch_env(),
         capture_output=True,
         check=True,
     )
 
 
-def test_doc_check_hit_routes_to_tailored_sections(tmp_path):
-    """End to end: a hit prints this repo's advice, not upstream's defaults (#173).
+def _run_doc_check_in_scratch(scratch: Path) -> subprocess.CompletedProcess[str]:
+    """Commit a sensitive-path change in a scratch repo and run doc-check.sh on it.
 
-    Drives the vendored script in a scratch repo carrying both tailored files,
-    so the verdict depends on this repo's .skills/, not on its branch history.
+    The scratch repo carries both tailored files, so the verdict depends on this
+    repo's .skills/, not on its branch history.
     """
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash not on PATH")
     script = _vendored_doc_check()
 
-    (tmp_path / ".skills").mkdir()
+    (scratch / ".skills").mkdir()
     for src in (LIST_PATH, SECTIONS_PATH):
-        shutil.copy(src, tmp_path / ".skills" / src.name)
-    (tmp_path / "AGENTS.md").write_text("base\n", encoding="utf-8")
-    _git(tmp_path, "init", "-q", "-b", "main")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", "base")
-    _git(tmp_path, "checkout", "-q", "-b", "work")
-    (tmp_path / "AGENTS.md").write_text("changed\n", encoding="utf-8")
-    _git(tmp_path, "commit", "-q", "-am", "touch a sensitive path")
+        shutil.copy(src, scratch / ".skills" / src.name)
+    (scratch / "AGENTS.md").write_text("base\n", encoding="utf-8")
+    _git(scratch, "init", "-q", "-b", "main")
+    _git(scratch, "add", "-A")
+    _git(scratch, "commit", "-q", "-m", "base")
+    _git(scratch, "checkout", "-q", "-b", "work")
+    (scratch / "AGENTS.md").write_text("changed\n", encoding="utf-8")
+    _git(scratch, "commit", "-q", "-am", "touch a sensitive path")
 
-    result = subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
+    return subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
         [bash, str(script), "--base", "main"],
-        cwd=tmp_path,
+        cwd=scratch,
+        env=_scratch_env(),
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def test_scratch_repo_ignores_inherited_git_env(tmp_path, monkeypatch):
+    """Under a git hook or `rebase -x`, GIT_DIR/GIT_INDEX_FILE name the OUTER repo.
+
+    Inherited, they redirected every scratch-repo write there: the e2e test
+    passed while committing into, and moving HEAD of, whatever repo they named.
+    """
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    _git(decoy, "init", "-q", "-b", "main")
+    _git(decoy, "commit", "-q", "--allow-empty", "-m", "decoy")
+    before = (decoy / ".git" / "HEAD").read_text(encoding="utf-8")
+    refs_before = sorted(p.name for p in (decoy / ".git" / "refs" / "heads").iterdir())
+
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(decoy / ".git" / "index"))
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    result = _run_doc_check_in_scratch(scratch)
+
+    assert (decoy / ".git" / "HEAD").read_text(encoding="utf-8") == before
+    assert sorted(p.name for p in (decoy / ".git" / "refs" / "heads").iterdir()) == refs_before
+    assert (scratch / ".git").is_dir(), "scratch repo was never created"
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_doc_check_hit_routes_to_tailored_sections(tmp_path):
+    """End to end: a hit prints this repo's advice, not upstream's defaults (#173)."""
+    result = _run_doc_check_in_scratch(tmp_path)
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert "(advice: .skills/doc-sections)" in result.stdout
