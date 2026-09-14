@@ -14,17 +14,8 @@
 # what stops individual entries going inert the way 6 of the 12 upstream
 # defaults had in this tree. It does not police what the list omits.
 #
-# When this check fires, spot-check the doc sections that own the changed path:
-#
-#   AGENTS.md            architecture diagram, frozen/derived table,
-#                        conventions, infra + env tables, common tasks, skills
-#   README.md            Project Structure tree, test-file table, CLI list,
-#                        features, API endpoint tables
-#   docs/SCHEMA.md       table/column reference + migration history
-#                        (alembic/versions/)
-#   docs/DEPLOYMENT.md   systemd services and ops reference (infra/)
-#   docs/SKILLS.md       skill descriptions and trigger phrases (skills/)
-#   docs/STYLE.md        brand colors and CSS conventions (static/, templates/)
+# The doc sections to spot-check on a hit live in .skills/doc-sections, which
+# doc-check.sh prints under the hit list (#173). Keep the two files in step.
 
 # --- Root inventory + config files --------------------------------------------
 AGENTS.md

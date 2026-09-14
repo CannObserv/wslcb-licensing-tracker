@@ -1,0 +1,18 @@
+# doc-sections — advice the vendored doc-check.sh prints on a hit
+# (shipping-work-python-fastapi Step 1.5). One doc section per line; blank
+# lines and `#`-comments ignored. This file REPLACES the script's built-in
+# defaults rather than extending them (gregoryfoster/skills#261, #173).
+#
+# .skills/doc-sensitive-paths says what the gate watches; this says which docs
+# to spot-check when one of those paths changes. Keep the two in step: a doc
+# that starts mirroring a path's inventory belongs here AND its path belongs in
+# the list. Upstream runs no dead-entry check on advice, since it is prose, so
+# tests/test_doc_sensitive_paths.py asserts each line opens with `<doc>:` naming
+# a tracked file.
+
+AGENTS.md: architecture diagram, frozen/derived table, conventions, infra + env tables, common tasks, skills
+README.md: Features, Project Structure tree, API Endpoints tables, Testing file table, CLI commands in Setup and ops sections
+docs/SCHEMA.md: table/column reference + migration history (alembic/versions/)
+docs/DEPLOYMENT.md: systemd services and ops reference (infra/)
+docs/SKILLS.md: skill descriptions and trigger phrases (skills/)
+docs/STYLE.md: brand colors and CSS conventions (static/, templates/)

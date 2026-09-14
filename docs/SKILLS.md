@@ -99,6 +99,8 @@ Vendored except for `skills/shipping-work-python-fastapi/scripts/pre-ship.sh`, w
 
 Step 1.5's doc gate (`doc-check.sh`) is vendored, not forked: the sensitive-path list lives in `.skills/doc-sensitive-paths` at the repo root (#172). Entries match whole path *segments* at any depth, and the file replaces the script's defaults rather than extending them — 6 of the 12 upstream defaults matched nothing in this tree. `tests/test_doc_sensitive_paths.py` asserts every entry still matches a tracked file, so the list cannot go inert as the layout moves. A list where *no* entry matches anything makes the script exit 2 rather than print a clean green (gregoryfoster/skills#252).
 
+The advice printed on a hit — which doc sections to spot-check — lives beside it in `.skills/doc-sections`, one `<doc>: <sections>` line per doc (#173). It too replaces the defaults, whose two lines describe a generic FastAPI layout and never name `docs/SCHEMA.md`, `docs/DEPLOYMENT.md`, `docs/SKILLS.md` or `docs/STYLE.md`. Tailoring only one of the two files makes every hit end with a `Note: this project tailors …` line (gregoryfoster/skills#284). Upstream runs no dead-entry check on advice, so the same test file asserts each line names a tracked doc and drives the vendored script end to end to confirm a hit prints `(advice: .skills/doc-sections)`.
+
 **Trigger:** "ship it", "push GH", "close GH", "wrap up".
 
 ## subagent-driven-development

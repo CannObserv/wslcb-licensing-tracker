@@ -226,7 +226,7 @@ wslcb-licensing-tracker/
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
 │   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
 │   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
-│   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths against inert entries (#172)
+│   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
