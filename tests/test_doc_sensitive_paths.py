@@ -154,13 +154,15 @@ def _git(cwd: Path, *args: str) -> None:
     git = shutil.which("git")
     if git is None:
         pytest.skip("git not on PATH")
-    subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
         [git, "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
         cwd=cwd,
         env=_scratch_env(),
         capture_output=True,
-        check=True,
+        text=True,
+        check=False,
     )
+    assert result.returncode == 0, f"git {' '.join(args)} failed: {result.stderr.strip()}"
 
 
 def _run_doc_check_in_scratch(scratch: Path) -> subprocess.CompletedProcess[str]:
@@ -193,6 +195,12 @@ def _run_doc_check_in_scratch(scratch: Path) -> subprocess.CompletedProcess[str]
         text=True,
         check=False,
     )
+
+
+def test_scratch_git_failure_reports_stderr(tmp_path):
+    """A failed scratch-repo step must say why, not just 'exit status 128'."""
+    with pytest.raises(AssertionError, match="is not a git command"):
+        _git(tmp_path, "no-such-subcommand")
 
 
 def test_scratch_repo_ignores_inherited_git_env(tmp_path, monkeypatch):
