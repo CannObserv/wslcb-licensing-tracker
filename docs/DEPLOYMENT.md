@@ -54,6 +54,63 @@ sudo systemctl enable --now wslcb-healthcheck.timer
 sudo systemctl restart wslcb-web.service
 ```
 
+## Memory pressure (#175)
+
+This VM has **7.2 GiB and no swap**, and the production service shares it with
+interactive agent sessions. That combination has a specific failure mode, seen
+on a sibling host on 2026-09-16: nothing gets OOM-killed. exe.dev session
+processes inherit `oom_score_adj` **-1000** from `exe-init`/`sshd`, so the
+kernel killer can never pick the session or anything it launches — under real
+exhaustion it takes the production service instead, while the kernel fails
+*atomic* allocations in unrelated processes (`tailscaled`, `ksoftirqd`). A
+cgroup cap on a process the killer won't touch **stalls** it rather than
+killing it, so the reservation has to go on the service, not the session.
+
+Three independent pieces, none of which substitutes for another:
+
+| Piece | File | Applies |
+|---|---|---|
+| Service reservation — `MemoryLow=256M`, `OOMScoreAdjust=-700` | `infra/wslcb-web.service` | `sudo cp` + `daemon-reload` + restart (see above) |
+| Kernel atomic-allocation reserve — `vm.min_free_kbytes=65536` | `infra/sysctl.d-wslcb-memory.conf` | `sudo install -m 644 infra/sysctl.d-wslcb-memory.conf /etc/sysctl.d/60-wslcb-memory.conf && sudo sysctl --system` |
+| Userspace OOM killer, acts before the kernel | `infra/earlyoom.default` | `sudo apt install earlyoom && sudo install -m 644 infra/earlyoom.default /etc/default/earlyoom && sudo systemctl enable --now earlyoom` |
+
+`OOMScoreAdjust=-700` is **calibrated, not arbitrary**: earlyoom 1.7 floors a
+`--prefer` match's score at 300, so the web service only wins if it sits below
+that. Measured on this host: adj 0 → ~674, -500 → 341 (still loses), -700 →
+~208. Re-measure with `cat /proc/$(pgrep -f 'uvicorn wslcb' | head -1)/oom_score`
+if either the service's footprint or the earlyoom config changes — the two are
+coupled, and changing one alone silently re-arms the bug.
+
+### Don't let a tool install at launch
+
+The measured peak on this class of host was never the workload — it was the
+*install*. A cold `npx -y --prefer-online socraticode@latest` reached 1.2 G at
+the cgroup, with all 126 `MemoryHigh` throttle events in the install and none
+in the indexing that followed; the same work from a pinned, pre-installed entry
+peaked at 75 MB. `--prefer-online` revalidates against the registry on every
+launch, so a warm cache is not a warm path.
+
+SocratiCode is therefore **pinned** on this host — one deliberate, capped
+install instead of one per launch:
+
+```bash
+npm view socraticode version        # pick a literal; never @latest
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100% \
+  -- npm install --prefix ~/.socraticode/pin socraticode@<version>
+node skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs resolve
+```
+
+`resolve` prints which path won without starting a server; it should report
+`pinned install v<version>`, not `npx`. The pin lives outside the repo
+(`~/.socraticode/pin`) and is inert when absent, so a fresh clone resolves
+exactly as before.
+
+**Known limitation:** pinning the driver does not pin the *session*. Claude
+Code cannot override a plugin's MCP command, so the plugin keeps launching
+`socraticode@latest` for its own server. `.claude/hooks/socraticode-health.sh`
+measures that gap and reports a defect when the two differ by a minor or major
+release — a patch apart stays quiet, since a pin is meant to lag.
+
 ## Logging
 
 Under systemd (non-TTY), all output is JSON lines — `timestamp`, `level`, `name`, `message`. Captured by the journal. Uvicorn access/error logs routed through the same formatter.

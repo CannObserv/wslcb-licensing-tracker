@@ -1,0 +1,25 @@
+# /etc/default/earlyoom — userspace OOM killer config (#175)
+#
+# Why this is needed at all: exe.dev session processes inherit oom_score_adj
+# -1000 from exe-init/sshd, so the kernel OOM killer can NEVER pick the agent
+# session or anything it launches. Under real exhaustion it takes the host's
+# production service instead. earlyoom acts *before* the kernel does and can
+# be told what to prefer, which the kernel killer cannot.
+#
+# -r 3600     report memory state hourly (journal), not every 60s
+# -m 6,3      warn at 6% free RAM, kill at 3%. No -s: this host has no swap.
+# --avoid     never pick the web app, sshd, or PID-1-ish supervisors.
+# --prefer    pick the transient npm/node installs first — the measured peak
+#             on this class of host was a cold `npx socraticode@latest`
+#             install (1.2 G at the cgroup), not the indexing that follows.
+#
+# NB earlyoom 1.7 floors a --prefer match's effective score at 300, so this
+# only works while wslcb-web.service sits BELOW 300; its OOMScoreAdjust=-700
+# puts it at ~208. Changing one without the other silently re-arms the bug.
+#
+# NB2 these match /proc/<pid>/comm, which the kernel TRUNCATES to 15 chars —
+# the npm launch shows up as 'npm exec socrat', not 'npm'. Do not anchor these
+# with a trailing '$': it makes --prefer match nothing at all, and lets
+# sshd-session and systemd-journal slip past --avoid. Verified against
+# `ps -eo comm=` on this host.
+EARLYOOM_ARGS="-r 3600 -m 6,3 --avoid '^(uvicorn|sshd|systemd|exe-init)' --prefer '^(node|npm|npx)'"
