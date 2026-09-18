@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-04-3"
+VERSION="2026-09-16-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -103,12 +103,15 @@ symlinks (skills/<override>/scripts/*) join the dangling scan: they are
 how an override tracks the scripts it does not change, and an upstream
 rename or deletion strands them while every top-level symlink still
 resolves. And each override's SKILL.md frontmatter is compared against
-its overrides: target — warning when the recorded version (the vendor
-version LAST SYNCED FROM, bumped on every re-sync; or the synced-from:
-commit for vendors that ship no version) has fallen behind the vendor
-copy. Drift is advisory in every mode including --check-only, and
-nothing is ever auto-merged: the point of an override is that upstream
-text cannot be applied blindly.
+its overrides: target on two comparands, either of which reports: the
+recorded version: (the vendor version LAST SYNCED FROM, bumped on every
+re-sync), and a diff of the synced-from: commit against the vendor now,
+scoped to the override's own real files. The second is the only one that
+sees a vendor SKILL.md changed WITHOUT a version bump, which is most of
+them (#286); an override recording no synced-from: warns nothing new.
+Drift is advisory in every mode including --check-only, and nothing is
+ever auto-merged: the point of an override is that upstream text cannot
+be applied blindly.
 
 That version comparison checks the STAMP. It cannot see divergence at
 the SAME version — an override synced honestly from v1.1 whose text
@@ -452,6 +455,65 @@ check_hook_registrations() {
 
 check_hook_registrations
 
+# ----------------------------------------------------- unpushed commits (#293)
+# The sensor for the defect #293 fixed in skills-submodule-update.sh, and the
+# only cohort-wide one that can exist: an unpushed commit lives on exactly one
+# machine, so nothing reachable through the GitHub API can see it. A sweep can
+# see a stale submodule pointer and guess; only something running ON the
+# checkout can tell "the hook never ran" from "the hook's commits are stranded
+# here". This runs at every session start in every consumer, which is the one
+# place the question is answerable.
+#
+# Advisory and never fatal, like every other default-mode check here, and
+# deliberately NOT wired to REG_GAPS: --check-only is a CI probe, a fresh clone
+# is never ahead of its upstream, and the only population that gate would catch
+# is a developer with legitimate unpushed work on main.
+#
+# Reports regardless of who wrote the commits, unlike the hook, which may only
+# roll back its own. Naming the state is the whole job here, and the state that
+# stranded CannObserv/replicator's service for 56 minutes was `ahead 1` —
+# whoever put it there.
+check_unpushed() {
+  local branch remote merge ahead mine
+  branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+  # main only. Unpushed work on a feature branch is the normal way to use one.
+  [ "$branch" = "main" ] || return 0
+
+  remote="$(git config --get "branch.$branch.remote" 2>/dev/null || true)"
+  merge="$(git config --get "branch.$branch.merge" 2>/dev/null || true)"
+  # No upstream is a configuration, not a fault: there is nothing to be ahead
+  # of, and a remote-less checkout cannot strand anything.
+  if [ -z "$remote" ] || [ -z "$merge" ]; then
+    return 0
+  fi
+
+  ahead="$(git rev-list --count '@{u}..HEAD' 2>/dev/null || true)"
+  case "$ahead" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$ahead" -gt 0 ] || return 0
+
+  echo "doctor: main is $ahead commit(s) ahead of $remote/${merge#refs/heads/} — unpushed." >&2
+  echo "doctor:   Unpushed is unshared. CI, fresh worktrees and every other clone" >&2
+  echo "doctor:   see none of it, and a service reading this checkout may refuse to" >&2
+  echo "doctor:   start on it (#293). Push, or know why these stay local." >&2
+
+  # Name the auto-refresh hook's own commits when they are the cause, because
+  # the repair differs: a `git push` clears today's symptom, but a hook that
+  # keeps generating stranded commits wants its vendored copy bumped. Matched
+  # against the exact subjects skills-submodule-update.sh writes.
+  mine="$(git log --format=%s '@{u}..HEAD' 2>/dev/null |
+    grep -c -F -x -e 'chore: update skills submodules' \
+                  -e 'chore: refresh .skills/doctor.sh' \
+                  -e 'chore: update skills submodules and refresh .skills/doctor.sh' || true)"
+  case "$mine" in ''|*[!0-9]*) mine=0 ;; esac
+  if [ "$mine" -gt 0 ]; then
+    echo "doctor:   $mine of them the auto-refresh hook's. It pushes what it commits as" >&2
+    echo "doctor:   of #293; a vendored copy from before that does not — bump the pointer." >&2
+  fi
+  return 0
+}
+
+check_unpushed
+
 # frontmatter_value <file> <key> — the value of the first `<key>:` line inside
 # the file's YAML frontmatter, surrounding double quotes stripped; empty when
 # absent. Not a YAML parser, deliberately: the doctor's dependency set is bash,
@@ -509,6 +571,13 @@ declare -a UNASSESSED=()
 # One formatter per class, so the call sites cannot word the same fact
 # differently: drift is recorded from the version comparison and from the
 # synced-from commit comparison, un-assessable from six distinct causes.
+#
+# Since #286 drift has ONE call site, which composes the two comparand
+# descriptions — `have` from what the override records, `now` from the vendor's
+# state — before handing them here. Deliberate, and the reason to keep it that
+# way: the two comparisons are one finding about one override, so wording them
+# apart would be the "same fact, two ways" this formatter exists to prevent,
+# and a SECOND call site is how that creeps back in (CR 5).
 record_override_drift() {
   local dir="$1" target="$2" have="$3" now="$4"
   DRIFTED+=("$dir overrides $target: last synced at $have, vendor now at $now")
@@ -528,7 +597,9 @@ report_drifted_overrides() {
   echo "doctor: copy each override aside BEFORE merging, then re-sync by" >&2
   echo "doctor: reapplying the local deltas onto the newer upstream text —" >&2
   echo "doctor: never upstream changes onto the old fork — and bump the" >&2
-  echo "doctor: override's version:/synced-from: to what was just synced." >&2
+  echo "doctor: override's version: AND synced-from: to what was just" >&2
+  echo "doctor: synced — a synced-from: left at the old commit re-reports" >&2
+  echo "doctor: the drift you just paid down." >&2
   echo "doctor: Last, diff that copy against the merged file and account for" >&2
   echo "doctor: every removed line: a presence-only check cannot see a local" >&2
   echo "doctor: delta the merge dropped. Advisory: nothing is auto-merged." >&2
@@ -1117,18 +1188,78 @@ EOF
 # `version:` in an override records THE VENDOR VERSION LAST SYNCED FROM — not
 # a version of the local file — bumped on every re-sync even when the local
 # deltas are unchanged; the two readings diverge as soon as someone edits an
-# override after syncing, which is an override's whole job. For a vendor that
-# ships no version: at all, the `synced-from:` sibling key pins the vendor
-# commit last synced from ("<repo> <tag> (<commit>)"), and the comparison is a
-# diff between that commit and HEAD scoped to the skill's path — so a
-# submodule bump that touches OTHER skills stays silent rather than training
-# the reader to skim.
+# override after syncing, which is an override's whole job. The `synced-from:`
+# sibling key pins the vendor commit last synced from ("<repo> <tag>
+# (<commit>)"), and the comparison is a diff between that commit and HEAD
+# scoped to the override's own files — so a submodule bump that touches OTHER
+# skills stays silent rather than training the reader to skim.
+#
+# #286 — BOTH comparisons run, and either one reports. The commit comparison
+# used to be an unversioned-vendor FALLBACK, reached only after the versioned
+# branch's `continue`, so a vendor that changed a SKILL.md WITHOUT bumping
+# `version:` was invisible: the stamps matched, which is the whole of what the
+# versioned branch can see. CannObserv/archiver's shipping-work-python-fastapi
+# override recorded `synced-from: 662de71` at a vendor also at 1.4, and four
+# separate SKILL.md changes had landed at that same 1.4 between the two
+# commits — Step 1.5's `.skills/doc-sections` paragraph, Step 2's exit-2 note,
+# a `skill:required` marker, and one more since. The doctor ran clean and the
+# gap was found by reading a report. The comparand was already in the
+# frontmatter, one `git diff` away.
+#
+# This is NOT #260's declined "stored hash" direction. That one compares the
+# override with the vendor, where divergence is the EXPECTED state and so
+# tells you only that something differs. This compares the vendor WITH ITSELF
+# — the commit the override synced from against the vendor now — so the
+# override's own deltas never enter it and it cannot fire on expected
+# divergence. Measured over this repo's own history, every versioned SKILL.md
+# but one has changed since its last bump, so keying staleness on `version:`
+# alone misses most of what moves.
+#
+# An override that records no `synced-from:` behaves exactly as before: the
+# absence is a finding only when nothing else can compare (an unversioned
+# vendor). Warning on it for a versioned vendor would fire on every override
+# in the cohort at once over a key none of them have been asked for yet, which
+# is how a new detector teaches its reader to skim.
 #
 # Warn only, in every mode. Never an exit code — not even under --check-only,
 # whose gate covers damage and wiring gaps (#231); drift is doc-sync debt the
 # operator pays down on their schedule, and a probe that failed on it would
 # push consumers toward deleting overrides rather than re-syncing them. Never
 # an auto-merge — upstream text cannot be applied to a fork blindly.
+
+# The vendor paths a `synced-from:` diff is scoped to: the ones the override
+# keeps as REAL FILES, printed one per line and relative to the vendor repo.
+#
+# Whole-skill-directory scope was a false-positive generator (#286). An
+# override in the blessed shape symlinks every script it does not change into
+# the submodule, so those track upstream BY CONSTRUCTION — a vendor-side
+# change there is already in the consumer's hands, with nothing to re-sync.
+# The motivating diff reported `scripts/doc-check.sh` alongside the SKILL.md
+# that really had fallen behind, and the override followed that script through
+# a symlink. Scoping to the override's own real files is the rule that
+# explains both halves: a symlink cannot fall behind, and a regular file is
+# the only thing that can.
+#
+# A forked script therefore KEEPS its signal, which scoping to SKILL.md alone
+# would have dropped — check_silent_forks skips a declared override wholesale,
+# so this comparison is the only detector an override's forked script has.
+#
+# SKILL.md unconditionally and first: it is the file the caller selected the
+# override on, and it is what #286 is about. Same three-directory glob
+# enumeration check_silent_forks uses, for the same reason — an unmatched glob
+# stays literal and the -f test rejects it, so this needs no subprocess.
+override_real_files() {
+  local dir="$1" skill_rel="$2" f rel
+  printf '%s\n' "$skill_rel/SKILL.md"
+  for f in "$dir"/*.md "$dir"/scripts/* "$dir"/references/* "$dir"/assets/*; do
+    [ -L "$f" ] && continue
+    [ -f "$f" ] || continue
+    rel="${f#"$dir"/}"
+    [ "$rel" = "SKILL.md" ] && continue
+    printf '%s\n' "$skill_rel/$rel"
+  done
+}
+
 check_override_drift() {
   [ -d skills ] || return 0
   DRIFTED=()
@@ -1143,6 +1274,8 @@ check_override_drift() {
   MALFORMED_SEEN=" "
   UNCLOSED_FENCE=()
   local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
+  local ver_drift changed have now line
+  local -a dpaths=()
   for dir in skills/*; do
     # A regular directory carrying a SKILL.md whose frontmatter names an
     # overrides: target. Symlinked skills track upstream by construction, and
@@ -1173,44 +1306,104 @@ check_override_drift() {
 
     v_ver="$(frontmatter_value "$vendor_md" version)"
     o_ver="$(frontmatter_value "$md" version)"
+    synced="$(frontmatter_value "$md" synced-from)"
+
+    # Comparison 1 of 2 — the version stamps, for a vendor that ships one.
+    # Deferred rather than reported here: when the commit comparison also
+    # fires, the two are one finding about one override, and the operator
+    # re-syncs once (#286).
+    ver_drift=0
     if [ -n "$v_ver" ]; then
       if [ -z "$o_ver" ]; then
         record_override_unassessed "$dir" "$target" \
           "the vendor is at version $v_ver and the override records no version: (the vendor version last synced from)"
       elif [ "$o_ver" != "$v_ver" ]; then
-        record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+        ver_drift=1
       fi
-      continue
     fi
 
-    # Unversioned upstream: the synced-from fallback.
-    synced="$(frontmatter_value "$md" synced-from)"
+    # Comparison 2 of 2 — the recorded commit against the vendor now. Run
+    # whenever the override records one, versioned vendor or not (#286): this
+    # is the only comparison that can see an un-bumped change, and gating it
+    # behind an absent `version:` is what hid four of them.
+    changed=""
+    rec=""
     if [ -z "$synced" ]; then
-      record_override_unassessed "$dir" "$target" \
-        "the vendor ships no version: and the override records no synced-from: (\"<repo> <tag> (<commit>)\")"
-      continue
+      # Absent is a finding only when nothing else can compare.
+      if [ -z "$v_ver" ]; then
+        record_override_unassessed "$dir" "$target" \
+          "the vendor ships no version: and the override records no synced-from: (\"<repo> <tag> (<commit>)\")"
+      fi
+    else
+      rec="${synced##*(}"
+      rec="${rec%%)*}"
+      if [ "$rec" = "$synced" ] || [ -z "$rec" ]; then
+        record_override_unassessed "$dir" "$target" \
+          "synced-from: \"$synced\" carries no (commit) to compare against"
+        rec=""
+      elif ! git -C "$repo_dir" rev-parse --verify --quiet "$rec^{commit}" >/dev/null 2>&1; then
+        record_override_unassessed "$dir" "$target" \
+          "the recorded commit $rec is not in the vendor's history (shallow clone?)"
+        rec=""
+      else
+        dpaths=()
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          dpaths+=("$line")
+        done <<EOF
+$(override_real_files "$dir" "$skill_rel")
+EOF
+        # diff --quiet: 0 unchanged, 1 changed, anything else is an error —
+        # which must land in "cannot be assessed" rather than in either
+        # verdict. --name-only runs only once that says there is something to
+        # name, so the clean path stays one git call.
+        rc=0
+        git -C "$repo_dir" diff --quiet "$rec" HEAD -- "${dpaths[@]}" 2>/dev/null || rc=$?
+        if [ "$rc" -eq 1 ]; then
+          # The files, not just the fact: an operator re-syncing by hand needs
+          # to know whether it is the SKILL.md or a forked script, and the
+          # list is the work order.
+          # Joined in awk, not `paste -sd ', '`: paste reads -d as a LIST of
+          # delimiters used cyclically, so two files joined on a bare comma
+          # and three alternated comma and space.
+          changed="$(git -C "$repo_dir" diff --name-only "$rec" HEAD -- "${dpaths[@]}" 2>/dev/null |
+            sed "s|^$skill_rel/||" |
+            awk '{ printf "%s%s", sep, $0; sep = ", " } END { print "" }' || true)"
+          [ -n "$changed" ] || changed="$skill_rel"
+        elif [ "$rc" -ne 0 ]; then
+          record_override_unassessed "$dir" "$target" \
+            "'git diff $rec HEAD' over ${#dpaths[@]} path(s) under $skill_rel failed in $repo_dir"
+          rec=""
+        fi
+      fi
     fi
-    rec="${synced##*(}"
-    rec="${rec%%)*}"
-    if [ "$rec" = "$synced" ] || [ -z "$rec" ]; then
-      record_override_unassessed "$dir" "$target" \
-        "synced-from: \"$synced\" carries no (commit) to compare against"
-      continue
-    fi
-    if ! git -C "$repo_dir" rev-parse --verify --quiet "$rec^{commit}" >/dev/null 2>&1; then
-      record_override_unassessed "$dir" "$target" \
-        "the recorded commit $rec is not in the vendor's history (shallow clone?)"
-      continue
-    fi
-    # diff --quiet: 0 unchanged, 1 changed, anything else is an error — which
-    # must land in "cannot be assessed" rather than in either verdict.
-    rc=0
-    git -C "$repo_dir" diff --quiet "$rec" HEAD -- "$skill_rel" 2>/dev/null || rc=$?
-    if [ "$rc" -eq 1 ]; then
-      record_override_drift "$dir" "$target" "commit $rec" "a vendor tree that has since changed $skill_rel"
-    elif [ "$rc" -ne 0 ]; then
-      record_override_unassessed "$dir" "$target" \
-        "'git diff $rec HEAD -- $skill_rel' failed in $repo_dir"
+
+    # One drift entry per override, naming whichever comparison fired. The
+    # matching-stamps case says SO: a reader told an override has fallen
+    # behind checks `version:` first, finds it equal, and concludes the
+    # doctor is wrong — which is the state #286 exists to report.
+    if [ -n "$changed" ]; then
+      # Branch on whether the VENDOR ships a version, not on whether the two
+      # stamps are EQUAL (CR 1). An override recording no version: at all made
+      # the equality false and fell through to the unversioned-vendor prose,
+      # so the line said "a vendor tree" about a vendor the doctor had just
+      # read 1.4 from — on the one line that is meant to be the work order.
+      # The version gap is its own un-assessable finding above; this line
+      # still names what is known.
+      if [ -z "$v_ver" ]; then
+        now="a vendor tree with $changed changed since that commit"
+      elif [ "$o_ver" = "$v_ver" ]; then
+        now="version $v_ver still — the stamps match and $changed changed anyway (#286)"
+      else
+        now="version $v_ver, with $changed changed since that commit"
+      fi
+      # `have` describes what the OVERRIDE recorded, so it conditions on the
+      # override's own field rather than on the vendor's.
+      have="commit $rec"
+      [ -z "$o_ver" ] || have="version $o_ver (commit $rec)"
+      record_override_drift "$dir" "$target" "$have" "$now"
+    elif [ "$ver_drift" = "1" ]; then
+      record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
     fi
   done
   # After the loop, so a repo with several overrides gets one remedy block per
