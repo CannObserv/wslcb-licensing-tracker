@@ -39,7 +39,9 @@ EARLYOOM_PREFER_BONUS = 300
 COMM_SHOULD_PREFER = ("node", "npm exec socrat", "npx")
 COMM_SHOULD_AVOID = ("uvicorn", "sshd", "sshd-session", "systemd", "systemd-journal")
 
-_SIZE_UNITS = {"": 1, "K": 1000, "M": 1000**2, "G": 1000**3}
+# systemd size suffixes are powers of 1024, not 1000 (systemd.syntax(7)):
+# MemoryLow=256M lands in memory.low as 268435456, verified on this host.
+_SIZE_UNITS = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3}
 
 
 def _directive(path: Path, key: str) -> str:

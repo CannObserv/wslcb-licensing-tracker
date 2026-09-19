@@ -76,6 +76,20 @@ Three independent pieces, none of which substitutes for another:
 | Kernel atomic-allocation reserve — `vm.min_free_kbytes=65536` | `infra/sysctl.d-60-wslcb-memory.conf` | `sudo install -m 644 infra/sysctl.d-60-wslcb-memory.conf /etc/sysctl.d/60-wslcb-memory.conf && sudo sysctl --system` |
 | Userspace OOM killer, acts before the kernel | `infra/default-earlyoom` | `sudo apt install earlyoom && sudo install -m 644 infra/default-earlyoom /etc/default/earlyoom && sudo systemctl enable --now earlyoom && sudo systemctl restart earlyoom` — the **restart is required**, see below — then `journalctl -u earlyoom -n 12 --no-pager` to confirm the parsed thresholds and both regexes |
 
+One command checks the whole stack against what `infra/` declares — effective
+cgroup protection, `oom_score_adj`, `vm.min_free_kbytes`, earlyoom's *parsed*
+args, and that SocratiCode still resolves to the pin:
+
+```bash
+scripts/verify-memory-pressure.sh          # exit 0 ok · 1 drift · 2 couldn't check
+```
+
+It reads every expectation from `infra/` rather than hardcoding them, so it
+cannot drift from the committed config; run it after any change here and after
+a reboot. `tests/test_infra_memory_pressure.py` is its counterpart — that
+checks the config files are coherent with each other, this checks the running
+host matches them. The rest of this section is what to do when it reports drift.
+
 `MemoryLow=` does not work alone. cgroup v2 limits a unit's effective low
 protection by *every* ancestor's, and `system.slice` ships with `memory.low=0`
 — so `min(256M, 0) = 0`. Normally the `memory_recursiveprot` mount option makes
