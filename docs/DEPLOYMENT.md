@@ -236,6 +236,7 @@ Set automatically by `wslcb-web.service` at startup — `ExecStartPre` writes th
 | Python or template change | `sudo systemctl restart wslcb-web.service` |
 | Service file change (existing) | `sudo cp infra/*.service infra/*.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart wslcb-web.service` |
 | Service file change (new timer added) | above + `sudo systemctl enable --now <timer-name>.timer` for each new timer |
+| Memory-pressure config change | **Not covered by the globs above** — `infra/` also holds a slice drop-in, a sysctl conf and an earlyoom default, none of them `*.service`/`*.timer`. See [Memory pressure](#memory-pressure-175) for the four apply commands. |
 | CSS change | `scripts/build-css.sh` (pre-commit hook does this automatically) |
 | DB schema change | `uv run alembic upgrade head` (no service restart needed) |
 | Test in a worktree | `uv run uvicorn wslcb_licensing_tracker.app:app --host 0.0.0.0 --port 8001 --log-config src/wslcb_licensing_tracker/log_config.json` |
