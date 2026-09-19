@@ -29,7 +29,7 @@ RestartSec=5
 # transient npm/ingest batch rather than the always-on service. At adj 0 it
 # read ~674 and would have been the first thing chosen.
 #
-# MemoryLow REQUIRES infra/system.slice.d-wslcb-memory.conf to be installed.
+# MemoryLow REQUIRES infra/system.slice.d-10-wslcb-memory.conf to be installed.
 # cgroup v2 caps effective protection at the ancestors', system.slice ships
 # with memory.low = 0, and this VM's cgroup2 is mounted without
 # memory_recursiveprot — so without that drop-in this line is silently inert.

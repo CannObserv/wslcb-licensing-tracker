@@ -71,9 +71,9 @@ Three independent pieces, none of which substitutes for another:
 | Piece | File | Applies |
 |---|---|---|
 | Service reservation — `MemoryLow=256M`, `OOMScoreAdjust=-700` | `infra/wslcb-web.service` | `sudo cp` + `daemon-reload` + restart (see above) |
-| **Parent slice grant — `MemoryLow=512M`** (without it the row above is inert) | `infra/system.slice.d-wslcb-memory.conf` | `sudo install -D -m 644 infra/system.slice.d-wslcb-memory.conf /etc/systemd/system/system.slice.d/10-wslcb-memory.conf && sudo systemctl daemon-reload` |
-| Kernel atomic-allocation reserve — `vm.min_free_kbytes=65536` | `infra/sysctl.d-wslcb-memory.conf` | `sudo install -m 644 infra/sysctl.d-wslcb-memory.conf /etc/sysctl.d/60-wslcb-memory.conf && sudo sysctl --system` |
-| Userspace OOM killer, acts before the kernel | `infra/earlyoom.default` | `sudo apt install earlyoom && sudo install -m 644 infra/earlyoom.default /etc/default/earlyoom && sudo systemctl enable --now earlyoom` |
+| **Parent slice grant — `MemoryLow=512M`** (without it the row above is inert) | `infra/system.slice.d-10-wslcb-memory.conf` | `sudo install -D -m 644 infra/system.slice.d-10-wslcb-memory.conf /etc/systemd/system/system.slice.d/10-wslcb-memory.conf && sudo systemctl daemon-reload` |
+| Kernel atomic-allocation reserve — `vm.min_free_kbytes=65536` | `infra/sysctl.d-60-wslcb-memory.conf` | `sudo install -m 644 infra/sysctl.d-60-wslcb-memory.conf /etc/sysctl.d/60-wslcb-memory.conf && sudo sysctl --system` |
+| Userspace OOM killer, acts before the kernel | `infra/default-earlyoom` | `sudo apt install earlyoom && sudo install -m 644 infra/default-earlyoom /etc/default/earlyoom && sudo systemctl enable --now earlyoom` |
 
 `MemoryLow=` does not work alone. cgroup v2 limits a unit's effective low
 protection by *every* ancestor's, and `system.slice` ships with `memory.low=0`
