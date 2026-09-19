@@ -59,7 +59,8 @@ sudo systemctl restart wslcb-web.service
 This VM has **7.2 GiB and no swap**, and the production service shares it with
 interactive agent sessions. That combination has a specific failure mode, seen
 on a sibling host on 2026-09-16: nothing gets OOM-killed. exe.dev session
-processes inherit `oom_score_adj` **-1000** from `exe-init`/`sshd`, so the
+processes inherit `oom_score_adj` **-1000** from exe.dev's sshd
+(`/exe.dev/bin/sshd`, itself running at -1000 under PID 1), so the
 kernel killer can never pick the session or anything it launches — under real
 exhaustion it takes the production service instead, while the kernel fails
 *atomic* allocations in unrelated processes (`tailscaled`, `ksoftirqd`). A
@@ -79,8 +80,11 @@ Three independent pieces, none of which substitutes for another:
 protection by *every* ancestor's, and `system.slice` ships with `memory.low=0`
 — so `min(256M, 0) = 0`. Normally the `memory_recursiveprot` mount option makes
 protection propagate without per-level config, and systemd ≥ 247 sets it when
-it mounts the hierarchy; on this VM `exe-init` mounts cgroup2 first, as bare
-`rw`, so it is absent. Verify before trusting the reservation:
+it mounts the hierarchy. Here the mount is bare `rw` — neither
+`memory_recursiveprot` nor `nsdelegate`, systemd's other default — so systemd
+did not perform it. **What did is undetermined**: PID 1 is systemd and no
+`exe-init` process exists on this host. The cause is open; the effect is
+measured. Verify before trusting the reservation:
 
 ```bash
 grep cgroup2 /proc/self/mountinfo               # memory_recursiveprot present?

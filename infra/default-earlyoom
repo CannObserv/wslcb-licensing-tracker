@@ -1,7 +1,8 @@
 # /etc/default/earlyoom — userspace OOM killer config (#175)
 #
 # Why this is needed at all: exe.dev session processes inherit oom_score_adj
-# -1000 from exe-init/sshd, so the kernel OOM killer can NEVER pick the agent
+# -1000 from exe.dev's sshd (/exe.dev/bin/sshd), so the kernel OOM killer can
+# NEVER pick the agent
 # session or anything it launches. Under real exhaustion it takes the host's
 # production service instead. earlyoom acts *before* the kernel does and can
 # be told what to prefer, which the kernel killer cannot.

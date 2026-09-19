@@ -16,7 +16,8 @@ Restart=always
 RestartSec=5
 # Memory reservation (#175). This host has no swap and shares its memory with
 # interactive agent sessions, whose processes inherit oom_score_adj=-1000 from
-# exe-init/sshd and so can never be OOM-killed. Under exhaustion the kernel
+# exe.dev's sshd (/exe.dev/bin/sshd, itself -1000 under PID 1) and so can never
+# be OOM-killed. Under exhaustion the kernel
 # would pick this service instead. MemoryLow keeps the app's working set off
 # the reclaim list under pressure; 256M is ~3x the measured steady state
 # (84.9 MB RSS, 66 MB charged to the cgroup on 2026-09-18), leaving room for
