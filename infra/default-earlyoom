@@ -22,12 +22,17 @@
 # with a trailing '$': it makes --prefer match nothing at all, and lets
 # sshd-session and systemd-journal slip past --avoid. Verified against
 # `ps -eo comm=` on this host.
-# UNVALIDATED AS COMMITTED: earlyoom is not installed on this host, so these
-# args have never been parsed by the binary. A malformed EARLYOOM_ARGS fails at
-# `systemctl enable --now earlyoom` — during an incident, on the one mechanism
-# meant to handle it. After installing, confirm the daemon echoed back what you
-# meant rather than assuming it started clean:
-#   systemctl is-active earlyoom
-#   journalctl -u earlyoom -n 20 --no-pager   # startup line prints parsed
-#                                             # mem thresholds, prefer, avoid
+# VALIDATED against earlyoom v1.7 on this host, 2026-09-19: the daemon echoed
+# back both regexes and the 6%/3% thresholds. Re-check after any edit — a
+# malformed EARLYOOM_ARGS fails at start, during an incident, on the one
+# mechanism meant to handle it.
+#
+# `apt install earlyoom` starts the daemon BEFORE this file is in place, and
+# `systemctl enable --now` will not restart an already-active unit — so the
+# stock `-r 3600` (no regexes, 10%/5%) stays loaded while the unit reports
+# active and enabled. Always restart, then read the journal, never infer from
+# unit state:
+#   sudo systemctl restart earlyoom
+#   journalctl -u earlyoom -n 12 --no-pager   # must print BOTH regex lines
+#                                             # and 6.00% / 3.00%
 EARLYOOM_ARGS="-r 3600 -m 6,3 --avoid '^(uvicorn|sshd|systemd|exe-init)' --prefer '^(node|npm|npx)'"

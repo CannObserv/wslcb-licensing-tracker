@@ -73,7 +73,7 @@ Three independent pieces, none of which substitutes for another:
 | Service reservation — `MemoryLow=256M`, `OOMScoreAdjust=-700` | `infra/wslcb-web.service` | `sudo cp` + `daemon-reload` + restart (see above) |
 | **Parent slice grant — `MemoryLow=512M`** (without it the row above is inert) | `infra/system.slice.d-10-wslcb-memory.conf` | `sudo install -D -m 644 infra/system.slice.d-10-wslcb-memory.conf /etc/systemd/system/system.slice.d/10-wslcb-memory.conf && sudo systemctl daemon-reload` |
 | Kernel atomic-allocation reserve — `vm.min_free_kbytes=65536` | `infra/sysctl.d-60-wslcb-memory.conf` | `sudo install -m 644 infra/sysctl.d-60-wslcb-memory.conf /etc/sysctl.d/60-wslcb-memory.conf && sudo sysctl --system` |
-| Userspace OOM killer, acts before the kernel (args **unvalidated** — see below) | `infra/default-earlyoom` | `sudo apt install earlyoom && sudo install -m 644 infra/default-earlyoom /etc/default/earlyoom && sudo systemctl enable --now earlyoom` then `journalctl -u earlyoom -n 20 --no-pager` to confirm the parsed thresholds |
+| Userspace OOM killer, acts before the kernel | `infra/default-earlyoom` | `sudo apt install earlyoom && sudo install -m 644 infra/default-earlyoom /etc/default/earlyoom && sudo systemctl enable --now earlyoom && sudo systemctl restart earlyoom` — the **restart is required**, see below — then `journalctl -u earlyoom -n 12 --no-pager` to confirm the parsed thresholds and both regexes |
 
 `MemoryLow=` does not work alone. cgroup v2 limits a unit's effective low
 protection by *every* ancestor's, and `system.slice` ships with `memory.low=0`
@@ -93,9 +93,41 @@ optional hardening step.
 `OOMScoreAdjust=-700` is **calibrated, not arbitrary**: earlyoom 1.7 floors a
 `--prefer` match's score at 300, so the web service only wins if it sits below
 that. Measured on this host: adj 0 → ~674, -500 → 341 (still loses), -700 →
-~208. Re-measure with `cat /proc/$(pgrep -f 'uvicorn wslcb' | head -1)/oom_score`
+~208. Re-measure with systemd's own view of the main PID:
+
+```bash
+cat /proc/$(systemctl show -p MainPID --value wslcb-web.service)/oom_score
+```
+
+Do **not** reach for `pgrep -f 'uvicorn wslcb'` here: `-f` matches against full
+command lines, so any shell whose own command contains that string matches
+itself first and reports `-1000`/`0` (the session's inherited values) — which
+reads exactly like a correctly-protected service. That misfire happened during
+this rollout. Re-measure
 if either the service's footprint or the earlyoom config changes — the two are
 coupled, and changing one alone silently re-arms the bug.
+
+### Verifying earlyoom actually took the config
+
+`apt install earlyoom` **starts the daemon itself**, before any config is in
+place. `systemctl enable --now` is then a no-op on an already-active unit, so
+the daemon keeps running with Debian's stock `EARLYOOM_ARGS="-r 3600"` — no
+`--prefer`, no `--avoid`, and default 10%/5% thresholds. It reports `active`
+and `enabled` throughout, which is why this needs checking rather than
+assuming. An explicit `systemctl restart earlyoom` is what applies the config.
+
+The journal is the only place the daemon says what it actually parsed. All
+four lines must be present:
+
+```
+Preferring to kill process names that match regex '^(node|npm|npx)'
+Will avoid killing process names that match regex '^(uvicorn|sshd|systemd|exe-init)'
+sending SIGTERM when mem <=  6.00% and swap <= 10.00%,
+        SIGKILL when mem <=  3.00% and swap <=  5.00%
+```
+
+Two missing regex lines and 10.00%/5.00% thresholds mean the stock config is
+still loaded. Confirmed working on this host with earlyoom v1.7 on 2026-09-19.
 
 ### Don't let a tool install at launch
 
