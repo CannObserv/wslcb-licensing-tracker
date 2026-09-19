@@ -71,8 +71,24 @@ Three independent pieces, none of which substitutes for another:
 | Piece | File | Applies |
 |---|---|---|
 | Service reservation — `MemoryLow=256M`, `OOMScoreAdjust=-700` | `infra/wslcb-web.service` | `sudo cp` + `daemon-reload` + restart (see above) |
+| **Parent slice grant — `MemoryLow=512M`** (without it the row above is inert) | `infra/system.slice.d-wslcb-memory.conf` | `sudo install -D -m 644 infra/system.slice.d-wslcb-memory.conf /etc/systemd/system/system.slice.d/10-wslcb-memory.conf && sudo systemctl daemon-reload` |
 | Kernel atomic-allocation reserve — `vm.min_free_kbytes=65536` | `infra/sysctl.d-wslcb-memory.conf` | `sudo install -m 644 infra/sysctl.d-wslcb-memory.conf /etc/sysctl.d/60-wslcb-memory.conf && sudo sysctl --system` |
 | Userspace OOM killer, acts before the kernel | `infra/earlyoom.default` | `sudo apt install earlyoom && sudo install -m 644 infra/earlyoom.default /etc/default/earlyoom && sudo systemctl enable --now earlyoom` |
+
+`MemoryLow=` does not work alone. cgroup v2 limits a unit's effective low
+protection by *every* ancestor's, and `system.slice` ships with `memory.low=0`
+— so `min(256M, 0) = 0`. Normally the `memory_recursiveprot` mount option makes
+protection propagate without per-level config, and systemd ≥ 247 sets it when
+it mounts the hierarchy; on this VM `exe-init` mounts cgroup2 first, as bare
+`rw`, so it is absent. Verify before trusting the reservation:
+
+```bash
+grep cgroup2 /proc/self/mountinfo               # memory_recursiveprot present?
+cat /sys/fs/cgroup/system.slice/memory.low      # must be >= the child's grant
+```
+
+Both readings are why the slice drop-in is a required row above, not an
+optional hardening step.
 
 `OOMScoreAdjust=-700` is **calibrated, not arbitrary**: earlyoom 1.7 floors a
 `--prefer` match's score at 300, so the web service only wins if it sits below

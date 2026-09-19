@@ -17,13 +17,18 @@ RestartSec=5
 # Memory reservation (#175). This host has no swap and shares its memory with
 # interactive agent sessions, whose processes inherit oom_score_adj=-1000 from
 # exe-init/sshd and so can never be OOM-killed. Under exhaustion the kernel
-# would pick this service instead. MemoryLow keeps the app's working set
-# (~75 MB observed) off the reclaim list under pressure; OOMScoreAdjust moves
+# would pick this service instead. MemoryLow keeps the app's working set off
+# the reclaim list under pressure; OOMScoreAdjust moves
 # it well down the killer's ranking without making it unkillable. -700 is
 # calibrated, not arbitrary: it puts this service's oom_score at ~208, clear of
 # the 300 floor earlyoom 1.7 applies to a --prefer match, so the killer takes a
 # transient npm/ingest batch rather than the always-on service. At adj 0 it
 # read ~674 and would have been the first thing chosen.
+#
+# MemoryLow REQUIRES infra/system.slice.d-wslcb-memory.conf to be installed.
+# cgroup v2 caps effective protection at the ancestors', system.slice ships
+# with memory.low = 0, and this VM's cgroup2 is mounted without
+# memory_recursiveprot — so without that drop-in this line is silently inert.
 MemoryLow=256M
 OOMScoreAdjust=-700
 Environment=PYTHONUNBUFFERED=1
