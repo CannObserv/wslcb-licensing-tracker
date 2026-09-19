@@ -22,4 +22,12 @@
 # with a trailing '$': it makes --prefer match nothing at all, and lets
 # sshd-session and systemd-journal slip past --avoid. Verified against
 # `ps -eo comm=` on this host.
+# UNVALIDATED AS COMMITTED: earlyoom is not installed on this host, so these
+# args have never been parsed by the binary. A malformed EARLYOOM_ARGS fails at
+# `systemctl enable --now earlyoom` — during an incident, on the one mechanism
+# meant to handle it. After installing, confirm the daemon echoed back what you
+# meant rather than assuming it started clean:
+#   systemctl is-active earlyoom
+#   journalctl -u earlyoom -n 20 --no-pager   # startup line prints parsed
+#                                             # mem thresholds, prefer, avoid
 EARLYOOM_ARGS="-r 3600 -m 6,3 --avoid '^(uvicorn|sshd|systemd|exe-init)' --prefer '^(node|npm|npx)'"
