@@ -23,7 +23,7 @@
     {
       "name": "infra",
       "path": "infra/",
-      "description": "systemd unit and timer files for all services (web, scraper, address validation, healthcheck). Consult when modifying service configuration or adding new scheduled tasks."
+      "description": "Host configuration: systemd units and timers for all services (web, scraper, address validation, healthcheck), plus the memory-pressure configs that keep the web service alive under exhaustion on this swapless VM (service + parent-slice MemoryLow, OOMScoreAdjust, vm.min_free_kbytes, earlyoom). Consult when modifying service configuration, adding scheduled tasks, or touching OOM/memory behaviour."
     },
     {
       "name": "research",
