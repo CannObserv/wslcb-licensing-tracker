@@ -18,7 +18,11 @@ RestartSec=5
 # interactive agent sessions, whose processes inherit oom_score_adj=-1000 from
 # exe-init/sshd and so can never be OOM-killed. Under exhaustion the kernel
 # would pick this service instead. MemoryLow keeps the app's working set off
-# the reclaim list under pressure; OOMScoreAdjust moves
+# the reclaim list under pressure; 256M is ~3x the measured steady state
+# (84.9 MB RSS, 66 MB charged to the cgroup on 2026-09-18), leaving room for
+# request bursts without reserving memory the host cannot spare. Do NOT
+# re-derive this from the 75 MB figure in #175 — that number is a pinned
+# SocratiCode server's peak, an unrelated process. OOMScoreAdjust moves
 # it well down the killer's ranking without making it unkillable. -700 is
 # calibrated, not arbitrary: it puts this service's oom_score at ~208, clear of
 # the 300 floor earlyoom 1.7 applies to a --prefer match, so the killer takes a
