@@ -126,21 +126,32 @@ fi
 # Config parsing proves nothing about the ranking (#178): earlyoom 1.7 applies
 # --prefer (+300) and --avoid (-300), then silently drops every -1000 process,
 # which is everything an agent session launches. Replay that over /proc and
-# fail if the winner is something --avoid exists to protect.
+# fail if the winner is something --avoid exists to protect. Mirrors v1.7
+# kill.c is_larger(): skip pid <= 1 and zero-RSS (kernel) threads, break score
+# ties on the larger RSS. If earlyoom would select ITSELF, kill.c zeroes the
+# victim and kills nothing — so that is a failure too, not a pass.
 if [ -n "$want_prefer" ] && [ -n "$want_avoid" ]; then
+  eoom=$(systemctl show -p MainPID --value earlyoom 2>/dev/null)
   top=$(for p in /proc/[0-9]*; do
+          pid=${p#/proc/}
+          [ "$pid" -le 1 ] && continue
           a=$(cat "$p/oom_score_adj" 2>/dev/null) || continue
           [ "$a" = -1000 ] && continue
           s=$(cat "$p/oom_score" 2>/dev/null) || continue
           c=$(cat "$p/comm" 2>/dev/null) || continue
+          r=$(awk '/^VmRSS:/{print $2}' "$p/status" 2>/dev/null)
+          [ -z "$r" ] || [ "$r" = 0 ] && continue
           [[ $c =~ $want_prefer ]] && s=$((s + 300))
           [[ $c =~ $want_avoid ]] && s=$((s - 300))
-          printf '%s\t%s\t%s\n' "$s" "${p#/proc/}" "$c"
-        done | sort -rn | head -3)
-  first=$(printf '%s\n' "$top" | head -1 | cut -f3)
-  summary=$(printf '%s\n' "$top" | awk -F'\t' '{printf "%s%s(%s)", (NR>1?", ":""), $3, $1}')
+          printf '%s\t%s\t%s\t%s\n' "$s" "$r" "$pid" "$c"
+        done | sort -t$'\t' -k1,1nr -k2,2nr | head -3)
+  first=$(printf '%s\n' "$top" | head -1 | cut -f4)
+  first_pid=$(printf '%s\n' "$top" | head -1 | cut -f3)
+  summary=$(printf '%s\n' "$top" | awk -F'\t' '{printf "%s%s(%s)", (NR>1?", ":""), $4, $1}')
   if [ -z "$first" ]; then
     blocked "no killable process readable in /proc"
+  elif [ "$first_pid" = "$eoom" ]; then
+    fail "earlyoom would select itself and so kill nothing — top 3: $summary"
   elif [[ $first =~ $want_avoid ]]; then
     fail "earlyoom's next victim would be '$first', which --avoid protects — top 3: $summary"
   else
