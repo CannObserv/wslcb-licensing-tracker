@@ -37,7 +37,7 @@ This project has no hosted CI at all — no `.github/` tree; the scheduled work 
 
 ## brainstorming
 
-Explores user intent, requirements, and design before any implementation. Produces structured questions, trade-off analysis, and a design sketch before writing code.
+Explores user intent, requirements, and design before any implementation. Produces structured questions, trade-off analysis, and a design sketch before writing code. Writes specs to `docs/specs/` (overriding the skill's `docs/superpowers/specs/` default, #176).
 
 **Trigger:** User says "brainstorm", "design this", "let's design", or proposes a new feature without a prior design discussion.
 
