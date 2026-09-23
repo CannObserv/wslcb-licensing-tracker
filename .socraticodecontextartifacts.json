@@ -43,7 +43,7 @@
     {
       "name": "socraticode",
       "path": "docs/SOCRATICODE.md",
-      "description": "Code exploration reference: the full SocratiCode tool table, the ToolSearch prefetch string, per-tool notes, graph-health and index-scope guidance. The on-demand half of the Code Exploration Policy block in AGENTS.md."
+      "description": "Code exploration reference: the full SocratiCode tool table, a pointer to the prefetch hook, per-tool notes, graph-health and index-scope guidance. The on-demand half of the Code Exploration Policy block in AGENTS.md."
     }
   ]
 }
