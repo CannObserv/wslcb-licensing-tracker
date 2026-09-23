@@ -38,7 +38,7 @@
     {
       "name": "specs",
       "path": "docs/specs/",
-      "description": "Dated design specs (docs/superpowers override, #176): address-validation TTL renewal, replay extracts (#154). Design intent at the time written; confirm current behaviour against source."
+      "description": "Dated design specs (the docs/superpowers/specs override, #176): the design intent behind a feature at the time it was written. Design history, not current behaviour; confirm against source."
     },
     {
       "name": "socraticode",
