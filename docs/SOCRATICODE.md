@@ -300,8 +300,7 @@ import-resolution advisory; graph `Built by:` current), 2.02 edges/file
 locally, so the policy block stays on variant A. The daily hook's
 `graph unresolved 76%` line is a **note**, not a defect: it counts every
 captured symbol edge, builtins and external libraries included (see **Graph
-health** above). Earlier notes here read it as the resolver missing this
-project's `uv`/hatch src layout; the server no longer supports that reading.
+health** above), so it is not evidence of a src-layout resolver defect.
 Still, confirm a negative graph answer with `rg -n 'from \.\w+ import|from
 wslcb_licensing_tracker'` before concluding nothing depends on a module.
 
