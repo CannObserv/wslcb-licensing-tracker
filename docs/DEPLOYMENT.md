@@ -118,8 +118,9 @@ optional hardening step.
 
 `OOMScoreAdjust=-700` is **calibrated, not arbitrary**: earlyoom 1.7 adds 300
 to a `--prefer` match's score, so the web service ranks below one only if it
-sits under 300. It also ranks below every killable adj-0 process. Measured on this host: adj 0 → ~674, -500 → 341 (still loses), -700 →
-~208. Re-measure with systemd's own view of the main PID:
+sits under 300. It also ranks below every killable adj-0 process. Measured on
+this host: adj 0 → ~674, -500 → 341 (still loses), -700 → ~208. Re-measure
+with systemd's own view of the main PID:
 
 ```bash
 cat /proc/$(systemctl show -p MainPID --value wslcb-web.service)/oom_score
