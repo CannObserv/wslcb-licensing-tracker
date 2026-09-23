@@ -282,8 +282,10 @@ dated prose indexed recursively: `docs/research/` (which carries
 [`architecture-review.md`](research/architecture-review.md)), `docs/plans/`
 and `docs/specs/`. Those three are also excluded from the code index (below),
 so they answer only through context search — and, being dated, may describe a
-design since superseded (the SQLite→PostgreSQL phase plans). Scope with
-`artifactName` when the question is about current behaviour.
+design since superseded (the SQLite→PostgreSQL phase plans). For a question
+about current behaviour, scope with `artifactName` to a current-state artifact
+— `database-schema`, `deployment`, `source-page`, `style` or `infra` — never
+`plans`, `specs` or `research`.
 
 ### Entry points
 
