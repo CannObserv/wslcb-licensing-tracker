@@ -31,6 +31,16 @@
       "description": "Architectural review findings and design decisions (architecture-review.md — consult before proposing structural changes), plus domain research: entity classification, template analysis, data audits, and record linking analysis. Relevant for work on entities, record linking, and data quality."
     },
     {
+      "name": "plans",
+      "path": "docs/plans/",
+      "description": "Dated implementation plans and design docs (2026-03 onward), including the superseded SQLite-to-PostgreSQL phase plans. Design history, not current behaviour: may describe values or schemas a later migration changed. Search with artifactName set when asking why something was built a certain way."
+    },
+    {
+      "name": "specs",
+      "path": "docs/specs/",
+      "description": "Dated design specs (docs/superpowers override, #176): address-validation TTL renewal, replay extracts (#154). Design intent at the time written; confirm current behaviour against source."
+    },
+    {
       "name": "socraticode",
       "path": "docs/SOCRATICODE.md",
       "description": "Code exploration reference: the full SocratiCode tool table, the ToolSearch prefetch string, per-tool notes, graph-health and index-scope guidance. The on-demand half of the Code Exploration Policy block in AGENTS.md."

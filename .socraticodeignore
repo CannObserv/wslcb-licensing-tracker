@@ -12,3 +12,11 @@
 # stay indexed. See GH #160.
 skills-vendor/
 .claude/skills/
+#
+# Dated prose leaves the code index so superseded designs stop outranking
+# source in codebase_search. All three stay searchable through
+# codebase_context_search as directory artifacts (plans, specs, research) —
+# the context store is governed by the manifest, not this file. See GH #179.
+docs/research/
+docs/plans/
+docs/specs/
