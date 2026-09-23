@@ -7,22 +7,42 @@
 # production service instead. earlyoom acts *before* the kernel does and can
 # be told what to prefer, which the kernel killer cannot.
 #
+# BUT earlyoom cannot kill -1000 either (#178): v1.7 kill.c drops any
+# oom_score_adj == -1000 process from candidacy AFTER applying the --prefer
+# bonus. So the session's node/npm/npx never get picked, whatever --prefer
+# says. What earlyoom actually chooses among is everything at adj > -1000.
+# Measured 2026-09-23, with --prefer inert, the ranking was: (sd-pam) 733,
+# llama-server 704, qdrant 685, then Postgres backends/checkpointer ~670.
+#
 # -r 3600     report memory state hourly (journal), not every 60s
 # -m 6,3      warn at 6% free RAM, kill at 3%. No -s: this host has no swap.
-# --avoid     never pick the web app, sshd, or PID-1-ish supervisors.
-# --prefer    pick the transient npm/node installs first — the measured peak
-#             on this class of host was a cold `npx socraticode@latest`
-#             install (1.2 G at the cgroup), not the indexing that follows.
+# --avoid     never pick the web app, sshd, PID-1-ish supervisors, Postgres,
+#             or (sd-pam). Postgres: SIGKILL on any backend makes the
+#             postmaster reset every connection, which takes the web app down
+#             by proxy. (sd-pam): tops the ranking at ~3.6 MB, so killing it
+#             frees nothing and costs a kill cycle. '.sd-pam' stands in for
+#             '\(sd-pam\)' — see NB3.
+# --prefer    SocratiCode's containers (llama-server/ollama, qdrant): adj 0,
+#             so actually killable, the largest transient RSS measured
+#             (424 M + 213 M), and restarted on demand by ollama and by
+#             Docker (restart=unless-stopped). node|npm|npx stay listed for
+#             any caller not at -1000; for agent sessions they are inert.
 #
-# NB earlyoom 1.7 floors a --prefer match's effective score at 300, so this
-# only works while wslcb-web.service sits BELOW 300; its OOMScoreAdjust=-700
-# puts it at ~208. Changing one without the other silently re-arms the bug.
+# NB earlyoom 1.7 adds 300 to a --prefer match's score, so a preferred
+# process outranks wslcb-web.service only while the service sits BELOW 300;
+# its OOMScoreAdjust=-700 puts it at ~208. Changing one without the other
+# silently re-arms the bug.
 #
 # NB2 these match /proc/<pid>/comm, which the kernel TRUNCATES to 15 chars —
 # the npm launch shows up as 'npm exec socrat', not 'npm'. Do not anchor these
 # with a trailing '$': it makes --prefer match nothing at all, and lets
 # sshd-session and systemd-journal slip past --avoid. Verified against
 # `ps -eo comm=` on this host.
+#
+# NB3 systemd, not a shell, parses this file: it strips the single quotes and
+# passes each regex through as one argv entry (verified in
+# /proc/<earlyoom>/cmdline). Keep the regexes free of backslashes; match
+# literal punctuation with '.' instead of an escape.
 # VALIDATED against earlyoom v1.7 on this host, 2026-09-19: the daemon echoed
 # back both regexes and the 6%/3% thresholds. Re-check after any edit — a
 # malformed EARLYOOM_ARGS fails at start, during an incident, on the one
@@ -36,4 +56,4 @@
 #   sudo systemctl restart earlyoom
 #   journalctl -u earlyoom -n 12 --no-pager   # must print BOTH regex lines
 #                                             # and 6.00% / 3.00%
-EARLYOOM_ARGS="-r 3600 -m 6,3 --avoid '^(uvicorn|sshd|systemd|exe-init)' --prefer '^(node|npm|npx)'"
+EARLYOOM_ARGS="-r 3600 -m 6,3 --avoid '^(uvicorn|sshd|systemd|exe-init|postgres|.sd-pam)' --prefer '^(node|npm|npx|llama-server|ollama|qdrant)'"

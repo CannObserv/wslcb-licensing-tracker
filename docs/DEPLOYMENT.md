@@ -67,6 +67,13 @@ exhaustion it takes the production service instead, while the kernel fails
 cgroup cap on a process the killer won't touch **stalls** it rather than
 killing it, so the reservation has to go on the service, not the session.
 
+earlyoom does not change that (#178): v1.7 skips -1000 processes just as the
+kernel does, so it can never take the session's `node`/`npm` either.
+Its `--prefer` therefore names SocratiCode's containers (`llama-server`,
+`ollama`, `qdrant`: adj 0, the largest transient RSS, restarted on demand), and
+its `--avoid` adds `postgres`. Without that, a Postgres backend ranked next
+after the containers, and SIGKILL on any backend resets every connection.
+
 Three independent pieces, none of which substitutes for another:
 
 | Piece | File | Applies |
@@ -78,7 +85,8 @@ Three independent pieces, none of which substitutes for another:
 
 One command checks the whole stack against what `infra/` declares — effective
 cgroup protection, `oom_score_adj`, `vm.min_free_kbytes`, earlyoom's *parsed*
-args, and that SocratiCode still resolves to the pin:
+args and its live top-3 victims (it fails if the top one is `--avoid`ed), and
+that SocratiCode still resolves to the pin:
 
 ```bash
 scripts/verify-memory-pressure.sh          # exit 0 ok · 1 drift · 2 couldn't check
@@ -108,9 +116,9 @@ cat /sys/fs/cgroup/system.slice/memory.low      # must be >= the child's grant
 Both readings are why the slice drop-in is a required row above, not an
 optional hardening step.
 
-`OOMScoreAdjust=-700` is **calibrated, not arbitrary**: earlyoom 1.7 floors a
-`--prefer` match's score at 300, so the web service only wins if it sits below
-that. Measured on this host: adj 0 → ~674, -500 → 341 (still loses), -700 →
+`OOMScoreAdjust=-700` is **calibrated, not arbitrary**: earlyoom 1.7 adds 300
+to a `--prefer` match's score, so the web service ranks below one only if it
+sits under 300. It also ranks below every killable adj-0 process. Measured on this host: adj 0 → ~674, -500 → 341 (still loses), -700 →
 ~208. Re-measure with systemd's own view of the main PID:
 
 ```bash
@@ -138,8 +146,8 @@ The journal is the only place the daemon says what it actually parsed. All
 four lines must be present:
 
 ```
-Preferring to kill process names that match regex '^(node|npm|npx)'
-Will avoid killing process names that match regex '^(uvicorn|sshd|systemd|exe-init)'
+Preferring to kill process names that match regex '^(node|npm|npx|llama-server|ollama|qdrant)'
+Will avoid killing process names that match regex '^(uvicorn|sshd|systemd|exe-init|postgres|.sd-pam)'
 sending SIGTERM when mem <=  6.00% and swap <= 10.00%,
         SIGKILL when mem <=  3.00% and swap <=  5.00%
 ```

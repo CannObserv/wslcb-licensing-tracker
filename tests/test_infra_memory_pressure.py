@@ -15,6 +15,13 @@ asserted here instead:
 - earlyoom 1.7 adds 300 to a `--prefer` match's badness, so the web service is
   only safely ranked below one while its own score stays under that. Measured
   on this host: adj 0 -> 674, -500 -> 341 (loses), -600 -> 274, -700 -> 208.
+- earlyoom 1.7 (kill.c) drops any process at `oom_score_adj` -1000 from
+  candidacy *after* the `--prefer` bonus, exactly as the kernel does. Session
+  processes inherit -1000 from exe.dev's sshd, so a `--prefer` that only names
+  session processes never fires (#178). It must name something killable.
+- With `--prefer` inert, earlyoom's next pick by raw score was a Postgres
+  backend or the checkpointer (#178, measured 2026-09-23). SIGKILL on any
+  backend makes the postmaster reset every connection: a web outage by proxy.
 
 Nothing here talks to systemd or the kernel; these parse the committed files.
 """
@@ -36,8 +43,29 @@ EARLYOOM_PREFER_BONUS = 300
 
 # Real `ps -eo comm=` values from this host. comm is TASK_COMM_LEN (16) minus
 # the NUL, so 15 characters — 'npm exec socraticode' arrives truncated.
-COMM_SHOULD_PREFER = ("node", "npm exec socrat", "npx")
-COMM_SHOULD_AVOID = ("uvicorn", "sshd", "sshd-session", "systemd", "systemd-journal")
+COMM_SHOULD_PREFER = (
+    "node",
+    "npm exec socrat",
+    "npx",
+    # SocratiCode's Docker containers — killable (adj 0), the heaviest
+    # transient load measured (#178), and restarted by Docker/ollama.
+    "llama-server",
+    "ollama",
+    "qdrant",
+)
+COMM_SHOULD_AVOID = (
+    "uvicorn",
+    "sshd",
+    "sshd-session",
+    "systemd",
+    "systemd-journal",
+    "postgres",
+    "(sd-pam)",
+)
+
+# Processes an agent session launches. They inherit oom_score_adj -1000 from
+# exe.dev's sshd, and earlyoom 1.7 never kills a -1000 process (#178).
+COMM_UNKILLABLE_SESSION = ("claude", "node", "npm exec socrat", "npx", "bash")
 
 # systemd size suffixes are powers of 1024, not 1000 (systemd.syntax(7)):
 # MemoryLow=256M lands in memory.low as 268435456, verified on this host.
@@ -101,9 +129,9 @@ def test_earlyoom_regexes_are_not_end_anchored(flag):
 
 
 @pytest.mark.parametrize("comm", COMM_SHOULD_PREFER)
-def test_earlyoom_prefers_the_transient_node_installs(comm):
+def test_earlyoom_prefers_the_transient_loads(comm):
     assert re.search(_earlyoom_regex("--prefer"), comm), (
-        f"--prefer does not match {comm!r} — the install earlyoom must pick first"
+        f"--prefer does not match {comm!r} — a transient load earlyoom should pick first"
     )
 
 
@@ -117,3 +145,33 @@ def test_earlyoom_avoids_the_service_and_supervisors(comm):
 def test_earlyoom_never_prefers_the_web_service():
     """The two regexes must not both claim uvicorn."""
     assert not re.search(_earlyoom_regex("--prefer"), "uvicorn")
+
+
+def test_earlyoom_prefers_something_killable():
+    """#178: a --prefer naming only -1000 session processes can never fire."""
+    pattern = _earlyoom_regex("--prefer")
+    killable = [
+        c for c in COMM_SHOULD_PREFER if c not in COMM_UNKILLABLE_SESSION and re.search(pattern, c)
+    ]
+    assert killable, (
+        f"--prefer {pattern!r} matches only session processes, which inherit "
+        "oom_score_adj -1000 and which earlyoom 1.7 skips after applying the bonus"
+    )
+
+
+@pytest.mark.parametrize("flag", ["--prefer", "--avoid"])
+def test_earlyoom_regexes_need_no_escaping(flag):
+    """systemd's EnvironmentFile parsing sits between this file and earlyoom's argv.
+
+    Its quote/backslash handling is one more layer to get wrong, and a wrong
+    regex fails silently. Match literal punctuation with '.' instead.
+    """
+    pattern = _earlyoom_regex(flag)
+    assert "\\" not in pattern, f"{flag} pattern {pattern!r} relies on a backslash escape"
+
+
+def test_earlyoom_regexes_do_not_overlap():
+    """No known comm may be both preferred and avoided."""
+    prefer, avoid = _earlyoom_regex("--prefer"), _earlyoom_regex("--avoid")
+    for comm in COMM_SHOULD_PREFER + COMM_SHOULD_AVOID:
+        assert not (re.search(prefer, comm) and re.search(avoid, comm)), comm

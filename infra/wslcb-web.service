@@ -26,9 +26,10 @@ RestartSec=5
 # SocratiCode server's peak, an unrelated process. OOMScoreAdjust moves
 # it well down the killer's ranking without making it unkillable. -700 is
 # calibrated, not arbitrary: it puts this service's oom_score at ~208, clear of
-# the 300 floor earlyoom 1.7 applies to a --prefer match, so the killer takes a
-# transient npm/ingest batch rather than the always-on service. At adj 0 it
-# read ~674 and would have been the first thing chosen.
+# the +300 earlyoom 1.7 adds to a --prefer match, and below every killable
+# adj-0 process (~667+), so either killer takes one of those first. At adj 0 it
+# read ~674 and would have been the first thing chosen. The session's own
+# node/npm are NOT among them: at -1000 neither killer can take them (#178).
 #
 # MemoryLow REQUIRES infra/system.slice.d-10-wslcb-memory.conf to be installed.
 # cgroup v2 caps effective protection at the ancestors', system.slice ships

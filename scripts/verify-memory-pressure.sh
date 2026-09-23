@@ -122,6 +122,32 @@ else
   fi
 fi
 
+# --- 4b. Who earlyoom would take right now ----------------------------------
+# Config parsing proves nothing about the ranking (#178): earlyoom 1.7 applies
+# --prefer (+300) and --avoid (-300), then silently drops every -1000 process,
+# which is everything an agent session launches. Replay that over /proc and
+# fail if the winner is something --avoid exists to protect.
+if [ -n "$want_prefer" ] && [ -n "$want_avoid" ]; then
+  top=$(for p in /proc/[0-9]*; do
+          a=$(cat "$p/oom_score_adj" 2>/dev/null) || continue
+          [ "$a" = -1000 ] && continue
+          s=$(cat "$p/oom_score" 2>/dev/null) || continue
+          c=$(cat "$p/comm" 2>/dev/null) || continue
+          [[ $c =~ $want_prefer ]] && s=$((s + 300))
+          [[ $c =~ $want_avoid ]] && s=$((s - 300))
+          printf '%s\t%s\t%s\n' "$s" "${p#/proc/}" "$c"
+        done | sort -rn | head -3)
+  first=$(printf '%s\n' "$top" | head -1 | cut -f3)
+  summary=$(printf '%s\n' "$top" | awk -F'\t' '{printf "%s%s(%s)", (NR>1?", ":""), $3, $1}')
+  if [ -z "$first" ]; then
+    blocked "no killable process readable in /proc"
+  elif [[ $first =~ $want_avoid ]]; then
+    fail "earlyoom's next victim would be '$first', which --avoid protects — top 3: $summary"
+  else
+    pass "earlyoom's next victims: $summary"
+  fi
+fi
+
 # --- 5. SocratiCode is pinned, not installing at launch ----------------------
 drv="$ROOT/skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs"
 if [ ! -f "$drv" ]; then
