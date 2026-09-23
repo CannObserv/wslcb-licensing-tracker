@@ -31,7 +31,9 @@ def test_project_docs_dirs_exist():
 
 def test_agents_md_states_override():
     """AGENTS.md is the point-of-use statement the vendored skills defer to."""
-    text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert "docs/superpowers/" in text, (
-        "AGENTS.md no longer states the docs/superpowers/ override (#176)"
+    lines = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8").splitlines()
+    needles = ("docs/superpowers/", "docs/specs/", "docs/plans/")
+    assert any(all(n in line for n in needles) for line in lines), (
+        "AGENTS.md no longer states the docs/superpowers/ → docs/specs/, docs/plans/ "
+        "override in one place (#176)"
     )
