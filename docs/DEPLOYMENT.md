@@ -93,7 +93,7 @@ scripts/verify-memory-pressure.sh          # exit 0 ok · 1 drift · 2 couldn't 
 ```
 
 It reads every expectation from `infra/` — and the session pin from
-`.claude/settings.json` — rather than hardcoding them, so it
+`.claude/settings.json` and VS Code's machine settings — rather than hardcoding them, so it
 cannot drift from the committed config; run it after any change here and after
 a reboot. `tests/test_infra_memory_pressure.py` is its counterpart — that
 checks the config files are coherent with each other, this checks the running
@@ -173,33 +173,55 @@ its own pin, and both name **1.14.0**:
 - **Driver** (`mcp-driver.mjs` — the health hook, `index`, `verify`): a
   pre-install at `~/.socraticode/pin`, outside the repo and inert when absent,
   so a fresh clone's driver resolves exactly as before.
-- **Plugin session** (the server Claude Code starts): `SOCRATICODE_SPEC` in the
-  `env` block of the committed `.claude/settings.json`. The plugin launches
-  `npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`, so the
-  variable replaces `@latest` (#180). It reaches only sessions started after
-  the edit.
+- **Plugin session** (the server Claude Code starts): the plugin launches
+  `npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`, and Claude
+  Code expands that from **its own startup environment**. The `env` block in
+  `.claude/settings.json` is merged only into the processes it launches — the
+  server received the variable and still ran `@latest` (#180,
+  gregoryfoster/skills#332). So the session pin has two halves:
+  - *declared* as `SOCRATICODE_SPEC` in the committed `.claude/settings.json`
+    — the value the tests and the verifier hold everything else to;
+  - *delivered* by VS Code's `claudeCode.environmentVariables` in
+    `~/.vscode-server/data/Machine/settings.json`. The key is machine-scoped,
+    so it cannot be a committed workspace setting, and it reaches only a
+    `claude` started after a full reconnect of the remote. From a terminal,
+    export the variable in the shell that launches `claude`.
 
-Re-pinning changes both, to one version:
+Re-pinning changes all of them, to one version:
 
 ```bash
 npm view socraticode version        # pick a literal; never @latest
 CAP=(-p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100%)
 systemd-run --user --scope "${CAP[@]}" choom -n 500 -- npm install --prefix ~/.socraticode/pin socraticode@<version>
 systemd-run --user --scope "${CAP[@]}" choom -n 500 -- npm exec -y --package=socraticode@<version> -- true   # warms the session's npx cache
-# then set "SOCRATICODE_SPEC": "socraticode@<version>" in .claude/settings.json,
-# and the version this section states above — tests/test_infra_memory_pressure.py holds the two together
+# then write socraticode@<version> into .claude/settings.json's SOCRATICODE_SPEC,
+# the SOCRATICODE_SPEC entry of claudeCode.environmentVariables in
+# ~/.vscode-server/data/Machine/settings.json, and the version this section
+# states above — tests/test_infra_memory_pressure.py holds the three together
 node skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs resolve
+# then fully reconnect the VS Code remote, so claude restarts with the new value
 ```
 
 `choom -n 500` makes each install killable: without it the scope inherits the
 session's -1000 and the cap stalls it instead (see above). `resolve` prints
 which path won without starting a server; it should report
-`pinned install v<version>`, not `npx`. For the session, check what launched,
-never a manifest — the plugin ships three, and two still hardcode `@latest`:
-`ps -eo args | grep '[s]ocraticode'` should show `npm exec socraticode@<version>`.
+`pinned install v<version>`, not `npx`.
 
-`scripts/verify-memory-pressure.sh` is the check that the two pins agree — it
-fails when they don't. `.claude/hooks/socraticode-health.sh` measures drift only
+For the session, the only evidence is the server that the session's `claude`
+launched. Don't trust a manifest (the plugin ships three, and two still
+hardcode `@latest`). Don't trust `claude mcp list` from a session shell either:
+that shell already carries the variable, so it reports what a launch *with* it
+would do. preflight's *"Plugin session launches … — no launch installs"* line
+reads the variable the same way (gregoryfoster/skills#332):
+
+```bash
+ps -eo pid,ppid,args | grep '[n]pm exec socraticode'   # expect socraticode@<version>, ppid = the extension's claude
+```
+
+`scripts/verify-memory-pressure.sh` checks every link: the declared value
+against the driver's pin, the machine setting against the declared value, and
+the running session's server against both. It fails on any disagreement.
+`.claude/hooks/socraticode-health.sh` measures drift only
 against a *floating* session spec, so once `SOCRATICODE_SPEC` is a literal it
 stays silent, even for a literal that differs from the driver's.
 
