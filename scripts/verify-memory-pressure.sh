@@ -27,6 +27,7 @@ RC=0
 pass() { [ "$QUIET" -eq 1 ] || printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; RC=1; }
 blocked() { printf '  \033[33m?\033[0m %s\n' "$1" >&2; [ "$RC" -eq 0 ] && RC=2; }
+note() { [ "$QUIET" -eq 1 ] || printf '  \033[2m·\033[0m %s\n' "$1"; }   # neither pass nor fail
 
 # Read a `key=value` directive from a systemd/env file, ignoring comments.
 # Tolerates `key=value` and `key = value` alike: infra/ carries both styles
@@ -162,8 +163,13 @@ fi
 
 # --- 5. SocratiCode is pinned, not installing at launch ----------------------
 # Two launches, two pins (#180): the driver's pre-install, and the plugin
-# session's SOCRATICODE_SPEC in .claude/settings.json. They must name one
-# version, or a re-pin changed only one of them.
+# session's SOCRATICODE_SPEC. They must name one version, or a re-pin changed
+# only one of them. The session's pin has three parts, and only the last is
+# evidence (gregoryfoster/skills#332): the value .claude/settings*.json
+# DECLARES; VS Code's machine setting, which DELIVERS it into claude's startup
+# environment — Claude Code expands the plugin's ${SOCRATICODE_SPEC:-…} from
+# that, and the settings block reaches only the processes it launches; and the
+# argv the session's server was actually LAUNCHED with.
 drv="$ROOT/skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs"
 pin_v=""
 if [ ! -f "$drv" ]; then
@@ -198,17 +204,55 @@ for f in "$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json"; do
 done
 case "$spec_state" in
   unread) blocked "could not read $spec_src (malformed JSON, or no node) — the session pin is unchecked" ;;
-  unset)  fail "SOCRATICODE_SPEC is unset — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
+  unset)  fail "SOCRATICODE_SPEC is not declared — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
   set)
     # The same literal test_infra_memory_pressure.py requires: x.y.z, no range.
     if ! [[ $spec =~ ^socraticode@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      fail "SOCRATICODE_SPEC is '$spec' ($spec_src), not a literal version — it installs at launch; see docs/DEPLOYMENT.md"
+      fail "SOCRATICODE_SPEC is declared '$spec' ($spec_src), not a literal version — it installs at launch; see docs/DEPLOYMENT.md"
     elif [ -n "$pin_v" ] && [ "${spec#socraticode@}" != "$pin_v" ]; then
-      fail "the plugin session launches $spec ($spec_src) but the driver's pin is v$pin_v — re-pin both; see docs/DEPLOYMENT.md"
+      fail "the session pin is declared $spec ($spec_src) but the driver's pin is v$pin_v — re-pin both; see docs/DEPLOYMENT.md"
     else
-      pass "the plugin session launches $spec ($spec_src)"
+      pass "the session pin is declared $spec ($spec_src)"
     fi ;;
 esac
+
+# Delivered: VS Code Remote starts claude with claudeCode.environmentVariables,
+# a machine-scoped key — outside the repo, so checked here and in the tests.
+vsc="$HOME/.vscode-server" vsc_settings="$HOME/.vscode-server/data/Machine/settings.json"
+if [ ! -d "$vsc" ]; then
+  blocked "no VS Code server — delivery of SOCRATICODE_SPEC to claude's startup environment is unchecked (from a terminal, export it in the launching shell)"
+elif [ ! -f "$vsc_settings" ]; then
+  fail "$vsc_settings is missing — nothing delivers SOCRATICODE_SPEC to claude's startup environment; see docs/DEPLOYMENT.md"
+elif [ "$spec_state" = set ]; then
+  delivered=$(node -e 'let s; try { s = require(process.argv[1]) } catch { process.exit(3) }
+                       const e = (s?.["claudeCode.environmentVariables"] ?? []).find((v) => v?.name === "SOCRATICODE_SPEC")
+                       if (!e) process.exit(4)
+                       process.stdout.write(String(e.value))' "$vsc_settings" 2>/dev/null)
+  case $? in
+    0) if [ "$delivered" = "$spec" ]; then
+         pass "VS Code starts claude with SOCRATICODE_SPEC=$delivered"
+       else
+         fail "VS Code starts claude with SOCRATICODE_SPEC=$delivered, but $spec_src declares $spec — re-pin all three; see docs/DEPLOYMENT.md"
+       fi ;;
+    4) fail "VS Code's claudeCode.environmentVariables sets no SOCRATICODE_SPEC — the declared pin never reaches the launch; see docs/DEPLOYMENT.md" ;;
+    *) blocked "could not read $vsc_settings (comments or malformed JSON, or no node) — delivery is unchecked" ;;
+  esac
+fi
+
+# Launched: the npm-exec server whose parent is a session's claude. A server
+# under `claude mcp list` inherits that caller's environment, not the session's.
+observed=0
+while read -r pid ppid _ _ launched _; do
+  [ "$(ps -o comm= -p "$ppid" 2>/dev/null)" = claude ] || continue
+  [[ $(ps -o args= -p "$ppid" 2>/dev/null) == *" mcp "* ]] && continue
+  observed=1
+  if [ "$spec_state" = set ] && [ "$launched" = "$spec" ]; then
+    pass "the running session server ($pid) launched $launched"
+  else
+    fail "the running session server ($pid) launched $launched — SOCRATICODE_SPEC missed claude's startup environment; see docs/DEPLOYMENT.md"
+  fi
+done < <(ps -eo pid=,ppid=,args= | awk '$3 == "npm" && $4 == "exec" && $5 ~ /^socraticode(@|$)/')
+[ "$observed" -eq 1 ] || note "no Claude session server is running — the launch was not observed"
 
 [ "$QUIET" -eq 1 ] || { echo; case $RC in
   0) echo "All checks passed — the stack is in force." ;;
