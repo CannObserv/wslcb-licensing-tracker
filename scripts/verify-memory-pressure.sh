@@ -180,21 +180,25 @@ else
 fi
 # Claude Code lets settings.local.json override the committed file, and
 # preflight.sh reads them in that order; the first to declare the key wins.
-# A file node cannot read (malformed JSON, or no node) is unchecked, not unset.
-spec="" spec_src="" spec_unread=""
+# Declared means present, even empty: an empty value overrides the next file,
+# and the plugin's ${SOCRATICODE_SPEC:-…} expands it to @latest. A file node
+# cannot read (malformed JSON, or no node) is unchecked, not unset.
+spec="" spec_src="" spec_state=unset
 for f in "$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json"; do
   [ -f "$f" ] || continue
-  if ! spec=$(node -e 'let s; try { s = require(process.argv[1]) } catch { process.exit(3) }
-                       process.stdout.write(s?.env?.SOCRATICODE_SPEC ?? "")' "$f" 2>/dev/null); then
-    spec="" spec_unread="${f#"$ROOT"/}"; break
-  fi
-  [ -n "$spec" ] && { spec_src="${f#"$ROOT"/}"; break; }
+  spec=$(node -e 'let s; try { s = require(process.argv[1]) } catch { process.exit(3) }
+                  if (!Object.hasOwn(s?.env ?? {}, "SOCRATICODE_SPEC")) process.exit(4)
+                  process.stdout.write(String(s.env.SOCRATICODE_SPEC))' "$f" 2>/dev/null)
+  case $? in
+    0) spec_state=set    spec_src="${f#"$ROOT"/}"; break ;;
+    4) ;;
+    *) spec_state=unread spec_src="${f#"$ROOT"/}"; break ;;
+  esac
 done
-[ -z "$spec_unread" ] || spec="<unread>"
-case "$spec" in
-  "<unread>") blocked "could not read $spec_unread (malformed JSON, or no node) — the session pin is unchecked" ;;
-  "") fail "SOCRATICODE_SPEC is unset — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
-  *)
+case "$spec_state" in
+  unread) blocked "could not read $spec_src (malformed JSON, or no node) — the session pin is unchecked" ;;
+  unset)  fail "SOCRATICODE_SPEC is unset — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
+  set)
     # The same literal test_infra_memory_pressure.py requires: x.y.z, no range.
     if ! [[ $spec =~ ^socraticode@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       fail "SOCRATICODE_SPEC is '$spec' ($spec_src), not a literal version — it installs at launch; see docs/DEPLOYMENT.md"
