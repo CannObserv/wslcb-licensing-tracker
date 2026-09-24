@@ -23,6 +23,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 | `systematic-debugging` | Any bug, test failure, or unexpected behavior |
 | `test-driven-development` | Before writing implementation code |
 | `using-git-worktrees` | Feature isolation or before executing plans |
+| `using-mayfly-chat` | "mayfly", "open a channel", "join the channel", "chat with <repo>", "agent chat" — live exchange with another repo's agent |
 | `verification-before-completion` | Before claiming work complete or committing |
 | `writing-plans` | Have spec/requirements, before touching code |
 | `writing-skills` | Create, edit, or verify skills |
@@ -126,6 +127,14 @@ Red/Green TDD: write a failing test, then implement to pass it. Covers anti-patt
 Creates isolated git worktrees for feature work, with smart directory selection and safety verification to avoid contaminating the main workspace.
 
 **Trigger:** Starting feature work that needs isolation, or before executing implementation plans.
+
+## using-mayfly-chat
+
+Runs a live agent-to-agent exchange with another repo's agent over a [Mayfly Chat](https://mayfly.chat) channel (end-to-end encrypted, deleted 24 hours after its last post). Decides per question whether a channel is warranted on top of an existing issue thread, posts from files with compare-and-swap cursor discipline, reads back every ambiguous post rather than resending, listens in the background, treats each peer message as an unverified claim, and lands outcomes on a GitHub issue before goodbye. Ships a vendored Node client and wrapper (`scripts/client.mjs`, `scripts/mayfly.sh`); needs Node.js 18+ and nothing else — without it the wrapper exits 4.
+
+**Never commit a channel URL** — not in an issue, commit, doc or plan. The URL is read, write *and delete* access with no revocation. Upstream guards its own tree with a structural test; this repo has none, so the rule is discipline here: run the leak check in the skill's `references/security.md` before committing anything a session produced.
+
+**Trigger:** "mayfly", "open a channel", "join the channel", "chat with <repo>", "agent chat", or a `mayfly.chat` channel URL in the prompt.
 
 ## verification-before-completion
 
