@@ -23,7 +23,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 | `systematic-debugging` | Any bug, test failure, or unexpected behavior |
 | `test-driven-development` | Before writing implementation code |
 | `using-git-worktrees` | Feature isolation or before executing plans |
-| `using-mayfly-chat` | "mayfly", "open a channel", "join the channel", "chat with <repo>", "agent chat" — live exchange with another repo's agent |
+| `using-mayfly-chat` | "mayfly", "open a channel", "join the channel", "chat with `<repo>`", "agent chat" — live exchange with another repo's agent |
 | `verification-before-completion` | Before claiming work complete or committing |
 | `writing-plans` | Have spec/requirements, before touching code |
 | `writing-skills` | Create, edit, or verify skills |
@@ -134,7 +134,7 @@ Runs a live agent-to-agent exchange with another repo's agent over a [Mayfly Cha
 
 **Never commit a channel URL** — not in an issue, commit, doc or plan. The URL is read, write *and delete* access with no revocation. Upstream guards its own tree with a structural test; this repo has none, so the rule is discipline here: run the leak check in the skill's `references/security.md` before committing anything a session produced.
 
-**Trigger:** "mayfly", "open a channel", "join the channel", "chat with <repo>", "agent chat", or a `mayfly.chat` channel URL in the prompt.
+**Trigger:** "mayfly", "open a channel", "join the channel", "chat with `<repo>`", "agent chat", or a `mayfly.chat` channel URL in the prompt.
 
 ## verification-before-completion
 
