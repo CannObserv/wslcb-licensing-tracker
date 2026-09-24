@@ -180,14 +180,19 @@ else
 fi
 # Claude Code lets settings.local.json override the committed file, and
 # preflight.sh reads them in that order; the first to declare the key wins.
-spec="" spec_src=""
+# A file node cannot read (malformed JSON, or no node) is unchecked, not unset.
+spec="" spec_src="" spec_unread=""
 for f in "$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json"; do
   [ -f "$f" ] || continue
-  spec=$(node -e 'try { process.stdout.write(require(process.argv[1]).env?.SOCRATICODE_SPEC ?? "") } catch {}' \
-    "$f" 2>/dev/null)
+  if ! spec=$(node -e 'let s; try { s = require(process.argv[1]) } catch { process.exit(3) }
+                       process.stdout.write(s?.env?.SOCRATICODE_SPEC ?? "")' "$f" 2>/dev/null); then
+    spec="" spec_unread="${f#"$ROOT"/}"; break
+  fi
   [ -n "$spec" ] && { spec_src="${f#"$ROOT"/}"; break; }
 done
+[ -z "$spec_unread" ] || spec="<unread>"
 case "$spec" in
+  "<unread>") blocked "could not read $spec_unread (malformed JSON, or no node) — the session pin is unchecked" ;;
   "") fail "SOCRATICODE_SPEC is unset — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
   socraticode@[0-9]*)
     if [ -n "$pin_v" ] && [ "${spec#socraticode@}" != "$pin_v" ]; then
