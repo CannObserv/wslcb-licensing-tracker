@@ -194,13 +194,15 @@ done
 case "$spec" in
   "<unread>") blocked "could not read $spec_unread (malformed JSON, or no node) — the session pin is unchecked" ;;
   "") fail "SOCRATICODE_SPEC is unset — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
-  socraticode@[0-9]*)
-    if [ -n "$pin_v" ] && [ "${spec#socraticode@}" != "$pin_v" ]; then
+  *)
+    # The same literal test_infra_memory_pressure.py requires: x.y.z, no range.
+    if ! [[ $spec =~ ^socraticode@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      fail "SOCRATICODE_SPEC is '$spec' ($spec_src), not a literal version — it installs at launch; see docs/DEPLOYMENT.md"
+    elif [ -n "$pin_v" ] && [ "${spec#socraticode@}" != "$pin_v" ]; then
       fail "the plugin session launches $spec ($spec_src) but the driver's pin is v$pin_v — re-pin both; see docs/DEPLOYMENT.md"
     else
       pass "the plugin session launches $spec ($spec_src)"
     fi ;;
-  *)  fail "SOCRATICODE_SPEC is '$spec' ($spec_src), not a literal version — it installs at launch; see docs/DEPLOYMENT.md" ;;
 esac
 
 [ "$QUIET" -eq 1 ] || { echo; case $RC in
