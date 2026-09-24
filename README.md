@@ -228,6 +228,8 @@ wslcb-licensing-tracker/
 │   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
 │   ├── test_no_channel_urls.py  # No live Mayfly channel URL in any tracked file (#181)
+│   ├── test_docs_layout.py      # Dated docs stay in docs/specs/ + docs/plans/, not docs/superpowers/ (#176)
+│   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs + SocratiCode pin agreement (#175, #180)
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
