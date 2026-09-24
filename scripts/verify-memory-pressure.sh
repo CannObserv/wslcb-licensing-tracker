@@ -2,7 +2,8 @@
 # Verify the #175 memory-pressure stack is actually in force on this host.
 #
 # Every expectation is read from infra/ (the session pin from
-# .claude/settings*.json) rather than hardcoded, so this cannot
+# .claude/settings*.json, then held against VS Code's machine settings and the
+# running session's server) rather than hardcoded, so this cannot
 # drift from the committed config. tests/test_infra_memory_pressure.py checks
 # that those files are coherent with each other; this checks that the running
 # host matches them. Both are needed: the whole point of #175 is that a
