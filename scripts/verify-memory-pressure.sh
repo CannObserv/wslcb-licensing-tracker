@@ -176,17 +176,24 @@ else
     *)       fail "SocratiCode resolves to '$src' — it installs at launch; see docs/DEPLOYMENT.md" ;;
   esac
 fi
-spec=$(node -e 'try { process.stdout.write(require(process.argv[1]).env?.SOCRATICODE_SPEC ?? "") } catch {}' \
-  "$ROOT/.claude/settings.json" 2>/dev/null)
+# Claude Code lets settings.local.json override the committed file, and
+# preflight.sh reads them in that order; the first to declare the key wins.
+spec="" spec_src=""
+for f in "$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json"; do
+  [ -f "$f" ] || continue
+  spec=$(node -e 'try { process.stdout.write(require(process.argv[1]).env?.SOCRATICODE_SPEC ?? "") } catch {}' \
+    "$f" 2>/dev/null)
+  [ -n "$spec" ] && { spec_src="${f#"$ROOT"/}"; break; }
+done
 case "$spec" in
   "") fail "SOCRATICODE_SPEC is unset — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
   socraticode@[0-9]*)
     if [ -n "$pin_v" ] && [ "${spec#socraticode@}" != "$pin_v" ]; then
-      fail "the plugin session launches $spec but the driver's pin is v$pin_v — re-pin both; see docs/DEPLOYMENT.md"
+      fail "the plugin session launches $spec ($spec_src) but the driver's pin is v$pin_v — re-pin both; see docs/DEPLOYMENT.md"
     else
-      pass "the plugin session launches $spec (SOCRATICODE_SPEC)"
+      pass "the plugin session launches $spec ($spec_src)"
     fi ;;
-  *)  fail "SOCRATICODE_SPEC is '$spec', not a literal version — it installs at launch; see docs/DEPLOYMENT.md" ;;
+  *)  fail "SOCRATICODE_SPEC is '$spec' ($spec_src), not a literal version — it installs at launch; see docs/DEPLOYMENT.md" ;;
 esac
 
 [ "$QUIET" -eq 1 ] || { echo; case $RC in
