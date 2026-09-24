@@ -196,9 +196,10 @@ which path won without starting a server; it should report
 never a manifest — the plugin ships three, and two still hardcode `@latest`:
 `ps -eo args | grep '[s]ocraticode'` should show `npm exec socraticode@<version>`.
 
-`scripts/verify-memory-pressure.sh` fails when the two pins disagree, and
-`.claude/hooks/socraticode-health.sh` reports a running session more than a
-patch away from the driver.
+`scripts/verify-memory-pressure.sh` is the check that the two pins agree — it
+fails when they don't. `.claude/hooks/socraticode-health.sh` measures drift only
+against a *floating* session spec, so once `SOCRATICODE_SPEC` is a literal it
+stays silent, even for a literal that differs from the driver's.
 
 ## Logging
 
