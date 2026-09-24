@@ -171,7 +171,9 @@ else
   src=$(node "$drv" resolve 2>/dev/null | sed -n 's/.*"source": "\([^"]*\)".*/\1/p')
   case "$src" in
     pinned*) pass "SocratiCode resolves to the $src"
-             pin_v=$(printf '%s' "$src" | sed -n 's/^pinned install v\([0-9.]*\) .*/\1/p') ;;
+             pin_v=$(printf '%s' "$src" | sed -n 's/^pinned install v\([0-9][0-9.]*\) .*/\1/p')
+             # An unreadable version would skip the comparison below and pass.
+             [ -n "$pin_v" ] || blocked "could not read the pinned version from '$src' — the session pin is unchecked against it" ;;
     "")      blocked "mcp-driver.mjs resolve produced no source" ;;
     *)       fail "SocratiCode resolves to '$src' — it installs at launch; see docs/DEPLOYMENT.md" ;;
   esac
