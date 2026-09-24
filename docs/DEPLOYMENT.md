@@ -211,8 +211,10 @@ For the session, the only evidence is the server that the session's `claude`
 launched. Don't trust a manifest (the plugin ships three, and two still
 hardcode `@latest`). Don't trust `claude mcp list` from a session shell either:
 that shell already carries the variable, so it reports what a launch *with* it
-would do. preflight's *"Plugin session launches … — no launch installs"* line
-reads the variable the same way (gregoryfoster/skills#332):
+would do. preflight reads the process table instead (gregoryfoster/skills#332):
+only its *"Plugin session launched … — observed: …"* pass is evidence, and a
+*"… — not observed: …"* warning reports the declared pin, not a launch — check
+by hand:
 
 ```bash
 ps -eo pid,ppid,args | grep '[n]pm exec socraticode'   # expect socraticode@<version>, ppid = the extension's claude
