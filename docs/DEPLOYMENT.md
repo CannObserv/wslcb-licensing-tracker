@@ -92,7 +92,8 @@ that both SocratiCode launches name one pinned version:
 scripts/verify-memory-pressure.sh          # exit 0 ok · 1 drift · 2 couldn't check
 ```
 
-It reads every expectation from `infra/` rather than hardcoding them, so it
+It reads every expectation from `infra/` — and the session pin from
+`.claude/settings.json` — rather than hardcoding them, so it
 cannot drift from the committed config; run it after any change here and after
 a reboot. `tests/test_infra_memory_pressure.py` is its counterpart — that
 checks the config files are coherent with each other, this checks the running
