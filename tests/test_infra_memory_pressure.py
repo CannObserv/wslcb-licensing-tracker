@@ -44,6 +44,7 @@ WEB_UNIT = INFRA / "wslcb-web.service"
 SLICE_DROPIN = INFRA / "system.slice.d-10-wslcb-memory.conf"
 EARLYOOM = INFRA / "default-earlyoom"
 CLAUDE_SETTINGS = REPO_ROOT / ".claude" / "settings.json"
+DEPLOYMENT_DOC = REPO_ROOT / "docs" / "DEPLOYMENT.md"
 
 # earlyoom 1.7 adds this to a --prefer match's badness; the web service must
 # rank below that to survive one. See the module docstring for measurements.
@@ -185,11 +186,26 @@ def test_earlyoom_regexes_do_not_overlap():
         assert not (re.search(prefer, comm) and re.search(avoid, comm)), comm
 
 
+def _session_spec() -> str:
+    env = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8")).get("env", {})
+    return env.get("SOCRATICODE_SPEC", "")
+
+
 def test_socraticode_session_pins_a_literal_version():
     """An unset or floating SOCRATICODE_SPEC installs at session start (#180)."""
-    env = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8")).get("env", {})
-    spec = env.get("SOCRATICODE_SPEC", "")
+    spec = _session_spec()
     assert re.fullmatch(r"socraticode@\d+\.\d+\.\d+", spec), (
         f"SOCRATICODE_SPEC is {spec!r}; pin the session to the driver's version "
         "in .claude/settings.json (docs/DEPLOYMENT.md 'Memory pressure')"
+    )
+
+
+def test_deployment_doc_names_the_session_pin():
+    """The doc states the pinned version; a re-pin must not leave it behind (#180 CR 4)."""
+    doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
+    match = re.search(r"both name \*\*(\d+\.\d+\.\d+)\*\*", doc)
+    assert match, "docs/DEPLOYMENT.md 'Memory pressure' no longer states the pinned version"
+    assert f"socraticode@{match.group(1)}" == _session_spec(), (
+        f"docs/DEPLOYMENT.md says both launches name {match.group(1)}, but "
+        f".claude/settings.json pins {_session_spec()!r}"
     )
