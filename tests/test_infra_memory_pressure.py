@@ -203,7 +203,7 @@ def test_socraticode_session_pins_a_literal_version():
 def test_deployment_doc_names_the_session_pin():
     """The doc states the pinned version; a re-pin must not leave it behind (#180 CR 4)."""
     doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
-    match = re.search(r"both name \*\*(\d+\.\d+\.\d+)\*\*", doc)
+    match = re.search(r"both\s+name\s+\*\*(\d+\.\d+\.\d+)\*\*", doc)  # survives a rewrap
     assert match, "docs/DEPLOYMENT.md 'Memory pressure' no longer states the pinned version"
     assert f"socraticode@{match.group(1)}" == _session_spec(), (
         f"docs/DEPLOYMENT.md says both launches name {match.group(1)}, but "
