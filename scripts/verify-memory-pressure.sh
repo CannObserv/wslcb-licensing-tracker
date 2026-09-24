@@ -246,7 +246,10 @@ while read -r pid ppid _ _ launched _; do
   [ "$(ps -o comm= -p "$ppid" 2>/dev/null)" = claude ] || continue
   [[ $(ps -o args= -p "$ppid" 2>/dev/null) == *" mcp "* ]] && continue
   observed=1
-  if [ "$spec_state" = set ] && [ "$launched" = "$spec" ]; then
+  if [ "$spec_state" != set ]; then
+    # Nothing to compare with: the declared check above already failed or blocked.
+    note "the running session server ($pid) launched $launched — not compared, no declared value was read"
+  elif [ "$launched" = "$spec" ]; then
     pass "the running session server ($pid) launched $launched"
   else
     fail "the running session server ($pid) launched $launched — SOCRATICODE_SPEC missed claude's startup environment; see docs/DEPLOYMENT.md"
