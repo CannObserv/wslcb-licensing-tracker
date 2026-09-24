@@ -1,4 +1,7 @@
 {
+  "env": {
+    "SOCRATICODE_SPEC": "socraticode@1.14.0"
+  },
   "hooks": {
     "SessionStart": [
       {

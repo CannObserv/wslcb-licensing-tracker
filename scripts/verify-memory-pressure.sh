@@ -160,17 +160,34 @@ if [ -n "$want_prefer" ] && [ -n "$want_avoid" ]; then
 fi
 
 # --- 5. SocratiCode is pinned, not installing at launch ----------------------
+# Two launches, two pins (#180): the driver's pre-install, and the plugin
+# session's SOCRATICODE_SPEC in .claude/settings.json. They must name one
+# version, or a re-pin changed only one of them.
 drv="$ROOT/skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs"
+pin_v=""
 if [ ! -f "$drv" ]; then
   blocked "mcp-driver.mjs not found — skills-vendor/ submodule not checked out?"
 else
   src=$(node "$drv" resolve 2>/dev/null | sed -n 's/.*"source": "\([^"]*\)".*/\1/p')
   case "$src" in
-    pinned*) pass "SocratiCode resolves to the $src" ;;
+    pinned*) pass "SocratiCode resolves to the $src"
+             pin_v=$(printf '%s' "$src" | sed -n 's/^pinned install v\([0-9.]*\) .*/\1/p') ;;
     "")      blocked "mcp-driver.mjs resolve produced no source" ;;
     *)       fail "SocratiCode resolves to '$src' — it installs at launch; see docs/DEPLOYMENT.md" ;;
   esac
 fi
+spec=$(node -e 'try { process.stdout.write(require(process.argv[1]).env?.SOCRATICODE_SPEC ?? "") } catch {}' \
+  "$ROOT/.claude/settings.json" 2>/dev/null)
+case "$spec" in
+  "") fail "SOCRATICODE_SPEC is unset — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
+  socraticode@[0-9]*)
+    if [ -n "$pin_v" ] && [ "${spec#socraticode@}" != "$pin_v" ]; then
+      fail "the plugin session launches $spec but the driver's pin is v$pin_v — re-pin both; see docs/DEPLOYMENT.md"
+    else
+      pass "the plugin session launches $spec (SOCRATICODE_SPEC)"
+    fi ;;
+  *)  fail "SOCRATICODE_SPEC is '$spec', not a literal version — it installs at launch; see docs/DEPLOYMENT.md" ;;
+esac
 
 [ "$QUIET" -eq 1 ] || { echo; case $RC in
   0) echo "All checks passed — the stack is in force." ;;

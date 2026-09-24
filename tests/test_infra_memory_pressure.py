@@ -23,9 +23,16 @@ asserted here instead:
   backend or the checkpointer (#178, measured 2026-09-23). SIGKILL on any
   backend makes the postmaster reset every connection: a web outage by proxy.
 
+One coupling lives outside infra/: the SocratiCode plugin session launches
+`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`, so unless
+`.claude/settings.json` names a literal version it installs at every session
+start the package moved — the measured peak, not the indexing (#180).
+`scripts/verify-memory-pressure.sh` checks that version against the host's pin.
+
 Nothing here talks to systemd or the kernel; these parse the committed files.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -36,6 +43,7 @@ INFRA = REPO_ROOT / "infra"
 WEB_UNIT = INFRA / "wslcb-web.service"
 SLICE_DROPIN = INFRA / "system.slice.d-10-wslcb-memory.conf"
 EARLYOOM = INFRA / "default-earlyoom"
+CLAUDE_SETTINGS = REPO_ROOT / ".claude" / "settings.json"
 
 # earlyoom 1.7 adds this to a --prefer match's badness; the web service must
 # rank below that to survive one. See the module docstring for measurements.
@@ -175,3 +183,13 @@ def test_earlyoom_regexes_do_not_overlap():
     prefer, avoid = _earlyoom_regex("--prefer"), _earlyoom_regex("--avoid")
     for comm in COMM_SHOULD_PREFER + COMM_SHOULD_AVOID:
         assert not (re.search(prefer, comm) and re.search(avoid, comm)), comm
+
+
+def test_socraticode_session_pins_a_literal_version():
+    """An unset or floating SOCRATICODE_SPEC installs at session start (#180)."""
+    env = json.loads(CLAUDE_SETTINGS.read_text(encoding="utf-8")).get("env", {})
+    spec = env.get("SOCRATICODE_SPEC", "")
+    assert re.fullmatch(r"socraticode@\d+\.\d+\.\d+", spec), (
+        f"SOCRATICODE_SPEC is {spec!r}; pin the session to the driver's version "
+        "in .claude/settings.json (docs/DEPLOYMENT.md 'Memory pressure')"
+    )

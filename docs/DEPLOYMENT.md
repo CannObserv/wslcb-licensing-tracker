@@ -86,7 +86,7 @@ Three independent pieces, none of which substitutes for another:
 One command checks the whole stack against what `infra/` declares — effective
 cgroup protection, `oom_score_adj`, `vm.min_free_kbytes`, earlyoom's *parsed*
 args and its live top-3 victims (it fails if the top one is `--avoid`ed), and
-that SocratiCode still resolves to the pin:
+that both SocratiCode launches name one pinned version:
 
 ```bash
 scripts/verify-memory-pressure.sh          # exit 0 ok · 1 drift · 2 couldn't check
@@ -166,25 +166,39 @@ peaked at 75 MB. `--prefer-online` revalidates against the registry on every
 launch, so a warm cache is not a warm path.
 
 SocratiCode is therefore **pinned** on this host — one deliberate, capped
-install instead of one per launch:
+install per version instead of one per launch. It has two launches, each with
+its own pin, and both name **1.14.0**:
+
+- **Driver** (`mcp-driver.mjs` — the health hook, `index`, `verify`): a
+  pre-install at `~/.socraticode/pin`, outside the repo and inert when absent,
+  so a fresh clone's driver resolves exactly as before.
+- **Plugin session** (the server Claude Code starts): `SOCRATICODE_SPEC` in the
+  `env` block of the committed `.claude/settings.json`. The plugin launches
+  `npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`, so the
+  variable replaces `@latest` (#180). It reaches only sessions started after
+  the edit.
+
+Re-pinning changes both, to one version:
 
 ```bash
 npm view socraticode version        # pick a literal; never @latest
-systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100% \
-  -- npm install --prefix ~/.socraticode/pin socraticode@<version>
+CAP='-p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100%'
+systemd-run --user --scope $CAP choom -n 500 -- npm install --prefix ~/.socraticode/pin socraticode@<version>
+systemd-run --user --scope $CAP choom -n 500 -- npm exec -y --package=socraticode@<version> -- true   # warms the session's npx cache
+# then set "SOCRATICODE_SPEC": "socraticode@<version>" in .claude/settings.json
 node skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs resolve
 ```
 
-`resolve` prints which path won without starting a server; it should report
-`pinned install v<version>`, not `npx`. The pin lives outside the repo
-(`~/.socraticode/pin`) and is inert when absent, so a fresh clone resolves
-exactly as before.
+`choom -n 500` makes each install killable: without it the scope inherits the
+session's -1000 and the cap stalls it instead (see above). `resolve` prints
+which path won without starting a server; it should report
+`pinned install v<version>`, not `npx`. For the session, check what launched,
+never a manifest — the plugin ships three, and two still hardcode `@latest`:
+`ps -eo args | grep '[s]ocraticode'` should show `npm exec socraticode@<version>`.
 
-**Known limitation:** pinning the driver does not pin the *session*. Claude
-Code cannot override a plugin's MCP command, so the plugin keeps launching
-`socraticode@latest` for its own server. `.claude/hooks/socraticode-health.sh`
-measures that gap and reports a defect when the two differ by a minor or major
-release — a patch apart stays quiet, since a pin is meant to lag.
+`scripts/verify-memory-pressure.sh` fails when the two pins disagree, and
+`.claude/hooks/socraticode-health.sh` reports a running session more than a
+patch away from the driver.
 
 ## Logging
 
