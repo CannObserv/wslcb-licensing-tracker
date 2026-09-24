@@ -233,7 +233,7 @@ elif [ "$spec_state" = set ]; then
     0) if [ "$delivered" = "$spec" ]; then
          pass "VS Code starts claude with SOCRATICODE_SPEC=$delivered"
        else
-         fail "VS Code starts claude with SOCRATICODE_SPEC=$delivered, but $spec_src declares $spec — re-pin all three; see docs/DEPLOYMENT.md"
+         fail "VS Code starts claude with SOCRATICODE_SPEC=$delivered, but $spec_src declares $spec — re-pin every place docs/DEPLOYMENT.md 'Memory pressure' lists"
        fi ;;
     4) fail "VS Code's claudeCode.environmentVariables sets no SOCRATICODE_SPEC — the declared pin never reaches the launch; see docs/DEPLOYMENT.md" ;;
     *) blocked "could not read $vsc_settings (comments or malformed JSON, or no node) — delivery is unchecked" ;;

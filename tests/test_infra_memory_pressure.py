@@ -239,5 +239,6 @@ def test_vscode_starts_claude_with_the_declared_session_spec():
     }
     assert delivered.get("SOCRATICODE_SPEC") == _session_spec(), (
         f"VS Code starts claude with SOCRATICODE_SPEC={delivered.get('SOCRATICODE_SPEC')!r}, "
-        f"but .claude/settings.json declares {_session_spec()!r} — re-pin all three"
+        f"but .claude/settings.json declares {_session_spec()!r} — re-pin every place "
+        "docs/DEPLOYMENT.md 'Memory pressure' lists"
     )
