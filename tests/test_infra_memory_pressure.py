@@ -24,12 +24,17 @@ asserted here instead:
   backend makes the postmaster reset every connection: a web outage by proxy.
 
 One coupling lives outside infra/: the SocratiCode plugin session launches
-`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`, so unless
-`.claude/settings.json` names a literal version it installs at every session
-start the package moved — the measured peak, not the indexing (#180).
-`scripts/verify-memory-pressure.sh` checks that version against the host's pin.
+`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`, so unless a
+literal version reaches that launch it installs at every session start the
+package moved — the measured peak, not the indexing (#180). Claude Code expands
+it from its own *startup* environment: `.claude/settings.json` only declares the
+value, and on a VS Code Remote host `claudeCode.environmentVariables` in the
+machine settings is what delivers it (gregoryfoster/skills#332).
+`scripts/verify-memory-pressure.sh` checks the launch itself.
 
-Nothing here talks to systemd or the kernel; these parse the committed files.
+Nothing here talks to systemd or the kernel; these parse the committed files —
+except one test, which reads VS Code's machine settings and skips where there
+are none.
 """
 
 import json
@@ -45,6 +50,10 @@ SLICE_DROPIN = INFRA / "system.slice.d-10-wslcb-memory.conf"
 EARLYOOM = INFRA / "default-earlyoom"
 CLAUDE_SETTINGS = REPO_ROOT / ".claude" / "settings.json"
 DEPLOYMENT_DOC = REPO_ROOT / "docs" / "DEPLOYMENT.md"
+# Host state, not committed: VS Code Remote's machine-scoped settings, the one
+# place claudeCode.environmentVariables can live (it cannot be a workspace key).
+VSCODE_SERVER = Path.home() / ".vscode-server"
+VSCODE_MACHINE_SETTINGS = VSCODE_SERVER / "data" / "Machine" / "settings.json"
 
 # earlyoom 1.7 adds this to a --prefer match's badness; the web service must
 # rank below that to survive one. See the module docstring for measurements.
@@ -208,4 +217,27 @@ def test_deployment_doc_names_the_session_pin():
     assert f"socraticode@{match.group(1)}" == _session_spec(), (
         f"docs/DEPLOYMENT.md says both launches name {match.group(1)}, but "
         f".claude/settings.json pins {_session_spec()!r}"
+    )
+
+
+def test_vscode_starts_claude_with_the_declared_session_spec():
+    """The settings block declares the pin; only claude's startup env delivers it (#180).
+
+    Claude Code expands the plugin's ${SOCRATICODE_SPEC:-…} before it merges the
+    settings env block, which then reaches only the processes it launches: the
+    server got the variable and still ran @latest.
+    """
+    if not VSCODE_SERVER.is_dir():
+        pytest.skip("no VS Code server on this host")
+    assert VSCODE_MACHINE_SETTINGS.is_file(), (
+        f"{VSCODE_MACHINE_SETTINGS} is missing, so nothing delivers SOCRATICODE_SPEC "
+        "to claude's startup environment (docs/DEPLOYMENT.md 'Memory pressure')"
+    )
+    settings = json.loads(VSCODE_MACHINE_SETTINGS.read_text(encoding="utf-8"))
+    delivered = {
+        e.get("name"): e.get("value") for e in settings.get("claudeCode.environmentVariables", [])
+    }
+    assert delivered.get("SOCRATICODE_SPEC") == _session_spec(), (
+        f"VS Code starts claude with SOCRATICODE_SPEC={delivered.get('SOCRATICODE_SPEC')!r}, "
+        f"but .claude/settings.json declares {_session_spec()!r} — re-pin all three"
     )
