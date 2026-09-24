@@ -182,9 +182,9 @@ Re-pinning changes both, to one version:
 
 ```bash
 npm view socraticode version        # pick a literal; never @latest
-CAP='-p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100%'
-systemd-run --user --scope $CAP choom -n 500 -- npm install --prefix ~/.socraticode/pin socraticode@<version>
-systemd-run --user --scope $CAP choom -n 500 -- npm exec -y --package=socraticode@<version> -- true   # warms the session's npx cache
+CAP=(-p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100%)
+systemd-run --user --scope "${CAP[@]}" choom -n 500 -- npm install --prefix ~/.socraticode/pin socraticode@<version>
+systemd-run --user --scope "${CAP[@]}" choom -n 500 -- npm exec -y --package=socraticode@<version> -- true   # warms the session's npx cache
 # then set "SOCRATICODE_SPEC": "socraticode@<version>" in .claude/settings.json
 node skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs resolve
 ```
