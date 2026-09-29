@@ -114,7 +114,7 @@ Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/
 | Operation | Transport |
 |---|---|
 | `git push` / `git pull` | SSH deploy key — `~/.ssh/config` routes `github.com` → `~/.ssh/wslcb-deploy-key` |
-| `gh` CLI (issues, PRs) | PAT — pre-authenticated as `gregoryfoster` |
+| `gh` CLI (issues, PRs) | PAT from repo-root `.env`, passed per command (parsed, never sourced) — no stored `gh auth` login |
 
 Never use `gh` for git push/pull. Never use SSH key for API calls.
 
