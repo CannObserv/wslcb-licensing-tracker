@@ -288,11 +288,13 @@ whose `address_validation_attempted_at` is older than `VALIDATION_TTL_DAYS`
 (180 days, in `address_validator.py`), oldest first, so upstream validator/USPS
 improvements are picked up without manual intervention.
 
-Scheduling keys on `address_validation_attempted_at` (stamped on every `/validate`
-call, pass or fail), **not** `address_validated_at` (which stays pure
+Scheduling keys on `address_validation_attempted_at` (stamped on every *answered*
+`/validate` call, confirmed or not), **not** `address_validated_at` (which stays pure
 "last confirmed" provenance). So each row is re-checked at most once per TTL, and a
-not_confirmed/unavailable re-check is **non-destructive** — it leaves `std_*` and
-`address_validated_at` intact and simply records the attempt.
+not_confirmed re-check is **non-destructive** — it leaves `std_*` and
+`address_validated_at` intact and simply records the attempt. A call with **no
+answer** — transport failure, or `unavailable` (USPS/Google down or rate-limited) —
+writes nothing, so the row is retried next run instead of parked for 180 days (#183).
 
 **Pacing + daily ceiling** keep us inside upstream limits (USPS 10K/day; a 429 falls
 over to Google at 160/day):
@@ -302,6 +304,9 @@ over to Google at 160/day):
   automatic runs combined (both scrape hooks + the weekly timer). The cap is
   measured by counting rows with `attempted_at >= start-of-UTC-day`, so a manual
   `refresh-addresses` run the same day also counts against it.
+- Unanswered calls leave no stamp, so the ceiling can't see them. Instead a batch
+  stops after `MAX_CONSECUTIVE_NO_ANSWER` (10) unanswered rows in a row, logging
+  `Stopping: … (provider outage?)`; the rest wait for the next run (#183).
 
 Because the initial ~59K validated rows come due in a tight window, the ceiling
 spreads the first renewal wave over ~12 days rather than one giant run. To renew on

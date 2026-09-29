@@ -1,7 +1,7 @@
 """HTTP client for the address-validator service.
 
 Pure transport layer — no database dependency.  Owns the shared
-connection pool, API-key/config reads, 429/500 retry policy, and the
+connection pool, API-key/config reads, transient-failure retry policy, and the
 ``/standardize`` and ``/validate`` endpoint wrappers.  The DB-facing
 orchestration lives in address_validator.py.
 
@@ -21,10 +21,16 @@ API_PATH_PREFIX = "/api/v2"
 CONFIRMED_STATUSES = frozenset(
     {"confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"}
 )
+# validation.status returned (with HTTP 200) when USPS/Google is unreachable or
+# rate-limited — a transient outage, not an answer about the address (#183).
+UNAVAILABLE_STATUS = "unavailable"
 TIMEOUT = 15.0
 HTTP_OK = 200
 HTTP_TOO_MANY_REQUESTS = 429
 HTTP_INTERNAL_SERVER_ERROR = 500
+# 429 = service rate limit, 500 = proxy throttle, 502/503/504 = gateway or
+# upstream briefly down (#183). Anything else is returned to the caller as-is.
+RETRYABLE_STATUSES = frozenset({HTTP_TOO_MANY_REQUESTS, HTTP_INTERNAL_SERVER_ERROR, 502, 503, 504})
 DEFAULT_RETRY_AFTER = 2.0
 # Upper bound on any single retry sleep. Bounds an adversarial or buggy
 # Retry-After header (and its backoff-multiplied product) so no single retry
@@ -94,56 +100,54 @@ async def _post_with_retry(
     client: httpx.AsyncClient,
     label: str,
 ) -> httpx.Response | None:
-    """POST with retry on HTTP 429 (service rate limit) and 500 (proxy throttle).
+    """POST with retry on transient failures.
 
-    Retries up to MAX_RETRIES times.  On 429, reads Retry-After header and
-    sleeps that duration (doubling on each subsequent retry).  On 500, falls
-    back to DEFAULT_RETRY_AFTER with the same exponential backoff.  Returns the
-    final successful Response, or None if all retries exhausted or a
-    non-retryable error occurs.
+    Retries up to MAX_RETRIES attempts on a RETRYABLE_STATUSES response or a
+    transport error (timeout, connection/read failure; #183).  Waits the
+    Retry-After header (DEFAULT_RETRY_AFTER when absent), doubling on each
+    subsequent retry and capped at MAX_RETRY_AFTER; never sleeps after the
+    final attempt.  Returns the first non-retryable Response, or None if all
+    attempts are exhausted or a non-transient error occurs.
     """
     backoff_multiplier = 1.0
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = await client.post(url, json=payload, headers=headers)
-        except httpx.TimeoutException:
-            logger.warning("Timeout calling %s API (attempt %d/%d)", label, attempt, MAX_RETRIES)
-            return None
+        except httpx.TransportError as e:
+            reason = type(e).__name__
+            wait = DEFAULT_RETRY_AFTER * backoff_multiplier
         except httpx.HTTPError as e:
             logger.warning("HTTP error calling %s API: %s", label, e)
             return None
         except Exception as e:  # noqa: BLE001
             logger.warning("Unexpected error calling %s API: %s", label, e)
             return None
+        else:
+            if response.status_code not in RETRYABLE_STATUSES:
+                return response
+            reason = f"HTTP {response.status_code}"
+            wait = _parse_retry_after(response) * backoff_multiplier
 
-        if response.status_code in (HTTP_TOO_MANY_REQUESTS, HTTP_INTERNAL_SERVER_ERROR):
-            # Cap the multiplied wait too — the backoff multiplier must not push
-            # an already-capped Retry-After back over the ceiling.
-            wait = min(_parse_retry_after(response) * backoff_multiplier, MAX_RETRY_AFTER)
-            if response.status_code == HTTP_TOO_MANY_REQUESTS:
-                logger.warning(
-                    "%s API returned 429 (rate limited by service, attempt %d/%d),"
-                    " retrying in %.1fs",
-                    label,
-                    attempt,
-                    MAX_RETRIES,
-                    wait,
-                )
-            else:
-                logger.warning(
-                    "%s API returned 500 (proxy throttle, attempt %d/%d), retrying in %.1fs",
-                    label,
-                    attempt,
-                    MAX_RETRIES,
-                    wait,
-                )
-            await asyncio.sleep(wait)
-            backoff_multiplier *= 2.0
-            continue
+        if attempt == MAX_RETRIES:
+            logger.warning(
+                "%s API: %s on attempt %d/%d; giving up", label, reason, attempt, MAX_RETRIES
+            )
+            return None
 
-        return response
+        # Cap the multiplied wait too — the backoff multiplier must not push
+        # an already-capped Retry-After back over the ceiling.
+        wait = min(wait, MAX_RETRY_AFTER)
+        logger.warning(
+            "%s API: %s on attempt %d/%d, retrying in %.1fs",
+            label,
+            reason,
+            attempt,
+            MAX_RETRIES,
+            wait,
+        )
+        await asyncio.sleep(wait)
+        backoff_multiplier *= 2.0
 
-    logger.warning("%s API: exhausted %d retries on 429/500", label, MAX_RETRIES)
     return None
 
 
@@ -152,8 +156,13 @@ async def _call_endpoint(
     address: str,
     client: httpx.AsyncClient | None,
     label: str,
+    log_ref: object = None,
 ) -> dict | None:
-    """POST *address* to *endpoint*, returning the parsed JSON dict or None."""
+    """POST *address* to *endpoint*, returning the parsed JSON dict or None.
+
+    Addresses are PII: log lines name *log_ref* (the caller's opaque id, e.g.
+    a location id), never the address itself (#183).
+    """
     api_key = get_api_key()
     if not api_key:
         return None
@@ -169,42 +178,50 @@ async def _call_endpoint(
 
     if response.status_code != HTTP_OK:
         logger.warning(
-            "%s API returned status %d for: %s",
+            "%s API returned status %d (ref %s)",
             label.capitalize(),
             response.status_code,
-            address,
+            log_ref,
         )
         return None
 
     data = response.json()
     for warn in data.get("warnings") or []:
-        logger.warning("Address API warning for %r: %s", address, warn)
+        logger.warning("Address API warning (ref %s): %s", log_ref, warn)
     return data
 
 
-async def standardize(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
+async def standardize(
+    address: str,
+    client: httpx.AsyncClient | None = None,
+    log_ref: object = None,
+) -> dict | None:
     """Standardize an address via POST /api/v2/standardize.
 
     Sends the full raw address string.  The server parses and standardizes
     the address according to USPS Publication 28 rules.
 
-    Retries on HTTP 429 (service rate limit) and 500 (proxy throttle) with
-    exponential backoff (up to MAX_RETRIES).
+    Retries transient failures with exponential backoff (see _post_with_retry).
+    *log_ref* identifies the address in log lines in place of the address.
     Returns a dict on success, or None on any failure.
     """
-    return await _call_endpoint("standardize", address, client, "address standardize")
+    return await _call_endpoint("standardize", address, client, "address standardize", log_ref)
 
 
-async def validate(address: str, client: httpx.AsyncClient | None = None) -> dict | None:
+async def validate(
+    address: str,
+    client: httpx.AsyncClient | None = None,
+    log_ref: object = None,
+) -> dict | None:
     """Validate an address via POST /api/v2/validate.
 
     Sends the full raw address string. The server runs parse → standardize
     internally before calling the USPS DPV provider.
 
-    Retries on HTTP 429 (service rate limit) and 500 (proxy throttle) with
-    exponential backoff (up to MAX_RETRIES).
+    Retries transient failures with exponential backoff (see _post_with_retry).
+    *log_ref* identifies the address in log lines in place of the address.
     Returns a dict on success, or None on any failure.
     A 200 response with validation.status='not_confirmed' or 'unavailable'
     is returned as a dict (not None) — the caller decides how to handle it.
     """
-    return await _call_endpoint("validate", address, client, "address validation")
+    return await _call_endpoint("validate", address, client, "address validation", log_ref)
