@@ -47,7 +47,7 @@ license_records → locations (FK: location_id, previous_location_id)
 - All Python source in `src/wslcb_licensing_tracker/`. CLI: `wslcb <subcommand>` or `python -m wslcb_licensing_tracker.cli <subcommand>`.
 - Diff-archive ingestion replays each section's unified-diff chain into full page states (`diff_replay.py`, #151) — never parse a diff's changed-only line stream for ingestion; it mis-pairs labels/values across records (`parser.extract_records_from_diff` remains for standalone single-diff inspection only).
 - PostgreSQL (asyncpg + SQLAlchemy 2.0 Core async). Schema managed by Alembic (`alembic upgrade head`).
-- systemd unit/timer files in `infra/`, plus the host memory-pressure configs (#175). AI agent skills in `skills/`; vendor repos (git submodules) in `skills-vendor/`.
+- systemd unit/timer files in `infra/`, plus the host memory-pressure configs (#175) and the needrestart drop-in (#184). AI agent skills in `skills/`; vendor repos (git submodules) in `skills-vendor/`.
 
 ## Frozen vs. Derived Data Contract
 
