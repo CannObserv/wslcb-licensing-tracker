@@ -227,6 +227,32 @@ the running session's server against both. It fails on any disagreement.
 against a *floating* session spec, so once `SOCRATICODE_SPEC` is a literal it
 stays silent, even for a literal that differs from the driver's.
 
+## OS security updates (#184)
+
+The exeuntu image masks the apt timers, so patching is by hand
+(gregoryfoster/skills#313). apt's needrestart hook runs `needrestart -m u`,
+which Ubuntu turns into *automatic* restarts unless `$nrconf{restart}` is set.
+Postgres, `wslcb-web` and dockerd all map libc6/libssl3t64, and a Postgres
+restart 503s `/api/v1/health`, which `wslcb-healthcheck` answers with its own
+`systemctl restart wslcb-web`. `infra/needrestart.conf.d/wslcb.conf` sets
+`'l'`, so an apply only lists what needs restarting; restarts happen in a
+window, under the owner's approval.
+
+```bash
+sudo install -m 644 infra/needrestart.conf.d/wslcb.conf /etc/needrestart/conf.d/
+sudo needrestart -m u -b -r l   # must print "Disabling Ubuntu mode, explicit restart mode configured"
+```
+
+- That line proves the *file's* key loaded; `-r l` keeps the proof itself from
+  restarting anything. Never run the proof without it.
+- Belt and braces on every apply: `sudo NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`
+  (`choom` because the session inherits adj -1000 from exe.dev's sshd).
+- Maintainer scripts are out of its reach: `postgresql-16` restarts the cluster
+  and `containerd` may restart itself. Hold them as separate steps, with
+  `wslcb-healthcheck.timer` stopped across the Postgres one.
+- `tests/test_needrestart_config.py` evaluates the file as Perl, and on the
+  host pins the installed copy and the live `conf.d` chain.
+
 ## Logging
 
 Under systemd (non-TTY), all output is JSON lines — `timestamp`, `level`, `name`, `message`. Captured by the journal. Uvicorn access/error logs routed through the same formatter.

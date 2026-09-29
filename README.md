@@ -230,6 +230,7 @@ wslcb-licensing-tracker/
 │   ├── test_no_channel_urls.py  # No live Mayfly channel URL in any tracked file (#181)
 │   ├── test_docs_layout.py      # Dated docs stay in docs/specs/ + docs/plans/, not docs/superpowers/ (#176)
 │   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs + SocratiCode pin agreement (#175, #180)
+│   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
