@@ -34,7 +34,8 @@ RETRYABLE_STATUSES = frozenset({HTTP_TOO_MANY_REQUESTS, HTTP_INTERNAL_SERVER_ERR
 DEFAULT_RETRY_AFTER = 2.0
 # Upper bound on any single retry sleep. Bounds an adversarial or buggy
 # Retry-After header (and its backoff-multiplied product) so no single retry
-# sleep exceeds 60s — worst-case ~180s total across MAX_RETRIES. See issue #118.
+# sleep exceeds 60s — worst-case ~120s total, since only MAX_RETRIES - 1 sleeps
+# happen (none after the final attempt; #183). See issue #118.
 MAX_RETRY_AFTER = 60.0
 MAX_RETRIES = 3
 
