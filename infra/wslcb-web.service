@@ -1,10 +1,12 @@
 [Unit]
 Description=WSLCB Licensing Tracker Web App
 # Start after the local cluster accepts connections (#184): postgresql@.service
-# is Before=postgresql.service, so this waits for every cluster. Wants=, never
-# Requires=/BindsTo=/PartOf=: a Postgres restart must not stop the app.
+# is Before=postgresql.service, so this waits for every cluster. Ordering only:
+# both units are WantedBy=multi-user.target, so no Wants= is needed at boot, and
+# one would make every start of this unit (the healthcheck's auto-restart too)
+# start a cluster an operator stopped on purpose. Never Requires=/BindsTo=/PartOf=
+# either: a Postgres restart must not stop the app.
 After=network.target postgresql.service
-Wants=postgresql.service
 
 [Service]
 Type=simple

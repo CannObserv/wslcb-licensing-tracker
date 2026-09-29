@@ -56,9 +56,12 @@ sudo systemctl restart wslcb-web.service
 
 A change to `[Unit]` ordering alone (`After=`, `Wants=`) takes effect on
 `daemon-reload`, so the restart can wait. `wslcb-web.service` starts after
-`postgresql.service`, which Ubuntu's `postgresql@.service` clusters precede, and
-only `Wants=` it: never `Requires=`, `BindsTo=` or `PartOf=`, because a Postgres
-restart must not stop the app (#184; `tests/test_infra_web_unit.py`).
+`postgresql.service`, which Ubuntu's `postgresql@.service` clusters precede.
+That's ordering only (#184; `tests/test_infra_web_unit.py`):
+- There's no `Wants=`, or the healthcheck's auto-restart would start a cluster
+  an operator stopped on purpose.
+- There's never a `Requires=`, `BindsTo=` or `PartOf=`, because a Postgres
+  restart must not stop the app.
 
 ## Memory pressure (#175)
 
