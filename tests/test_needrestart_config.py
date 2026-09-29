@@ -1,10 +1,10 @@
 """Drift guard: apt's needrestart hook lists restarts and never performs them (#184).
 
-``/etc/apt/apt.conf.d/99needrestart`` runs ``needrestart -m u`` after every dpkg
-run, and Ubuntu's patch to needrestart 3.6 turns that into *automatic* restarts
-while ``$nrconf{restart}`` is unset, which is the stock state. Postgres maps
-libc6, libssl3t64, libxml2 and libsystemd0, and so do ``wslcb-web`` and the
-Docker daemon under SocratiCode's containers. A security apply would then
+``/etc/apt/apt.conf.d/99needrestart`` runs ``apt-pinvoke -m u`` (which calls
+needrestart) after every dpkg run, and Ubuntu's patch to needrestart 3.6 turns
+that into *automatic* restarts while ``$nrconf{restart}`` is unset, which is the
+stock state. Postgres maps libc6, libssl3t64, libxml2 and libsystemd0, and so do
+``wslcb-web`` and the Docker daemon under SocratiCode's containers. A security apply would then
 restart all of them mid-apply, outside the owner's window, and a Postgres
 restart makes ``/api/v1/health`` 503, which ``wslcb-healthcheck`` answers by
 restarting ``wslcb-web`` itself. ``infra/needrestart.conf.d/wslcb.conf`` sets

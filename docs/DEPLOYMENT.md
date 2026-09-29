@@ -239,8 +239,9 @@ stays silent, even for a literal that differs from the driver's.
 ## OS security updates (#184)
 
 The exeuntu image masks the apt timers, so patching is by hand
-(gregoryfoster/skills#313). apt's needrestart hook runs `needrestart -m u`,
-which Ubuntu turns into *automatic* restarts unless `$nrconf{restart}` is set.
+(gregoryfoster/skills#313). apt's needrestart hook (`/etc/apt/apt.conf.d/99needrestart`)
+runs `/usr/lib/needrestart/apt-pinvoke -m u … || true`, which calls needrestart;
+Ubuntu turns that into *automatic* restarts unless `$nrconf{restart}` is set.
 Postgres, `wslcb-web` and dockerd all map libc6/libssl3t64, and a Postgres
 restart 503s `/api/v1/health`, which `wslcb-healthcheck` answers with its own
 `systemctl restart wslcb-web`. `infra/needrestart.conf.d/wslcb.conf` sets
