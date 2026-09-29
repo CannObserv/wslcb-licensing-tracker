@@ -62,8 +62,9 @@ DAILY_VALIDATION_LIMIT = 5000
 
 # _validate_batch stops after this many consecutive rows get no provider answer
 # (#183). At the ~7% 'unavailable' rate seen in normal operation, 10 in a row
-# by chance is vanishingly unlikely; a real outage trips it within ~10 calls
-# instead of spending the whole batch against a provider that is down.
+# by chance is vanishingly unlikely. A real outage trips it after 10 rows —
+# at most 10 x MAX_RETRIES = 30 HTTP attempts, ~8.5 min with 15s timeouts plus
+# backoff — instead of spending the whole batch against a provider that is down.
 MAX_CONSECUTIVE_NO_ANSWER = 10
 
 
