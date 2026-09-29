@@ -20,7 +20,9 @@ from wslcb_licensing_tracker.address_client import (
 )
 from wslcb_licensing_tracker.address_validator import (
     DAILY_VALIDATION_LIMIT,
+    MAX_CONSECUTIVE_NO_ANSWER,
     VALIDATION_TTL_DAYS,
+    LocationOutcome,
     _validate_batch,
     backfill_addresses,
     process_location,
@@ -242,6 +244,39 @@ class TestValidateLocation:
         assert row["address_validated_at"] is None
         assert row["address_validation_attempted_at"] is not None
 
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_unavailable_writes_nothing(self, pg_conn):
+        # 'unavailable' is a transient provider outage, not an answer: leave the
+        # row unstamped so the next run retries it (#183).
+        loc_id = await get_or_create_location(pg_conn, "12 OUTAGE LN, YAKIMA, WA 98901")
+        mock_result = {
+            "address_line_1": "",
+            "validation": {"status": "unavailable", "dpv_match_code": None},
+        }
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch("wslcb_licensing_tracker.address_validator.validate", return_value=mock_result),
+        ):
+            result = await validate_location(pg_conn, loc_id, "12 OUTAGE LN, YAKIMA, WA 98901")
+        assert result is False
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.validation_status,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["validation_status"] is None
+        assert row["address_validation_attempted_at"] is None
+
 
 class TestParseRetryAfter:
     def test_parses_numeric_header(self):
@@ -364,29 +399,80 @@ class TestPostWithRetry:
                 "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
             )
         assert result is None
-        assert mock_sleep.call_count == MAX_RETRIES
+        # No sleep after the final attempt — there is nothing left to wait for.
+        assert mock_sleep.call_count == MAX_RETRIES - 1
         for call in mock_sleep.call_args_list:
             assert call.args[0] <= MAX_RETRY_AFTER
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_returns_none_on_timeout(self):
+    async def test_retries_on_timeout_then_succeeds(self):
+        # A timeout is transient: back off and retry, don't give up on attempt 1 (#183).
         mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.post.side_effect = httpx.TimeoutException("timed out")
+        mock_client.post.side_effect = [
+            httpx.TimeoutException("timed out"),
+            httpx.Response(200, json={"ok": True}),
+        ]
 
-        result = await _post_with_retry(
-            "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
-        )
-        assert result is None
+        with patch("wslcb_licensing_tracker.address_client.asyncio.sleep", new_callable=AsyncMock):
+            result = await _post_with_retry(
+                "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+            )
+        assert result is not None
+        assert result.status_code == 200
+        assert mock_client.post.call_count == 2
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_returns_none_on_http_error(self):
+    async def test_exhausts_retries_on_persistent_connect_error(self):
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.side_effect = httpx.ConnectError("connection refused")
 
+        with patch("wslcb_licensing_tracker.address_client.asyncio.sleep", new_callable=AsyncMock):
+            result = await _post_with_retry(
+                "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+            )
+        assert result is None
+        assert mock_client.post.call_count == MAX_RETRIES
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_returns_none_on_non_transport_http_error(self):
+        # Not a transient network failure — retrying would not help.
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.side_effect = httpx.TooManyRedirects("loop")
+
         result = await _post_with_retry(
             "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
         )
         assert result is None
+        assert mock_client.post.call_count == 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    @pytest.mark.parametrize("status", [502, 503, 504])
+    async def test_retries_on_gateway_errors(self, status):
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.side_effect = [
+            httpx.Response(status),
+            httpx.Response(200, json={"ok": True}),
+        ]
+
+        with patch("wslcb_licensing_tracker.address_client.asyncio.sleep", new_callable=AsyncMock):
+            result = await _post_with_retry(
+                "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+            )
+        assert result is not None
+        assert result.status_code == 200
+        assert mock_client.post.call_count == 2
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_does_not_retry_client_errors(self):
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.return_value = httpx.Response(422)
+
+        result = await _post_with_retry(
+            "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+        )
+        assert result is not None
+        assert result.status_code == 422
+        assert mock_client.post.call_count == 1
 
 
 class TestStandardizeHTTP:
@@ -449,6 +535,40 @@ class TestValidateHTTP:
         assert result is None
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_non_200_log_names_ref_not_address(self, caplog):
+        # Addresses are PII: logs carry the caller's ref, never the address (#183).
+        with (
+            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch(
+                "wslcb_licensing_tracker.address_client._post_with_retry",
+                return_value=httpx.Response(422),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            result = await validate("123 SECRET ST, SEATTLE, WA", log_ref=4242)
+        assert result is None
+        messages = [r.getMessage() for r in caplog.records]
+        assert messages
+        assert not any("SECRET" in m for m in messages)
+        assert any("4242" in m and "422" in m for m in messages)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_api_warning_log_names_ref_not_address(self, caplog):
+        body = {"address_line_1": "", "warnings": ["Missing secondary unit"]}
+        with (
+            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch(
+                "wslcb_licensing_tracker.address_client._post_with_retry",
+                return_value=httpx.Response(200, json=body),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            await validate("123 SECRET ST, SEATTLE, WA", log_ref=4242)
+        messages = [r.getMessage() for r in caplog.records]
+        assert not any("SECRET" in m for m in messages)
+        assert any("4242" in m and "Missing secondary unit" in m for m in messages)
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_when_post_returns_none(self):
         with (
             patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
@@ -500,6 +620,8 @@ class TestProcessLocation:
             result = await process_location(pg_conn, loc_id, "100 MAIN ST STE 1, OLYMPIA, WA 98501")
         assert result is True
         mock_val.assert_called_once()
+        # Logs name the row, never the address (#183).
+        assert mock_val.call_args.kwargs["log_ref"] == loc_id
 
         row = (
             (
@@ -554,6 +676,8 @@ class TestProcessLocation:
             result = await process_location(pg_conn, loc_id, "200 ELM ST, TACOMA, WA 98401")
         assert result is True
         mock_s.assert_called_once()
+        # Logs name the row, never the address (#183).
+        assert mock_s.call_args.kwargs["log_ref"] == loc_id
 
         row = (
             (
@@ -684,6 +808,100 @@ class TestProcessLocation:
         assert row["address_validation_attempted_at"] > old
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_unavailable_on_new_row_writes_nothing(self, pg_conn):
+        """'unavailable' leaves attempted_at NULL so the next backfill retries (#183)."""
+        loc_id = await get_or_create_location(pg_conn, "14 OUTAGE LN, YAKIMA, WA 98901")
+        mock_result = {
+            "address_line_1": "",
+            "validation": {"status": "unavailable", "dpv_match_code": None},
+        }
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.address_validator.validate",
+                return_value=mock_result,
+            ),
+        ):
+            result = await process_location(pg_conn, loc_id, "14 OUTAGE LN, YAKIMA, WA 98901")
+        assert result is False
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.validation_status,
+                        locations.c.dpv_match_code,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["validation_status"] is None
+        assert row["dpv_match_code"] is None
+        assert row["address_validation_attempted_at"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_renewal_unavailable_leaves_prior_confirmation_untouched(self, pg_conn):
+        """A re-check that hits a provider outage must not overwrite the confirmed
+        status/dpv nor bump attempted_at — the row stays due for renewal (#183)."""
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        loc_id = await get_or_create_location(pg_conn, "2 CONFIRMED WAY, SEATTLE, WA 98101")
+        old = datetime.now(UTC) - timedelta(days=200)
+        await pg_conn.execute(
+            update(locations)
+            .where(locations.c.id == loc_id)
+            .values(
+                std_address_line_1="2 CONFIRMED WAY",
+                validation_status="confirmed",
+                dpv_match_code="Y",
+                address_standardized_at=old,
+                address_validated_at=old,
+                address_validation_attempted_at=old,
+            )
+        )
+        mock_result = {
+            "address_line_1": "",
+            "validation": {"status": "unavailable", "dpv_match_code": None},
+        }
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.address_validator.validate",
+                return_value=mock_result,
+            ),
+        ):
+            result = await process_location(pg_conn, loc_id, "2 CONFIRMED WAY, SEATTLE, WA 98101")
+        assert result is False
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.validation_status,
+                        locations.c.dpv_match_code,
+                        locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["validation_status"] == "confirmed"
+        assert row["dpv_match_code"] == "Y"
+        assert row["address_validated_at"] == old
+        assert row["address_validation_attempted_at"] == old
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "")
         result = await process_location(pg_conn, loc_id, "")
@@ -735,7 +953,7 @@ class TestValidateBatch:
                 .where(locations.c.id == location_id)
                 .values(validation_status="test_ok")
             )
-            return True
+            return LocationOutcome.WRITTEN
 
         rows = [
             {"id": loc_ok, "raw_address": "400 GOOD ST, SEATTLE, WA 98101"},
@@ -745,7 +963,7 @@ class TestValidateBatch:
 
         async with pg_engine.connect() as conn:
             with patch(
-                "wslcb_licensing_tracker.address_validator.process_location",
+                "wslcb_licensing_tracker.address_validator._process_location",
                 side_effect=mock_process,
             ):
                 result = await _validate_batch(
@@ -776,8 +994,8 @@ class TestValidateBatch:
 
         async with pg_engine.connect() as conn:
             with patch(
-                "wslcb_licensing_tracker.address_validator.process_location",
-                return_value=True,
+                "wslcb_licensing_tracker.address_validator._process_location",
+                return_value=LocationOutcome.WRITTEN,
             ):
                 result = await _validate_batch(
                     conn, locs, "Batch commit test", batch_size=2, rate_limit=0
@@ -820,7 +1038,7 @@ class TestValidateBatch:
                 .where(locations.c.id == location_id)
                 .values(validation_status="recovered_ok")
             )
-            return True
+            return LocationOutcome.WRITTEN
 
         rows = [
             {"id": loc_before, "raw_address": "900 BEFORE ST, SEATTLE, WA 98101"},
@@ -830,7 +1048,7 @@ class TestValidateBatch:
 
         async with pg_engine.connect() as conn:
             with patch(
-                "wslcb_licensing_tracker.address_validator.process_location",
+                "wslcb_licensing_tracker.address_validator._process_location",
                 side_effect=mock_process,
             ):
                 result = await _validate_batch(
@@ -858,6 +1076,43 @@ class TestValidateBatch:
         assert statuses[loc_abort] is None  # never updated
         assert statuses[loc_after] == "recovered_ok"  # committed after recovery
 
+    @staticmethod
+    def _rows(n):
+        # The breaker never touches the DB, so ids need not exist.
+        return [{"id": 900_000 + i, "raw_address": f"{i} ANY ST, SEATTLE, WA"} for i in range(n)]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_stops_after_consecutive_no_answers(self, pg_engine, caplog):
+        """A provider outage must not burn through the whole batch: unanswered rows
+        are invisible to the daily budget, so the breaker bounds the calls (#183)."""
+        rows = self._rows(MAX_CONSECUTIVE_NO_ANSWER + 5)
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                return_value=LocationOutcome.NO_ANSWER,
+            ) as mock_process:
+                with caplog.at_level("INFO"):
+                    result = await _validate_batch(conn, rows, "Outage", rate_limit=0)
+        assert result == 0
+        assert mock_process.call_count == MAX_CONSECUTIVE_NO_ANSWER
+        # Untried rows are not failures: the summary counts what was attempted.
+        done = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Done:")]
+        assert done == [f"Done: {MAX_CONSECUTIVE_NO_ANSWER}/{len(rows)} attempted, 0 succeeded"]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_any_answer_resets_the_breaker(self, pg_engine):
+        streak = [LocationOutcome.NO_ANSWER] * (MAX_CONSECUTIVE_NO_ANSWER - 1)
+        outcomes = [*streak, LocationOutcome.RECORDED, *streak, LocationOutcome.WRITTEN]
+        rows = self._rows(len(outcomes))
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                side_effect=outcomes,
+            ) as mock_process:
+                result = await _validate_batch(conn, rows, "Flaky", rate_limit=0)
+        assert result == 1
+        assert mock_process.call_count == len(outcomes)
+
 
 # ---------------------------------------------------------------------------
 # backfill_addresses — TTL-based renewal of already-validated locations (#150)
@@ -879,7 +1134,7 @@ class TestBackfillTTL:
 
         async def mock_process(conn, location_id, address, client=None):
             processed.append(location_id)
-            return True
+            return LocationOutcome.WRITTEN
 
         return processed, mock_process
 
@@ -924,7 +1179,7 @@ class TestBackfillTTL:
                     return_value="test-key",
                 ),
                 patch(
-                    "wslcb_licensing_tracker.address_validator.process_location",
+                    "wslcb_licensing_tracker.address_validator._process_location",
                     side_effect=mock_process,
                 ),
             ):
@@ -968,7 +1223,7 @@ class TestBackfillTTL:
                     return_value="test-key",
                 ),
                 patch(
-                    "wslcb_licensing_tracker.address_validator.process_location",
+                    "wslcb_licensing_tracker.address_validator._process_location",
                     side_effect=mock_process,
                 ),
             ):
@@ -1007,7 +1262,7 @@ class TestBackfillTTL:
                     return_value="test-key",
                 ),
                 patch(
-                    "wslcb_licensing_tracker.address_validator.process_location",
+                    "wslcb_licensing_tracker.address_validator._process_location",
                     side_effect=mock_process,
                 ),
             ):
@@ -1060,7 +1315,7 @@ class TestBackfillTTL:
                     return_value="test-key",
                 ),
                 patch(
-                    "wslcb_licensing_tracker.address_validator.process_location",
+                    "wslcb_licensing_tracker.address_validator._process_location",
                     side_effect=mock_process,
                 ),
             ):
@@ -1108,7 +1363,7 @@ class TestBackfillTTL:
                     return_value="test-key",
                 ),
                 patch(
-                    "wslcb_licensing_tracker.address_validator.process_location",
+                    "wslcb_licensing_tracker.address_validator._process_location",
                     side_effect=mock_process,
                 ),
             ):
@@ -1162,7 +1417,7 @@ class TestBackfillTTL:
                     return_value="test-key",
                 ),
                 patch(
-                    "wslcb_licensing_tracker.address_validator.process_location",
+                    "wslcb_licensing_tracker.address_validator._process_location",
                     side_effect=mock_process,
                 ),
             ):
