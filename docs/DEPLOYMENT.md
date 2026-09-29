@@ -54,6 +54,12 @@ sudo systemctl enable --now wslcb-healthcheck.timer
 sudo systemctl restart wslcb-web.service
 ```
 
+A change to `[Unit]` ordering alone (`After=`, `Wants=`) takes effect on
+`daemon-reload`, so the restart can wait. `wslcb-web.service` starts after
+`postgresql.service`, which Ubuntu's `postgresql@.service` clusters precede, and
+only `Wants=` it: never `Requires=`, `BindsTo=` or `PartOf=`, because a Postgres
+restart must not stop the app (#184; `tests/test_infra_web_unit.py`).
+
 ## Memory pressure (#175)
 
 This VM has **7.2 GiB and no swap**, and the production service shares it with
