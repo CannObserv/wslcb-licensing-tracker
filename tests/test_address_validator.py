@@ -620,6 +620,8 @@ class TestProcessLocation:
             result = await process_location(pg_conn, loc_id, "100 MAIN ST STE 1, OLYMPIA, WA 98501")
         assert result is True
         mock_val.assert_called_once()
+        # Logs name the row, never the address (#183).
+        assert mock_val.call_args.kwargs["log_ref"] == loc_id
 
         row = (
             (
@@ -674,6 +676,8 @@ class TestProcessLocation:
             result = await process_location(pg_conn, loc_id, "200 ELM ST, TACOMA, WA 98401")
         assert result is True
         mock_s.assert_called_once()
+        # Logs name the row, never the address (#183).
+        assert mock_s.call_args.kwargs["log_ref"] == loc_id
 
         row = (
             (
