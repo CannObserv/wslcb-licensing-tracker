@@ -441,7 +441,7 @@ async def _validate_batch(
 
     # Final commit for any remaining rows after the last batch_size boundary.
     await conn.commit()
-    logger.info("Done: %d/%d succeeded (%d failed)", succeeded, total, total - succeeded)
+    logger.info("Done: %d/%d attempted, %d succeeded", attempted, total, succeeded)
     return succeeded
 
 

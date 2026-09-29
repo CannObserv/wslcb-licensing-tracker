@@ -1078,7 +1078,7 @@ class TestValidateBatch:
         return [{"id": 900_000 + i, "raw_address": f"{i} ANY ST, SEATTLE, WA"} for i in range(n)]
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_stops_after_consecutive_no_answers(self, pg_engine):
+    async def test_stops_after_consecutive_no_answers(self, pg_engine, caplog):
         """A provider outage must not burn through the whole batch: unanswered rows
         are invisible to the daily budget, so the breaker bounds the calls (#183)."""
         rows = self._rows(MAX_CONSECUTIVE_NO_ANSWER + 5)
@@ -1087,9 +1087,13 @@ class TestValidateBatch:
                 "wslcb_licensing_tracker.address_validator._process_location",
                 return_value=LocationOutcome.NO_ANSWER,
             ) as mock_process:
-                result = await _validate_batch(conn, rows, "Outage", rate_limit=0)
+                with caplog.at_level("INFO"):
+                    result = await _validate_batch(conn, rows, "Outage", rate_limit=0)
         assert result == 0
         assert mock_process.call_count == MAX_CONSECUTIVE_NO_ANSWER
+        # Untried rows are not failures: the summary counts what was attempted.
+        done = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Done:")]
+        assert done == [f"Done: {MAX_CONSECUTIVE_NO_ANSWER}/{len(rows)} attempted, 0 succeeded"]
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_any_answer_resets_the_breaker(self, pg_engine):
