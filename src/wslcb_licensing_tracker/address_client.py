@@ -30,7 +30,15 @@ HTTP_TOO_MANY_REQUESTS = 429
 HTTP_INTERNAL_SERVER_ERROR = 500
 # 429 = service rate limit, 500 = proxy throttle, 502/503/504 = gateway or
 # upstream briefly down (#183). Anything else is returned to the caller as-is.
-RETRYABLE_STATUSES = frozenset({HTTP_TOO_MANY_REQUESTS, HTTP_INTERNAL_SERVER_ERROR, 502, 503, 504})
+RETRYABLE_STATUSES = frozenset(
+    {
+        HTTP_TOO_MANY_REQUESTS,
+        HTTP_INTERNAL_SERVER_ERROR,
+        httpx.codes.BAD_GATEWAY,
+        httpx.codes.SERVICE_UNAVAILABLE,
+        httpx.codes.GATEWAY_TIMEOUT,
+    }
+)
 DEFAULT_RETRY_AFTER = 2.0
 # Upper bound on any single retry sleep. Bounds an adversarial or buggy
 # Retry-After header (and its backoff-multiplied product) so no single retry
