@@ -46,9 +46,11 @@ ISO_ALPHA2_LEN = 2
 # validator/USPS improvements are picked up. Scheduling keys on attempted_at,
 # not validated_at, so a row is re-checked at most once per TTL whether the
 # provider answers or not — and a failed re-check never degrades the prior
-# confirmation (see _validate_and_write). A call the provider never answers
-# (transport failure, status 'unavailable') writes nothing, so it is retried on
-# the next run rather than parked for a TTL (#183).
+# confirmation (see _validate_and_write). A call nobody answers (transport
+# failure, 429/5xx after retries, or no provider configured on the validator)
+# writes nothing, so it is retried on the next run rather than parked for a TTL
+# (#183). A USPS "no delivery-point determination" ('unavailable' with a
+# provider) *is* an answer and waits a full TTL like any other (#187).
 VALIDATION_TTL_DAYS = 180
 
 # Upper bound on /validate calls per UTC day across all automatic backfill runs
@@ -60,9 +62,9 @@ VALIDATION_TTL_DAYS = 180
 # outage MAX_CONSECUTIVE_NO_ANSWER is what bounds them (#183).
 DAILY_VALIDATION_LIMIT = 5000
 
-# _validate_batch stops after this many consecutive rows get no provider answer
-# (#183). At the ~7% 'unavailable' rate seen in normal operation, 10 in a row
-# by chance is vanishingly unlikely. A real outage trips it after 10 rows —
+# _validate_batch stops after this many consecutive rows get no answer (#183).
+# In normal operation a no-answer is rare (every HTTP 200 is an answer; #187),
+# so 10 in a row means the validator or its providers are down. It trips after 10 rows —
 # at most 10 x MAX_RETRIES = 30 HTTP attempts, ~8.5 min with 15s timeouts plus
 # backoff — instead of spending the whole batch against a provider that is down.
 MAX_CONSECUTIVE_NO_ANSWER = 10
@@ -73,7 +75,7 @@ class LocationOutcome(Enum):
 
     WRITTEN = auto()  # standardized, or validation confirmed: std_* overlaid
     RECORDED = auto()  # provider answered without confirming: status + attempt stamped
-    NO_ANSWER = auto()  # transport failure or 'unavailable': nothing written
+    NO_ANSWER = auto()  # transport failure, 429/5xx, or no provider: nothing written
     FAILED = auto()  # empty address, standardize failure, or DB write error
 
 
@@ -143,6 +145,29 @@ async def standardize_location(
     return True
 
 
+async def _record_no_determination(
+    conn: AsyncConnection, location_id: int, now: datetime
+) -> LocationOutcome:
+    """Stamp the attempt for a provider's 'unavailable' answer, keeping prior status.
+
+    A NULL status becomes 'unavailable' so a never-answered row shows why it
+    has no confirmation; any earlier status and dpv stay (#187).
+    """
+    try:
+        await conn.execute(
+            update(locations)
+            .where(locations.c.id == location_id)
+            .values(
+                validation_status=func.coalesce(locations.c.validation_status, UNAVAILABLE_STATUS),
+                address_validation_attempted_at=now,
+            )
+        )
+    except Exception:
+        logger.exception("Failed to update location %d during validate", location_id)
+        return LocationOutcome.FAILED
+    return LocationOutcome.RECORDED
+
+
 async def _validate_and_write(
     conn: AsyncConnection,
     location_id: int,
@@ -158,29 +183,39 @@ async def _validate_and_write(
       validation_status, dpv_match_code and address_validation_attempted_at
       only; std_* and address_validated_at are left intact so a failed
       re-check never degrades a prior confirmation (#150) → RECORDED.
-    * no answer (transport failure, or 'unavailable': USPS/Google down or
-      rate-limited) — writes nothing, so the row is retried next run and a
-      prior status is not overwritten (#183) → NO_ANSWER.
+    * 'unavailable' from a named provider (USPS 200 with a blank DPV: "no
+      delivery-point determination") — an answer, deterministic per address
+      (CannObserv/address-validator#250): stamps address_validation_attempted_at
+      so the row waits a full TTL, and keeps any prior status/dpv, which it
+      carries no new information to replace (#187) → RECORDED.
+    * no answer (transport failure or 429/5xx after retries → None, or
+      'unavailable' with no provider: none configured on the validator) —
+      writes nothing, so the row is retried next run (#183) → NO_ANSWER.
     """
     try:
         result = await validate(raw_address, client, log_ref=location_id)
     except Exception:
         logger.exception("Validate failed for location %d", location_id)
-        return LocationOutcome.NO_ANSWER
+        result = None
 
     if result is None:
         return LocationOutcome.NO_ANSWER
 
     validation = result.get("validation") or {}
     status = validation.get("status", "")
+    now = datetime.now(UTC)
+
     if status == UNAVAILABLE_STATUS:
-        logger.info("Validation provider unavailable for location %d; left for retry", location_id)
-        return LocationOutcome.NO_ANSWER
+        provider = validation.get("provider")
+        if not provider:
+            logger.info("Validator has no provider for location %d; left for retry", location_id)
+            return LocationOutcome.NO_ANSWER
+        logger.info("No delivery-point determination for location %d (%s)", location_id, provider)
+        return await _record_no_determination(conn, location_id, now)
 
     dpv = validation.get("dpv_match_code")
     # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
     has_address = status in CONFIRMED_STATUSES
-    now = datetime.now(UTC)
 
     try:
         if has_address:
@@ -292,7 +327,8 @@ async def process_location(
     :func:`_validate_and_write`: a confirmed result overlays std_* and
     address_validated_at, any other answer stamps only status and
     address_validation_attempted_at (non-destructive re-check; #150), and no
-    answer — including 'unavailable' — writes nothing (#183).
+    answer writes nothing (#183), and a USPS "no determination" only stamps
+    the attempt (#187).
 
     When validation is off, calls ``/standardize`` only (no attempted_at).
 

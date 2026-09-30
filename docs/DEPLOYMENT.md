@@ -292,9 +292,18 @@ Scheduling keys on `address_validation_attempted_at` (stamped on every *answered
 `/validate` call, confirmed or not), **not** `address_validated_at` (which stays pure
 "last confirmed" provenance). So each row is re-checked at most once per TTL, and a
 not_confirmed re-check is **non-destructive** — it leaves `std_*` and
-`address_validated_at` intact and simply records the attempt. A call with **no
-answer** — transport failure, or `unavailable` (USPS/Google down or rate-limited) —
-writes nothing, so the row is retried next run instead of parked for 180 days (#183).
+`address_validated_at` intact and simply records the attempt.
+
+Every HTTP 200 is an answer. That includes `unavailable` with a named provider,
+which is USPS's "no delivery-point determination" (a blank DPV): the same address
+gets the same answer on every call. It records the attempt and keeps any prior
+status/dpv (#187; CannObserv/address-validator#250).
+
+A call with **no answer** writes nothing, so the row is retried next run (#183):
+- a transport failure, or 429/5xx still failing after retries;
+- `unavailable` with no provider, meaning none is configured on the validator.
+
+Outages come back as HTTP errors, never as a 200 `unavailable`.
 
 **Pacing + daily ceiling** keep us inside upstream limits (USPS 10K/day; a 429 falls
 over to Google at 160/day):

@@ -21,8 +21,11 @@ API_PATH_PREFIX = "/api/v2"
 CONFIRMED_STATUSES = frozenset(
     {"confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"}
 )
-# validation.status returned (with HTTP 200) when USPS/Google is unreachable or
-# rate-limited — a transient outage, not an answer about the address (#183).
+# validation.status meaning either "the provider answered with no delivery-point
+# determination" (provider named, e.g. usps: a blank DPV — deterministic per
+# address) or "no provider configured" (provider null). It never means a
+# transient outage: those arrive as HTTP 429 + Retry-After or 5xx
+# (CannObserv/address-validator#250; #187 corrects #183's reading).
 UNAVAILABLE_STATUS = "unavailable"
 TIMEOUT = 15.0
 HTTP_OK = 200

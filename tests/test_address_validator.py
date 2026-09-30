@@ -23,6 +23,7 @@ from wslcb_licensing_tracker.address_validator import (
     MAX_CONSECUTIVE_NO_ANSWER,
     VALIDATION_TTL_DAYS,
     LocationOutcome,
+    _process_location,
     _validate_batch,
     backfill_addresses,
     process_location,
@@ -245,13 +246,13 @@ class TestValidateLocation:
         assert row["address_validation_attempted_at"] is not None
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_unavailable_writes_nothing(self, pg_conn):
-        # 'unavailable' is a transient provider outage, not an answer: leave the
-        # row unstamped so the next run retries it (#183).
+    async def test_unavailable_without_provider_writes_nothing(self, pg_conn):
+        # 'unavailable' with no provider means the validator has none configured —
+        # a service-side state, not an answer: leave the row for retry (#187).
         loc_id = await get_or_create_location(pg_conn, "12 OUTAGE LN, YAKIMA, WA 98901")
         mock_result = {
             "address_line_1": "",
-            "validation": {"status": "unavailable", "dpv_match_code": None},
+            "validation": {"status": "unavailable", "dpv_match_code": None, "provider": None},
         }
         with (
             patch(
@@ -808,12 +809,13 @@ class TestProcessLocation:
         assert row["address_validation_attempted_at"] > old
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_unavailable_on_new_row_writes_nothing(self, pg_conn):
-        """'unavailable' leaves attempted_at NULL so the next backfill retries (#183)."""
+    async def test_unavailable_without_provider_on_new_row_writes_nothing(self, pg_conn):
+        """No provider configured: leaves attempted_at NULL so the next backfill
+        retries (#187)."""
         loc_id = await get_or_create_location(pg_conn, "14 OUTAGE LN, YAKIMA, WA 98901")
         mock_result = {
             "address_line_1": "",
-            "validation": {"status": "unavailable", "dpv_match_code": None},
+            "validation": {"status": "unavailable", "dpv_match_code": None, "provider": None},
         }
         with (
             patch(
@@ -845,9 +847,10 @@ class TestProcessLocation:
         assert row["address_validation_attempted_at"] is None
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_renewal_unavailable_leaves_prior_confirmation_untouched(self, pg_conn):
-        """A re-check that hits a provider outage must not overwrite the confirmed
-        status/dpv nor bump attempted_at — the row stays due for renewal (#183)."""
+    async def test_renewal_unavailable_without_provider_leaves_row_untouched(self, pg_conn):
+        """A re-check the validator can't serve (no provider configured) must not
+        overwrite the confirmed status/dpv nor bump attempted_at — the row stays
+        due for renewal (#187)."""
         from datetime import timedelta
 
         from wslcb_licensing_tracker.address_validator import UTC, datetime
@@ -868,7 +871,7 @@ class TestProcessLocation:
         )
         mock_result = {
             "address_line_1": "",
-            "validation": {"status": "unavailable", "dpv_match_code": None},
+            "validation": {"status": "unavailable", "dpv_match_code": None, "provider": None},
         }
         with (
             patch(
@@ -900,6 +903,113 @@ class TestProcessLocation:
         assert row["dpv_match_code"] == "Y"
         assert row["address_validated_at"] == old
         assert row["address_validation_attempted_at"] == old
+
+    # USPS answered HTTP 200 with a blank DPV ("no delivery-point determination").
+    # Deterministic per address — the same input gets the same answer every call
+    # (CannObserv/address-validator#250) — so it is an answer, not an outage (#187).
+    USPS_NO_DETERMINATION = {
+        "address_line_1": "301 E HARBOR AVE",
+        "city": "WESTPORT",
+        "region": "WA",
+        "postal_code": "98595",
+        "validation": {"status": "unavailable", "dpv_match_code": None, "provider": "usps"},
+        "warnings": [],
+    }
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_usps_no_determination_on_new_row_records_attempt(self, pg_conn):
+        """The row waits a full TTL instead of heading every backfill (#187)."""
+        loc_id = await get_or_create_location(pg_conn, "301 E HARBOR AVE, WESTPORT, WA 98595")
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.address_validator.validate",
+                return_value=self.USPS_NO_DETERMINATION,
+            ),
+        ):
+            outcome = await _process_location(
+                pg_conn, loc_id, "301 E HARBOR AVE, WESTPORT, WA 98595"
+            )
+        # An answer: it must not count toward the no-answer breaker.
+        assert outcome is LocationOutcome.RECORDED
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.validation_status,
+                        locations.c.dpv_match_code,
+                        locations.c.std_address_line_1,
+                        locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["validation_status"] == "unavailable"  # no prior status to keep
+        assert row["dpv_match_code"] is None
+        assert row["std_address_line_1"] == ""  # not a confirmation: no overlay
+        assert row["address_validated_at"] is None
+        assert row["address_validation_attempted_at"] is not None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_renewal_usps_no_determination_keeps_prior_status(self, pg_conn):
+        """Re-checking a confirmed row that now gets no determination keeps its
+        status, dpv and std_* (no new information) but records the attempt (#187)."""
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        loc_id = await get_or_create_location(pg_conn, "3 CONFIRMED WAY, SEATTLE, WA 98101")
+        old = datetime.now(UTC) - timedelta(days=200)
+        await pg_conn.execute(
+            update(locations)
+            .where(locations.c.id == loc_id)
+            .values(
+                std_address_line_1="3 CONFIRMED WAY",
+                validation_status="confirmed",
+                dpv_match_code="Y",
+                address_standardized_at=old,
+                address_validated_at=old,
+                address_validation_attempted_at=old,
+            )
+        )
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.address_validator.validate",
+                return_value=self.USPS_NO_DETERMINATION,
+            ),
+        ):
+            result = await process_location(pg_conn, loc_id, "3 CONFIRMED WAY, SEATTLE, WA 98101")
+        assert result is False
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.std_address_line_1,
+                        locations.c.validation_status,
+                        locations.c.dpv_match_code,
+                        locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["std_address_line_1"] == "3 CONFIRMED WAY"
+        assert row["validation_status"] == "confirmed"
+        assert row["dpv_match_code"] == "Y"
+        assert row["address_validated_at"] == old
+        assert row["address_validation_attempted_at"] > old
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
