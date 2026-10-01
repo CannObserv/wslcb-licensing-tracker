@@ -18,7 +18,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `std_country` — ISO 3166-1 alpha-2 country code (e.g., `US`); validated before storage; empty string if invalid
 - `std_region` — standardized state/region code from the address validator
 - `validated_address` — full single-line validated address string from the API (e.g., `1200 WESTLAKE AVE N  SEATTLE WA 98109`); NULL if not confirmed
-- `validation_status` — last `/validate` answer: `confirmed`, `confirmed_missing_secondary`, `confirmed_bad_secondary`, `not_confirmed`, `invalid`, or `not_found` (`standardized` after a standardize-only run); NULL if not yet validated. `unavailable` (USPS answered with no delivery-point determination) is written only when the row has no prior status; a re-check that gets it keeps the earlier status (#187)
+- `validation_status` — last `/validate` answer: `confirmed`, `confirmed_missing_secondary`, `confirmed_bad_secondary`, `not_confirmed`, `invalid`, `not_found`, or `undetermined` (`standardized` after a standardize-only run; legacy `unavailable` from before address-validator's contract v2); NULL if not yet validated. A no-determination answer (`undetermined`/`unavailable`) or a DPV-less (Google) confirmation of a USPS-confirmed row is written only when the row has no prior status; otherwise the earlier status is kept (#187)
 - `dpv_match_code` — USPS DPV match code (e.g., `Y` = confirmed, `S` = correctable, `D` = missing secondary, `N` = not confirmed); NULL if not yet validated
 - `latitude` — WGS84 latitude from the address validator; NULL if not confirmed
 - `longitude` — WGS84 longitude from the address validator; NULL if not confirmed
