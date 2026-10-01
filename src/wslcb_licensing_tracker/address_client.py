@@ -27,6 +27,13 @@ CONFIRMED_STATUSES = frozenset(
 # transient outage: those arrive as HTTP 429 + Retry-After or 5xx
 # (CannObserv/address-validator#250; #187 corrects #183's reading).
 UNAVAILABLE_STATUS = "unavailable"
+# Contract v2 (deployed 2026-09-30): no provider could determine the address —
+# USPS gave a blank DPV and the Google fallback found nothing either. A final
+# answer, cached upstream; 'unavailable' then means only "no provider
+# configured". A warning containing UNDETERMINED_RETRY_HINT means a fallback
+# provider was unreachable: not cached, retry on a later day.
+UNDETERMINED_STATUS = "undetermined"
+UNDETERMINED_RETRY_HINT = "a later retry may produce a determination"
 TIMEOUT = 15.0
 HTTP_OK = 200
 HTTP_TOO_MANY_REQUESTS = 429

@@ -294,16 +294,30 @@ Scheduling keys on `address_validation_attempted_at` (stamped on every *answered
 not_confirmed re-check is **non-destructive** — it leaves `std_*` and
 `address_validated_at` intact and simply records the attempt.
 
-Every HTTP 200 is an answer. That includes `unavailable` with a named provider,
-which is USPS's "no delivery-point determination" (a blank DPV): the same address
-gets the same answer on every call. It records the attempt and keeps any prior
-status/dpv (#187; CannObserv/address-validator#250).
+Every HTTP 200 is an answer, with three special cases (#187;
+CannObserv/address-validator#250, contract v2 deployed 2026-09-30):
 
-A call with **no answer** writes nothing, so the row is retried next run (#183):
+- **No determination.** `undetermined` means neither USPS nor the Google fallback
+  could place the address. Before v2 the same case arrived as `unavailable` with a
+  named provider. The same address gets the same answer on every call, so the
+  tracker records the attempt and keeps any prior status/dpv.
+- **Google-grade confirmation.** A `confirmed*` with no DPV code comes from Google,
+  which can alter the street, suite or ZIP (address-validator#258). It never
+  replaces a USPS confirmation; it only records the attempt. A row with no
+  USPS confirmation still takes it.
+- **Retry-later warning.** `undetermined` with the warning "a later retry may
+  produce a determination" means a fallback provider was unreachable. The tracker
+  writes nothing and retries next run, and this does **not** count toward the
+  breaker.
+
+A call with **no answer** writes nothing, so the row is retried next run, and it
+counts toward the breaker (#183):
 - a transport failure, or 429/5xx still failing after retries;
 - `unavailable` with no provider, meaning none is configured on the validator.
 
-Outages come back as HTTP errors, never as a 200 `unavailable`.
+Outages come back as HTTP errors, never as a 200 status. Among never-attempted
+rows the newest location goes first, so a fresh scrape's locations don't queue
+behind old rows that keep getting no answer.
 
 **Pacing + daily ceiling** keep us inside upstream limits (USPS 10K/day; a 429 falls
 over to Google at 160/day):

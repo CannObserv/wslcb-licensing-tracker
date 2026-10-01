@@ -1011,6 +1011,151 @@ class TestProcessLocation:
         assert row["address_validated_at"] == old
         assert row["address_validation_attempted_at"] > old
 
+    # address-validator contract v2 (CannObserv/address-validator#250, deployed
+    # 2026-09-30): nobody determined the address — a final answer, cached upstream.
+    UNDETERMINED = {
+        "address_line_1": "",
+        "validation": {"status": "undetermined", "dpv_match_code": None, "provider": "usps"},
+        "warnings": [],
+    }
+    # Same, but a fallback provider failed along the way: not cached, retry later.
+    UNDETERMINED_RETRYABLE = {
+        "address_line_1": "",
+        "validation": {"status": "undetermined", "dpv_match_code": None, "provider": "usps"},
+        "warnings": [
+            "Validation undetermined while a fallback provider was unreachable;"
+            " a later retry may produce a determination"
+        ],
+    }
+    # A Google-grade confirmation: no USPS DPV code, may have altered the street/ZIP
+    # (CannObserv/address-validator#258).
+    GOOGLE_CONFIRMED = {
+        "address_line_1": "19501",
+        "address_line_2": "",
+        "city": "Woodinville",
+        "region": "WA",
+        "postal_code": "98072-0000",
+        "country": "US",
+        "validated": "19501 Woodinville WA 98072-0000",
+        "latitude": 47.75,
+        "longitude": -122.16,
+        "validation": {"status": "confirmed", "dpv_match_code": None, "provider": "google"},
+        "warnings": ["One or more address components are unconfirmed"],
+    }
+
+    @staticmethod
+    async def _seed_usps_confirmed(conn, address, line_1):
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        loc_id = await get_or_create_location(conn, address)
+        old = datetime.now(UTC) - timedelta(days=200)
+        await conn.execute(
+            update(locations)
+            .where(locations.c.id == loc_id)
+            .values(
+                std_address_line_1=line_1,
+                std_city="WOODINVILLE",
+                validation_status="confirmed",
+                dpv_match_code="Y",
+                address_standardized_at=old,
+                address_validated_at=old,
+                address_validation_attempted_at=old,
+            )
+        )
+        return loc_id, old
+
+    async def _run(self, conn, loc_id, address, result):
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch("wslcb_licensing_tracker.address_validator.validate", return_value=result),
+        ):
+            return await _process_location(conn, loc_id, address)
+
+    async def _row(self, conn, loc_id):
+        return (
+            (
+                await conn.execute(
+                    select(
+                        locations.c.std_address_line_1,
+                        locations.c.std_city,
+                        locations.c.validation_status,
+                        locations.c.dpv_match_code,
+                        locations.c.address_validated_at,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_undetermined_on_renewal_keeps_prior_status(self, pg_conn):
+        """'undetermined' is an answer with nothing to replace a confirmation (#187)."""
+        addr = "5 KEEP WAY, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_usps_confirmed(pg_conn, addr, "5 KEEP WAY")
+        outcome = await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] == "confirmed"
+        assert row["dpv_match_code"] == "Y"
+        assert row["address_validated_at"] == old
+        assert row["address_validation_attempted_at"] > old
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_undetermined_on_new_row_records_status(self, pg_conn):
+        addr = "6 FRESH WAY, WOODINVILLE, WA 98072"
+        loc_id = await get_or_create_location(pg_conn, addr)
+        outcome = await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] == "undetermined"
+        assert row["address_validation_attempted_at"] is not None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_undetermined_with_retry_warning_writes_nothing(self, pg_conn):
+        """A fallback provider was unreachable: not final, so not stamped (#187)."""
+        addr = "7 LATER WAY, WOODINVILLE, WA 98072"
+        loc_id = await get_or_create_location(pg_conn, addr)
+        outcome = await self._run(pg_conn, loc_id, addr, self.UNDETERMINED_RETRYABLE)
+        assert outcome is LocationOutcome.RETRY_LATER
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] is None
+        assert row["address_validation_attempted_at"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_google_confirmation_never_replaces_usps_confirmation(self, pg_conn):
+        """A DPV-less confirmation must not overwrite a USPS-confirmed address
+        (CannObserv/address-validator#258); it only records the attempt."""
+        addr = "19501 & 19495 144TH AVE NE STE, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_usps_confirmed(pg_conn, addr, "19501 144TH AVE NE")
+        outcome = await self._run(pg_conn, loc_id, addr, self.GOOGLE_CONFIRMED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["std_address_line_1"] == "19501 144TH AVE NE"
+        assert row["std_city"] == "WOODINVILLE"
+        assert row["validation_status"] == "confirmed"
+        assert row["dpv_match_code"] == "Y"
+        assert row["address_validated_at"] == old
+        assert row["address_validation_attempted_at"] > old
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_google_confirmation_fills_a_never_confirmed_row(self, pg_conn):
+        """With no USPS confirmation to protect, a Google confirmation still lands."""
+        addr = "19502 NOWHERE AVE NE, WOODINVILLE, WA 98072"
+        loc_id = await get_or_create_location(pg_conn, addr)
+        outcome = await self._run(pg_conn, loc_id, addr, self.GOOGLE_CONFIRMED)
+        assert outcome is LocationOutcome.WRITTEN
+        row = await self._row(pg_conn, loc_id)
+        assert row["std_city"] == "Woodinville"
+        assert row["validation_status"] == "confirmed"
+        assert row["address_validated_at"] is not None
+
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "")
@@ -1222,6 +1367,18 @@ class TestValidateBatch:
                 result = await _validate_batch(conn, rows, "Flaky", rate_limit=0)
         assert result == 1
         assert mock_process.call_count == len(outcomes)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_retry_later_does_not_trip_the_breaker(self, pg_engine):
+        """The validator answered; only its fallback was out. Not an outage (#187)."""
+        rows = self._rows(MAX_CONSECUTIVE_NO_ANSWER + 5)
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                return_value=LocationOutcome.RETRY_LATER,
+            ) as mock_process:
+                await _validate_batch(conn, rows, "Fallback out", rate_limit=0)
+        assert mock_process.call_count == len(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1548,6 +1705,49 @@ class TestBackfillTTL:
                 .all()
             )
         assert all(a is None for a in attempted)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_never_attempted_newest_first(self, pg_engine):
+        """Among never-attempted rows the newest location goes first, so a fresh
+        scrape's locations are not queued behind old rows that keep getting no
+        answer (#187)."""
+        from sqlalchemy import func
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        async with pg_engine.connect() as conn:
+            used_before = (
+                await conn.execute(
+                    select(func.count())
+                    .select_from(locations)
+                    .where(locations.c.address_validation_attempted_at >= day_start)
+                )
+            ).scalar_one()
+            ids = [
+                await get_or_create_location(conn, f"{70 + i} QUEUE WAY, SEATTLE, WA 98107")
+                for i in range(3)
+            ]
+            await conn.commit()
+
+        processed, mock_process = self._capture()
+        async with pg_engine.connect() as conn:
+            with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                    return_value=True,
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.get_api_key",
+                    return_value="test-key",
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator._process_location",
+                    side_effect=mock_process,
+                ),
+            ):
+                await backfill_addresses(conn, rate_limit=0, daily_limit=used_before + 1)
+        assert processed == [max(ids)]
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_default_daily_limit_is_constant(self):

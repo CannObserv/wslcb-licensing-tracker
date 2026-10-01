@@ -29,6 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from .address_client import (
     CONFIRMED_STATUSES,
     UNAVAILABLE_STATUS,
+    UNDETERMINED_RETRY_HINT,
+    UNDETERMINED_STATUS,
     get_api_key,
     is_validation_enabled,
     standardize,
@@ -70,12 +72,17 @@ DAILY_VALIDATION_LIMIT = 5000
 MAX_CONSECUTIVE_NO_ANSWER = 10
 
 
+# Statuses meaning "no provider determined this address" (address-validator#250).
+NO_DETERMINATION_STATUSES = frozenset({UNAVAILABLE_STATUS, UNDETERMINED_STATUS})
+
+
 class LocationOutcome(Enum):
     """What processing one location did — drives _validate_batch's breaker (#183)."""
 
     WRITTEN = auto()  # standardized, or validation confirmed: std_* overlaid
     RECORDED = auto()  # provider answered without confirming: status + attempt stamped
     NO_ANSWER = auto()  # transport failure, 429/5xx, or no provider: nothing written
+    RETRY_LATER = auto()  # answered, but a fallback provider was out: nothing written
     FAILED = auto()  # empty address, standardize failure, or DB write error
 
 
@@ -145,27 +152,108 @@ async def standardize_location(
     return True
 
 
-async def _record_no_determination(
-    conn: AsyncConnection, location_id: int, now: datetime
-) -> LocationOutcome:
-    """Stamp the attempt for a provider's 'unavailable' answer, keeping prior status.
-
-    A NULL status becomes 'unavailable' so a never-answered row shows why it
-    has no confirmation; any earlier status and dpv stay (#187).
-    """
+async def _write(conn: AsyncConnection, location_id: int, values: dict) -> bool:
+    """UPDATE one location row; log and return False on a DB error."""
     try:
-        await conn.execute(
-            update(locations)
-            .where(locations.c.id == location_id)
-            .values(
-                validation_status=func.coalesce(locations.c.validation_status, UNAVAILABLE_STATUS),
-                address_validation_attempted_at=now,
-            )
-        )
+        await conn.execute(update(locations).where(locations.c.id == location_id).values(**values))
     except Exception:
         logger.exception("Failed to update location %d during validate", location_id)
-        return LocationOutcome.FAILED
-    return LocationOutcome.RECORDED
+        return False
+    return True
+
+
+async def _record_attempt(
+    conn: AsyncConnection, location_id: int, now: datetime, status_if_none: str
+) -> LocationOutcome:
+    """Stamp the attempt but keep the row's status, dpv and std_* (#187).
+
+    For an answer with nothing to replace what the row holds: a provider's
+    no-determination, or a DPV-less confirmation of a row USPS already
+    confirmed. A NULL status becomes *status_if_none*, so a never-answered row
+    shows why it has no confirmation.
+    """
+    ok = await _write(
+        conn,
+        location_id,
+        {
+            "validation_status": func.coalesce(locations.c.validation_status, status_if_none),
+            "address_validation_attempted_at": now,
+        },
+    )
+    return LocationOutcome.RECORDED if ok else LocationOutcome.FAILED
+
+
+async def _is_usps_confirmed(conn: AsyncConnection, location_id: int) -> bool:
+    """True if the row holds a confirmation that carried a USPS DPV code."""
+    row = (
+        await conn.execute(
+            select(locations.c.dpv_match_code, locations.c.address_validated_at).where(
+                locations.c.id == location_id
+            )
+        )
+    ).one_or_none()
+    return bool(row and row.dpv_match_code and row.address_validated_at)
+
+
+async def _apply_no_determination(
+    conn: AsyncConnection,
+    location_id: int,
+    validation: dict,
+    warnings: list,
+    now: datetime,
+) -> LocationOutcome:
+    """Handle 'unavailable' / 'undetermined' (CannObserv/address-validator#250)."""
+    status = validation.get("status", "")
+    provider = validation.get("provider")
+    if status == UNAVAILABLE_STATUS and not provider:
+        logger.info("Validator has no provider for location %d; left for retry", location_id)
+        return LocationOutcome.NO_ANSWER
+    if any(UNDETERMINED_RETRY_HINT in str(w) for w in warnings):
+        logger.info(
+            "Undetermined for location %d while a fallback was unreachable; left for retry",
+            location_id,
+        )
+        return LocationOutcome.RETRY_LATER
+    logger.info("No determination for location %d (%s, %s)", location_id, status, provider)
+    return await _record_attempt(conn, location_id, now, status)
+
+
+async def _apply_confirmation(
+    conn: AsyncConnection, location_id: int, result: dict, now: datetime
+) -> LocationOutcome:
+    """Overlay a confirmation — unless it lacks a DPV code and the row is USPS-confirmed.
+
+    A DPV-less (Google-grade) confirmation can alter the street, suite or ZIP
+    (CannObserv/address-validator#258), so it never replaces a USPS
+    confirmation; it fills a row that has none (#187).
+    """
+    validation = result.get("validation") or {}
+    status = validation.get("status", "")
+    dpv = validation.get("dpv_match_code")
+    if dpv is None and await _is_usps_confirmed(conn, location_id):
+        logger.info("Kept USPS confirmation of location %d over a DPV-less one", location_id)
+        return await _record_attempt(conn, location_id, now, status)
+    ok = await _write(
+        conn,
+        location_id,
+        {
+            "std_address_line_1": result.get("address_line_1", ""),
+            "std_address_line_2": result.get("address_line_2", ""),
+            "std_city": result.get("city", ""),
+            "std_region": result.get("region", ""),
+            "std_postal_code": result.get("postal_code", ""),
+            "std_country": _sanitize_country(result.get("country", "")),
+            "std_address_string": result.get("validated"),
+            "validation_status": status,
+            "dpv_match_code": dpv,
+            "latitude": result.get("latitude"),
+            "longitude": result.get("longitude"),
+            "address_standardized_at": now,
+            "address_validated_at": now,
+            "address_validation_attempted_at": now,
+        },
+    )
+    return LocationOutcome.WRITTEN if ok else LocationOutcome.FAILED
 
 
 async def _validate_and_write(
@@ -179,15 +267,18 @@ async def _validate_and_write(
     * confirmed — overlays std_* columns, validation_status, dpv_match_code,
       latitude, longitude, and sets address_standardized_at,
       address_validated_at and address_validation_attempted_at → WRITTEN.
+      A confirmation without a DPV code (Google-grade) does not overlay a row
+      USPS already confirmed; it only stamps the attempt (#187) → RECORDED.
     * any other answer (not_confirmed, invalid, not_found) — writes
       validation_status, dpv_match_code and address_validation_attempted_at
       only; std_* and address_validated_at are left intact so a failed
       re-check never degrades a prior confirmation (#150) → RECORDED.
-    * 'unavailable' from a named provider (USPS 200 with a blank DPV: "no
-      delivery-point determination") — an answer, deterministic per address
-      (CannObserv/address-validator#250): stamps address_validation_attempted_at
-      so the row waits a full TTL, and keeps any prior status/dpv, which it
-      carries no new information to replace (#187) → RECORDED.
+    * no determination — 'undetermined', or 'unavailable' from a named
+      provider (pre-v2 USPS blank DPV) — an answer, deterministic per address
+      (CannObserv/address-validator#250): stamps the attempt so the row waits a
+      full TTL and keeps any prior status/dpv (#187) → RECORDED. With the
+      "later retry may produce a determination" warning a fallback provider
+      was out: writes nothing → RETRY_LATER.
     * no answer (transport failure or 429/5xx after retries → None, or
       'unavailable' with no provider: none configured on the validator) —
       writes nothing, so the row is retried next run (#183) → NO_ANSWER.
@@ -205,58 +296,25 @@ async def _validate_and_write(
     status = validation.get("status", "")
     now = datetime.now(UTC)
 
-    if status == UNAVAILABLE_STATUS:
-        provider = validation.get("provider")
-        if not provider:
-            logger.info("Validator has no provider for location %d; left for retry", location_id)
-            return LocationOutcome.NO_ANSWER
-        logger.info("No delivery-point determination for location %d (%s)", location_id, provider)
-        return await _record_no_determination(conn, location_id, now)
-
-    dpv = validation.get("dpv_match_code")
+    if status in NO_DETERMINATION_STATUSES:
+        warnings = result.get("warnings") or []
+        return await _apply_no_determination(conn, location_id, validation, warnings, now)
     # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
-    has_address = status in CONFIRMED_STATUSES
+    if status in CONFIRMED_STATUSES:
+        return await _apply_confirmation(conn, location_id, result, now)
 
-    try:
-        if has_address:
-            await conn.execute(
-                update(locations)
-                .where(locations.c.id == location_id)
-                .values(
-                    std_address_line_1=result.get("address_line_1", ""),
-                    std_address_line_2=result.get("address_line_2", ""),
-                    std_city=result.get("city", ""),
-                    std_region=result.get("region", ""),
-                    std_postal_code=result.get("postal_code", ""),
-                    std_country=_sanitize_country(result.get("country", "")),
-                    std_address_string=result.get("validated"),
-                    validation_status=status,
-                    dpv_match_code=dpv,
-                    latitude=result.get("latitude"),
-                    longitude=result.get("longitude"),
-                    address_standardized_at=now,
-                    address_validated_at=now,
-                    address_validation_attempted_at=now,
-                )
-            )
-            return LocationOutcome.WRITTEN
-
-        # Answered but not confirmed — record the attempt and status, but leave
-        # std_* and address_validated_at intact (non-destructive; #150).
-        await conn.execute(
-            update(locations)
-            .where(locations.c.id == location_id)
-            .values(
-                validation_status=status,
-                dpv_match_code=dpv,
-                address_validation_attempted_at=now,
-            )
-        )
-    except Exception:
-        logger.exception("Failed to update location %d during validate", location_id)
-        return LocationOutcome.FAILED
-
-    return LocationOutcome.RECORDED
+    # Answered but not confirmed — record the attempt and status, but leave
+    # std_* and address_validated_at intact (non-destructive; #150).
+    ok = await _write(
+        conn,
+        location_id,
+        {
+            "validation_status": status,
+            "dpv_match_code": validation.get("dpv_match_code"),
+            "address_validation_attempted_at": now,
+        },
+    )
+    return LocationOutcome.RECORDED if ok else LocationOutcome.FAILED
 
 
 async def validate_location(
@@ -547,7 +605,12 @@ async def backfill_addresses(
                 (locations.c.address_validation_attempted_at.is_(None))
                 | (locations.c.address_validation_attempted_at < ttl_cutoff)
             )
-            .order_by(locations.c.address_validation_attempted_at.asc().nulls_first())
+            # Newest first among never-attempted rows: a fresh scrape's locations
+            # don't queue behind old rows that keep getting no answer (#187).
+            .order_by(
+                locations.c.address_validation_attempted_at.asc().nulls_first(),
+                locations.c.id.desc(),
+            )
             .limit(budget)
         )
 
