@@ -31,6 +31,7 @@ from .address_client import (
     UNAVAILABLE_STATUS,
     UNDETERMINED_RETRY_HINT,
     UNDETERMINED_STATUS,
+    QuotaExhaustedError,
     get_api_key,
     is_validation_enabled,
     standardize,
@@ -69,6 +70,8 @@ DAILY_VALIDATION_LIMIT = 5000
 # so 10 in a row means the validator or its providers are down. It trips after 10 rows —
 # at most 10 x MAX_RETRIES = 30 HTTP attempts, ~8.5 min with 15s timeouts plus
 # backoff — instead of spending the whole batch against a provider that is down.
+# A daily quota that is out needs no breaker: its 429 carries a Retry-After past
+# MAX_RETRY_AFTER, and the batch stops on the first one (QuotaExhaustedError; #187).
 MAX_CONSECUTIVE_NO_ANSWER = 10
 
 
@@ -122,6 +125,8 @@ async def standardize_location(
 
     try:
         result = await standardize(raw_address, client, log_ref=location_id)
+    except QuotaExhaustedError:
+        raise  # the batch decides to stop (#187)
     except Exception:
         logger.exception("Standardize failed for location %d", location_id)
         return False
@@ -282,9 +287,13 @@ async def _validate_and_write(
     * no answer (transport failure or 429/5xx after retries → None, or
       'unavailable' with no provider: none configured on the validator) —
       writes nothing, so the row is retried next run (#183) → NO_ANSWER.
+    * daily quota out (Retry-After past MAX_RETRY_AFTER) — writes nothing
+      and raises QuotaExhaustedError so the batch stops (#187).
     """
     try:
         result = await validate(raw_address, client, log_ref=location_id)
+    except QuotaExhaustedError:
+        raise  # the batch decides to stop (#187)
     except Exception:
         logger.exception("Validate failed for location %d", location_id)
         result = None
@@ -463,6 +472,26 @@ async def validate_previous_location(
     return await _validate_record_location(conn, record_id, "previous_location_id", client)
 
 
+async def _recover_outer_transaction(conn: AsyncConnection, exc: Exception) -> bool:
+    """Roll back an aborted outer transaction after a row error.
+
+    If the outer transaction entered an aborted state (e.g.
+    InFailedSQLTransactionError), begin_nested() itself fails on every
+    subsequent row, so roll back to a clean transaction. Returns False when the
+    rollback also fails and the batch must abort.
+    """
+    orig = getattr(exc, "orig", exc.__cause__)
+    if orig is None or "InFailedSQLTransaction" not in str(orig):
+        return True
+    logger.warning("Outer transaction aborted; rolling back to recover")
+    try:
+        await conn.rollback()
+    except Exception:
+        logger.exception("Rollback failed; aborting batch")
+        return False
+    return True
+
+
 async def _validate_batch(
     conn: AsyncConnection,
     rows: list,
@@ -478,7 +507,9 @@ async def _validate_batch(
     Wraps each row in a savepoint so a single DB failure does not poison the
     batch.  Commits every *batch_size* rows to flush progress incrementally.
     Stops early after MAX_CONSECUTIVE_NO_ANSWER consecutive rows get no
-    provider answer (#183); those rows stay unstamped for the next run.
+    provider answer (#183), or at once when the validator reports a daily
+    quota out (QuotaExhaustedError; #187); untried rows stay unstamped for the
+    next run.
 
     Returns:
         Number of locations successfully processed.
@@ -503,20 +534,19 @@ async def _validate_batch(
             if outcome is LocationOutcome.WRITTEN:
                 succeeded += 1
             no_answer_streak = no_answer_streak + 1 if outcome is LocationOutcome.NO_ANSWER else 0
+        except QuotaExhaustedError as exc:
+            logger.warning(
+                "Stopping: validator asked to wait %.0fs (daily provider quota out);"
+                " %d left for the next run",
+                exc.retry_after,
+                total - attempted + 1,
+            )
+            break
         except Exception as exc:  # noqa: BLE001 — intentionally broad; savepoint isolates damage
             logger.warning("Savepoint rollback for location %d", location_id, exc_info=True)
             errors += 1
-            # If the outer transaction entered an aborted state (e.g. InFailedSQLTransactionError),
-            # begin_nested() itself will fail on every subsequent row.  Rollback to recover a clean
-            # transaction before continuing; break if the rollback also fails.
-            orig = getattr(exc, "orig", exc.__cause__)
-            if orig is not None and "InFailedSQLTransaction" in str(orig):
-                logger.warning("Outer transaction aborted; rolling back to recover")
-                try:
-                    await conn.rollback()
-                except Exception:
-                    logger.exception("Rollback failed; aborting batch")
-                    break
+            if not await _recover_outer_transaction(conn, exc):
+                break
 
         if no_answer_streak >= MAX_CONSECUTIVE_NO_ANSWER:
             logger.warning(
