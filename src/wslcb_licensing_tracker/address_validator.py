@@ -347,6 +347,10 @@ async def validate_location(
 
     Returns:
         True if address_validated_at was set (confirmed/corrected), False otherwise.
+
+    Raises:
+        QuotaExhaustedError: the validator asked for a wait past
+            MAX_RETRY_AFTER (a daily provider quota is out); nothing is written.
     """
     if not is_validation_enabled():
         return False
@@ -402,6 +406,8 @@ async def process_location(
     Does NOT commit — the caller is responsible for committing.
 
     Returns True if the location was successfully processed, False otherwise.
+    Raises QuotaExhaustedError, writing nothing, when the validator asks for a
+    wait past MAX_RETRY_AFTER: a daily provider quota is out (#187).
     """
     outcome = await _process_location(conn, location_id, raw_address, client)
     return outcome is LocationOutcome.WRITTEN
@@ -421,6 +427,7 @@ async def _validate_record_location(
     Skips if the location is already fully processed for the current config.
 
     Returns True if the location was already processed or standardization succeeded.
+    Raises QuotaExhaustedError as :func:`process_location` does.
     """
     col = getattr(license_records.c, fk_column)
     row = (
@@ -459,7 +466,10 @@ async def validate_record(
     record_id: int,
     client: httpx.AsyncClient | None = None,
 ) -> bool:
-    """Standardize (and optionally validate) the primary location for a license record."""
+    """Standardize (and optionally validate) the primary location for a license record.
+
+    Raises QuotaExhaustedError as :func:`process_location` does.
+    """
     return await _validate_record_location(conn, record_id, "location_id", client)
 
 
@@ -468,7 +478,10 @@ async def validate_previous_location(
     record_id: int,
     client: httpx.AsyncClient | None = None,
 ) -> bool:
-    """Standardize (and optionally validate) the previous location for a CHANGE OF LOCATION record."""  # noqa: E501
+    """Standardize (and optionally validate) a CHANGE OF LOCATION record's previous location.
+
+    Raises QuotaExhaustedError as :func:`process_location` does.
+    """
     return await _validate_record_location(conn, record_id, "previous_location_id", client)
 
 
