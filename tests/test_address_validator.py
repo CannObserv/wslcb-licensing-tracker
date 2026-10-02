@@ -306,6 +306,12 @@ class TestParseRetryAfter:
         response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3600"})
         assert _parse_retry_after(response) == 3600.0
 
+    @pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "1e400"])
+    def test_non_finite_header_returns_default(self, raw):
+        # asyncio.sleep(nan) never returns: one bad header would hang the backfill.
+        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": raw})
+        assert _parse_retry_after(response) == DEFAULT_RETRY_AFTER
+
     def test_value_at_cap_is_returned_unchanged(self):
         response = httpx.Response(
             HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": str(MAX_RETRY_AFTER)}
