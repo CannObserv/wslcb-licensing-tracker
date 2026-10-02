@@ -101,7 +101,7 @@ def _upper(value: str | None) -> str | None:
 
 
 def _std_columns(result: dict, string_key: str) -> dict:
-    """Map an /standardize or /validate result onto the std_* columns, uppercased.
+    """Map a /standardize or /validate result onto the std_* columns, uppercased.
 
     USPS answers arrive uppercase (Pub 28); Google-grade ones arrive mixed case
     (CannObserv/address-validator#263), which split the city filter in two
@@ -130,8 +130,8 @@ async def standardize_location(
     Always runs regardless of the ENABLE_ADDRESS_VALIDATION flag.
 
     On success writes std_address_line_1/2, std_city, std_region,
-    std_postal_code, std_country, std_address_string, validation_status
-    (set to "standardized"), and address_standardized_at.
+    std_postal_code, std_country, std_address_string (all uppercased; #188),
+    validation_status (set to "standardized"), and address_standardized_at.
 
     Does NOT commit — the caller is responsible for committing.
     Returns False if raw_address is empty/None or the API call fails.
