@@ -315,6 +315,10 @@ counts toward the breaker (#183):
 - a transport failure, or 429/5xx still failing after retries;
 - `unavailable` with no provider, meaning none is configured on the validator.
 
+A 429 or 5xx whose `Retry-After` is over 60s means a daily provider quota is out
+(Google's resets at midnight Pacific; address-validator#270). The run stops on the
+first one, writes nothing for that row, and leaves the rest for the next run (#187).
+
 Outages come back as HTTP errors, never as a 200 status. Among never-attempted
 rows the newest location goes first, so a fresh scrape's locations don't queue
 behind old rows that keep getting no answer.

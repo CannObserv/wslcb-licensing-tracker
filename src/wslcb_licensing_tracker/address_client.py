@@ -50,12 +50,29 @@ RETRYABLE_STATUSES = frozenset(
     }
 )
 DEFAULT_RETRY_AFTER = 2.0
-# Upper bound on any single retry sleep. Bounds an adversarial or buggy
-# Retry-After header (and its backoff-multiplied product) so no single retry
-# sleep exceeds 60s — worst-case ~120s total, since only MAX_RETRIES - 1 sleeps
-# happen (none after the final attempt; #183). See issue #118.
+# Upper bound on any single retry sleep — worst-case ~120s total, since only
+# MAX_RETRIES - 1 sleeps happen (none after the final attempt; #183, #118).
+# A Retry-After above it is not slept on: the validator sends the time until a
+# provider holds a token again, so a value past 60s means a daily quota is out
+# (Google's runs to midnight Pacific) and the client raises QuotaExhaustedError
+# instead (#187; CannObserv/address-validator#270).
 MAX_RETRY_AFTER = 60.0
 MAX_RETRIES = 3
+
+
+class QuotaExhaustedError(Exception):
+    """The validator asked for a wait longer than MAX_RETRY_AFTER (#187).
+
+    No retry within the cap can succeed, so batch callers stop rather than
+    spend their remaining rows on refusals. ``retry_after`` is the requested
+    wait in seconds.
+    """
+
+    def __init__(self, retry_after: float) -> None:
+        """Record *retry_after*, the wait in seconds the validator asked for."""
+        super().__init__(f"Retry-After {retry_after:.0f}s exceeds the {MAX_RETRY_AFTER:.0f}s cap")
+        self.retry_after = retry_after
+
 
 # Shared connection pool for all address validation HTTP calls.
 # httpx.AsyncClient binds to the event loop lazily (on first request), so
@@ -87,11 +104,11 @@ def is_validation_enabled() -> bool:
 
 
 def _parse_retry_after(response: httpx.Response) -> float:
-    """Extract Retry-After seconds from a response, clamped to [0.5, MAX_RETRY_AFTER].
+    """Extract Retry-After seconds from a response, floored at 0.5.
 
-    Falls back to DEFAULT_RETRY_AFTER on a missing/unparseable header. A value
-    above MAX_RETRY_AFTER is clamped and logged — a Retry-After that large
-    signals a misbehaving upstream, not a transient blip.
+    Falls back to DEFAULT_RETRY_AFTER on a missing/unparseable header. Not
+    capped: the caller treats a value above MAX_RETRY_AFTER as a quota that is
+    out, not a wait (#187).
     """
     raw = response.headers.get("Retry-After", "")
     try:
@@ -99,17 +116,9 @@ def _parse_retry_after(response: httpx.Response) -> float:
         # ("Wed, 21 Oct 2015 07:28:00 GMT") is intentionally treated as
         # unparseable and falls back to DEFAULT_RETRY_AFTER — our validator
         # emits numeric values, and the fallback degrades safely (2s, not a stall).
-        parsed = max(float(raw), 0.5)
+        return max(float(raw), 0.5)
     except (ValueError, TypeError):
         return DEFAULT_RETRY_AFTER
-    if parsed > MAX_RETRY_AFTER:
-        logger.warning(
-            "Retry-After %.1fs exceeds cap; clamping to %.1fs (possible service issue)",
-            parsed,
-            MAX_RETRY_AFTER,
-        )
-        return MAX_RETRY_AFTER
-    return parsed
 
 
 async def _post_with_retry(
@@ -127,6 +136,9 @@ async def _post_with_retry(
     subsequent retry and capped at MAX_RETRY_AFTER; never sleeps after the
     final attempt.  Returns the first non-retryable Response, or None if all
     attempts are exhausted or a non-transient error occurs.
+
+    Raises QuotaExhaustedError, without sleeping or retrying, when a retryable
+    response asks for more than MAX_RETRY_AFTER seconds (#187).
     """
     backoff_multiplier = 1.0
     for attempt in range(1, MAX_RETRIES + 1):
@@ -145,7 +157,10 @@ async def _post_with_retry(
             if response.status_code not in RETRYABLE_STATUSES:
                 return response
             reason = f"HTTP {response.status_code}"
-            wait = _parse_retry_after(response) * backoff_multiplier
+            retry_after = _parse_retry_after(response)
+            if retry_after > MAX_RETRY_AFTER:
+                raise QuotaExhaustedError(retry_after)
+            wait = retry_after * backoff_multiplier
 
         if attempt == MAX_RETRIES:
             logger.warning(
@@ -222,7 +237,8 @@ async def standardize(
 
     Retries transient failures with exponential backoff (see _post_with_retry).
     *log_ref* identifies the address in log lines in place of the address.
-    Returns a dict on success, or None on any failure.
+    Returns a dict on success, or None on any failure. Raises
+    QuotaExhaustedError when the service asks for a wait past MAX_RETRY_AFTER.
     """
     return await _call_endpoint("standardize", address, client, "address standardize", log_ref)
 
@@ -242,5 +258,7 @@ async def validate(
     Returns a dict on success, or None on any failure.
     A 200 response with validation.status='not_confirmed' or 'unavailable'
     is returned as a dict (not None) — the caller decides how to handle it.
+    Raises QuotaExhaustedError when the service asks for a wait past
+    MAX_RETRY_AFTER: a daily provider quota is out (#187).
     """
     return await _call_endpoint("validate", address, client, "address validation", log_ref)
