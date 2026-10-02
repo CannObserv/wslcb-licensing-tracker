@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
 
 import httpx
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .address_client import (
@@ -187,20 +187,27 @@ async def _write(conn: AsyncConnection, location_id: int, values: dict) -> bool:
 
 
 async def _record_attempt(
-    conn: AsyncConnection, location_id: int, now: datetime, status_if_none: str
+    conn: AsyncConnection,
+    location_id: int,
+    now: datetime,
+    status_if_none: str,
+    replaces: frozenset[str] = frozenset(),
 ) -> LocationOutcome:
     """Stamp the attempt but keep the row's status, dpv and std_* (#187).
 
     For an answer with nothing to replace what the row holds: a provider's
     no-determination, or a DPV-less confirmation of a row USPS already
-    confirmed. A NULL status becomes *status_if_none*, so a never-answered row
-    shows why it has no confirmation.
+    confirmed. A NULL status — or one in *replaces* — becomes *status_if_none*,
+    so a never-answered row shows why it has no confirmation.
     """
+    current = locations.c.validation_status
     ok = await _write(
         conn,
         location_id,
         {
-            "validation_status": func.coalesce(locations.c.validation_status, status_if_none),
+            "validation_status": case(
+                (current.is_(None) | current.in_(replaces), status_if_none), else_=current
+            ),
             "address_validation_attempted_at": now,
         },
     )
@@ -208,15 +215,26 @@ async def _record_attempt(
 
 
 async def _is_usps_confirmed(conn: AsyncConnection, location_id: int) -> bool:
-    """True if the row holds a confirmation that carried a USPS DPV code."""
+    """True if the row's std_* come from a confirmation not known to be DPV-less.
+
+    Keys on address_validated_at, not the DPV code: a later non-confirming
+    answer (pre-#183 transient stamping, a DPV-less invalid/not_found) clears
+    dpv_match_code but keeps the confirmed std_*. Only a confirmed status with
+    no DPV code marks a Google-grade confirmation, which has nothing to protect
+    (#189).
+    """
     row = (
         await conn.execute(
-            select(locations.c.dpv_match_code, locations.c.address_validated_at).where(
-                locations.c.id == location_id
-            )
+            select(
+                locations.c.validation_status,
+                locations.c.dpv_match_code,
+                locations.c.address_validated_at,
+            ).where(locations.c.id == location_id)
         )
     ).one_or_none()
-    return bool(row and row.dpv_match_code and row.address_validated_at)
+    if not (row and row.address_validated_at):
+        return False
+    return bool(row.dpv_match_code) or row.validation_status not in CONFIRMED_STATUSES
 
 
 async def _apply_no_determination(
@@ -239,7 +257,9 @@ async def _apply_no_determination(
         )
         return LocationOutcome.RETRY_LATER
     logger.info("No determination for location %d (%s, %s)", location_id, status, provider)
-    return await _record_attempt(conn, location_id, now, status)
+    # A no-determination status gives way to the newer one, so pre-v2 USPS
+    # 'unavailable' rows take 'undetermined' (#189); real answers are kept.
+    return await _record_attempt(conn, location_id, now, status, NO_DETERMINATION_STATUSES)
 
 
 async def _apply_confirmation(
@@ -294,7 +314,8 @@ async def _validate_and_write(
     * no determination — 'undetermined', or 'unavailable' from a named
       provider (pre-v2 USPS blank DPV) — an answer, deterministic per address
       (CannObserv/address-validator#250): stamps the attempt so the row waits a
-      full TTL and keeps any prior status/dpv (#187) → RECORDED. With the
+      full TTL and keeps any prior status/dpv (#187), save that a prior
+      no-determination status takes the new one (#189) → RECORDED. With the
       "later retry may produce a determination" warning a fallback provider
       was out: writes nothing → RETRY_LATER.
     * no answer (transport failure or 429/5xx after retries → None, or

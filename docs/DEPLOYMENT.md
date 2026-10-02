@@ -300,11 +300,14 @@ CannObserv/address-validator#250, contract v2 deployed 2026-09-30):
 - **No determination.** `undetermined` means neither USPS nor the Google fallback
   could place the address. Before v2 the same case arrived as `unavailable` with a
   named provider. The same address gets the same answer on every call, so the
-  tracker records the attempt and keeps any prior status/dpv.
+  tracker records the attempt and keeps any prior status/dpv. A prior legacy
+  `unavailable` status gives way to `undetermined` (#189).
 - **Google-grade confirmation.** A `confirmed*` with no DPV code comes from Google,
   which can alter the street, suite or ZIP (address-validator#258). It never
   replaces a USPS confirmation; it only records the attempt. A row with no
-  USPS confirmation still takes it.
+  USPS confirmation still takes it. A row counts as USPS-confirmed when
+  `address_validated_at` is set, even if a later `invalid`/`not_found` answer
+  cleared its DPV code; only a DPV-less `confirmed*` row does not (#189).
 - **Retry-later warning.** `undetermined` with the warning "a later retry may
   produce a determination" means a fallback provider was unreachable. The tracker
   writes nothing and retries next run, and this does **not** count toward the
