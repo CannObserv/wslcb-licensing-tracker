@@ -10,6 +10,7 @@ Split from address_validator.py (#141).
 
 import asyncio
 import logging
+import math
 import os
 
 import httpx
@@ -65,13 +66,18 @@ class QuotaExhaustedError(Exception):
 
     No retry within the cap can succeed, so batch callers stop rather than
     spend their remaining rows on refusals. ``retry_after`` is the requested
-    wait in seconds.
+    wait in seconds; ``status`` the HTTP status that carried it. A 429 past the
+    cap is a daily provider quota out (address-validator#270); a 5xx past it is
+    whatever the server says it is.
     """
 
-    def __init__(self, retry_after: float) -> None:
-        """Record *retry_after*, the wait in seconds the validator asked for."""
-        super().__init__(f"Retry-After {retry_after:.0f}s exceeds the {MAX_RETRY_AFTER:.0f}s cap")
+    def __init__(self, retry_after: float, status: int) -> None:
+        """Record the requested wait (seconds) and the status that carried it."""
+        super().__init__(
+            f"HTTP {status} Retry-After {retry_after:.0f}s exceeds the {MAX_RETRY_AFTER:.0f}s cap"
+        )
         self.retry_after = retry_after
+        self.status = status
 
 
 # Shared connection pool for all address validation HTTP calls.
@@ -106,9 +112,9 @@ def is_validation_enabled() -> bool:
 def _parse_retry_after(response: httpx.Response) -> float:
     """Extract Retry-After seconds from a response, floored at 0.5.
 
-    Falls back to DEFAULT_RETRY_AFTER on a missing/unparseable header. Not
-    capped: the caller treats a value above MAX_RETRY_AFTER as a quota that is
-    out, not a wait (#187).
+    Falls back to DEFAULT_RETRY_AFTER on a missing, unparseable or non-finite
+    header (asyncio.sleep(nan) never returns). Not capped: the caller treats a
+    value above MAX_RETRY_AFTER as a quota that is out, not a wait (#187).
     """
     raw = response.headers.get("Retry-After", "")
     try:
@@ -116,9 +122,12 @@ def _parse_retry_after(response: httpx.Response) -> float:
         # ("Wed, 21 Oct 2015 07:28:00 GMT") is intentionally treated as
         # unparseable and falls back to DEFAULT_RETRY_AFTER — our validator
         # emits numeric values, and the fallback degrades safely (2s, not a stall).
-        return max(float(raw), 0.5)
+        parsed = float(raw)
     except (ValueError, TypeError):
         return DEFAULT_RETRY_AFTER
+    if not math.isfinite(parsed):
+        return DEFAULT_RETRY_AFTER
+    return max(parsed, 0.5)
 
 
 async def _post_with_retry(
@@ -159,7 +168,7 @@ async def _post_with_retry(
             reason = f"HTTP {response.status_code}"
             retry_after = _parse_retry_after(response)
             if retry_after > MAX_RETRY_AFTER:
-                raise QuotaExhaustedError(retry_after)
+                raise QuotaExhaustedError(retry_after, response.status_code)
             wait = retry_after * backoff_multiplier
 
         if attempt == MAX_RETRIES:
