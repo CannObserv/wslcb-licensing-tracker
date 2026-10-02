@@ -95,6 +95,30 @@ def _sanitize_country(raw: str) -> str:
     return raw if (len(raw) == ISO_ALPHA2_LEN and raw.isalpha() and raw.isascii()) else ""
 
 
+def _upper(value: str | None) -> str | None:
+    """Uppercase *value*, passing None through (a NULL column stays NULL)."""
+    return value.upper() if value is not None else None
+
+
+def _std_columns(result: dict, string_key: str) -> dict:
+    """Map an /standardize or /validate result onto the std_* columns, uppercased.
+
+    USPS answers arrive uppercase (Pub 28); Google-grade ones arrive mixed case
+    (CannObserv/address-validator#263), which split the city filter in two
+    (#188). Uppercasing here keeps one spelling whichever provider answered.
+    *string_key* names the full-address field: "standardized" or "validated".
+    """
+    return {
+        "std_address_line_1": _upper(result.get("address_line_1", "")),
+        "std_address_line_2": _upper(result.get("address_line_2", "")),
+        "std_city": _upper(result.get("city", "")),
+        "std_region": _upper(result.get("region", "")),
+        "std_postal_code": _upper(result.get("postal_code", "")),
+        "std_country": _sanitize_country(_upper(result.get("country", "")) or ""),
+        "std_address_string": _upper(result.get(string_key)),
+    }
+
+
 async def standardize_location(
     conn: AsyncConnection,
     location_id: int,
@@ -140,13 +164,7 @@ async def standardize_location(
             update(locations)
             .where(locations.c.id == location_id)
             .values(
-                std_address_line_1=result.get("address_line_1", ""),
-                std_address_line_2=result.get("address_line_2", ""),
-                std_city=result.get("city", ""),
-                std_region=result.get("region", ""),
-                std_postal_code=result.get("postal_code", ""),
-                std_country=_sanitize_country(result.get("country", "")),
-                std_address_string=result.get("standardized"),
+                **_std_columns(result, "standardized"),
                 validation_status="standardized",
                 address_standardized_at=datetime.now(UTC),
             )
@@ -243,13 +261,7 @@ async def _apply_confirmation(
         conn,
         location_id,
         {
-            "std_address_line_1": result.get("address_line_1", ""),
-            "std_address_line_2": result.get("address_line_2", ""),
-            "std_city": result.get("city", ""),
-            "std_region": result.get("region", ""),
-            "std_postal_code": result.get("postal_code", ""),
-            "std_country": _sanitize_country(result.get("country", "")),
-            "std_address_string": result.get("validated"),
+            **_std_columns(result, "validated"),
             "validation_status": status,
             "dpv_match_code": dpv,
             "latitude": result.get("latitude"),

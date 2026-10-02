@@ -12,6 +12,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `std_address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`); empty string if none
 - `std_address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); NULL if none (migration 0004; older rows may have empty string)
 - `std_city` — standardized city name from the address validator
+- All `std_*` text (and `std_address_string`) is stored uppercase whichever provider answered — Google-grade answers arrive mixed case and split the city filter (#188); rows written before it are fixed by the one-off backfill tracked on #188
 - `std_state` — standardized 2-letter state code
 - `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
 - `std_postal_code` — standardized postal code from `/api/v1/validate`
