@@ -1289,6 +1289,101 @@ class TestProcessLocation:
         assert row["validation_status"] == "confirmed"
         assert row["address_validated_at"] is not None
 
+    @staticmethod
+    async def _seed_dpv_cleared(conn, address, line_1, status):
+        """A once-confirmed row whose DPV code a later non-confirming answer cleared.
+
+        Pre-#183 transient stamping and DPV-less invalid/not_found re-checks both
+        write dpv_match_code NULL but keep address_validated_at and std_* (#189).
+        """
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.address_validator import UTC, datetime
+
+        loc_id = await get_or_create_location(conn, address)
+        old = datetime.now(UTC) - timedelta(days=200)
+        await conn.execute(
+            update(locations)
+            .where(locations.c.id == loc_id)
+            .values(
+                std_address_line_1=line_1,
+                std_city="WOODINVILLE",
+                validation_status=status,
+                dpv_match_code=None,
+                address_standardized_at=old,
+                address_validated_at=old,
+                address_validation_attempted_at=old,
+            )
+        )
+        return loc_id, old
+
+    @pytest.mark.parametrize("status", ["unavailable", "invalid", "not_found", "not_confirmed"])
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_google_confirmation_keeps_std_whose_dpv_was_cleared(self, pg_conn, status):
+        """Losing the DPV code must not lose the guard: the std_* came from a
+        confirmation, so a DPV-less answer only records the attempt (#189)."""
+        addr = f"8 CLEARED WAY {status.upper()}, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_dpv_cleared(pg_conn, addr, "8 CLEARED WAY", status)
+        outcome = await self._run(pg_conn, loc_id, addr, self.GOOGLE_CONFIRMED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["std_address_line_1"] == "8 CLEARED WAY"
+        assert row["validation_status"] == status
+        assert row["dpv_match_code"] is None
+        assert row["address_validated_at"] == old
+        assert row["address_validation_attempted_at"] > old
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_google_confirmation_replaces_a_google_confirmation(self, pg_conn):
+        """A DPV-less confirmed row has nothing USPS to protect (#189)."""
+        addr = "9 GOOGLE WAY, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_dpv_cleared(pg_conn, addr, "9 GOOGLE WAY", "confirmed")
+        outcome = await self._run(pg_conn, loc_id, addr, self.GOOGLE_CONFIRMED)
+        assert outcome is LocationOutcome.WRITTEN
+        row = await self._row(pg_conn, loc_id)
+        assert row["std_address_line_1"] == "19501"
+        assert row["address_validated_at"] > old
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_usps_confirmation_replaces_a_dpv_cleared_row(self, pg_conn):
+        """The guard only stops DPV-less answers; a USPS DPV answer always lands."""
+        addr = "10 USPS WAY, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_dpv_cleared(pg_conn, addr, "10 OLD WAY", "unavailable")
+        usps = {
+            **self.GOOGLE_CONFIRMED,
+            "address_line_1": "10 USPS WAY",
+            "validation": {"status": "confirmed", "dpv_match_code": "Y", "provider": "usps"},
+        }
+        outcome = await self._run(pg_conn, loc_id, addr, usps)
+        assert outcome is LocationOutcome.WRITTEN
+        row = await self._row(pg_conn, loc_id)
+        assert row["std_address_line_1"] == "10 USPS WAY"
+        assert row["validation_status"] == "confirmed"
+        assert row["dpv_match_code"] == "Y"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_undetermined_replaces_legacy_unavailable_status(self, pg_conn):
+        """Under contract v2 'unavailable' means no provider configured; a row
+        stamped with the pre-v2 USPS 'unavailable' takes the v2 answer (#189)."""
+        addr = "11 LEGACY WAY, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_dpv_cleared(pg_conn, addr, "11 LEGACY WAY", "unavailable")
+        outcome = await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] == "undetermined"
+        assert row["std_address_line_1"] == "11 LEGACY WAY"
+        assert row["address_validated_at"] == old
+        assert row["address_validation_attempted_at"] > old
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_undetermined_keeps_a_not_found_status(self, pg_conn):
+        """Only a no-determination status gives way; a real answer is kept (#187)."""
+        addr = "12 KEPT WAY, WOODINVILLE, WA 98072"
+        loc_id, _ = await self._seed_dpv_cleared(pg_conn, addr, "12 KEPT WAY", "not_found")
+        await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] == "not_found"
+
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "")
