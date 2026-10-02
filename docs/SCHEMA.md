@@ -12,20 +12,18 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `std_address_line_1` — USPS-standardized street address (e.g., `1200 WESTLAKE AVE N`); empty string if none
 - `std_address_line_2` — secondary unit designator (e.g., `STE 100`, `# A1`, `UNIT 2`); NULL if none (migration 0004; older rows may have empty string)
 - `std_city` — standardized city name from the address validator
-- All `std_*` text (and `std_address_string`) is stored uppercase whichever provider answered — Google-grade answers arrive mixed case and split the city filter (#188); rows written before it are fixed by the one-off backfill tracked on #188
-- `std_state` — standardized 2-letter state code
-- `std_zip` — standardized ZIP code, may include +4 suffix (e.g., `98109-3528`)
-- `std_postal_code` — standardized postal code from `/api/v1/validate`
+- `std_postal_code` — standardized postal code, may include +4 suffix (e.g., `98109-3528`)
 - `std_country` — ISO 3166-1 alpha-2 country code (e.g., `US`); validated before storage; empty string if invalid
 - `std_region` — standardized state/region code from the address validator
-- `validated_address` — full single-line validated address string from the API (e.g., `1200 WESTLAKE AVE N  SEATTLE WA 98109`); NULL if not confirmed
+- `std_address_string` — full single-line address string from the API (`standardized` from `/standardize`, `validated` from `/validate`; e.g., `1200 WESTLAKE AVE N  SEATTLE WA 98109`); NULL if never standardized
 - `validation_status` — last `/validate` answer: `confirmed`, `confirmed_missing_secondary`, `confirmed_bad_secondary`, `not_confirmed`, `invalid`, `not_found`, or `undetermined` (`standardized` after a standardize-only run; legacy `unavailable` from before address-validator's contract v2); NULL if not yet validated. A no-determination answer (`undetermined`/`unavailable`) or a DPV-less (Google) confirmation of a USPS-confirmed row is written only when the row has no prior status; otherwise the earlier status is kept (#187)
 - `dpv_match_code` — USPS DPV match code (e.g., `Y` = confirmed, `S` = correctable, `D` = missing secondary, `N` = not confirmed); NULL if not yet validated
 - `latitude` — WGS84 latitude from the address validator; NULL if not confirmed
 - `longitude` — WGS84 longitude from the address validator; NULL if not confirmed
 - `address_validated_at` — TIMESTAMPTZ of the last time a `/validate` call **confirmed** this address (provenance). NULL = never confirmed. Written only on a confirmed response; never cleared or written on failure, so a later not_confirmed re-check does not blank it (#150)
 - `address_validation_attempted_at` — TIMESTAMPTZ of the last **answered** `/validate` call for this row, confirmed or not (scheduling). Every HTTP 200 counts as answered, including `unavailable` from a named provider (#187). A call with no answer (transport failure, 429/5xx after retries, or `unavailable` with no provider configured) leaves it untouched so the row is retried next run (#183). This — not `address_validated_at` — is the TTL renewal key (`backfill_addresses` re-checks rows whose attempt is older than `VALIDATION_TTL_DAYS`), and its count since start-of-UTC-day is the daily answered-call total used for the `DAILY_VALIDATION_LIMIT` ceiling. Not set by standardize-only (validation-disabled) runs. Added by Alembic revision `0005`; backfilled from `address_validated_at` (#150)
-- Most `std_*` columns default to empty string; `std_address_line_2` is nullable (NULL = no second line; query layer normalises via `COALESCE`). `validated_address`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are also nullable
+- Most `std_*` columns default to empty string; `std_address_line_2` is nullable (NULL = no second line; query layer normalises via `COALESCE`). `std_address_string`, `validation_status`, `dpv_match_code`, `latitude`, `longitude` are also nullable
+- All `std_*` text is stored uppercase whichever provider answered — Google-grade answers arrive mixed case and split the city filter (#188); rows written before it are fixed by the one-off backfill tracked on #188
 - New records that reference an already-known raw address reuse the existing location row (no redundant API call)
 - `get_or_create_location()` in `db.py` handles the upsert logic (uses `_normalize_raw_address()` from `text_utils.py`)
 
