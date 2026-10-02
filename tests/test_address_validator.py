@@ -13,6 +13,7 @@ from wslcb_licensing_tracker.address_client import (
     HTTP_TOO_MANY_REQUESTS,
     MAX_RETRIES,
     MAX_RETRY_AFTER,
+    QuotaExhaustedError,
     _parse_retry_after,
     _post_with_retry,
     standardize,
@@ -300,17 +301,10 @@ class TestParseRetryAfter:
         response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "0"})
         assert _parse_retry_after(response) == 0.5
 
-    def test_clamps_to_maximum(self):
+    def test_long_value_is_returned_unclamped(self):
+        # The caller decides what a long wait means (#187, address-validator#270).
         response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3600"})
-        assert _parse_retry_after(response) == MAX_RETRY_AFTER
-
-    def test_logs_warning_when_clamped_to_maximum(self, caplog):
-        response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3600"})
-        with caplog.at_level("WARNING"):
-            _parse_retry_after(response)
-        assert any(
-            "exceeds cap" in r.message or "clamp" in r.message.lower() for r in caplog.records
-        )
+        assert _parse_retry_after(response) == 3600.0
 
     def test_value_at_cap_is_returned_unchanged(self):
         response = httpx.Response(
@@ -386,9 +380,9 @@ class TestPostWithRetry:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_backoff_wait_never_exceeds_max_retry_after(self):
-        # Adversarial Retry-After plus the doubling backoff multiplier must never
+        # A Retry-After under the cap, doubled by the backoff multiplier, must never
         # sleep longer than MAX_RETRY_AFTER on any single retry.
-        retry_response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "3600"})
+        retry_response = httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "40"})
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = retry_response
 
@@ -404,6 +398,46 @@ class TestPostWithRetry:
         assert mock_sleep.call_count == MAX_RETRIES - 1
         for call in mock_sleep.call_args_list:
             assert call.args[0] <= MAX_RETRY_AFTER
+
+    @pytest.mark.parametrize("status", [HTTP_TOO_MANY_REQUESTS, 503])
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_retry_after_over_cap_raises_without_sleeping(self, status):
+        # Over MAX_RETRY_AFTER means a daily quota is out (address-validator#270):
+        # no retry inside the cap could succeed, so stop instead of sleeping (#187).
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.return_value = httpx.Response(status, headers={"Retry-After": "35000"})
+
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_client.asyncio.sleep",
+                new_callable=AsyncMock,
+            ) as mock_sleep,
+            pytest.raises(QuotaExhaustedError) as excinfo,
+        ):
+            await _post_with_retry(
+                "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+            )
+        assert excinfo.value.retry_after == 35000.0
+        assert mock_client.post.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_retry_after_at_cap_is_waited_out(self):
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.side_effect = [
+            httpx.Response(HTTP_TOO_MANY_REQUESTS, headers={"Retry-After": "60"}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+
+        with patch(
+            "wslcb_licensing_tracker.address_client.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            result = await _post_with_retry(
+                "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
+            )
+        assert result is not None
+        mock_sleep.assert_awaited_once_with(MAX_RETRY_AFTER)
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_retries_on_timeout_then_succeeds(self):
@@ -474,6 +508,52 @@ class TestPostWithRetry:
         assert result is not None
         assert result.status_code == 422
         assert mock_client.post.call_count == 1
+
+
+class TestQuotaExhaustedPropagates:
+    """Single-row helpers write nothing and let the batch decide to stop (#187)."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_validate_location_propagates_and_writes_nothing(self, pg_conn):
+        loc_id = await get_or_create_location(pg_conn, "12 QUOTA ST, OLYMPIA, WA 98501")
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.is_validation_enabled",
+                return_value=True,
+            ),
+            patch(
+                "wslcb_licensing_tracker.address_validator.validate",
+                side_effect=QuotaExhaustedError(35000.0),
+            ),
+            pytest.raises(QuotaExhaustedError),
+        ):
+            await validate_location(pg_conn, loc_id, "12 QUOTA ST, OLYMPIA, WA 98501")
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.validation_status,
+                        locations.c.address_validation_attempted_at,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["validation_status"] is None
+        assert row["address_validation_attempted_at"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_standardize_location_propagates(self, pg_conn):
+        loc_id = await get_or_create_location(pg_conn, "14 QUOTA ST, OLYMPIA, WA 98501")
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.standardize",
+                side_effect=QuotaExhaustedError(35000.0),
+            ),
+            pytest.raises(QuotaExhaustedError),
+        ):
+            await standardize_location(pg_conn, loc_id, "14 QUOTA ST, OLYMPIA, WA 98501")
 
 
 class TestStandardizeHTTP:
@@ -1379,6 +1459,28 @@ class TestValidateBatch:
             ) as mock_process:
                 await _validate_batch(conn, rows, "Fallback out", rate_limit=0)
         assert mock_process.call_count == len(rows)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_stops_at_once_when_quota_exhausted(self, pg_engine, caplog):
+        """A Retry-After past the cap means a daily quota is out: stop on the first
+        one rather than spend MAX_CONSECUTIVE_NO_ANSWER rows finding out (#187)."""
+        rows = self._rows(5)
+        outcomes = [LocationOutcome.WRITTEN, QuotaExhaustedError(35000.0)]
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                side_effect=outcomes,
+            ) as mock_process:
+                with caplog.at_level("INFO"):
+                    result = await _validate_batch(conn, rows, "Quota", rate_limit=0)
+        assert result == 1
+        assert mock_process.call_count == len(outcomes)
+        stops = [r for r in caplog.records if r.getMessage().startswith("Stopping:")]
+        assert len(stops) == 1
+        assert stops[0].levelname == "WARNING"
+        assert "35000" in stops[0].getMessage()
+        # Not a row failure: no savepoint-rollback warning for it.
+        assert not any("Savepoint rollback" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
