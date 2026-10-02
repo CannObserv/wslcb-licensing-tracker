@@ -124,6 +124,49 @@ class TestStandardizeLocation:
         assert row["std_address_line_2"] is None
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_uppercases_std_text(self, pg_conn):
+        """Mixed-case components are stored uppercase, Pub 28 style (#188)."""
+        loc_id = await get_or_create_location(pg_conn, "451 KRAMER RD, UNDERWOOD, WA 98651")
+        mock_result = {
+            "address_line_1": "451 Kramer Rd",
+            "address_line_2": "Ste b",
+            "city": "Underwood",
+            "region": "wa",
+            "postal_code": "98651",
+            "country": "us",
+            "standardized": "451 Kramer Rd  Underwood, WA 98651",
+        }
+        with patch(
+            "wslcb_licensing_tracker.address_validator.standardize",
+            return_value=mock_result,
+        ):
+            await standardize_location(pg_conn, loc_id, "451 KRAMER RD, UNDERWOOD, WA 98651")
+        row = (
+            (
+                await pg_conn.execute(
+                    select(
+                        locations.c.std_address_line_1,
+                        locations.c.std_address_line_2,
+                        locations.c.std_city,
+                        locations.c.std_region,
+                        locations.c.std_country,
+                        locations.c.std_address_string,
+                    ).where(locations.c.id == loc_id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(row) == {
+            "std_address_line_1": "451 KRAMER RD",
+            "std_address_line_2": "STE B",
+            "std_city": "UNDERWOOD",
+            "std_region": "WA",
+            "std_country": "US",
+            "std_address_string": "451 KRAMER RD  UNDERWOOD, WA 98651",
+        }
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_sanitizes_country_code(self, pg_conn):
         loc_id = await get_or_create_location(pg_conn, "456 ELM ST, TACOMA, WA 98401")
         mock_result = {
@@ -1170,6 +1213,7 @@ class TestProcessLocation:
                     select(
                         locations.c.std_address_line_1,
                         locations.c.std_city,
+                        locations.c.std_address_string,
                         locations.c.validation_status,
                         locations.c.dpv_match_code,
                         locations.c.address_validated_at,
@@ -1239,7 +1283,9 @@ class TestProcessLocation:
         outcome = await self._run(pg_conn, loc_id, addr, self.GOOGLE_CONFIRMED)
         assert outcome is LocationOutcome.WRITTEN
         row = await self._row(pg_conn, loc_id)
-        assert row["std_city"] == "Woodinville"
+        # Google's mixed case is stored uppercase, matching USPS answers (#188).
+        assert row["std_city"] == "WOODINVILLE"
+        assert row["std_address_string"] == "19501 WOODINVILLE WA 98072-0000"
         assert row["validation_status"] == "confirmed"
         assert row["address_validated_at"] is not None
 
