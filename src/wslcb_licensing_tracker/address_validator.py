@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .address_client import (
     CONFIRMED_STATUSES,
+    MAX_RETRY_AFTER,
     UNAVAILABLE_STATUS,
     UNDETERMINED_RETRY_HINT,
     UNDETERMINED_STATUS,
@@ -549,9 +550,11 @@ async def _validate_batch(
             no_answer_streak = no_answer_streak + 1 if outcome is LocationOutcome.NO_ANSWER else 0
         except QuotaExhaustedError as exc:
             logger.warning(
-                "Stopping: validator asked to wait %.0fs (daily provider quota out);"
-                " %d left for the next run",
+                "Stopping: validator returned HTTP %d with Retry-After %.0fs, over the"
+                " %.0fs cap (a 429 means a daily provider quota is out); %d left for the next run",
+                exc.status,
                 exc.retry_after,
+                MAX_RETRY_AFTER,
                 total - attempted + 1,
             )
             break

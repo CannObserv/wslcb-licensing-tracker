@@ -424,6 +424,7 @@ class TestPostWithRetry:
                 "http://test/api", {"address": "x"}, {"X-API-Key": "k"}, mock_client, "test"
             )
         assert excinfo.value.retry_after == 35000.0
+        assert excinfo.value.status == status
         assert mock_client.post.call_count == 1
         mock_sleep.assert_not_called()
 
@@ -529,7 +530,7 @@ class TestQuotaExhaustedPropagates:
             ),
             patch(
                 "wslcb_licensing_tracker.address_validator.validate",
-                side_effect=QuotaExhaustedError(35000.0),
+                side_effect=QuotaExhaustedError(35000.0, HTTP_TOO_MANY_REQUESTS),
             ),
             pytest.raises(QuotaExhaustedError),
         ):
@@ -555,7 +556,7 @@ class TestQuotaExhaustedPropagates:
         with (
             patch(
                 "wslcb_licensing_tracker.address_validator.standardize",
-                side_effect=QuotaExhaustedError(35000.0),
+                side_effect=QuotaExhaustedError(35000.0, HTTP_TOO_MANY_REQUESTS),
             ),
             pytest.raises(QuotaExhaustedError),
         ):
@@ -1471,7 +1472,7 @@ class TestValidateBatch:
         """A Retry-After past the cap means a daily quota is out: stop on the first
         one rather than spend MAX_CONSECUTIVE_NO_ANSWER rows finding out (#187)."""
         rows = self._rows(5)
-        outcomes = [LocationOutcome.WRITTEN, QuotaExhaustedError(35000.0)]
+        outcomes = [LocationOutcome.WRITTEN, QuotaExhaustedError(35000.0, HTTP_TOO_MANY_REQUESTS)]
         async with pg_engine.connect() as conn:
             with patch(
                 "wslcb_licensing_tracker.address_validator._process_location",
@@ -1484,6 +1485,8 @@ class TestValidateBatch:
         stops = [r for r in caplog.records if r.getMessage().startswith("Stopping:")]
         assert len(stops) == 1
         assert stops[0].levelname == "WARNING"
+        # The status is logged: a 5xx past the cap is not necessarily a quota.
+        assert "HTTP 429" in stops[0].getMessage()
         assert "35000" in stops[0].getMessage()
         # Not a row failure: no savepoint-rollback warning for it.
         assert not any("Savepoint rollback" in r.getMessage() for r in caplog.records)
