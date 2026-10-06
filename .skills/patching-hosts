@@ -1,0 +1,26 @@
+# The patching-hosts skill's host knob (#192). Grammar: the vendored skill's
+# references/knob.md. The skill reads this file and never writes it; a
+# malformed line makes the host report-only (tests/test_patching_hosts_knob.py).
+#
+# Times are UTC. Every range covers both Pacific offsets (PDT UTC-7, PST UTC-8),
+# so nothing needs revisiting at a DST change.
+class production
+posture scheduled
+
+window Tue 15:15-23:30             # 08:15-16:30 PDT / 07:15-15:30 PST
+
+# Ingest timers (infra/*.timer): each has RandomizedDelaySec=300. A scrape task
+# ran 5m43s on 2026-10-06; a refresh can take ~20 min.
+quiet 07:25-09:05                  # 00:30 PT scrape
+quiet 13:25-15:05                  # 06:30 PT scrape
+quiet 08:55-11:35 Sun              # 02:00 PT address backfill, 03:00 PT disk hygiene
+
+# wslcb-task@ is Type=oneshot: a running task is "activating", not "active".
+inflight systemctl list-units 'wslcb-task@*' --state=activating,active,deactivating --no-legend | wc -l
+service wslcb-web.service
+restarter wslcb-healthcheck.timer
+health curl -sf http://localhost:8000/api/v1/health
+
+# wslcb_test is the pytest database (TEST_DATABASE_URL). No backup line: there
+# is no backup regime yet (#185). No origin lines: no third-party apt origin.
+datastore postgres postgresql@16-main wslcb wslcb_test

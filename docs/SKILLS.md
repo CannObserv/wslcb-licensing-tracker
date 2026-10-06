@@ -16,6 +16,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 | `init-socraticode` | "init socraticode", "set up code search", "index this project" — installs/enables the SocratiCode plugin + Qdrant and runs a full index |
 | `managing-skills` | Add/update/remove skill repos (submodule + symlink) |
 | `orchestrating-issue-backlog` | Prioritize backlog, design parallel execution plan |
+| `patching-hosts` | "patch the host", "OS updates", "security updates", "needrestart" — the monthly owner-approved patch run; host knob in `.skills/patching-hosts` |
 | `reviewing-architecture` | Say "AR" or "architecture review" |
 | `reviewing-code-python-fastapi` | Say "CR" or "code review" |
 | `shipping-work-python-fastapi` | Say "ship it", "push GH", or "wrap up" |
@@ -79,6 +80,14 @@ Manages external skill repos using the git submodule + symlink pattern. Adds ski
 Prioritizes an open issue backlog using agreed rubrics, analyzes conflict zones and dependencies, designs a parallel-safe batch execution plan using git worktrees, produces a design doc and GitHub issue, then hands off to an agent team.
 
 **Trigger:** Need to work through a backlog of issues systematically, in parallel.
+
+## patching-hosts
+
+Patches the host's OS packages in a scheduled, owner-approved monthly run: a read-only probe of the pending set by class, a recovery point (a Postgres dump the owner copies off the node), a gated apply in held steps (Postgres and Docker each under their own approval, `wslcb-healthcheck.timer` stopped around the Postgres one), needrestart held to list mode, a detached reboot chain that copies the volatile journal last, and post-boot verification. First run here: #192.
+
+What only this repo knows lives in `.skills/patching-hosts`: the `scheduled` posture, the window, a `quiet` range per ingest timer (UTC, covering both Pacific offsets), the in-flight count of `wslcb-task@*` units, the restarter, the health check, and every cluster database. The skill reads it and never writes it, and a malformed line makes the host report-only, so `tests/test_patching_hosts_knob.py` runs the vendored `read-knob.sh` against it. Its `inflight` line counts `activating` units: `wslcb-task@` is a oneshot, and the skill's own example (`--state=active`) reads 0 mid-scrape.
+
+**Trigger:** "patch the host", "OS updates", "security updates", "apply updates", "unattended-upgrades", "needrestart", "is this host patched".
 
 ## reviewing-architecture
 
