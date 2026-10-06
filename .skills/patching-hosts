@@ -24,3 +24,8 @@ health curl -sf http://localhost:8000/api/v1/health
 # wslcb_test is the pytest database (TEST_DATABASE_URL). No backup line: there
 # is no backup regime yet (#185). No origin lines: no third-party apt origin.
 datastore postgres postgresql@16-main wslcb wslcb_test
+
+# The image deleted fwupd's /etc/update-motd.d/85-fwupd conffile and masked its
+# units; unattended-upgrade reads the deleted conffile as a prompt, skips fwupd
+# and exits 1, which fails the dry run the bulk gates on (#192).
+exception held:fwupd 2026-11-10 masked by the image; its deleted motd conffile makes unattended-upgrade skip it and exit 1 (#192)
