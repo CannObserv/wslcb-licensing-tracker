@@ -8,6 +8,7 @@ class production
 posture scheduled
 
 window Tue 15:15-23:30             # 08:15-16:30 PDT / 07:15-15:30 PST
+window Wed 12:30-13:20             # one-off: #192's reboot missed Tuesday's window; remove after the run
 
 # Ingest timers (infra/*.timer): each has RandomizedDelaySec=300. A scrape task
 # ran 5m43s on 2026-10-06; a refresh can take ~20 min.
