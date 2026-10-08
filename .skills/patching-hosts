@@ -29,4 +29,4 @@ datastore postgres postgresql@16-main wslcb wslcb_test
 # unattended-upgrade skipped it and exited 1) was purged with its 53 orphaned
 # dependencies on 2026-10-08; savepoint in /var/backups/patching-hosts-prune-fwupd
 # (#193). The masks stay. Review: does the base image still ship it?
-exception purged:fwupd 2027-04-08 purged with its orphans; the image still ships it, masked, and its deleted motd conffile blocks unattended-upgrade (#193)
+exception purged:fwupd 2027-04-08 purged with its orphans; the image still ships it, masked, and its deleted motd conffile would block unattended-upgrade if fwupd were reinstalled (#193)
