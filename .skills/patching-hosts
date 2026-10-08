@@ -25,7 +25,8 @@ health curl -sf http://localhost:8000/api/v1/health
 # is no backup regime yet (#185). No origin lines: no third-party apt origin.
 datastore postgres postgresql@16-main wslcb wslcb_test
 
-# The image deleted fwupd's /etc/update-motd.d/85-fwupd conffile and masked its
-# units; unattended-upgrade reads the deleted conffile as a prompt, skips fwupd
-# and exits 1, which fails the dry run the bulk gates on (#192).
-exception held:fwupd 2026-11-10 masked by the image; its deleted motd conffile makes unattended-upgrade skip it and exit 1 (#192)
+# fwupd (the image ships it, masks its units and deletes its motd conffile, so
+# unattended-upgrade skipped it and exited 1) was purged with its 53 orphaned
+# dependencies on 2026-10-08; savepoint in /var/backups/patching-hosts-prune-fwupd
+# (#193). The masks stay. Review: does the base image still ship it?
+exception purged:fwupd 2027-04-08 purged with its orphans; the image still ships it, masked, and its deleted motd conffile blocks unattended-upgrade (#193)
