@@ -29,13 +29,19 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="module")
-def knob() -> dict:
-    """The knob as the vendored reader resolves it for this host."""
+# Past every review-by date the knob holds: each exception has expired.
+FAR_FUTURE = "2099-12-31"
+
+
+def _read_knob(today: str | None = None) -> dict:
+    """The knob as the vendored reader resolves it for this host, on `today`."""
     bash = shutil.which("bash")
     assert bash
+    argv = [bash, str(READ_KNOB), "--config", str(KNOB), "--host", HOST]
+    if today:
+        argv += ["--today", today]
     result = subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
-        [bash, str(READ_KNOB), "--config", str(KNOB), "--host", HOST],
+        argv,
         capture_output=True,
         text=True,
         check=False,
@@ -44,9 +50,29 @@ def knob() -> dict:
     return json.loads(result.stdout)
 
 
-def test_knob_has_no_findings(knob: dict) -> None:
+@pytest.fixture(scope="module")
+def knob() -> dict:
+    """The knob as the vendored reader resolves it for this host, today."""
+    return _read_knob()
+
+
+@pytest.mark.parametrize("today", [None, FAR_FUTURE])
+def test_knob_has_no_findings(today: str | None) -> None:
+    """No malformed line, on any date.
+
+    A passed review-by date is an `expired-exception` finding: the probe's to
+    report at patch time, not a gate on unrelated commits.
+    """
+    knob = _read_knob(today)
     assert knob["knob"]["present"]
-    assert knob["findings"] == []
+    assert [f for f in knob["findings"] if f["kind"] != "expired-exception"] == []
+
+
+def test_expired_exceptions_are_still_reported() -> None:
+    knob = _read_knob(FAR_FUTURE)
+    expired = {f["line"] for f in knob["findings"] if f["kind"] == "expired-exception"}
+    assert expired == {e["line"] for e in knob["exception"]}
+    assert knob["report_only"] is False
 
 
 def test_host_is_not_report_only(knob: dict) -> None:
