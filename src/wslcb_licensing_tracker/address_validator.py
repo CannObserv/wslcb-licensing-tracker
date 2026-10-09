@@ -54,7 +54,8 @@ ISO_ALPHA2_LEN = 2
 # failure, 429/5xx after retries, or no provider configured on the validator)
 # writes nothing, so it is retried on the next run rather than parked for a TTL
 # (#183). A USPS "no delivery-point determination" ('unavailable' with a
-# provider) *is* an answer and waits a full TTL like any other (#187).
+# provider) *is* an answer and waits a full TTL like any other (#187). An answer
+# carrying the retry hint is not final, so it writes nothing either (#191).
 VALIDATION_TTL_DAYS = 180
 
 # Upper bound on /validate calls per UTC day across all automatic backfill runs
