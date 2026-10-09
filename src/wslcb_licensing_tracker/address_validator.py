@@ -336,7 +336,9 @@ async def _validate_and_write(
         logger.info("Validator has no provider for location %d; left for retry", location_id)
         return LocationOutcome.NO_ANSWER
     # Checked before any status branch: the hint can ride on any non-final
-    # answer, and recording one would park the row for a full TTL (#191).
+    # answer, and recording one would park the row for a full TTL (#191). It
+    # never rides on an answer with a DPV code — upstream's chain returns those
+    # on sight — so this cannot discard a USPS confirmation.
     if any(RETRY_HINT in str(w) for w in result.get("warnings") or []):
         logger.info(
             "Answer '%s' for location %d came while a fallback was unreachable; left for retry",
