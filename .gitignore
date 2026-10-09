@@ -3,7 +3,10 @@ __pycache__/
 *.pyc
 # All persistent data (DB + HTML snapshots) lives under data/
 data/
-.env
+# The whole family, so copies like .env.bak-* can't be committed (watcher#280);
+# the committed template is the one exception.
+.env*
+!.env.example
 .pytest_cache/
 .ruff_cache/
 .coverage*

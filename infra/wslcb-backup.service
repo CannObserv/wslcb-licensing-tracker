@@ -1,0 +1,83 @@
+[Unit]
+Description=WSLCB database dump + data archive to GCS - nightly, create-only, holds no database credential (#185)
+# The cohort's backup unit (CannObserv/broker#4, watcher#296 D8, watcher#297).
+# Not bound to wslcb-web.service: the artifacts are the database and data/, and
+# a stopped app still has both worth shipping. After postgresql so a boot-time
+# catch-up run (Persistent=true on the timer) does not race the server; after
+# tailscaled because the dead-man check-in goes to co-status over the tailnet.
+After=network-online.target postgresql.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Its own unprivileged user, allocated by systemd for each run: nothing to
+# provision, no account to log in to, and a uid no other process holds. The
+# database knows it as the role of the same name - pg_read_all_data and nothing
+# more (scripts/setup-backup-role.sql) - reached by peer auth over the local
+# socket, so no database credential exists for the job at all.
+DynamicUser=yes
+User=wslcb_backup
+WorkingDirectory=/home/exedev/wslcb-licensing-tracker
+
+# The two keys, as credentials rather than environment: systemd reads each
+# 0400 root:root file and hands the run a private copy under
+# $CREDENTIALS_DIRECTORY, gone when it exits.
+# Both files must exist - a missing LoadCredential= source fails the start
+# (243/CREDENTIALS), and systemd 255 ignores an empty SetCredential= fallback -
+# so until the co-status monitor exists the check-in key is an empty file, and
+# the job warns that a stopped backup will not be noticed.
+LoadCredential=gcs:/etc/wslcb-licensing-tracker/co-wslcb-backup.json
+LoadCredential=checkin-key:/etc/wslcb-licensing-tracker/backup-checkin.key
+# The SDK takes a path; this is the private copy's. An env file that set the
+# variable too would win over this line, and aim the job at a key it cannot
+# read - the job refuses that (exit 2) rather than fail "Permission denied".
+Environment=GOOGLE_APPLICATION_CREDENTIALS=%d/gcs
+
+# WSLCB_BACKUP_BUCKET, WSLCB_ARCHIVE_BUCKET, and the check-in's base URL and
+# monitor id - no secret. NOT /etc/wslcb-licensing-tracker/.env: that carries
+# DATABASE_URL and the address-validator key, neither of which this unit needs.
+# No leading '-': a backup unit without its configuration must fail loudly.
+EnvironmentFile=/etc/wslcb-licensing-tracker/backup.env
+
+# The sandbox. A read-only filesystem but for a private /tmp (the dump is
+# written there); no new privileges.
+ProtectSystem=strict
+# An empty /home, with only the checkout bound back in, read-only: the venv,
+# the code and data/ - no ~/.ssh, no other checkout. The venv's python links to
+# /usr/bin/python3.12, outside /home; a uv-managed interpreter under
+# ~/.local/share/uv would be hidden (203/EXEC), and tests/test_infra_backup_units.py
+# fails on a host where that is so.
+ProtectHome=tmpfs
+BindReadOnlyPaths=/home/exedev/wslcb-licensing-tracker
+# Both env files are already closed to this uid by mode; hidden as well, so a
+# later chmod cannot open them. systemd reads backup.env and the keys before
+# the namespace exists, so hiding their directory costs nothing.
+InaccessiblePaths=/etc/wslcb-licensing-tracker
+InaccessiblePaths=-/home/exedev/wslcb-licensing-tracker/.env
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+# The local socket for pg_dump, and IP for GCS and the co-status check-in.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# No capabilities at all.
+CapabilityBoundingSet=
+# The tree is read-only to this unit anyway; say so rather than let Python try.
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Background work on a host that also serves the web app (#175).
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# The dump measured 33.4 MB in 4.8 s (2026-09-29); the archive's first run
+# uploads ~350 MB, later runs a few files. An hour is generous for both and
+# short enough that a wedged run is a failed unit, not a hang. A first run cut
+# short resumes where it stopped: the archive skips what the bucket holds.
+TimeoutStartSec=3600
+
+# The venv's interpreter directly rather than `uv run`: uv wants a writable
+# cache and may sync the environment, both refused by the sandbox (broker#4).
+ExecStart=/home/exedev/wslcb-licensing-tracker/.venv/bin/python -m wslcb_licensing_tracker.cli ops backup --database wslcb

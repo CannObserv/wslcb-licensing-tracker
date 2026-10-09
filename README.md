@@ -111,6 +111,9 @@ wslcb-licensing-tracker/
 ├── substances.py           # Async regulated substance CRUD
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
 ├── disk_hygiene.py         # Weekly cache/worktree/data-straggler cleanup (#138)
+├── backup.py               # Nightly pg_dump + data/ archive mirror to GCS, create-only (#185)
+├── backup_checkin.py       # co-status dead-man check-in for the backup (#185)
+├── restore.py              # Fetch/verify/restore a dump; fetch archive files (#185)
 ├── log_config.py           # Centralized logging configuration
 ├── config.py               # Runtime config helpers (get_build_id); env vars in .env.example
 ├── seed_code_map.json      # Seed data: WSLCB numeric code → endorsement name(s)
@@ -156,7 +159,8 @@ wslcb-licensing-tracker/
 ├── scripts/
 │   ├── build-css.sh            # Rebuild Tailwind output (run manually or via pre-commit)
 │   ├── download-tailwind.sh    # Download platform-specific Tailwind CLI binary
-│   └── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
+│   ├── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
+│   └── setup-backup-role.sql   # Once per cluster: the backup's read-only `wslcb_backup` role (#185)
 ├── alembic.ini             # Alembic config (repo root, not inside alembic/)
 ├── alembic/                # Alembic schema migrations
 │   ├── env.py
@@ -176,6 +180,8 @@ wslcb-licensing-tracker/
 │   ├── wslcb-healthcheck.service   # Health check service (restarts web on failure)
 │   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
 │   ├── wslcb-address-validation.timer # Weekly address backfill timer
+│   ├── wslcb-backup.service        # Nightly DB + data/ backup to GCS (#185; see docs/RECOVERY.md)
+│   ├── wslcb-backup.timer          # Daily at 08:17 Pacific, after the morning scrape
 │   └── sudoers.d-wslcb-healthcheck # sudoers snippet for passwordless restart
 ├── skills/                 # Claude Code agent skills (local + symlinks to skills-vendor/)
 ├── skills-vendor/          # Vendored skill repos (git submodules)
@@ -225,6 +231,13 @@ wslcb-licensing-tracker/
 │   ├── test_cli_scrape.py       # Scrape CLI subcommand tests
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
 │   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
+│   ├── test_backup.py           # Dump verify/tiers + archive mirror rules, against GCS fakes (#185)
+│   ├── test_backup_checkin.py   # Dead-man check-in config + retry rules (#185)
+│   ├── test_restore.py          # --latest across tiers, suspect names, verified fetch (#185)
+│   ├── test_cli_backup.py       # `wslcb ops backup|restore|restore-archive` (#185)
+│   ├── test_backup_restore_rehearsal.py  # Real pg_dump → fake bucket → pg_restore round trip (#185)
+│   ├── test_infra_backup_units.py  # wslcb-backup unit sandbox + timer pins (#185)
+│   ├── gcs_fakes.py             # SDK-faithful google-cloud-storage fakes (#185)
 │   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
 │   ├── test_no_channel_urls.py  # No live Mayfly channel URL in any tracked file (#181)
@@ -510,6 +523,18 @@ This runs a two-phase process:
 2. **Repair** — fix broken ASSUMPTION records (empty business names) and CHANGE OF LOCATION records (missing locations)
 
 Safe to re-run at any time. Address validation is deferred; run `uv run wslcb ingest backfill-addresses` afterward to validate new locations.
+
+## Backups
+
+Nightly, `wslcb-backup.timer` dumps the database and mirrors the frozen source
+files under `data/` to two GCS buckets, create-only, with a co-status dead-man
+check-in (#185). Install, restore and drills: [`docs/RECOVERY.md`](docs/RECOVERY.md).
+
+```bash
+uv run wslcb ops restore --list                                   # dumps, both tiers
+uv run wslcb ops restore --latest --prefix HOST --download-only DIR
+uv run wslcb ops restore-archive --prefix HOST --into DIR [--path SUBPATH]
+```
 
 ## Testing
 

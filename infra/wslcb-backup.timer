@@ -1,0 +1,17 @@
+[Unit]
+Description=Nightly WSLCB database dump + data archive to GCS (#185)
+
+[Timer]
+# Once a day, after the morning scrape: 06:30 PT plus its 5-minute jitter plus
+# up to 36 minutes of run ends by 07:11 PT, so each dump carries both of the
+# day's scrapes. Local time, so the margin holds across DST. An overlap would
+# be harmless anyway - pg_dump reads one MVCC snapshot. Persistent=true runs a
+# day a reboot skipped; the jitter keeps it off the minute other timers share.
+OnCalendar=*-*-* 08:17:00 America/Los_Angeles
+RandomizedDelaySec=10min
+Persistent=true
+AccuracySec=1min
+Unit=wslcb-backup.service
+
+[Install]
+WantedBy=timers.target

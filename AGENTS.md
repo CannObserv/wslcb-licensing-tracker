@@ -144,6 +144,7 @@ scripts/build-css.sh        # manual CSS rebuild if changing templates or tailwi
 | File | Content |
 |---|---|
 | `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION` |
+| `/etc/wslcb-licensing-tracker/backup.env` + two `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
 | `.env` (repo root, gitignored) | Dev/agent: `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL`, plus GitHub PATs for the `gh` CLI |
 | `.env.example` (committed) | Canonical list of every env var the project consumes, with comments |
 
@@ -186,6 +187,7 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases
 ## Reference
 
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
+- [`docs/RECOVERY.md`](docs/RECOVERY.md) — nightly GCS backup (DB + `data/` archive), restore, drills; log in [`docs/RECOVERY-REHEARSALS.md`](docs/RECOVERY-REHEARSALS.md)
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference and migration history
 - [`docs/SOURCE_PAGE.md`](docs/SOURCE_PAGE.md) — WSLCB source page structure and field label quirks (needed when touching `parser.py`)
 - [`docs/STYLE.md`](docs/STYLE.md) — brand colors and CSS conventions
