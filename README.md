@@ -232,6 +232,7 @@ wslcb-licensing-tracker/
 │   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs + SocratiCode pin agreement (#175, #180)
 │   ├── test_infra_web_unit.py    # wslcb-web starts after Postgres, never bound to its lifetime (#184)
 │   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
+│   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate (#192, #193)
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
