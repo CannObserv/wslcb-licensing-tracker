@@ -1148,14 +1148,29 @@ class TestProcessLocation:
         "validation": {"status": "undetermined", "dpv_match_code": None, "provider": "usps"},
         "warnings": [],
     }
-    # Same, but a fallback provider failed along the way: not cached, retry later.
+    # Upstream retry warning: a fallback provider failed along the way, so the
+    # answer is not cached and a later retry may do better. Since
+    # CannObserv/address-validator#275 it rides on invalid/not_found too (#191).
+    RETRY_WARNING = (
+        "Validation incomplete while a fallback provider was unreachable;"
+        " a later retry may produce a determination"
+    )
     UNDETERMINED_RETRYABLE = {
         "address_line_1": "",
         "validation": {"status": "undetermined", "dpv_match_code": None, "provider": "usps"},
-        "warnings": [
-            "Validation undetermined while a fallback provider was unreachable;"
-            " a later retry may produce a determination"
-        ],
+        "warnings": [RETRY_WARNING],
+    }
+    # USPS 429/5xx, then a Google verdict with no DPV code.
+    NOT_FOUND = {
+        "address_line_1": "",
+        "validation": {"status": "not_found", "dpv_match_code": None, "provider": "google"},
+        "warnings": [],
+    }
+    NOT_FOUND_RETRYABLE = {**NOT_FOUND, "warnings": [RETRY_WARNING]}
+    INVALID_RETRYABLE = {
+        "address_line_1": "",
+        "validation": {"status": "invalid", "dpv_match_code": None, "provider": "google"},
+        "warnings": [RETRY_WARNING],
     }
     # A Google-grade confirmation: no USPS DPV code, may have altered the street/ZIP
     # (CannObserv/address-validator#258).
@@ -1383,6 +1398,66 @@ class TestProcessLocation:
         await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
         row = await self._row(pg_conn, loc_id)
         assert row["validation_status"] == "not_found"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    @pytest.mark.parametrize("result_name", ["NOT_FOUND_RETRYABLE", "INVALID_RETRYABLE"])
+    async def test_verdict_with_retry_warning_writes_nothing(self, pg_conn, result_name):
+        """A hinted invalid/not_found is not final: not stamped for a TTL (#191)."""
+        addr = f"13 {result_name} WAY, WOODINVILLE, WA 98072"
+        loc_id = await get_or_create_location(pg_conn, addr)
+        outcome = await self._run(pg_conn, loc_id, addr, getattr(self, result_name))
+        assert outcome is LocationOutcome.RETRY_LATER
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] is None
+        assert row["dpv_match_code"] is None
+        assert row["address_validation_attempted_at"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_not_found_without_retry_warning_is_recorded(self, pg_conn):
+        addr = "14 FINAL WAY, WOODINVILLE, WA 98072"
+        loc_id = await get_or_create_location(pg_conn, addr)
+        outcome = await self._run(pg_conn, loc_id, addr, self.NOT_FOUND)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] == "not_found"
+        assert row["address_validation_attempted_at"] is not None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_hinted_not_found_on_renewal_keeps_row_due(self, pg_conn):
+        """A renewal that gets a hinted verdict keeps its old attempt stamp, so
+        it stays at the front of the queue for the next run (#191)."""
+        addr = "15 RENEW WAY, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_usps_confirmed(pg_conn, addr, "15 RENEW WAY")
+        outcome = await self._run(pg_conn, loc_id, addr, self.NOT_FOUND_RETRYABLE)
+        assert outcome is LocationOutcome.RETRY_LATER
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] == "confirmed"
+        assert row["dpv_match_code"] == "Y"
+        assert row["address_validation_attempted_at"] == old
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_dpv_less_confirmation_with_retry_warning_writes_nothing(self, pg_conn):
+        """USPS was out, so a Google-grade confirmation is not parked for a TTL (#191)."""
+        addr = "16 GOOGLE WAY, WOODINVILLE, WA 98072"
+        loc_id = await get_or_create_location(pg_conn, addr)
+        before = await self._row(pg_conn, loc_id)
+        result = {**self.GOOGLE_CONFIRMED, "warnings": [self.RETRY_WARNING]}
+        outcome = await self._run(pg_conn, loc_id, addr, result)
+        assert outcome is LocationOutcome.RETRY_LATER
+        assert await self._row(pg_conn, loc_id) == before
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_no_provider_with_retry_warning_is_still_no_answer(self, pg_conn):
+        """No provider configured counts toward the breaker, hint or not (#183, #191)."""
+        addr = "17 NOBODY WAY, WOODINVILLE, WA 98072"
+        loc_id = await get_or_create_location(pg_conn, addr)
+        result = {
+            "address_line_1": "",
+            "validation": {"status": "unavailable", "dpv_match_code": None, "provider": None},
+            "warnings": [self.RETRY_WARNING],
+        }
+        outcome = await self._run(pg_conn, loc_id, addr, result)
+        assert outcome is LocationOutcome.NO_ANSWER
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_on_empty_address(self, pg_conn):
