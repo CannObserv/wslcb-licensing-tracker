@@ -33,7 +33,7 @@ def _env(monkeypatch, client):
 
 class TestBackup:
     def test_exit_code_is_the_jobs(self):
-        with patch("wslcb_licensing_tracker.cli.run_backup_job", return_value=1) as job:
+        with patch("wslcb_licensing_tracker.backup.main", return_value=1) as job:
             result = CliRunner().invoke(main, ["ops", "backup"])
         assert result.exit_code == 1
         assert job.call_args.kwargs["database"] == "wslcb"
@@ -104,3 +104,22 @@ class TestRestoreArchive:
     def test_prefix_is_required(self, tmp_path):
         result = CliRunner().invoke(main, ["ops", "restore-archive", "--into", str(tmp_path)])
         assert result.exit_code == 2
+
+
+class TestImportIsolation:
+    def test_cli_import_does_not_load_the_gcs_sdk(self):
+        """Every `wslcb` command — the scraper's timer too — imports cli. Loading
+        the SDK there would make scrapes fail on a venv not yet synced to the
+        new dependency, and cost them its memory on a swapless host (#175)."""
+        import subprocess
+        import sys
+
+        probe = (
+            "import sys, wslcb_licensing_tracker.cli; print('google.cloud.storage' in sys.modules)"
+        )
+        # Popen, not run: this module's autouse fixture fakes subprocess.run.
+        with subprocess.Popen(  # noqa: S603 — this interpreter, a fixed probe
+            [sys.executable, "-c", probe], stdout=subprocess.PIPE, text=True
+        ) as proc:
+            out, _ = proc.communicate()
+        assert out.strip() == "False"

@@ -50,15 +50,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from . import restore
 from .address_validator import backfill_addresses as run_backfill_addresses
 from .address_validator import refresh_addresses as run_refresh_addresses
 from .address_validator import refresh_specific_addresses as run_refresh_specific_addresses
 from .admin_audit import log_action
 from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
-from .backup import iso
-from .backup import main as run_backup_job
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
@@ -567,6 +564,19 @@ def disk_hygiene(dry_run: bool) -> None:
     click.echo(f"{verb} {summary['freed_bytes'] / 1_048_576:.1f} MB.")
 
 
+def _restore():  # noqa: ANN202 — returns the module
+    """The restore module, imported on use.
+
+    It and ``backup`` load the GCS SDK, and every ``wslcb`` command — the
+    scraper's timer too — imports this module: loading it at the top would
+    fail scrapes on a venv not yet synced to the dependency, and cost them its
+    memory on a swapless host (#175).
+    """
+    from . import restore  # noqa: PLC0415
+
+    return restore
+
+
 @ops.command("backup")
 @click.option("--database", default="wslcb", help="Database name (a DSN in tests).")
 def backup(database: str) -> None:
@@ -575,6 +585,8 @@ def backup(database: str) -> None:
     The nightly wslcb-backup.service job. Reads WSLCB_BACKUP_BUCKET and
     WSLCB_ARCHIVE_BUCKET; exits non-zero unless everything in scope shipped.
     """
+    from .backup import main as run_backup_job  # noqa: PLC0415 — see _restore()
+
     sys.exit(run_backup_job(database=database))
 
 
@@ -603,6 +615,9 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
     bucket: str,
 ) -> None:
     """Bring a shipped dump back (#185). The runbook is docs/RECOVERY.md."""
+    restore = _restore()
+    from .backup import iso  # noqa: PLC0415 — see _restore()
+
     if sum((list_, latest, key is not None)) != 1:
         msg = "say which: exactly one of --list, --latest, --object KEY"
         raise click.UsageError(msg)
@@ -663,6 +678,7 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
 @click.option("--bucket", envvar="WSLCB_ARCHIVE_BUCKET", required=True, help="Archive bucket.")
 def restore_archive(prefix: str, into: Path, subtree: str, bucket: str) -> None:
     """Bring data/ files back from the archive bucket, md5-checked (#185)."""
+    restore = _restore()
     try:
         count = restore.fetch_archive(restore.make_client(), bucket, prefix, into, path=subtree)
     except Exception as exc:  # noqa: BLE001 — reported, then exit 1
