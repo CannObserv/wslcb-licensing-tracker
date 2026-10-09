@@ -268,16 +268,27 @@ def read_alembic_head(database: str, *, runner: Runner) -> str | None:
 
 
 def run_pg_dump(database: str, out: Path, *, runner: Runner) -> None:
-    """Custom format to ``out``, through an fd this process opened."""
-    argv = ["pg_dump", "--format=custom", "--no-password", f"--dbname={database}"]
-    with out.open("wb") as handle:
-        result = runner(
-            argv,
-            stdout=handle,
-            stderr=subprocess.PIPE,
-            check=False,
-            timeout=PG_DUMP_TIMEOUT_SECONDS,
-        )
+    """Custom format to ``out``, written by ``pg_dump`` itself.
+
+    ``--file``, not watcher's stdout fd (which served its old root unit's
+    privilege drop, gone here): on a seekable file ``pg_dump`` records each
+    data block's offset in the table of contents, so ``pg_restore -j`` can
+    work, and a cut archive fails :func:`verify_dump` wherever it is cut.
+    Through stdout it appended a second table of contents (measured on the
+    test database, 2026-10-09: 123,728 bytes against 62,474), and a cut that
+    removed only that copy passed both reads — harmlessly, as it restored
+    identically, but no longer a clean signal.
+    """
+    argv = [
+        "pg_dump",
+        "--format=custom",
+        "--no-password",
+        f"--file={out}",
+        f"--dbname={database}",
+    ]
+    result = runner(
+        argv, capture_output=True, text=True, check=False, timeout=PG_DUMP_TIMEOUT_SECONDS
+    )
     if result.returncode != 0:
         msg = f"pg_dump exited {result.returncode}: {_tail(result.stderr)}"
         raise BackupError(msg)

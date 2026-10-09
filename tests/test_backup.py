@@ -63,8 +63,9 @@ class FakePg:
         if program == self.fail:
             return subprocess.CompletedProcess(argv, 1, stdout="", stderr=f"{program}: boom\n")
         if program == "pg_dump":
-            kwargs["stdout"].write(DUMP_BYTES)
-            return subprocess.CompletedProcess(argv, 0, stdout=None, stderr=b"")
+            out = next(a for a in argv if a.startswith("--file="))
+            Path(out.removeprefix("--file=")).write_bytes(DUMP_BYTES)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         if program == "psql":
             return subprocess.CompletedProcess(argv, 0, stdout=f"{self.head}\n", stderr="")
         if program == "pg_restore" and "--file=/dev/null" in argv:

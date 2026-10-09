@@ -6,7 +6,7 @@ All operational commands are exposed as click subcommands grouped by domain:
   backfill-addresses, refresh-addresses, compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
 - ``admin``: add-user, list-users, remove-user
-- ``ops``: disk-hygiene
+- ``ops``: disk-hygiene, backup, restore, restore-archive
 
 Top-level aliases exist for backward compatibility with the systemd
 ``wslcb-task@%i`` template (which passes a single token).  Both forms
@@ -30,13 +30,18 @@ Usage::
     wslcb admin list-users             # list admin users
     wslcb admin remove-user EMAIL      # remove admin user
     wslcb ops disk-hygiene [--dry-run] # weekly cache/worktree/data-straggler cleanup (#138)
+    wslcb ops backup                   # nightly dump + data archive to GCS (#185; the timer's job)
+    wslcb ops restore --list           # dumps in WSLCB_BACKUP_BUCKET (see docs/RECOVERY.md)
+    wslcb ops restore-archive --prefix HOST --into DIR  # data/ files back from the archive
 
 Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 """
 
 import asyncio
 import logging
+import subprocess
 import sys
+import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -45,12 +50,15 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from . import restore
 from .address_validator import backfill_addresses as run_backfill_addresses
 from .address_validator import refresh_addresses as run_refresh_addresses
 from .address_validator import refresh_specific_addresses as run_refresh_specific_addresses
 from .admin_audit import log_action
 from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
+from .backup import iso
+from .backup import main as run_backup_job
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
@@ -557,6 +565,114 @@ def disk_hygiene(dry_run: bool) -> None:
         click.echo(f"WARNING: {warning}")
     verb = "Would free" if dry_run else "Freed"
     click.echo(f"{verb} {summary['freed_bytes'] / 1_048_576:.1f} MB.")
+
+
+@ops.command("backup")
+@click.option("--database", default="wslcb", help="Database name (a DSN in tests).")
+def backup(database: str) -> None:
+    """Dump the database and mirror data/ to GCS, then check in (#185).
+
+    The nightly wslcb-backup.service job. Reads WSLCB_BACKUP_BUCKET and
+    WSLCB_ARCHIVE_BUCKET; exits non-zero unless everything in scope shipped.
+    """
+    sys.exit(run_backup_job(database=database))
+
+
+@ops.command("restore")
+@click.option("--list", "list_", is_flag=True, help="List dumps and exit.")
+@click.option("--latest", is_flag=True, help="The newest dump of --prefix's host.")
+@click.option("--object", "key", metavar="KEY", help="A dump by its object key.")
+@click.option("--prefix", metavar="HOST", help="Whose dumps (required with --latest).")
+@click.option("--into", metavar="DATABASE", help="Restore into this existing, empty database.")
+@click.option(
+    "--download-only",
+    metavar="DIR",
+    type=click.Path(path_type=Path),
+    help="Fetch and verify only, into a private directory.",
+)
+@click.option("--run-as", metavar="USER", help="OS user pg_restore runs as (peer auth).")
+@click.option("--bucket", envvar="WSLCB_BACKUP_BUCKET", required=True, help="Dump bucket.")
+def restore_cmd(  # noqa: PLR0913 — one click option each
+    list_: bool,
+    latest: bool,
+    key: str | None,
+    prefix: str | None,
+    into: str | None,
+    download_only: Path | None,
+    run_as: str | None,
+    bucket: str,
+) -> None:
+    """Bring a shipped dump back (#185). The runbook is docs/RECOVERY.md."""
+    if sum((list_, latest, key is not None)) != 1:
+        msg = "say which: exactly one of --list, --latest, --object KEY"
+        raise click.UsageError(msg)
+    if latest and not prefix:
+        msg = "say whose: --latest needs --prefix HOST, the host that shipped the dump"
+        raise click.UsageError(msg)
+    if not list_ and (into is None) == (download_only is None):
+        msg = "say where: exactly one of --into DATABASE, --download-only DIR"
+        raise click.UsageError(msg)
+    try:
+        # Inside the try: a missing or revoked key raises from google.auth here.
+        client = restore.make_client()
+        if list_:
+            for snapshot in restore.list_snapshots(client, bucket, prefix):
+                meta = snapshot.metadata
+                click.echo(
+                    " ".join(
+                        [
+                            snapshot.name,
+                            *(f"{f}={meta.get(f, '')}" for f in restore.LISTED_METADATA),
+                            f"created={iso(snapshot.created) if snapshot.created else ''}",
+                            *(["SUSPECT(named after its creation)"] if snapshot.suspect else []),
+                        ]
+                    )
+                )
+            return
+        key = key or restore.latest_key(client, bucket, prefix)
+        if download_only is not None:
+            path = restore.fetch(client, bucket, key, download_only, runner=subprocess.run)
+            click.echo(f"verified: {path}")
+            return
+        with tempfile.TemporaryDirectory(prefix="wslcb-restore-") as work:
+            path = restore.fetch(client, bucket, key, Path(work), runner=subprocess.run)
+            restore.restore_into(path, into, run_as=run_as, runner=subprocess.run)
+    except Exception as exc:  # noqa: BLE001 — reported, then exit 1
+        # One exit and one sentence for every failure, whatever raised it: a
+        # traceback is the wrong thing to hand an operator mid-incident.
+        error = (
+            str(exc) if isinstance(exc, restore.RestoreError) else f"{type(exc).__name__}: {exc}"
+        )
+        logger.error("Restore failed: %s", error)  # noqa: TRY400 — one sentence, no traceback
+        click.echo(f"restore failed: {error}", err=True)
+        sys.exit(1)
+    click.echo(f"restored gs://{bucket}/{key} into {into}")
+    click.echo("next: the go/no-go gates in docs/RECOVERY.md")
+
+
+@ops.command("restore-archive")
+@click.option("--prefix", metavar="HOST", required=True, help="Whose archive.")
+@click.option(
+    "--into",
+    metavar="DIR",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="A private directory to write data/-relative paths under.",
+)
+@click.option("--path", "subtree", default="", help="Only files under this data/-relative path.")
+@click.option("--bucket", envvar="WSLCB_ARCHIVE_BUCKET", required=True, help="Archive bucket.")
+def restore_archive(prefix: str, into: Path, subtree: str, bucket: str) -> None:
+    """Bring data/ files back from the archive bucket, md5-checked (#185)."""
+    try:
+        count = restore.fetch_archive(restore.make_client(), bucket, prefix, into, path=subtree)
+    except Exception as exc:  # noqa: BLE001 — reported, then exit 1
+        error = (
+            str(exc) if isinstance(exc, restore.RestoreError) else f"{type(exc).__name__}: {exc}"
+        )
+        logger.error("Archive restore failed: %s", error)  # noqa: TRY400 — as above
+        click.echo(f"restore failed: {error}", err=True)
+        sys.exit(1)
+    click.echo(f"restored {count} file(s) into {into}")
 
 
 # ---------------------------------------------------------------------------
