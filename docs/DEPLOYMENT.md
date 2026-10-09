@@ -313,10 +313,12 @@ CannObserv/address-validator#250, contract v2 deployed 2026-09-30):
   USPS confirmation still takes it. A row counts as USPS-confirmed when
   `address_validated_at` is set, even if a later `invalid`/`not_found` answer
   cleared its DPV code; only a DPV-less `confirmed*` row does not (#189).
-- **Retry-later warning.** `undetermined` with the warning "a later retry may
-  produce a determination" means a fallback provider was unreachable. The tracker
-  writes nothing and retries next run, and this does **not** count toward the
-  breaker.
+- **Retry-later warning.** Any answer with the warning "a later retry may produce
+  a determination" means a fallback provider was unreachable. Usually that is
+  `undetermined`, or a DPV-less `invalid`/`not_found` (address-validator#275). The
+  tracker writes nothing and retries next run (#191). This does **not** count
+  toward the breaker or the daily limit. During a USPS outage each row falls
+  through to Google until Google's quota stops the run.
 
 A call with **no answer** writes nothing, so the row is retried next run, and it
 counts toward the breaker (#183):

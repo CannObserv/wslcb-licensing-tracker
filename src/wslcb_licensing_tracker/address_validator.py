@@ -29,8 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from .address_client import (
     CONFIRMED_STATUSES,
     MAX_RETRY_AFTER,
+    RETRY_HINT,
     UNAVAILABLE_STATUS,
-    UNDETERMINED_RETRY_HINT,
     UNDETERMINED_STATUS,
     QuotaExhaustedError,
     get_api_key,
@@ -63,7 +63,10 @@ VALIDATION_TTL_DAYS = 180
 # (160/day). attempted_at is stamped on every *answered* call, so counting rows
 # with attempted_at >= start-of-day counts same-day answered calls. #150.
 # Unanswered calls leave no stamp and are invisible to this count; during an
-# outage MAX_CONSECUTIVE_NO_ANSWER is what bounds them (#183).
+# outage MAX_CONSECUTIVE_NO_ANSWER is what bounds them (#183). Retry-later
+# answers (#191) are invisible too and don't trip that breaker: during a USPS
+# outage each row falls through to Google until its quota's long Retry-After
+# stops the run (QuotaExhaustedError).
 DAILY_VALIDATION_LIMIT = 5000
 
 # _validate_batch stops after this many consecutive rows get no answer (#183).
@@ -238,24 +241,11 @@ async def _is_usps_confirmed(conn: AsyncConnection, location_id: int) -> bool:
 
 
 async def _apply_no_determination(
-    conn: AsyncConnection,
-    location_id: int,
-    validation: dict,
-    warnings: list,
-    now: datetime,
+    conn: AsyncConnection, location_id: int, validation: dict, now: datetime
 ) -> LocationOutcome:
-    """Handle 'unavailable' / 'undetermined' (CannObserv/address-validator#250)."""
+    """Record a provider's no-determination answer (CannObserv/address-validator#250)."""
     status = validation.get("status", "")
     provider = validation.get("provider")
-    if status == UNAVAILABLE_STATUS and not provider:
-        logger.info("Validator has no provider for location %d; left for retry", location_id)
-        return LocationOutcome.NO_ANSWER
-    if any(UNDETERMINED_RETRY_HINT in str(w) for w in warnings):
-        logger.info(
-            "Undetermined for location %d while a fallback was unreachable; left for retry",
-            location_id,
-        )
-        return LocationOutcome.RETRY_LATER
     logger.info("No determination for location %d (%s, %s)", location_id, status, provider)
     # A no-determination status gives way to the newer one, so pre-v2 USPS
     # 'unavailable' rows take 'undetermined' (#189); real answers are kept.
@@ -315,9 +305,11 @@ async def _validate_and_write(
       provider (pre-v2 USPS blank DPV) — an answer, deterministic per address
       (CannObserv/address-validator#250): stamps the attempt so the row waits a
       full TTL and keeps any prior status/dpv (#187), save that a prior
-      no-determination status takes the new one (#189) → RECORDED. With the
-      "later retry may produce a determination" warning a fallback provider
-      was out: writes nothing → RETRY_LATER.
+      no-determination status takes the new one (#189) → RECORDED.
+    * any answer carrying the "later retry may produce a determination"
+      warning — a fallback provider was out, so it is not final (undetermined,
+      or since CannObserv/address-validator#275 a DPV-less invalid/not_found):
+      writes nothing, so the row is retried next run (#191) → RETRY_LATER.
     * no answer (transport failure or 429/5xx after retries → None, or
       'unavailable' with no provider: none configured on the validator) —
       writes nothing, so the row is retried next run (#183) → NO_ANSWER.
@@ -339,9 +331,20 @@ async def _validate_and_write(
     status = validation.get("status", "")
     now = datetime.now(UTC)
 
+    if status == UNAVAILABLE_STATUS and not validation.get("provider"):
+        logger.info("Validator has no provider for location %d; left for retry", location_id)
+        return LocationOutcome.NO_ANSWER
+    # Checked before any status branch: the hint can ride on any non-final
+    # answer, and recording one would park the row for a full TTL (#191).
+    if any(RETRY_HINT in str(w) for w in result.get("warnings") or []):
+        logger.info(
+            "Answer '%s' for location %d came while a fallback was unreachable; left for retry",
+            status,
+            location_id,
+        )
+        return LocationOutcome.RETRY_LATER
     if status in NO_DETERMINATION_STATUSES:
-        warnings = result.get("warnings") or []
-        return await _apply_no_determination(conn, location_id, validation, warnings, now)
+        return await _apply_no_determination(conn, location_id, validation, now)
     # Gate on validation status: v2 returns address_line_1="" (not None) for unconfirmed.
     if status in CONFIRMED_STATUSES:
         return await _apply_confirmation(conn, location_id, result, now)
