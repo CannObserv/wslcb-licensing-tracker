@@ -35,6 +35,12 @@ stdout fd: through stdout `pg_dump` appended a second table of contents, and a
 cut removing only that copy passed both verification reads (measured
 2026-10-09).
 
+**When the archive reports `differs`.** A file under `data/` no longer matches
+the object it was first shipped as. These files are frozen, so one side is
+damaged: compare the local file with `restore-archive --path <it>`. If the local
+copy is the bad one, put the archived bytes back. The alert repeats nightly
+until the two agree; nothing is ever shipped over the object.
+
 **Why create-only.** The service account holds `objectCreator` + `objectViewer`
 on both buckets and nothing else: no overwrite, no delete. A compromised host
 cannot erase its history; retention belongs to the bucket. GCS soft-delete
