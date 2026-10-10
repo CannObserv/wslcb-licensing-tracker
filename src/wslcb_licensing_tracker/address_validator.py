@@ -75,8 +75,10 @@ VALIDATION_WINDOW = timedelta(hours=24)
 # so 10 in a row means the validator or its providers are down. It trips after 10 rows —
 # at most 10 x MAX_RETRIES = 30 HTTP attempts, ~8.5 min with 15s timeouts plus
 # backoff — instead of spending the whole batch against a provider that is down.
-# A daily quota that is out needs no breaker: its 429 carries a Retry-After past
-# MAX_RETRY_AFTER, and the batch stops on the first one (QuotaExhaustedError; #187).
+# Once every provider's daily quota is out, the 429 carries a Retry-After past
+# MAX_RETRY_AFTER and the batch stops on the first one (QuotaExhaustedError; #187).
+# USPS's quota alone running out shows up as retry-later answers instead, since
+# Google answers in its place: MAX_CONSECUTIVE_RETRY_LATER covers that.
 MAX_CONSECUTIVE_NO_ANSWER = 10
 
 # _validate_batch stops after this many consecutive retry-later answers. One
