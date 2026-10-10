@@ -50,6 +50,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from .address_validator import DAILY_VALIDATION_LIMIT
 from .address_validator import backfill_addresses as run_backfill_addresses
 from .address_validator import refresh_addresses as run_refresh_addresses
 from .address_validator import refresh_specific_addresses as run_refresh_specific_addresses
@@ -245,10 +246,22 @@ def backfill_addresses(rate_limit: float) -> None:
     "--location-ids",
     default=None,
     type=click.Path(exists=True),
-    help="File of newline-separated location IDs to re-validate.",
+    help="File of newline-separated location IDs to re-validate, run in file order.",
 )
-def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
+@click.option(
+    "--budget-reserve",
+    type=click.IntRange(min=0),
+    default=None,
+    help="With --location-ids: run only what the rolling 24h validation limit allows,"
+    " keeping this many calls for the scrape hooks.",
+)
+def refresh_addresses(
+    rate_limit: float, location_ids: str | None, budget_reserve: int | None
+) -> None:
     """Re-validate locations via the address API."""
+    if budget_reserve is not None and not location_ids:
+        msg = "--budget-reserve needs --location-ids"
+        raise click.UsageError(msg)
     ids: list[int] | None = None
     if location_ids:
         with Path(location_ids).open() as fh:
@@ -257,7 +270,13 @@ def refresh_addresses(rate_limit: float, location_ids: str | None) -> None:
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             if ids is not None:
-                await run_refresh_specific_addresses(conn, ids, rate_limit=rate_limit)
+                await run_refresh_specific_addresses(
+                    conn,
+                    ids,
+                    rate_limit=rate_limit,
+                    daily_limit=None if budget_reserve is None else DAILY_VALIDATION_LIMIT,
+                    reserve=budget_reserve or 0,
+                )
             else:
                 await run_refresh_addresses(conn, rate_limit=rate_limit)
 

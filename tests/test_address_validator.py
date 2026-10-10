@@ -22,14 +22,17 @@ from wslcb_licensing_tracker.address_client import (
 from wslcb_licensing_tracker.address_validator import (
     DAILY_VALIDATION_LIMIT,
     MAX_CONSECUTIVE_NO_ANSWER,
+    MAX_CONSECUTIVE_RETRY_LATER,
     VALIDATION_TTL_DAYS,
     LocationOutcome,
     _process_location,
     _validate_batch,
     backfill_addresses,
     process_location,
+    refresh_specific_addresses,
     standardize_location,
     validate_location,
+    validations_used,
 )
 from wslcb_licensing_tracker.db import get_or_create_location
 from wslcb_licensing_tracker.models import locations
@@ -1390,6 +1393,39 @@ class TestProcessLocation:
         assert row["address_validated_at"] == old
         assert row["address_validation_attempted_at"] > old
 
+    @pytest.mark.parametrize(
+        "status", ["confirmed", "confirmed_missing_secondary", "confirmed_bad_secondary"]
+    )
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_undetermined_replaces_a_dpv_less_confirmation(self, pg_conn, status):
+        """No provider will repeat a Google-grade confirmation, so the status stops
+        claiming one; std_* and address_validated_at stay as the best text (#190)."""
+        addr = f"13 GOOGLE WAY {status.upper()}, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_dpv_cleared(pg_conn, addr, "13 GOOGLE WAY", status)
+        outcome = await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["validation_status"] == "undetermined"
+        assert row["dpv_match_code"] is None
+        assert row["std_address_line_1"] == "13 GOOGLE WAY"
+        assert row["address_validated_at"] == old
+        assert row["address_validation_attempted_at"] > old
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_demoted_google_row_then_counts_as_usps_confirmed(self, pg_conn):
+        """Accepted tradeoff of #190: once demoted, the row's std_* are guarded like
+        a USPS confirmation. Moot while address-validator sends no DPV-less US
+        confirmations (address-validator#274); pinned so a change is deliberate."""
+        addr = "14 DEMOTED WAY, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_dpv_cleared(pg_conn, addr, "14 DEMOTED WAY", "confirmed")
+        await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
+        outcome = await self._run(pg_conn, loc_id, addr, self.GOOGLE_CONFIRMED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["std_address_line_1"] == "14 DEMOTED WAY"
+        assert row["validation_status"] == "undetermined"
+        assert row["address_validated_at"] == old
+
     @pytest.mark.asyncio(loop_scope="session")
     async def test_undetermined_keeps_a_not_found_status(self, pg_conn):
         """Only a no-determination status gives way; a real answer is kept (#187)."""
@@ -1672,16 +1708,63 @@ class TestValidateBatch:
         assert mock_process.call_count == len(outcomes)
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_retry_later_does_not_trip_the_breaker(self, pg_engine):
-        """The validator answered; only its fallback was out. Not an outage (#187)."""
-        rows = self._rows(MAX_CONSECUTIVE_NO_ANSWER + 5)
+    async def test_stops_after_consecutive_retry_laters(self, pg_engine, caplog):
+        """Retry-later answers in a row mean USPS is out and each row is spending
+        Google's 160/day fallback quota: stop rather than drain it (#189/#190)."""
+        rows = self._rows(MAX_CONSECUTIVE_RETRY_LATER + 5)
         async with pg_engine.connect() as conn:
             with patch(
                 "wslcb_licensing_tracker.address_validator._process_location",
                 return_value=LocationOutcome.RETRY_LATER,
             ) as mock_process:
-                await _validate_batch(conn, rows, "Fallback out", rate_limit=0)
-        assert mock_process.call_count == len(rows)
+                with caplog.at_level("INFO"):
+                    await _validate_batch(conn, rows, "Fallback out", rate_limit=0)
+        assert mock_process.call_count == MAX_CONSECUTIVE_RETRY_LATER
+        stops = [r for r in caplog.records if r.getMessage().startswith("Stopping:")]
+        assert len(stops) == 1
+        assert stops[0].levelname == "WARNING"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_no_answers_between_retry_laters_do_not_reset_that_breaker(self, pg_engine):
+        """With USPS out, Google's per-minute 429s turn some rows into no-answers;
+        they must not hide the retry-later streak (CR 1)."""
+        r, n = LocationOutcome.RETRY_LATER, LocationOutcome.NO_ANSWER
+        outcomes = [r, n, r, n, r, n, r, n]
+        rows = self._rows(len(outcomes))
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                side_effect=outcomes,
+            ) as mock_process:
+                await _validate_batch(conn, rows, "Alternating", rate_limit=0)
+        assert mock_process.call_count == 2 * MAX_CONSECUTIVE_RETRY_LATER - 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_row_failure_does_not_reset_the_retry_later_breaker(self, pg_engine):
+        """An empty address or DB hiccup says nothing about the provider (CR 9)."""
+        r, f = LocationOutcome.RETRY_LATER, LocationOutcome.FAILED
+        outcomes = [r, f, r, f, r, f]
+        rows = self._rows(len(outcomes))
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                side_effect=outcomes,
+            ) as mock_process:
+                await _validate_batch(conn, rows, "Failing rows", rate_limit=0)
+        assert mock_process.call_count == 2 * MAX_CONSECUTIVE_RETRY_LATER - 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_final_answer_resets_the_retry_later_breaker(self, pg_engine):
+        streak = [LocationOutcome.RETRY_LATER] * (MAX_CONSECUTIVE_RETRY_LATER - 1)
+        outcomes = [*streak, LocationOutcome.RECORDED, *streak, LocationOutcome.WRITTEN]
+        rows = self._rows(len(outcomes))
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                side_effect=outcomes,
+            ) as mock_process:
+                await _validate_batch(conn, rows, "Flaky fallback", rate_limit=0)
+        assert mock_process.call_count == len(outcomes)
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_stops_at_once_when_quota_exhausted(self, pg_engine, caplog):
@@ -1721,6 +1804,18 @@ class TestBackfillTTL:
     process_location is mocked to capture which location ids the selector surfaces
     (and to leave attempted_at untouched, so the ceiling math is deterministic).
     """
+
+    # Usage is fixed so the budget arithmetic doesn't depend on rows other tests
+    # in this session stamped (the tables are truncated only per session; CR 4).
+    USED = 7
+
+    @pytest.fixture(autouse=True)
+    def _fixed_usage(self):
+        with patch(
+            "wslcb_licensing_tracker.address_validator.validations_used",
+            return_value=self.USED,
+        ):
+            yield
 
     @staticmethod
     def _capture():
@@ -1869,21 +1964,12 @@ class TestBackfillTTL:
     async def test_daily_ceiling_clamps_to_remaining_budget(self, pg_engine):
         from datetime import timedelta
 
-        from sqlalchemy import func
-
         from wslcb_licensing_tracker.address_validator import UTC, datetime
 
         stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
-        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
         async with pg_engine.connect() as conn:
-            used_before = (
-                await conn.execute(
-                    select(func.count())
-                    .select_from(locations)
-                    .where(locations.c.address_validation_attempted_at >= day_start)
-                )
-            ).scalar_one()
+            used_before = self.USED
             eligible = []
             for i in range(5):
                 addr = f"{600 + i} CEIL ST, SEATTLE, WA 981{i:02}"
@@ -1922,12 +2008,9 @@ class TestBackfillTTL:
     async def test_daily_ceiling_zero_budget_processes_nothing(self, pg_engine):
         from datetime import timedelta
 
-        from sqlalchemy import func
-
         from wslcb_licensing_tracker.address_validator import UTC, datetime
 
         stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
-        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
         async with pg_engine.connect() as conn:
             lid = await get_or_create_location(conn, "700 ZERO ST, SEATTLE, WA 98107")
@@ -1937,13 +2020,7 @@ class TestBackfillTTL:
                 .values(address_standardized_at=stale, address_validation_attempted_at=stale)
             )
             await conn.commit()
-            used_before = (
-                await conn.execute(
-                    select(func.count())
-                    .select_from(locations)
-                    .where(locations.c.address_validation_attempted_at >= day_start)
-                )
-            ).scalar_one()
+            used_before = self.USED
 
         processed, mock_process = self._capture()
         async with pg_engine.connect() as conn:
@@ -1972,21 +2049,12 @@ class TestBackfillTTL:
         locations are not starved during the renewal wave."""
         from datetime import timedelta
 
-        from sqlalchemy import func
-
         from wslcb_licensing_tracker.address_validator import UTC, datetime
 
         stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
-        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
         async with pg_engine.connect() as conn:
-            used_before = (
-                await conn.execute(
-                    select(func.count())
-                    .select_from(locations)
-                    .where(locations.c.address_validation_attempted_at >= day_start)
-                )
-            ).scalar_one()
+            used_before = self.USED
             # 2 never-attempted (attempted_at NULL by default) + 3 stale.
             for i in range(2):
                 await get_or_create_location(conn, f"{80 + i} NEW WAY, SEATTLE, WA 98108")
@@ -2038,19 +2106,8 @@ class TestBackfillTTL:
         """Among never-attempted rows the newest location goes first, so a fresh
         scrape's locations are not queued behind old rows that keep getting no
         answer (#187)."""
-        from sqlalchemy import func
-
-        from wslcb_licensing_tracker.address_validator import UTC, datetime
-
-        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         async with pg_engine.connect() as conn:
-            used_before = (
-                await conn.execute(
-                    select(func.count())
-                    .select_from(locations)
-                    .where(locations.c.address_validation_attempted_at >= day_start)
-                )
-            ).scalar_one()
+            used_before = self.USED
             ids = [
                 await get_or_create_location(conn, f"{70 + i} QUEUE WAY, SEATTLE, WA 98107")
                 for i in range(3)
@@ -2078,4 +2135,107 @@ class TestBackfillTTL:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_default_daily_limit_is_constant(self):
-        assert DAILY_VALIDATION_LIMIT == 5000
+        assert DAILY_VALIDATION_LIMIT == 450
+
+
+# ---------------------------------------------------------------------------
+# Rolling 24h budget — USPS counts its daily quota over a rolling window
+# ---------------------------------------------------------------------------
+
+
+class TestValidationsUsed:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_counts_attempts_in_the_24h_before_now(self, pg_conn):
+        """USPS's daily quota rolls over 24h, so the tracker's count does too:
+        a UTC-day count would let two runs either side of midnight double up."""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime(2001, 1, 2, 9, 0, tzinfo=UTC)
+        stamps = {
+            "inside, before midnight": now - timedelta(hours=23),
+            "inside, after midnight": now - timedelta(hours=1),
+            "outside": now - timedelta(hours=25),
+            "after now": now + timedelta(hours=1),
+        }
+        for i, at in enumerate(stamps.values()):
+            lid = await get_or_create_location(pg_conn, f"{i} WINDOW WAY, SEATTLE, WA 98101")
+            await pg_conn.execute(
+                update(locations)
+                .where(locations.c.id == lid)
+                .values(address_validation_attempted_at=at)
+            )
+        assert await validations_used(pg_conn, now) == 2
+
+
+# ---------------------------------------------------------------------------
+# refresh_specific_addresses — budgeted remediation runs (#189/#190)
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshSpecificBudget:
+    """A remediation run from a timer shares the rolling budget with the scrape
+    hooks, leaving *reserve* calls for them; ids run in the order given."""
+
+    @staticmethod
+    async def _seed(pg_engine, n, tag):
+        async with pg_engine.connect() as conn:
+            ids = [
+                await get_or_create_location(conn, f"{i} {tag} WAY, SEATTLE, WA 98101")
+                for i in range(n)
+            ]
+            await conn.commit()
+        return ids
+
+    @staticmethod
+    async def _refresh(pg_engine, ids, used, **kwargs):
+        processed: list[int] = []
+
+        async def mock_process(conn, location_id, address, client=None):
+            processed.append(location_id)
+            return LocationOutcome.RECORDED
+
+        async with pg_engine.connect() as conn:
+            with (
+                patch(
+                    "wslcb_licensing_tracker.address_validator.get_api_key",
+                    return_value="test-key",
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator.validations_used",
+                    return_value=used,
+                ),
+                patch(
+                    "wslcb_licensing_tracker.address_validator._process_location",
+                    side_effect=mock_process,
+                ),
+            ):
+                await refresh_specific_addresses(conn, ids, rate_limit=0, **kwargs)
+        return processed
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_runs_ids_in_the_order_given(self, pg_engine):
+        ids = await self._seed(pg_engine, 4, "ORDER")
+        wanted = [ids[2], ids[0], ids[3], ids[1]]
+        assert await self._refresh(pg_engine, wanted, used=0) == wanted
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_unbudgeted_run_ignores_the_daily_limit(self, pg_engine):
+        ids = await self._seed(pg_engine, 3, "MANUAL")
+        assert await self._refresh(pg_engine, ids, used=DAILY_VALIDATION_LIMIT) == ids
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_budget_leaves_the_reserve_for_scrape_hooks(self, pg_engine):
+        ids = await self._seed(pg_engine, 6, "BUDGET")
+        processed = await self._refresh(pg_engine, ids, used=5, daily_limit=12, reserve=3)
+        assert processed == ids[:4]  # 12 - 5 used - 3 reserved
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_spent_budget_processes_nothing(self, pg_engine, caplog):
+        ids = await self._seed(pg_engine, 2, "SPENT")
+        with caplog.at_level("INFO"):
+            processed = await self._refresh(pg_engine, ids, used=10, daily_limit=12, reserve=3)
+        assert processed == []
+        messages = [r.getMessage() for r in caplog.records]
+        # The ids exist; it is the budget that is spent (CR 6).
+        assert not any(m.startswith("No locations") for m in messages)
+        assert any("budget spent" in m for m in messages)

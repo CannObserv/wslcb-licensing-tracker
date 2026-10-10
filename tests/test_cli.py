@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from cli_helpers import mock_async_engine, mock_get_db
 from click.testing import CliRunner
 
+from wslcb_licensing_tracker.address_validator import DAILY_VALIDATION_LIMIT
 from wslcb_licensing_tracker.cli import main
 
 
@@ -105,6 +106,49 @@ class TestIngestGroup:
         result = CliRunner().invoke(main, ["ingest", "refresh-addresses"])
         assert result.exit_code == 0
         mock_ra.assert_called_once()
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_refresh_specific_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_refresh_addresses_budget_reserve(self, mock_engine, mock_rs, mock_gdb, tmp_path):
+        """--budget-reserve runs ids under the rolling daily limit (#189/#190)."""
+        mock_engine.return_value = mock_async_engine()
+        ids = tmp_path / "ids.txt"
+        ids.write_text("7\n3\n\n5\n")
+        result = CliRunner().invoke(
+            main,
+            ["ingest", "refresh-addresses", "--location-ids", str(ids), "--budget-reserve", "100"],
+        )
+        assert result.exit_code == 0, result.output
+        args, kwargs = mock_rs.call_args
+        assert args[1] == [7, 3, 5]
+        assert kwargs["daily_limit"] == DAILY_VALIDATION_LIMIT
+        assert kwargs["reserve"] == 100
+
+    @patch("wslcb_licensing_tracker.cli.run_refresh_addresses", new_callable=AsyncMock)
+    def test_refresh_addresses_budget_reserve_needs_location_ids(self, mock_ra):
+        """A budget only applies to an id list; a full refresh must not pretend (CR 11)."""
+        result = CliRunner().invoke(
+            main, ["ingest", "refresh-addresses", "--budget-reserve", "100"]
+        )
+        assert result.exit_code == 2
+        assert "--budget-reserve needs --location-ids" in result.output
+        mock_ra.assert_not_called()
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_refresh_specific_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_refresh_addresses_ids_unbudgeted_by_default(
+        self, mock_engine, mock_rs, mock_gdb, tmp_path
+    ):
+        mock_engine.return_value = mock_async_engine()
+        ids = tmp_path / "ids.txt"
+        ids.write_text("7\n")
+        result = CliRunner().invoke(
+            main, ["ingest", "refresh-addresses", "--location-ids", str(ids)]
+        )
+        assert result.exit_code == 0, result.output
+        assert mock_rs.call_args.kwargs.get("daily_limit") is None
 
 
 class TestDbGroup:
