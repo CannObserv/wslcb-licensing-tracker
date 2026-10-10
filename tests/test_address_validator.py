@@ -1805,8 +1805,8 @@ class TestBackfillTTL:
     (and to leave attempted_at untouched, so the ceiling math is deterministic).
     """
 
-    # Usage is fixed: a live count could drift between a test's read and the
-    # backfill's own as rows from a run ~24h ago leave the window (CR 4).
+    # Usage is fixed so the budget arithmetic doesn't depend on rows other tests
+    # in this session stamped (the tables are truncated only per session; CR 4).
     USED = 7
 
     @pytest.fixture(autouse=True)
