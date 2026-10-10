@@ -125,6 +125,16 @@ class TestIngestGroup:
         assert kwargs["daily_limit"] == DAILY_VALIDATION_LIMIT
         assert kwargs["reserve"] == 100
 
+    @patch("wslcb_licensing_tracker.cli.run_refresh_addresses", new_callable=AsyncMock)
+    def test_refresh_addresses_budget_reserve_needs_location_ids(self, mock_ra):
+        """A budget only applies to an id list; a full refresh must not pretend (CR 11)."""
+        result = CliRunner().invoke(
+            main, ["ingest", "refresh-addresses", "--budget-reserve", "100"]
+        )
+        assert result.exit_code == 2
+        assert "--budget-reserve needs --location-ids" in result.output
+        mock_ra.assert_not_called()
+
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
     @patch("wslcb_licensing_tracker.cli.run_refresh_specific_addresses", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
