@@ -854,6 +854,15 @@ async def refresh_specific_addresses(  # noqa: PLR0913 — budget is two knobs
     if daily_limit is not None:
         used = await validations_used(conn, datetime.now(UTC))
         budget = max(0, daily_limit - used - reserve)
+        if budget == 0:
+            logger.info(
+                "Refresh budget spent (%d used in 24h, limit %d, %d reserved); %d ids wait",
+                used,
+                daily_limit,
+                reserve,
+                len(rows),
+            )
+            return 0
         logger.info(
             "Budget: %d of %d ids (%d used in 24h, limit %d, %d reserved)",
             min(budget, len(rows)),

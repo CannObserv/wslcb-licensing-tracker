@@ -2206,6 +2206,12 @@ class TestRefreshSpecificBudget:
         assert processed == ids[:4]  # 12 - 5 used - 3 reserved
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_spent_budget_processes_nothing(self, pg_engine):
+    async def test_spent_budget_processes_nothing(self, pg_engine, caplog):
         ids = await self._seed(pg_engine, 2, "SPENT")
-        assert await self._refresh(pg_engine, ids, used=10, daily_limit=12, reserve=3) == []
+        with caplog.at_level("INFO"):
+            processed = await self._refresh(pg_engine, ids, used=10, daily_limit=12, reserve=3)
+        assert processed == []
+        messages = [r.getMessage() for r in caplog.records]
+        # The ids exist; it is the budget that is spent (CR 6).
+        assert not any(m.startswith("No locations") for m in messages)
+        assert any("budget spent" in m for m in messages)
