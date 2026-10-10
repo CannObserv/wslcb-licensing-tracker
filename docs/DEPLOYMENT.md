@@ -306,12 +306,9 @@ CannObserv/address-validator#250, contract v2 deployed 2026-09-30):
 - **No determination.** `undetermined` means neither USPS nor the Google fallback
   could place the address. Before v2 the same case arrived as `unavailable` with a
   named provider. The same address gets the same answer on every call, so the
-  tracker records the attempt and keeps any prior status/dpv. A prior legacy
-  `unavailable` status gives way to `undetermined` (#189), and so does a DPV-less
-  `confirmed*` status, which no provider will repeat; its `std_*` and
-  `address_validated_at` stay (#190). Such a row then counts as USPS-confirmed
-  below, which is moot while address-validator sends no DPV-less US confirmations
-  (address-validator#274).
+  tracker records the attempt and keeps any prior status/dpv. A legacy
+  `unavailable` (#189) or DPV-less `confirmed*` (#190) status gives way to
+  `undetermined`, keeping `std_*` and `address_validated_at`.
 - **Google-grade confirmation.** A `confirmed*` with no DPV code comes from Google,
   which can alter the street, suite or ZIP (address-validator#258). It never
   replaces a USPS confirmation; it only records the attempt. A row with no
@@ -321,9 +318,8 @@ CannObserv/address-validator#250, contract v2 deployed 2026-09-30):
 - **Retry-later warning.** Any answer (`undetermined`, or a DPV-less
   `invalid`/`not_found`) warning "a later retry may produce a determination" means
   a fallback provider was out. The tracker writes nothing and retries next run
-  (#191). It is invisible to the daily limit, so a batch stops after
-  `MAX_CONSECUTIVE_RETRY_LATER` (3) in a row: USPS is out (usually its quota) and
-  each further row would spend a Google call for nothing written.
+  (#191). A batch stops after `MAX_CONSECUTIVE_RETRY_LATER` (3) of them with no
+  final answer between: USPS is out, and each row would spend a Google call.
 
 A call with **no answer** writes nothing, so the row is retried next run, and it
 counts toward the breaker (#183):
@@ -339,25 +335,20 @@ Outages come back as HTTP errors, never as a 200 status. Among never-attempted
 rows the newest location goes first, so a fresh scrape's locations don't queue
 behind old rows that keep getting no answer.
 
-**Pacing + daily ceiling** keep us inside upstream limits (USPS 500/day over a
-rolling 24h since 2026-10; a 429 falls over to Google at 160/day):
+**Pacing + daily ceiling** keep us inside upstream limits (USPS 500 per rolling
+24h; a 429 falls over to Google at 160/day):
 
 - `--rate-limit` defaults to **1.0** (1 req/s).
-- `DAILY_VALIDATION_LIMIT = 450` caps `/validate` calls in any rolling 24h across
-  all automatic runs combined (both scrape hooks + the weekly timer). The cap is
-  measured by counting rows with `attempted_at` in the last 24h
-  (`validations_used`), so any `refresh-addresses` run in that window also counts
-  against it. A UTC-day count would let runs either side of midnight double up.
+- `DAILY_VALIDATION_LIMIT = 450` caps answered `/validate` calls (rows with
+  `attempted_at` in the last 24h) across the scrape hooks, the weekly timer and
+  any refresh run.
 - Unanswered calls leave no stamp, so the ceiling can't see them. Instead a batch
   stops after `MAX_CONSECUTIVE_NO_ANSWER` (10) unanswered rows in a row, logging
   `Stopping: … (provider outage?)`; the rest wait for the next run (#183).
 
-About 62K validated rows come due between 2027-02-15 and 04-05; at 450/day the
-ceiling spreads that wave over months, oldest first. To renew on demand outside the
-TTL (e.g. a single known-stale row), use `refresh-addresses --location-ids`, which
-is **not** daily-capped unless given `--budget-reserve N`: then it runs the ids in
-file order up to `450 − used in 24h − N`, keeping N calls for the scrape hooks.
-That is the form to schedule for a remediation backlog (#189/#190).
+To renew outside the TTL, use `refresh-addresses --location-ids F` (uncapped).
+For a backlog, add `--budget-reserve N`: ids run in file order up to
+`450 − used in 24h − N`, keeping N for the scrape hooks (#189/#190).
 
 ### Common address commands
 
