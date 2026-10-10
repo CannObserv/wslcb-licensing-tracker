@@ -1791,6 +1791,18 @@ class TestBackfillTTL:
     (and to leave attempted_at untouched, so the ceiling math is deterministic).
     """
 
+    # Usage is fixed: a live count could drift between a test's read and the
+    # backfill's own as rows from a run ~24h ago leave the window (CR 4).
+    USED = 7
+
+    @pytest.fixture(autouse=True)
+    def _fixed_usage(self):
+        with patch(
+            "wslcb_licensing_tracker.address_validator.validations_used",
+            return_value=self.USED,
+        ):
+            yield
+
     @staticmethod
     def _capture():
         processed: list[int] = []
@@ -1943,7 +1955,7 @@ class TestBackfillTTL:
         stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
 
         async with pg_engine.connect() as conn:
-            used_before = await validations_used(conn, datetime.now(UTC))
+            used_before = self.USED
             eligible = []
             for i in range(5):
                 addr = f"{600 + i} CEIL ST, SEATTLE, WA 981{i:02}"
@@ -1994,7 +2006,7 @@ class TestBackfillTTL:
                 .values(address_standardized_at=stale, address_validation_attempted_at=stale)
             )
             await conn.commit()
-            used_before = await validations_used(conn, datetime.now(UTC))
+            used_before = self.USED
 
         processed, mock_process = self._capture()
         async with pg_engine.connect() as conn:
@@ -2028,7 +2040,7 @@ class TestBackfillTTL:
         stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
 
         async with pg_engine.connect() as conn:
-            used_before = await validations_used(conn, datetime.now(UTC))
+            used_before = self.USED
             # 2 never-attempted (attempted_at NULL by default) + 3 stale.
             for i in range(2):
                 await get_or_create_location(conn, f"{80 + i} NEW WAY, SEATTLE, WA 98108")
@@ -2080,10 +2092,8 @@ class TestBackfillTTL:
         """Among never-attempted rows the newest location goes first, so a fresh
         scrape's locations are not queued behind old rows that keep getting no
         answer (#187)."""
-        from wslcb_licensing_tracker.address_validator import UTC, datetime
-
         async with pg_engine.connect() as conn:
-            used_before = await validations_used(conn, datetime.now(UTC))
+            used_before = self.USED
             ids = [
                 await get_or_create_location(conn, f"{70 + i} QUEUE WAY, SEATTLE, WA 98107")
                 for i in range(3)
