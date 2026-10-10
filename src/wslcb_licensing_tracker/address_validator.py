@@ -563,8 +563,12 @@ def _streaks(outcome: LocationOutcome, no_answer: int, retry_later: int) -> tupl
 
     A no-answer leaves the retry-later streak as it is: with USPS out, Google's
     per-minute 429s turn some rows into no-answers between retry-laters, and
-    resetting on those would hide the streak. Only a final answer clears it.
+    resetting on those would hide the streak. A row failure (empty address, DB
+    error) says nothing about the provider, so it leaves both. Only a final
+    answer clears them.
     """
+    if outcome is LocationOutcome.FAILED:
+        return no_answer, retry_later
     if outcome is LocationOutcome.NO_ANSWER:
         return no_answer + 1, retry_later
     if outcome is LocationOutcome.RETRY_LATER:

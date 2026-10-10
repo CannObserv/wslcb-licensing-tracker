@@ -1740,6 +1740,20 @@ class TestValidateBatch:
         assert mock_process.call_count == 2 * MAX_CONSECUTIVE_RETRY_LATER - 1
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_row_failure_does_not_reset_the_retry_later_breaker(self, pg_engine):
+        """An empty address or DB hiccup says nothing about the provider (CR 9)."""
+        r, f = LocationOutcome.RETRY_LATER, LocationOutcome.FAILED
+        outcomes = [r, f, r, f, r, f]
+        rows = self._rows(len(outcomes))
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                side_effect=outcomes,
+            ) as mock_process:
+                await _validate_batch(conn, rows, "Failing rows", rate_limit=0)
+        assert mock_process.call_count == 2 * MAX_CONSECUTIVE_RETRY_LATER - 1
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_a_final_answer_resets_the_retry_later_breaker(self, pg_engine):
         streak = [LocationOutcome.RETRY_LATER] * (MAX_CONSECUTIVE_RETRY_LATER - 1)
         outcomes = [*streak, LocationOutcome.RECORDED, *streak, LocationOutcome.WRITTEN]
