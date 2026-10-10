@@ -558,6 +558,20 @@ async def _recover_outer_transaction(conn: AsyncConnection, exc: Exception) -> b
     return True
 
 
+def _streaks(outcome: LocationOutcome, no_answer: int, retry_later: int) -> tuple[int, int]:
+    """Advance the breakers' streaks for one row's outcome.
+
+    A no-answer leaves the retry-later streak as it is: with USPS out, Google's
+    per-minute 429s turn some rows into no-answers between retry-laters, and
+    resetting on those would hide the streak. Only a final answer clears it.
+    """
+    if outcome is LocationOutcome.NO_ANSWER:
+        return no_answer + 1, retry_later
+    if outcome is LocationOutcome.RETRY_LATER:
+        return 0, retry_later + 1
+    return 0, 0
+
+
 def _breaker_tripped(no_answer_streak: int, retry_later_streak: int, left: int) -> bool:
     """True, with a warning, when a streak says a provider is out (#183, #189/#190)."""
     if no_answer_streak >= MAX_CONSECUTIVE_NO_ANSWER:
@@ -622,9 +636,8 @@ async def _validate_batch(
                 outcome = await _process_location(conn, location_id, address)
             if outcome is LocationOutcome.WRITTEN:
                 succeeded += 1
-            no_answer_streak = no_answer_streak + 1 if outcome is LocationOutcome.NO_ANSWER else 0
-            retry_later_streak = (
-                retry_later_streak + 1 if outcome is LocationOutcome.RETRY_LATER else 0
+            no_answer_streak, retry_later_streak = _streaks(
+                outcome, no_answer_streak, retry_later_streak
             )
         except QuotaExhaustedError as exc:
             logger.warning(

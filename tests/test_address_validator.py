@@ -1710,6 +1710,21 @@ class TestValidateBatch:
         assert stops[0].levelname == "WARNING"
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_no_answers_between_retry_laters_do_not_reset_that_breaker(self, pg_engine):
+        """With USPS out, Google's per-minute 429s turn some rows into no-answers;
+        they must not hide the retry-later streak (CR 1)."""
+        r, n = LocationOutcome.RETRY_LATER, LocationOutcome.NO_ANSWER
+        outcomes = [r, n, r, n, r, n, r, n]
+        rows = self._rows(len(outcomes))
+        async with pg_engine.connect() as conn:
+            with patch(
+                "wslcb_licensing_tracker.address_validator._process_location",
+                side_effect=outcomes,
+            ) as mock_process:
+                await _validate_batch(conn, rows, "Alternating", rate_limit=0)
+        assert mock_process.call_count == 2 * MAX_CONSECUTIVE_RETRY_LATER - 1
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_a_final_answer_resets_the_retry_later_breaker(self, pg_engine):
         streak = [LocationOutcome.RETRY_LATER] * (MAX_CONSECUTIVE_RETRY_LATER - 1)
         outcomes = [*streak, LocationOutcome.RECORDED, *streak, LocationOutcome.WRITTEN]
