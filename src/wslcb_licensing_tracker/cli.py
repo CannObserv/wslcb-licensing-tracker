@@ -270,12 +270,13 @@ def refresh_addresses(
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             if ids is not None:
-                budget = (
-                    {}
-                    if budget_reserve is None
-                    else {"daily_limit": DAILY_VALIDATION_LIMIT, "reserve": budget_reserve}
+                await run_refresh_specific_addresses(
+                    conn,
+                    ids,
+                    rate_limit=rate_limit,
+                    daily_limit=None if budget_reserve is None else DAILY_VALIDATION_LIMIT,
+                    reserve=budget_reserve or 0,
                 )
-                await run_refresh_specific_addresses(conn, ids, rate_limit=rate_limit, **budget)
             else:
                 await run_refresh_addresses(conn, rate_limit=rate_limit)
 
