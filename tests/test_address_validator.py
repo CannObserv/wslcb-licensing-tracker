@@ -1412,6 +1412,21 @@ class TestProcessLocation:
         assert row["address_validation_attempted_at"] > old
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_demoted_google_row_then_counts_as_usps_confirmed(self, pg_conn):
+        """Accepted tradeoff of #190: once demoted, the row's std_* are guarded like
+        a USPS confirmation. Moot while address-validator sends no DPV-less US
+        confirmations (address-validator#274); pinned so a change is deliberate."""
+        addr = "14 DEMOTED WAY, WOODINVILLE, WA 98072"
+        loc_id, old = await self._seed_dpv_cleared(pg_conn, addr, "14 DEMOTED WAY", "confirmed")
+        await self._run(pg_conn, loc_id, addr, self.UNDETERMINED)
+        outcome = await self._run(pg_conn, loc_id, addr, self.GOOGLE_CONFIRMED)
+        assert outcome is LocationOutcome.RECORDED
+        row = await self._row(pg_conn, loc_id)
+        assert row["std_address_line_1"] == "14 DEMOTED WAY"
+        assert row["validation_status"] == "undetermined"
+        assert row["address_validated_at"] == old
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_undetermined_keeps_a_not_found_status(self, pg_conn):
         """Only a no-determination status gives way; a real answer is kept (#187)."""
         addr = "12 KEPT WAY, WOODINVILLE, WA 98072"
