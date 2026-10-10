@@ -1723,6 +1723,8 @@ class TestValidateBatch:
         stops = [r for r in caplog.records if r.getMessage().startswith("Stopping:")]
         assert len(stops) == 1
         assert stops[0].levelname == "WARNING"
+        # Google's per-minute window trips it too, not only a USPS outage (#189 canary).
+        assert "provider was unreachable (rate-limited or out)" in stops[0].getMessage()
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_no_answers_between_retry_laters_do_not_reset_that_breaker(self, pg_engine):

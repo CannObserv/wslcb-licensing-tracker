@@ -82,9 +82,11 @@ VALIDATION_WINDOW = timedelta(hours=24)
 MAX_CONSECUTIVE_NO_ANSWER = 10
 
 # _validate_batch stops after this many consecutive retry-later answers. One
-# such answer means USPS returned 429/5xx and Google answered in its place, so a
-# streak means USPS is out (most likely its daily quota) and every further row
-# spends one of Google's 160/day calls for nothing the tracker writes (#189/#190).
+# such answer means a provider in address-validator's chain was unreachable:
+# USPS returned 429/5xx and Google answered in its place, or USPS answered
+# 'undetermined' and Google (asked next) was over its 5/min or daily window
+# (#189 canary). Either way every further row spends calls for nothing the
+# tracker writes (#189/#190).
 MAX_CONSECUTIVE_RETRY_LATER = 3
 
 
@@ -591,7 +593,7 @@ def _breaker_tripped(no_answer_streak: int, retry_later_streak: int, left: int) 
     if retry_later_streak >= MAX_CONSECUTIVE_RETRY_LATER:
         logger.warning(
             "Stopping: %d consecutive answers came while a fallback provider was"
-            " unreachable (USPS quota or outage?); %d left for the next run",
+            " unreachable (rate-limited or out); %d left for the next run",
             retry_later_streak,
             left,
         )
