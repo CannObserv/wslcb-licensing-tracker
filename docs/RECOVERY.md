@@ -128,8 +128,11 @@ the monitor alarms on.
 
 ## The co-status monitor
 
-Created on co-status, not here: `co-wslcb-backup`, its own tenant or the
-cohort's, whichever co-status's owner prefers. The fields:
+Created on co-status, not here (CannObserv/status#30, 2026-10-10): monitor
+`co-wslcb-backup`, id `01M4KCE70FJSJKCP2WFH990CAA`, tenant `co-wslcb`, on the
+same two notifier channels as `co-usa-wa-backup` and `co-observo-backup`. A
+rebuilt host keeps the id and needs only the key, re-issued by co-status's
+operator, terminal to terminal. The fields:
 
 | Field | Value | Why |
 |---|---|---|
