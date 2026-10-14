@@ -37,7 +37,8 @@ anyone looked (#198).
 | `interval_seconds` | `86400` | runs are 6 h then 18 h apart; a full cycle is 24 h, and anything shorter alarms on one missed morning run |
 | `grace_seconds` | `7200` | 5 min jitter, plus the scrape before the check-in (max 61 s measured), plus 1 h: the timer is Pacific time, so the fall-back makes one cycle a year 25 h |
 | `renotify_seconds` | `86400` | one reminder a day while a fault lasts |
-| `title_template` / `body_template` | `wslcb scrape {{ outcome }} on {{ source_host }}` / error, `consecutive_errors`, `last_success_at`, `window_expires` | rendered for an `alert` only |
+| `title_template` | `wslcb scrape {{ outcome }} on {{ source_host }}` | rendered for an `alert` only |
+| `body_template` | `{{ error }} — {{ consecutive_errors }} consecutive; last success {{ last_success_at }}; the source window starts dropping uncaptured records after {{ window_expires }}` | as requested in status#46 |
 
 `tests/test_infra_scrape_unit.py` holds the interval and grace above to the
 timer. An `alert` carries `outcome` (`failed`), `source_host`, `error`,
