@@ -221,7 +221,7 @@ wslcb-licensing-tracker/
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
 │   ├── test_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
 │   ├── test_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
-│   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196)
+│   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196), freshness (#197)
 │   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
 │   ├── test_backfill_diffs.py   # Diff-archive scanning, dry-run, and live ingest
 │   ├── test_replay_extracts.py  # Replay-generated provenance extracts (#154)
@@ -376,7 +376,8 @@ Archived HTML snapshots and other persistent data are stored in `./data/` relati
 | `GET /api/v1/cities` | JSON list of cities for a given state (query param `state`) |
 | `GET /api/v1/stats` | JSON aggregate statistics |
 | `GET /api/v1/export` | Streaming CSV export (same query params as `/search`) |
-| `GET /api/v1/health` | Health check — 200 OK or 503 when the DB is unavailable |
+| `GET /api/v1/health` | Liveness — 200 OK or 503 when the DB is unavailable; `data.scrape` reports scrape freshness but never fails it (#197) |
+| `GET /api/v1/health/ingest` | Data freshness — 503 when the last successful scrape is over 26 h old, for external uptime checks |
 
 All `/api/v1/` responses use a consistent JSON envelope: `{"ok": bool, "message": "...", "data": ...}`. The CSV export endpoint is exempt and returns a raw `StreamingResponse`.
 
@@ -565,7 +566,7 @@ Test structure:
 | `tests/test_models.py` | SQLAlchemy Table definition smoke tests |
 | `tests/test_app.py` | App lifespan and startup |
 | `tests/test_routes.py` | Public route tests — dashboard layout, search, stat cards |
-| `tests/test_api_routes.py` | Versioned API routes — cities, stats, export, health check |
+| `tests/test_api_routes.py` | Versioned API routes — cities, stats, export, health checks + scrape freshness |
 | `tests/test_source_viewer.py` | Source viewer route — snapshot dispatch, iframe rendering, not-found cases |
 | `tests/test_admin_auth.py` | Admin authentication — header extraction, env-var fallback, redirect/403 |
 | `tests/test_admin_routes.py` | Admin route rendering and redirects |
@@ -583,7 +584,7 @@ Test structure:
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
 | `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing (require `TEST_DATABASE_URL`) |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions (require `TEST_DATABASE_URL`) |
-| `tests/test_scraper.py` | Scraper — content hash deduplication, redundant data cleanup |
+| `tests/test_scraper.py` | Scraper — content hash deduplication, redundant data cleanup, run history + freshness |
 | `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill |
 | `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
 | `tests/test_substances.py` | Regulated substance CRUD — get, add, remove, set-endorsements |

@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import text
 
 from wslcb_licensing_tracker.scraper import (
+    STALE_AFTER,
     ScrapeHealth,
     ScrapeOutcome,
     alert_variables,
@@ -20,6 +21,7 @@ from wslcb_licensing_tracker.scraper import (
     ok_variables,
     save_html_snapshot,
     scrape,
+    scrape_freshness,
     scrape_health,
 )
 
@@ -168,6 +170,60 @@ class TestScrapeHealth:
     async def test_never_succeeded(self, pg_conn):
         await _fresh_scrape_log(pg_conn, ("error", _T0), ("error", _T0 + timedelta(hours=6)))
         assert await scrape_health(pg_conn) == ScrapeHealth(None, 2)
+
+
+# ── scrape freshness, for /api/v1/health (#197) ───────────────────────
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+class TestScrapeFreshness:
+    async def test_fresh(self, pg_conn):
+        await _fresh_scrape_log(pg_conn, ("success", _T0), ("error", _T0 + timedelta(hours=6)))
+        assert await scrape_freshness(pg_conn, now=_T0 + timedelta(hours=7)) == {
+            "last_success_at": _T0,
+            "last_attempt_status": "error",
+            "consecutive_errors": 1,
+            "stale": False,
+            "stale_after_hours": 26,
+        }
+
+    async def test_stale(self, pg_conn):
+        """Down since 2026-10-13: two days of 403s behind the last good fetch."""
+        await _fresh_scrape_log(
+            pg_conn,
+            ("unchanged", _T0),
+            *(("error", _T0 + timedelta(hours=h)) for h in (6, 24, 30, 48)),
+        )
+        freshness = await scrape_freshness(pg_conn, now=_T0 + timedelta(hours=49))
+        assert freshness["stale"] is True
+        assert freshness["last_success_at"] == _T0
+        assert freshness["consecutive_errors"] == 4
+
+    async def test_stale_only_past_the_threshold(self, pg_conn):
+        """At exactly STALE_AFTER the monitor hasn't alerted yet; a second later it has."""
+        await _fresh_scrape_log(pg_conn, ("success", _T0))
+        at_edge = await scrape_freshness(pg_conn, now=_T0 + STALE_AFTER)
+        past_edge = await scrape_freshness(pg_conn, now=_T0 + STALE_AFTER + timedelta(seconds=1))
+        assert at_edge["stale"] is False
+        assert past_edge["stale"] is True
+
+    async def test_in_progress_run_is_the_last_attempt(self, pg_conn):
+        await _fresh_scrape_log(pg_conn, ("success", _T0), ("running", _T0 + timedelta(hours=6)))
+        freshness = await scrape_freshness(pg_conn, now=_T0 + timedelta(hours=6))
+        assert freshness["last_attempt_status"] == "running"
+        assert freshness["stale"] is False
+
+    async def test_no_history(self, pg_conn):
+        """Nothing ever fetched is nothing fresh."""
+        await _fresh_scrape_log(pg_conn)
+        assert await scrape_freshness(pg_conn, now=_T0) == {
+            "last_success_at": None,
+            "last_attempt_status": None,
+            "consecutive_errors": 0,
+            "stale": True,
+            "stale_after_hours": 26,
+        }
 
 
 class _FakeResponse:

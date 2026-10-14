@@ -5,7 +5,8 @@ Async PostgreSQL port of scraper.py.
 Also the scrape's side of its co-status check-in (#196): ``scrape()`` returns a
 ``ScrapeOutcome``, ``scrape_health()`` reads the run history from
 ``scrape_log``, and ``ok_variables()`` / ``alert_variables()`` / ``fault_key()``
-shape what the monitor's templates see. The CLI sends it.
+shape what the monitor's templates see. The CLI sends it. ``scrape_freshness()``
+reports the same history to ``/api/v1/health`` (#197).
 """
 
 import gzip
@@ -35,6 +36,10 @@ logger = logging.getLogger(__name__)
 SOURCE_WINDOW = timedelta(days=30)
 #: A fetched page counts, changed or not.
 _SUCCESS_STATUSES = ("success", "unchanged")
+#: Past this long after the last successful fetch, /api/v1/health reports the
+#: data stale (#197). It is the scrape monitor's interval plus grace
+#: (docs/MONITORING.md), so the endpoint flips when the dead-man alert fires.
+STALE_AFTER = timedelta(hours=26)
 
 
 @dataclass(frozen=True)
@@ -134,6 +139,28 @@ async def scrape_health(conn: AsyncConnection) -> ScrapeHealth:
         errors = errors.where(scrape_log.c.id > last[0])
     count = (await conn.execute(errors)).scalar_one()
     return ScrapeHealth(last[1] if last is not None else None, count)
+
+
+async def scrape_freshness(conn: AsyncConnection, now: datetime | None = None) -> dict:
+    """The ``scrape`` object /api/v1/health reports (#197).
+
+    ``stale`` is true past ``STALE_AFTER`` since the last successful fetch, and
+    when there has never been one. ``last_attempt_status`` is the newest run's
+    status, ``running`` included. *now* defaults to the current UTC time.
+    """
+    health = await scrape_health(conn)
+    last_status = (
+        await conn.execute(select(scrape_log.c.status).order_by(scrape_log.c.id.desc()).limit(1))
+    ).scalar_one_or_none()
+    now = now or datetime.now(UTC)
+    last = health.last_success_at
+    return {
+        "last_success_at": last,
+        "last_attempt_status": last_status,
+        "consecutive_errors": health.consecutive_errors,
+        "stale": last is None or now - last > STALE_AFTER,
+        "stale_after_hours": STALE_AFTER // timedelta(hours=1),
+    }
 
 
 def fault_key(exc: BaseException) -> str:
