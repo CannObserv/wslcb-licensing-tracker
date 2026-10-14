@@ -34,7 +34,8 @@ default scheduling priority.
 
 `wslcb-task@scrape.service` gets `wslcb-task@scrape.service.d/checkin.conf`
 (the co-status check-in key, tailnet ordering, a 2 h timeout). It is **not** in
-the copy block below: it needs its key file first: install it from [`MONITORING.md`](MONITORING.md).
+the copy block below, because it needs its key file first; install it from
+[`MONITORING.md`](MONITORING.md).
 
 ### Sudoers rule (install once)
 
