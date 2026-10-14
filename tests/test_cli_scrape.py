@@ -93,6 +93,27 @@ class TestCmdScrapeCheckin:
     @patch(f"{_SCRAPE}.post_checkin")
     @patch(f"{_SCRAPE}.run_backfill_addresses", new_callable=AsyncMock)
     @patch(f"{_SCRAPE}.run_scrape", new_callable=AsyncMock)
+    def test_checkins_leave_the_event_loop(self, scrape, backfill, checkin, health, *_):
+        """post_checkin is sync httpx (up to 2 x 10 s): it runs in a worker thread."""
+        import threading
+
+        from wslcb_licensing_tracker.scraper import ScrapeHealth, ScrapeOutcome
+
+        threads = []
+        health.return_value = ScrapeHealth(None, 1)
+        checkin.side_effect = lambda *_a, **_kw: threads.append(threading.current_thread())
+        scrape.return_value = ScrapeOutcome(7, "unchanged")
+        CliRunner().invoke(main, ["ingest", "scrape"])
+        scrape.side_effect = OSError("down")
+        CliRunner().invoke(main, ["ingest", "scrape"])
+
+        assert len(threads) == 2
+        assert all(t is not threading.main_thread() for t in threads)
+
+    @patch(f"{_SCRAPE}.scrape_health", new_callable=AsyncMock)
+    @patch(f"{_SCRAPE}.post_checkin")
+    @patch(f"{_SCRAPE}.run_backfill_addresses", new_callable=AsyncMock)
+    @patch(f"{_SCRAPE}.run_scrape", new_callable=AsyncMock)
     def test_failure_alerts_and_still_fails(self, scrape, backfill, checkin, health, *_):
         """An alert with the history and a fault key; exit 1 so the unit fails."""
         from datetime import UTC, datetime

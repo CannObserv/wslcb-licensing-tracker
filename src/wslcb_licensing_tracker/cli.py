@@ -136,10 +136,12 @@ def scrape(rate_limit: float) -> None:
     async def _run(engine: AsyncEngine) -> None:
         # The co-status check-in (#196) goes as soon as the scrape decides,
         # before the backfill: that takes minutes and cannot fail the scrape.
+        # post_checkin is sync httpx, so it runs off the event loop.
         try:
             outcome = await run_scrape(engine)
         except Exception as exc:
-            post_checkin(
+            await asyncio.to_thread(
+                post_checkin,
                 "alert",
                 alert_variables(exc, await _scrape_history(engine), host),
                 monitor=SCRAPE,
@@ -147,7 +149,9 @@ def scrape(rate_limit: float) -> None:
                 metadata={"fault": fault_key(exc)},
             )
             raise  # the unit still fails: the check-in reports, never replaces
-        post_checkin("ok", ok_variables(outcome, host), monitor=SCRAPE, environ=os.environ)
+        await asyncio.to_thread(
+            post_checkin, "ok", ok_variables(outcome, host), monitor=SCRAPE, environ=os.environ
+        )
         # Post-scrape: standardize any new locations via the address API.
         # Failure here is non-fatal — the weekly timer catches stragglers.
         try:
