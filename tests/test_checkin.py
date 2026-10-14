@@ -164,3 +164,18 @@ class TestMonitors:
         meta = {"fault": "HTTPStatusError 403"}
         assert post_checkin("alert", {}, monitor=BACKUP, environ=env, metadata=meta, post=post)
         assert post.calls[0][1] == {"status": "alert", "variables": {}, "metadata": meta}
+
+
+def test_no_test_finds_a_configured_checkin():
+    """conftest strips the check-in config, so no test can POST to co-status —
+    not even one that runs a real command under a unit's environment."""
+    import os
+
+    from wslcb_licensing_tracker.checkin import CREDENTIALS_DIRECTORY_ENV
+
+    monitors = (BACKUP, SCRAPE)
+    names = [CREDENTIALS_DIRECTORY_ENV] + [
+        n for m in monitors for n in (m.base_url_env, m.monitor_id_env)
+    ]
+    for name in names:
+        assert name not in os.environ, name
