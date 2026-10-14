@@ -57,8 +57,11 @@ sudo cp -r infra/wslcb-task@scrape.service.d /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
-Then, once the monitor id is posted: the key is the `co-wslcb` tenant's, the
-one the backup already holds, so it is copied root to root and never shown.
+Then, once the monitor id is posted. The key below is the `co-wslcb` tenant's,
+the one the backup already holds, copied root to root and never shown. That
+holds **if status#46 confirms keys are tenant-scoped**. If they are per
+monitor, write the new key in at a prompt instead, as RECOVERY.md § Install
+and first run does for the backup's; a wrong key reads as `rejected with HTTP 403`.
 
 ```bash
 sudo install -m 0400 -o root -g root /etc/wslcb-licensing-tracker/backup-checkin.key \
