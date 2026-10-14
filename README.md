@@ -177,6 +177,7 @@ wslcb-licensing-tracker/
 │   ├── wslcb-web.service           # Web app service
 │   ├── wslcb-task@.service         # Oneshot task template
 │   ├── wslcb-scraper.timer         # Twice-daily scraper timer
+│   ├── wslcb-task@scrape.service.d/ # Scrape check-in drop-in: key credential, 2 h timeout (#196; key file first)
 │   ├── wslcb-healthcheck.service   # Health check service (restarts web on failure)
 │   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
 │   ├── wslcb-address-validation.timer # Weekly address backfill timer
@@ -252,6 +253,8 @@ wslcb-licensing-tracker/
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 └── docs/                   # Operations and architecture documentation
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
+    ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
+    ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
     ├── SCHEMA.md            # Full table/column reference and migration history
     ├── SKILLS.md            # AI agent skill inventory and trigger phrases
     ├── SOCRATICODE.md       # Code-exploration tool table, per-tool notes, graph health, index scope
@@ -334,6 +337,8 @@ sudo systemctl enable --now wslcb-healthcheck.timer
 The healthcheck service polls `/api/v1/health` every 5 minutes and automatically restarts the web app if it is unreachable. The `sudoers.d-wslcb-healthcheck` snippet grants the necessary permission for a passwordless `systemctl restart wslcb-web.service`.
 
 The scraper runs twice daily at 12:30 AM and 6:30 AM Pacific with up to 5 minutes of random delay.
+
+Each run can check in to a co-status dead-man monitor, so a failing or stopped scraper alerts (#196). Its drop-in, `infra/wslcb-task@scrape.service.d/`, is deliberately not in the copy block above: it needs its key file first, or every scrape fails to start. Install it from [`docs/MONITORING.md`](docs/MONITORING.md).
 
 Check the timer status:
 
