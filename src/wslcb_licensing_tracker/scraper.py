@@ -1,17 +1,24 @@
 """Async scraper for WSLCB licensing activity page.
 
 Async PostgreSQL port of scraper.py.
+
+Also the scrape's side of its co-status check-in (#196): ``scrape()`` returns a
+``ScrapeOutcome``, ``scrape_health()`` reads the run history from
+``scrape_log``, and ``ok_variables()`` / ``alert_variables()`` / ``fault_key()``
+shape what the monitor's templates see. The CLI sends it.
 """
 
 import gzip
 import hashlib
 import logging
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from bs4 import BeautifulSoup
-from sqlalchemy import delete, exists, select, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -22,6 +29,34 @@ from .parser import SECTION_MAP, parse_records_from_table
 from .pipeline import IngestOptions, ingest_batch
 
 logger = logging.getLogger(__name__)
+
+#: The source page shows the last 30 days. Past this long after the last
+#: successful fetch, records posted early in a gap fall off it unrecorded.
+SOURCE_WINDOW = timedelta(days=30)
+#: A fetched page counts, changed or not.
+_SUCCESS_STATUSES = ("success", "unchanged")
+
+
+@dataclass(frozen=True)
+class ScrapeOutcome:
+    """What one completed scrape did, as recorded in its ``scrape_log`` row."""
+
+    scrape_log_id: int
+    status: Literal["success", "unchanged"]
+    new: int = 0
+    approved: int = 0
+    discontinued: int = 0
+    skipped: int = 0
+
+
+@dataclass(frozen=True)
+class ScrapeHealth:
+    """The run history a failure alert reports (#196)."""
+
+    #: When the newest ``success``/``unchanged`` run finished; None if never.
+    last_success_at: datetime | None
+    #: ``error`` runs since then. ``running`` rows (a killed run) don't count.
+    consecutive_errors: int
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +109,71 @@ async def get_last_content_hash(conn: AsyncConnection) -> str | None:
     return row[0] if row else None
 
 
-async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
+async def scrape_health(conn: AsyncConnection) -> ScrapeHealth:
+    """Last successful fetch and the errors since, from ``scrape_log``."""
+    last = (
+        await conn.execute(
+            select(
+                scrape_log.c.id,
+                func.coalesce(scrape_log.c.finished_at, scrape_log.c.started_at),
+            )
+            .where(scrape_log.c.status.in_(_SUCCESS_STATUSES))
+            .order_by(scrape_log.c.id.desc())
+            .limit(1)
+        )
+    ).first()
+    errors = select(func.count()).select_from(scrape_log).where(scrape_log.c.status == "error")
+    if last is not None:
+        errors = errors.where(scrape_log.c.id > last[0])
+    count = (await conn.execute(errors)).scalar_one()
+    return ScrapeHealth(last[1] if last is not None else None, count)
+
+
+def fault_key(exc: BaseException) -> str:
+    """The stable part of a failure, for the check-in's ``metadata.fault``.
+
+    co-status opens a new fault, and reports at once, when this changes: a 403
+    becoming a 503 or a DNS failure is news; the next 403 is not.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"{type(exc).__name__} {exc.response.status_code}"
+    return type(exc).__name__
+
+
+def ok_variables(outcome: ScrapeOutcome, host: str) -> dict:
+    """The flat variables an ``ok`` check-in carries."""
+    return {
+        "outcome": "ok",
+        "source_host": host,
+        "scrape_status": outcome.status,
+        "records_new": outcome.new,
+        "records_approved": outcome.approved,
+        "records_discontinued": outcome.discontinued,
+        "records_skipped": outcome.skipped,
+        "scrape_log_id": outcome.scrape_log_id,
+    }
+
+
+def alert_variables(exc: BaseException, health: ScrapeHealth | None, host: str) -> dict:
+    """The flat variables an ``alert`` check-in carries; every key always present.
+
+    *health* is None when the history couldn't be read (the database being
+    what failed): its three keys are then empty, and the alert still goes.
+    ``error`` is the exception's first line — httpx appends an MDN link.
+    """
+    message = str(exc).splitlines()[0] if str(exc) else ""
+    last = health.last_success_at if health else None
+    return {
+        "outcome": "failed",
+        "source_host": host,
+        "error": f"{type(exc).__name__}: {message}" if message else type(exc).__name__,
+        "consecutive_errors": health.consecutive_errors if health else "",
+        "last_success_at": last.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if last else "",
+        "window_expires": (last + SOURCE_WINDOW).astimezone(UTC).date().isoformat() if last else "",
+    }
+
+
+async def scrape(engine: AsyncEngine) -> ScrapeOutcome:  # noqa: C901, PLR0915
     """Run a full scrape: fetch, archive, parse, ingest, and log."""
     logger.info("Starting scrape of %s", WSLCB_SOURCE_URL)
 
@@ -116,7 +215,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                     )
                 )
                 await conn.commit()
-                return
+                return ScrapeOutcome(log_id, "unchanged")
 
             scrape_time = datetime.now(UTC)
             snapshot_path = None
@@ -193,6 +292,7 @@ async def scrape(engine: AsyncEngine) -> None:  # noqa: C901, PLR0915
                 counts["discontinued"],
                 counts["skipped"],
             )
+            return ScrapeOutcome(log_id, "success", **counts)
 
         except Exception as exc:
             logger.exception("Scrape failed")

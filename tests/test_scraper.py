@@ -2,17 +2,25 @@
 
 import gzip
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from sqlalchemy import text
 
 from wslcb_licensing_tracker.scraper import (
+    ScrapeHealth,
+    ScrapeOutcome,
+    alert_variables,
     cleanup_redundant_scrapes,
     compute_content_hash,
+    fault_key,
     get_last_content_hash,
+    ok_variables,
     save_html_snapshot,
+    scrape,
+    scrape_health,
 )
 
 _needs_db = pytest.mark.skipif(
@@ -103,3 +111,203 @@ def test_save_html_snapshot_increments_version(tmp_path, monkeypatch):
 
     assert "v1" in p1.name
     assert "v2" in p2.name
+
+
+# ── scrape outcome + health, for the co-status check-in (#196) ───────
+
+
+async def _fresh_scrape_log(conn, *rows):
+    """Empty scrape_log inside the test's transaction, then insert *rows*.
+
+    Each row is ``(status, started_at)``; ids ascend in the order given.
+    """
+    await conn.execute(text("UPDATE sources SET scrape_log_id = NULL"))
+    await conn.execute(text("DELETE FROM scrape_log"))
+    for status, started_at in rows:
+        await conn.execute(
+            text(
+                "INSERT INTO scrape_log (started_at, finished_at, status) "
+                "VALUES (:at, :at, :status)"
+            ),
+            {"at": started_at, "status": status},
+        )
+
+
+_T0 = datetime(2026, 10, 12, 7, 31, tzinfo=UTC)
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+class TestScrapeHealth:
+    async def test_no_history(self, pg_conn):
+        await _fresh_scrape_log(pg_conn)
+        assert await scrape_health(pg_conn) == ScrapeHealth(None, 0)
+
+    async def test_errors_since_the_last_success(self, pg_conn):
+        """unchanged is a success: the page was fetched. Earlier errors don't count."""
+        await _fresh_scrape_log(
+            pg_conn,
+            ("error", _T0 - timedelta(days=2)),
+            ("success", _T0),
+            ("unchanged", _T0 + timedelta(hours=6)),
+            ("error", _T0 + timedelta(hours=24)),
+            ("error", _T0 + timedelta(hours=30)),
+        )
+        assert await scrape_health(pg_conn) == ScrapeHealth(_T0 + timedelta(hours=6), 2)
+
+    async def test_running_rows_are_not_errors(self, pg_conn):
+        """A run killed mid-scrape leaves 'running'; it is no evidence either way."""
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0),
+            ("running", _T0 + timedelta(hours=6)),
+            ("error", _T0 + timedelta(hours=24)),
+        )
+        assert await scrape_health(pg_conn) == ScrapeHealth(_T0, 1)
+
+    async def test_never_succeeded(self, pg_conn):
+        await _fresh_scrape_log(pg_conn, ("error", _T0), ("error", _T0 + timedelta(hours=6)))
+        assert await scrape_health(pg_conn) == ScrapeHealth(None, 2)
+
+
+class _FakeResponse:
+    def __init__(self, status_code, body=""):
+        self.status_code = status_code
+        self.text = body
+        self._request = httpx.Request("GET", "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp")
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            response = httpx.Response(self.status_code, request=self._request)
+            raise httpx.HTTPStatusError("Client error", request=self._request, response=response)
+
+
+def _fake_client(response):
+    class _Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def get(self, _url):
+            return response
+
+    return _Client
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+class TestScrapeOutcome:
+    async def test_unchanged_page_returns_its_outcome(self, pg_engine, monkeypatch):
+        import wslcb_licensing_tracker.scraper as mod
+
+        body = "<html>same</html>"
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_client(_FakeResponse(200, body)))
+        monkeypatch.setattr(
+            mod, "get_last_content_hash", AsyncMock(return_value=compute_content_hash(body))
+        )
+
+        outcome = await scrape(pg_engine)
+
+        assert outcome.status == "unchanged"
+        assert (outcome.new, outcome.approved, outcome.discontinued, outcome.skipped) == (
+            0,
+            0,
+            0,
+            0,
+        )
+        async with pg_engine.connect() as conn:
+            status = (
+                await conn.execute(
+                    text("SELECT status FROM scrape_log WHERE id = :id"),
+                    {"id": outcome.scrape_log_id},
+                )
+            ).scalar_one()
+        assert status == "unchanged"
+
+    async def test_http_error_still_raises_and_logs(self, pg_engine, monkeypatch):
+        """The exit status is the unit's failure signal; the check-in doesn't replace it."""
+        import wslcb_licensing_tracker.scraper as mod
+
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_client(_FakeResponse(403)))
+        with pytest.raises(httpx.HTTPStatusError):
+            await scrape(pg_engine)
+        async with pg_engine.connect() as conn:
+            status = (
+                await conn.execute(text("SELECT status FROM scrape_log ORDER BY id DESC LIMIT 1"))
+            ).scalar_one()
+        assert status == "error"
+
+
+def _http_error(code):
+    request = httpx.Request("GET", "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp")
+    response = httpx.Response(code, request=request)
+    message = (
+        f"Client error '{code} Forbidden' for url '{request.url}'\n"
+        "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+    )
+    return httpx.HTTPStatusError(message, request=request, response=response)
+
+
+class TestFaultKey:
+    """``metadata.fault``: the stable part of a failure, so a new kind reports at once."""
+
+    def test_http_status_carries_the_code(self):
+        assert fault_key(_http_error(403)) == "HTTPStatusError 403"
+        assert fault_key(_http_error(503)) == "HTTPStatusError 503"
+
+    def test_other_errors_are_their_type(self):
+        assert fault_key(httpx.ConnectError("[Errno -3] Temporary failure")) == "ConnectError"
+        assert fault_key(ValueError("Could not find data tables in page")) == "ValueError"
+
+
+class TestCheckinVariables:
+    def test_ok(self):
+        outcome = ScrapeOutcome(
+            scrape_log_id=565, status="success", new=3, approved=1, discontinued=2, skipped=40
+        )
+        assert ok_variables(outcome, "host") == {
+            "outcome": "ok",
+            "source_host": "host",
+            "scrape_status": "success",
+            "records_new": 3,
+            "records_approved": 1,
+            "records_discontinued": 2,
+            "records_skipped": 40,
+            "scrape_log_id": 565,
+        }
+
+    def test_alert_carries_the_deadline(self):
+        """window_expires: when the 30-day source window starts dropping the gap."""
+        health = ScrapeHealth(datetime(2026, 10, 12, 13, 34, 1, 160977, tzinfo=UTC), 4)
+        assert alert_variables(_http_error(403), health, "host") == {
+            "outcome": "failed",
+            "source_host": "host",
+            "error": "HTTPStatusError: Client error '403 Forbidden' for url "
+            "'https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp'",
+            "consecutive_errors": 4,
+            "last_success_at": "2026-10-12T13:34:01Z",
+            "window_expires": "2026-11-11",
+        }
+
+    def test_alert_without_history_keeps_every_key(self):
+        """The monitor's template names every key; a missing one could break the render."""
+        variables = alert_variables(ValueError(""), None, "host")
+        assert variables["error"] == "ValueError"
+        assert (
+            variables["consecutive_errors"],
+            variables["last_success_at"],
+            variables["window_expires"],
+        ) == ("", "", "")
+
+    def test_alert_never_succeeded(self):
+        variables = alert_variables(ValueError("x"), ScrapeHealth(None, 2), "host")
+        assert (
+            variables["consecutive_errors"],
+            variables["last_success_at"],
+            variables["window_expires"],
+        ) == (2, "", "")

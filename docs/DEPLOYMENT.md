@@ -7,7 +7,7 @@ Operations reference for the exe.dev VM deployment.
 | Service | Purpose |
 |---|---|
 | `wslcb-web.service` | uvicorn on port 8000; `ExecStartPost` polls `/api/v1/health` up to 5×(3 s) |
-| `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter |
+| `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter; each run checks in to co-status ([§ Scrape check-in](#scrape-check-in), #196) |
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure |
 | `wslcb-address-validation.timer` | Weekly address backfill + TTL renewal, Sunday 2:00 AM Pacific, ±5 min jitter |
@@ -31,6 +31,10 @@ wslcb-task@disk-hygiene
 `IOSchedulingClass=idle`) — this is genuinely idle-priority background
 work, scoped to just this instance so scrape/backfill-addresses keep
 default scheduling priority.
+
+`wslcb-task@scrape.service` gets `wslcb-task@scrape.service.d/checkin.conf`
+(the co-status check-in key, tailnet ordering, a 2 h timeout). It is **not** in
+the copy block below: it needs its key file first ([§ Scrape check-in](#scrape-check-in)).
 
 ### Sudoers rule (install once)
 
@@ -63,6 +67,71 @@ That's ordering only (#184; `tests/test_infra_web_unit.py`):
   an operator stopped on purpose.
 - There's never a `Requires=`, `BindsTo=` or `PartOf=`, because a Postgres
   restart must not stop the app.
+
+## Scrape check-in (#196)
+
+Each scrape checks in to co-status, as the backup does ([`RECOVERY.md`](RECOVERY.md)
+§ The co-status monitor; same module, `checkin.py`). Nothing else notices a
+failed scrape: from 2026-10-13 a WSLCB block 403'd every run for a day before
+anyone looked (#198).
+
+- **When:** right after `scraper.scrape()` returns or raises, before the
+  post-scrape address backfill, which takes minutes and cannot fail the scrape.
+- **`ok`** after `success` or `unchanged`. **`alert`** on any exception; the
+  run still exits 1, so the unit still fails. co-status folds consecutive
+  alerts into one fault (one report, a daily reminder, *has cleared* on the
+  next `ok`), and `metadata.fault` (`HTTPStatusError 403`, `ConnectError`, …)
+  reports a *different* failure at once.
+- **Silence** alarms too: a stopped timer, a masked unit, a run hung until
+  its timeout.
+- Config: `WSLCB_SCRAPE_CHECKIN_BASE_URL` and `WSLCB_SCRAPE_MONITOR_ID` in
+  `/etc/wslcb-licensing-tracker/.env` (the template's `EnvironmentFile`); the
+  key is the drop-in's `checkin-key` credential, never an env var. A manual
+  `wslcb ingest scrape` has no credential and warns that it isn't checking in.
+
+**The monitor** is `co-wslcb-scrape`, on tenant `co-wslcb` (CannObserv/status#46):
+
+| Field | Value | Why |
+|---|---|---|
+| `interval_seconds` | `86400` | runs are 6 h then 18 h apart; a full cycle is 24 h, and anything shorter alarms on one missed morning run |
+| `grace_seconds` | `7200` | 5 min jitter, plus the scrape before the check-in (max 61 s measured), plus 1 h: the timer is Pacific time, so the fall-back makes one cycle a year 25 h |
+| `renotify_seconds` | `86400` | one reminder a day while a fault lasts |
+| `title_template` / `body_template` | `wslcb scrape {{ outcome }} on {{ source_host }}` / error, `consecutive_errors`, `last_success_at`, `window_expires` | rendered for an `alert` only |
+
+`tests/test_infra_scrape_unit.py` holds the interval and grace above to the
+timer. An `alert` carries `outcome` (`failed`), `source_host`, `error`,
+`consecutive_errors`, `last_success_at` and `window_expires`: the last success
+plus 30 days, after which the source window drops records the gap missed.
+All of them are always present; the last three are `""` when the database
+can't be read. An `ok` carries `outcome`, `source_host`, `scrape_status`,
+`records_{new,approved,discontinued,skipped}` and `scrape_log_id`.
+
+**Install, in this order.** The key file first: a missing `LoadCredential=`
+source fails every scrape (243/CREDENTIALS).
+
+```bash
+sudo install -m 0400 -o root -g root /dev/null /etc/wslcb-licensing-tracker/scrape-checkin.key
+sudo cp -r infra/wslcb-task@scrape.service.d /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+Then, once the monitor id is posted: the key is the `co-wslcb` tenant's, the
+one the backup already holds, so it is copied root to root and never shown.
+
+```bash
+sudo install -m 0400 -o root -g root /etc/wslcb-licensing-tracker/backup-checkin.key \
+     /etc/wslcb-licensing-tracker/scrape-checkin.key
+printf 'WSLCB_SCRAPE_CHECKIN_BASE_URL=http://status:9000\nWSLCB_SCRAPE_MONITOR_ID=<id>\n' \
+  | sudo tee -a /etc/wslcb-licensing-tracker/.env >/dev/null
+sudo systemctl start wslcb-task@scrape.service   # optional: check in now, not at the next firing
+```
+
+The run reads as `exedev`, so code running as that user can read the key's
+private copy during a run. That adds no exposure: `exedev` already owns the
+checkout and venv the backup runs. Until all three are set the run logs `scrape
+check-in not configured` (a WARNING) or `half-configured` (an ERROR). A landed
+check-in shows only as httpx's `"HTTP/1.1 202 Accepted"`; the proof is the
+monitor's fresh last check-in.
 
 ## Memory pressure (#175)
 

@@ -112,7 +112,7 @@ wslcb-licensing-tracker/
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
 ├── disk_hygiene.py         # Weekly cache/worktree/data-straggler cleanup (#138)
 ├── backup.py               # Nightly pg_dump + data/ archive mirror to GCS, create-only (#185)
-├── backup_checkin.py       # co-status dead-man check-in for the backup (#185)
+├── checkin.py              # co-status dead-man check-ins: backup (#185), scrape (#196)
 ├── restore.py              # Fetch/verify/restore a dump; fetch archive files (#185)
 ├── log_config.py           # Centralized logging configuration
 ├── config.py               # Runtime config helpers (get_build_id); env vars in .env.example
@@ -220,7 +220,7 @@ wslcb-licensing-tracker/
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
 │   ├── test_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
 │   ├── test_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
-│   ├── test_scraper.py       # Scraper hash deduplication tests
+│   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196)
 │   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
 │   ├── test_backfill_diffs.py   # Diff-archive scanning, dry-run, and live ingest
 │   ├── test_replay_extracts.py  # Replay-generated provenance extracts (#154)
@@ -228,15 +228,16 @@ wslcb-licensing-tracker/
 │   ├── test_admin_audit.py   # Admin audit log tests
 │   ├── test_substances.py    # Regulated substance CRUD tests
 │   ├── test_cli.py              # Click CLI group and subcommand tests
-│   ├── test_cli_scrape.py       # Scrape CLI subcommand tests
+│   ├── test_cli_scrape.py       # Scrape CLI: post-scrape backfill, co-status check-in (#196)
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
 │   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
 │   ├── test_backup.py           # Dump verify/tiers + archive mirror rules, against GCS fakes (#185)
-│   ├── test_backup_checkin.py   # Dead-man check-in config + retry rules (#185)
+│   ├── test_checkin.py          # Dead-man check-in config + retry rules, per monitor (#185, #196)
 │   ├── test_restore.py          # --latest across tiers, suspect names, verified fetch (#185)
 │   ├── test_cli_backup.py       # `wslcb ops backup|restore|restore-archive` (#185)
 │   ├── test_backup_restore_rehearsal.py  # Real pg_dump → fake bucket → pg_restore round trip (#185)
 │   ├── test_infra_backup_units.py  # wslcb-backup unit sandbox + timer pins (#185)
+│   ├── test_infra_scrape_unit.py   # scrape check-in drop-in + monitor timing pins (#196)
 │   ├── gcs_fakes.py             # SDK-faithful google-cloud-storage fakes (#185)
 │   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)

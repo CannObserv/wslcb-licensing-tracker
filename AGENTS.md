@@ -143,7 +143,7 @@ scripts/build-css.sh        # manual CSS rebuild if changing templates or tailwi
 
 | File | Content |
 |---|---|
-| `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION` |
+| `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION`, scrape check-in id/URL; its key is `scrape-checkin.key`, a credential (#196) |
 | `/etc/wslcb-licensing-tracker/backup.env` + two `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
 | `.env` (repo root, gitignored) | Dev/agent: `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL`, plus GitHub PATs for the `gh` CLI |
 | `.env.example` (committed) | Canonical list of every env var the project consumes, with comments |

@@ -39,6 +39,8 @@ Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
 
 import asyncio
 import logging
+import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -57,6 +59,7 @@ from .address_validator import refresh_specific_addresses as run_refresh_specifi
 from .admin_audit import log_action
 from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
+from .checkin import SCRAPE, post_checkin
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
@@ -69,6 +72,7 @@ from .log_config import setup_logging
 from .models import admin_users
 from .parser import SECTION_DIR_MAP
 from .replay_extracts import generate_replay_extracts as run_generate_replay_extracts
+from .scraper import ScrapeHealth, alert_variables, fault_key, ok_variables, scrape_health
 from .scraper import cleanup_redundant_scrapes as run_cleanup_redundant
 from .scraper import scrape as run_scrape
 
@@ -127,9 +131,23 @@ def ingest() -> None:
 )
 def scrape(rate_limit: float) -> None:
     """Run a live scrape of the WSLCB page."""
+    host = socket.gethostname()
 
     async def _run(engine: AsyncEngine) -> None:
-        await run_scrape(engine)
+        # The co-status check-in (#196) goes as soon as the scrape decides,
+        # before the backfill: that takes minutes and cannot fail the scrape.
+        try:
+            outcome = await run_scrape(engine)
+        except Exception as exc:
+            post_checkin(
+                "alert",
+                alert_variables(exc, await _scrape_history(engine), host),
+                monitor=SCRAPE,
+                environ=os.environ,
+                metadata={"fault": fault_key(exc)},
+            )
+            raise  # the unit still fails: the check-in reports, never replaces
+        post_checkin("ok", ok_variables(outcome, host), monitor=SCRAPE, environ=os.environ)
         # Post-scrape: standardize any new locations via the address API.
         # Failure here is non-fatal — the weekly timer catches stragglers.
         try:
@@ -139,6 +157,19 @@ def scrape(rate_limit: float) -> None:
             logger.warning("Post-scrape address backfill failed", exc_info=True)
 
     _run_with_engine(_run)
+
+
+async def _scrape_history(engine: AsyncEngine) -> ScrapeHealth | None:
+    """The run history for a failure alert, or None when it can't be read.
+
+    The database may be what failed; the alert goes without its history then.
+    """
+    try:
+        async with get_db(engine) as conn:
+            return await scrape_health(conn)
+    except Exception:  # noqa: BLE001 — the alert matters more than its detail
+        logger.warning("Could not read scrape history for the alert", exc_info=True)
+        return None
 
 
 @ingest.command("backfill-snapshots")
