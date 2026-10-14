@@ -62,6 +62,23 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 # These mirror the dict shape produced by parser.parse_records_from_table.
 
 
+@pytest.fixture(autouse=True)
+def _no_configured_checkin(monkeypatch):
+    """No test finds a co-status check-in configured (#196).
+
+    The scrape command checks in from ``os.environ``. Under a unit's
+    environment (a credentials directory, a monitor id) a test running it
+    would POST to co-status for real. Tests that exercise a configured
+    check-in build their own environ and pass it in.
+    """
+    from wslcb_licensing_tracker.checkin import BACKUP, CREDENTIALS_DIRECTORY_ENV, SCRAPE
+
+    monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
+    for monitor in (BACKUP, SCRAPE):
+        monkeypatch.delenv(monitor.base_url_env, raising=False)
+        monkeypatch.delenv(monitor.monitor_id_env, raising=False)
+
+
 @pytest.fixture
 def standard_new_application():
     """A plain NEW APPLICATION record (new_application section)."""

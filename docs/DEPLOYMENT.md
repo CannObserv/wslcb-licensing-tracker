@@ -7,7 +7,7 @@ Operations reference for the exe.dev VM deployment.
 | Service | Purpose |
 |---|---|
 | `wslcb-web.service` | uvicorn on port 8000; `ExecStartPost` polls `/api/v1/health` up to 5×(3 s) |
-| `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter |
+| `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter; each run checks in to co-status ([`MONITORING.md`](MONITORING.md), #196) |
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure |
 | `wslcb-address-validation.timer` | Weekly address backfill + TTL renewal, Sunday 2:00 AM Pacific, ±5 min jitter |
@@ -31,6 +31,11 @@ wslcb-task@disk-hygiene
 `IOSchedulingClass=idle`) — this is genuinely idle-priority background
 work, scoped to just this instance so scrape/backfill-addresses keep
 default scheduling priority.
+
+`wslcb-task@scrape.service` gets `wslcb-task@scrape.service.d/checkin.conf`
+(the co-status check-in key, tailnet ordering, a 2 h timeout). It is **not** in
+the copy block below, because it needs its key file first; install it from
+[`MONITORING.md`](MONITORING.md).
 
 ### Sudoers rule (install once)
 

@@ -112,7 +112,7 @@ wslcb-licensing-tracker/
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
 ├── disk_hygiene.py         # Weekly cache/worktree/data-straggler cleanup (#138)
 ├── backup.py               # Nightly pg_dump + data/ archive mirror to GCS, create-only (#185)
-├── backup_checkin.py       # co-status dead-man check-in for the backup (#185)
+├── checkin.py              # co-status dead-man check-ins: backup (#185), scrape (#196)
 ├── restore.py              # Fetch/verify/restore a dump; fetch archive files (#185)
 ├── log_config.py           # Centralized logging configuration
 ├── config.py               # Runtime config helpers (get_build_id); env vars in .env.example
@@ -177,6 +177,7 @@ wslcb-licensing-tracker/
 │   ├── wslcb-web.service           # Web app service
 │   ├── wslcb-task@.service         # Oneshot task template
 │   ├── wslcb-scraper.timer         # Twice-daily scraper timer
+│   ├── wslcb-task@scrape.service.d/ # Scrape check-in drop-in: key credential, 2 h timeout (#196; key file first)
 │   ├── wslcb-healthcheck.service   # Health check service (restarts web on failure)
 │   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
 │   ├── wslcb-address-validation.timer # Weekly address backfill timer
@@ -220,7 +221,7 @@ wslcb-licensing-tracker/
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
 │   ├── test_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
 │   ├── test_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
-│   ├── test_scraper.py       # Scraper hash deduplication tests
+│   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196)
 │   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
 │   ├── test_backfill_diffs.py   # Diff-archive scanning, dry-run, and live ingest
 │   ├── test_replay_extracts.py  # Replay-generated provenance extracts (#154)
@@ -228,15 +229,16 @@ wslcb-licensing-tracker/
 │   ├── test_admin_audit.py   # Admin audit log tests
 │   ├── test_substances.py    # Regulated substance CRUD tests
 │   ├── test_cli.py              # Click CLI group and subcommand tests
-│   ├── test_cli_scrape.py       # Scrape CLI subcommand tests
+│   ├── test_cli_scrape.py       # Scrape CLI: post-scrape backfill, co-status check-in (#196)
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
 │   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
 │   ├── test_backup.py           # Dump verify/tiers + archive mirror rules, against GCS fakes (#185)
-│   ├── test_backup_checkin.py   # Dead-man check-in config + retry rules (#185)
+│   ├── test_checkin.py          # Dead-man check-in config + retry rules, per monitor (#185, #196)
 │   ├── test_restore.py          # --latest across tiers, suspect names, verified fetch (#185)
 │   ├── test_cli_backup.py       # `wslcb ops backup|restore|restore-archive` (#185)
 │   ├── test_backup_restore_rehearsal.py  # Real pg_dump → fake bucket → pg_restore round trip (#185)
 │   ├── test_infra_backup_units.py  # wslcb-backup unit sandbox + timer pins (#185)
+│   ├── test_infra_scrape_unit.py   # scrape check-in drop-in + monitor timing pins (#196)
 │   ├── gcs_fakes.py             # SDK-faithful google-cloud-storage fakes (#185)
 │   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
@@ -251,6 +253,8 @@ wslcb-licensing-tracker/
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 └── docs/                   # Operations and architecture documentation
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
+    ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
+    ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
     ├── SCHEMA.md            # Full table/column reference and migration history
     ├── SKILLS.md            # AI agent skill inventory and trigger phrases
     ├── SOCRATICODE.md       # Code-exploration tool table, per-tool notes, graph health, index scope
@@ -333,6 +337,8 @@ sudo systemctl enable --now wslcb-healthcheck.timer
 The healthcheck service polls `/api/v1/health` every 5 minutes and automatically restarts the web app if it is unreachable. The `sudoers.d-wslcb-healthcheck` snippet grants the necessary permission for a passwordless `systemctl restart wslcb-web.service`.
 
 The scraper runs twice daily at 12:30 AM and 6:30 AM Pacific with up to 5 minutes of random delay.
+
+Each run can check in to a co-status dead-man monitor, so a failing or stopped scraper alerts (#196). Its drop-in, `infra/wslcb-task@scrape.service.d/`, is deliberately not in the copy block above: it needs its key file first, or every scrape fails to start. Install it from [`docs/MONITORING.md`](docs/MONITORING.md).
 
 Check the timer status:
 

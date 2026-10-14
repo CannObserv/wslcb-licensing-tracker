@@ -56,7 +56,7 @@ from pathlib import Path
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
-from .backup_checkin import CREDENTIALS_DIRECTORY_ENV, post_checkin
+from .checkin import BACKUP, CREDENTIALS_DIRECTORY_ENV, post_checkin
 from .db import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -619,7 +619,10 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
     def fail(code: int, error: str) -> int:
         # The variables a monitor's alert template can use; RECOVERY.md lists them.
         post_checkin(
-            "alert", {"source_host": host, "outcome": "failed", "error": error}, environ=environ
+            "alert",
+            {"source_host": host, "outcome": "failed", "error": error},
+            monitor=BACKUP,
+            environ=environ,
         )
         return code
 
@@ -656,5 +659,5 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
             )
         except BackupError as exc:
             return fail(1, str(exc))
-    post_checkin("ok", _ok_variables(summary), environ=environ)
+    post_checkin("ok", _ok_variables(summary), monitor=BACKUP, environ=environ)
     return 0

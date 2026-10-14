@@ -14,5 +14,6 @@ AGENTS.md: architecture diagram, frozen/derived table, conventions, infra + env 
 README.md: Features, Project Structure tree, API Endpoints tables, Testing file table, CLI commands in Setup and ops sections
 docs/SCHEMA.md: table/column reference + migration history (alembic/versions/)
 docs/DEPLOYMENT.md: systemd services and ops reference (infra/)
+docs/MONITORING.md: co-status check-ins, the scrape drop-in + monitor fields (infra/wslcb-task@scrape.service.d/, checkin.py)
 docs/SKILLS.md: skill descriptions and trigger phrases (skills/)
 docs/STYLE.md: brand colors and CSS conventions (static/, templates/)
