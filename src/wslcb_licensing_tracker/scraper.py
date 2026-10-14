@@ -51,7 +51,14 @@ class ScrapeOutcome:
 
 @dataclass(frozen=True)
 class ScrapeHealth:
-    """The run history a failure alert reports (#196)."""
+    """The run history a failure alert reports (#196).
+
+    Caveat: ``wslcb db cleanup-redundant`` deletes ``unchanged`` rows. After
+    one, ``last_success_at`` can fall back to an older ``success`` row, and
+    errors before a deleted ``unchanged`` row count as consecutive. Both err
+    conservative (an earlier deadline, more errors), and only after that
+    manual command.
+    """
 
     #: When the newest ``success``/``unchanged`` run finished; None if never.
     last_success_at: datetime | None
