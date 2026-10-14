@@ -20,7 +20,7 @@ TEMPLATE = REPO_ROOT / "infra" / "wslcb-task@.service"
 DROPIN_DIR = REPO_ROOT / "infra" / "wslcb-task@scrape.service.d"
 DROPIN = DROPIN_DIR / "checkin.conf"
 TIMER = REPO_ROOT / "infra" / "wslcb-scraper.timer"
-DEPLOYMENT = REPO_ROOT / "docs" / "DEPLOYMENT.md"
+MONITORING = REPO_ROOT / "docs" / "MONITORING.md"
 
 #: The fall-back hour: the timer runs on Pacific time, the monitor counts seconds.
 DST_SECONDS = 3600
@@ -46,8 +46,8 @@ def _directives(path: Path, section: str) -> dict[str, list[str]]:
 
 
 def _monitor_field(name: str) -> int:
-    """A field of the scrape monitor's table in DEPLOYMENT.md § Scrape check-in."""
-    section = DEPLOYMENT.read_text().split("## Scrape check-in", 1)[1].split("\n## ", 1)[0]
+    """A field of the scrape monitor's table in MONITORING.md § Scrape check-in."""
+    section = MONITORING.read_text().split("## Scrape check-in", 1)[1].split("\n## ", 1)[0]
     return int(re.search(rf"`{name}` \| `(\d+)`", section)[1])
 
 
