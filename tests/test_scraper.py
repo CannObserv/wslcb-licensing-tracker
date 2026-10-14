@@ -311,3 +311,14 @@ class TestCheckinVariables:
             variables["last_success_at"],
             variables["window_expires"],
         ) == (2, "", "")
+
+    def test_alert_survives_an_exception_that_cannot_be_printed(self):
+        """str(exc) is the one foreign call here; if it raises, the alert still goes."""
+
+        class UnprintableError(Exception):
+            def __str__(self):
+                raise RuntimeError("no")
+
+        variables = alert_variables(UnprintableError(), ScrapeHealth(None, 1), "host")
+        assert variables["error"] == "UnprintableError"
+        assert variables["consecutive_errors"] == 1

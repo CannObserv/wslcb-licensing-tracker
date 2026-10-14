@@ -166,9 +166,16 @@ def alert_variables(exc: BaseException, health: ScrapeHealth | None, host: str) 
 
     *health* is None when the history couldn't be read (the database being
     what failed): its three keys are then empty, and the alert still goes.
-    ``error`` is the exception's first line — httpx appends an MDN link.
+    ``error`` is the exception's first line — httpx appends an MDN link — or
+    just its type when it has none, or can't be printed. Nothing here may
+    raise: the CLI builds this inside its ``except``, where a new exception
+    would replace the scrape's and drop the alert.
     """
-    message = str(exc).splitlines()[0] if str(exc) else ""
+    try:
+        text = str(exc)
+    except Exception:  # noqa: BLE001 — an alert without its message beats none
+        text = ""
+    message = text.splitlines()[0] if text else ""
     last = health.last_success_at if health else None
     return {
         "outcome": "failed",
