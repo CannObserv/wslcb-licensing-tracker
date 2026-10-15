@@ -520,6 +520,23 @@ class TestHealthIngestEndpoint:
         assert body["message"] == "Scrape stale"
         assert body["data"]["consecutive_errors"] == freshness["consecutive_errors"]
 
+    def test_unreadable_freshness_is_not_reported_as_db_down(self, client, caplog):
+        """The DB answered; only scrape_log failed. Point triage at the right part."""
+        with patch(
+            "wslcb_licensing_tracker.api_routes.scrape_freshness",
+            new_callable=AsyncMock,
+            side_effect=Exception("permission denied for table scrape_log"),
+        ):
+            with caplog.at_level("WARNING"):
+                resp = client.get("/api/v1/health/ingest")
+        assert resp.status_code == 503
+        body = resp.json()
+        _assert_envelope(body, ok=False)
+        assert body["message"] == "Scrape freshness unavailable"
+        assert body["data"] == {"db": "ok", "detail": "scrape freshness unavailable"}
+        assert "permission denied" not in resp.text
+        assert "permission denied" in caplog.text
+
     def test_db_error_returns_503_without_leaking(self, client):
         dsn_ish = "connection to server at 10.0.0.7 port 5432 failed"
         with patch("wslcb_licensing_tracker.api_routes.get_db") as mock_get_db:

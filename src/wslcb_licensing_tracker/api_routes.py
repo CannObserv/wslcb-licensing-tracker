@@ -167,13 +167,20 @@ async def api_health_ingest(request: Request) -> JSONResponse:
 
     For external uptime checks that should alarm on an ingest outage. Never
     point ``wslcb-healthcheck`` here — it would restart the web app for the
-    whole of an outage the restart can't fix.
+    whole of an outage the restart can't fix. A ``scrape_log`` read failure is
+    also a 503, reported apart from an unreachable database.
     """
     try:
         async with get_db(request.app.state.engine) as conn:
-            scrape = await scrape_freshness(conn)
+            await conn.execute(text("SELECT 1"))
+            scrape = await _read_freshness(conn)
     except Exception as exc:  # noqa: BLE001
         return _db_unreachable(exc)
+    if scrape is None:
+        return _fail(
+            {"db": "ok", "detail": "scrape freshness unavailable"},
+            "Scrape freshness unavailable",
+        )
     if scrape["stale"]:
         return _fail(scrape, "Scrape stale")
     return _ok(scrape, "Scrape fresh")
