@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 import httpx
 from bs4 import BeautifulSoup
@@ -69,6 +69,20 @@ class ScrapeHealth:
     last_success_at: datetime | None
     #: ``error`` runs since then. ``running`` rows (a killed run) don't count.
     consecutive_errors: int
+
+
+class ScrapeFreshness(TypedDict):
+    """The ``scrape`` object /api/v1/health reports (#197); a public JSON contract."""
+
+    #: As ``ScrapeHealth.last_success_at``.
+    last_success_at: datetime | None
+    #: The newest run's status, ``running`` included; None with no runs.
+    last_attempt_status: str | None
+    #: As ``ScrapeHealth.consecutive_errors``.
+    consecutive_errors: int
+    #: Past ``STALE_AFTER`` since ``last_success_at``, or never succeeded.
+    stale: bool
+    stale_after_hours: int
 
 
 # ---------------------------------------------------------------------------
@@ -141,26 +155,21 @@ async def scrape_health(conn: AsyncConnection) -> ScrapeHealth:
     return ScrapeHealth(last[1] if last is not None else None, count)
 
 
-async def scrape_freshness(conn: AsyncConnection, now: datetime | None = None) -> dict:
-    """The ``scrape`` object /api/v1/health reports (#197).
-
-    ``stale`` is true past ``STALE_AFTER`` since the last successful fetch, and
-    when there has never been one. ``last_attempt_status`` is the newest run's
-    status, ``running`` included. *now* defaults to the current UTC time.
-    """
+async def scrape_freshness(conn: AsyncConnection, now: datetime | None = None) -> ScrapeFreshness:
+    """Read ``scrape_log`` into a ``ScrapeFreshness``; *now* defaults to UTC now."""
     health = await scrape_health(conn)
     last_status = (
         await conn.execute(select(scrape_log.c.status).order_by(scrape_log.c.id.desc()).limit(1))
     ).scalar_one_or_none()
     now = now or datetime.now(UTC)
     last = health.last_success_at
-    return {
-        "last_success_at": last,
-        "last_attempt_status": last_status,
-        "consecutive_errors": health.consecutive_errors,
-        "stale": last is None or now - last > STALE_AFTER,
-        "stale_after_hours": STALE_AFTER // timedelta(hours=1),
-    }
+    return ScrapeFreshness(
+        last_success_at=last,
+        last_attempt_status=last_status,
+        consecutive_errors=health.consecutive_errors,
+        stale=last is None or now - last > STALE_AFTER,
+        stale_after_hours=STALE_AFTER // timedelta(hours=1),
+    )
 
 
 def fault_key(exc: BaseException) -> str:

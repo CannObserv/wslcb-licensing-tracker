@@ -27,7 +27,7 @@ from .engine import get_db
 from .queries_export import export_records_cursor
 from .queries_filter import get_cities_for_state
 from .queries_stats import get_stats
-from .scraper import scrape_freshness
+from .scraper import ScrapeFreshness, scrape_freshness
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def _db_unreachable(exc: Exception) -> JSONResponse:
     return _fail({"db": "error", "detail": "database unreachable"}, "Database unreachable")
 
 
-async def _read_freshness(conn: AsyncConnection) -> dict | None:
+async def _read_freshness(conn: AsyncConnection) -> ScrapeFreshness | None:
     """scrape_freshness(), or None when scrape_log can't be read (logged)."""
     try:
         return await scrape_freshness(conn)
