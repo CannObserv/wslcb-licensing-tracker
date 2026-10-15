@@ -88,4 +88,6 @@ or with no successful run ever. `/health` stays 200 when stale:
 `wslcb-healthcheck` restarts the web app on any non-2xx, and a restart can't
 fix an upstream outage. `GET /api/v1/health/ingest` returns the same object
 with a 503 when stale, for an external uptime check; never point
-`wslcb-healthcheck` at it.
+`wslcb-healthcheck` at it. If `scrape_log` can't be read, `data.scrape` is
+null (`/health` still 200, "scrape freshness unknown") and `/health/ingest`
+503s "Scrape freshness unavailable" with `db: ok`.
