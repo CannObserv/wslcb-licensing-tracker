@@ -54,12 +54,21 @@ def _ok(
     renders with plain ``json.dumps``, which chokes on the tz-aware datetimes
     that reach /stats via the scrape_log row (#170).
 
-    Every envelope-producing route builds its response here, ``headers`` included,
-    so no endpoint hand-rolls JSONResponse and drops back to raw ``json.dumps``.
+    Every envelope-producing route builds its response here or in ``_fail``,
+    ``headers`` included, so no endpoint hand-rolls JSONResponse and drops back
+    to raw ``json.dumps``.
     """
     return JSONResponse(
         {"ok": True, "message": message, "data": jsonable_encoder(data)},
         headers=headers,
+    )
+
+
+def _fail(data: object, message: str, status_code: int = 503) -> JSONResponse:
+    """Return an ``ok: false`` envelope response, encoded as ``_ok`` encodes."""
+    return JSONResponse(
+        {"ok": False, "message": message, "data": jsonable_encoder(data)},
+        status_code=status_code,
     )
 
 
@@ -117,14 +126,7 @@ def _db_unreachable(exc: Exception) -> JSONResponse:
     # The health routes are unauthenticated by design (systemd + uptime monitors),
     # so the body carries a fixed string: driver errors render host/port/user/database
     # into their text. The real cause goes to the log line above.
-    return JSONResponse(
-        {
-            "ok": False,
-            "message": "Database unreachable",
-            "data": {"db": "error", "detail": "database unreachable"},
-        },
-        status_code=503,
-    )
+    return _fail({"db": "error", "detail": "database unreachable"}, "Database unreachable")
 
 
 async def _read_freshness(conn: AsyncConnection) -> dict | None:
@@ -173,10 +175,7 @@ async def api_health_ingest(request: Request) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         return _db_unreachable(exc)
     if scrape["stale"]:
-        return JSONResponse(
-            {"ok": False, "message": "Scrape stale", "data": jsonable_encoder(scrape)},
-            status_code=503,
-        )
+        return _fail(scrape, "Scrape stale")
     return _ok(scrape, "Scrape fresh")
 
 
