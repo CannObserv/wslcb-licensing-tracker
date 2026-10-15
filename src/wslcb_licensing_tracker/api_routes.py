@@ -157,7 +157,12 @@ async def api_health(request: Request) -> JSONResponse:
             scrape = await _read_freshness(conn)
     except Exception as exc:  # noqa: BLE001
         return _db_unreachable(exc)
-    message = "Healthy; scrape stale" if scrape and scrape["stale"] else "Healthy"
+    if scrape is None:
+        message = "Healthy; scrape freshness unknown"
+    elif scrape["stale"]:
+        message = "Healthy; scrape stale"
+    else:
+        message = "Healthy"
     return _ok({"db": "ok", "build": get_build_id(), "scrape": scrape}, message)
 
 

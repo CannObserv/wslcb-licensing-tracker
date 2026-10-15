@@ -483,6 +483,7 @@ class TestHealthScrapeFreshness:
                 resp = client.get("/api/v1/health")
         assert resp.status_code == 200
         assert resp.json()["data"]["scrape"] is None
+        assert resp.json()["message"] == "Healthy; scrape freshness unknown"
         assert "scrape_log does not exist" not in resp.text
         assert "scrape_log does not exist" in caplog.text
 
