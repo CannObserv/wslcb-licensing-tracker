@@ -377,7 +377,7 @@ Archived HTML snapshots and other persistent data are stored in `./data/` relati
 | `GET /api/v1/stats` | JSON aggregate statistics |
 | `GET /api/v1/export` | Streaming CSV export (same query params as `/search`) |
 | `GET /api/v1/health` | Liveness — 200 OK or 503 when the DB is unavailable; `data.scrape` reports scrape freshness but never fails it (#197) |
-| `GET /api/v1/health/ingest` | Data freshness — 503 when the last successful scrape is over 26 h old, for external uptime checks |
+| `GET /api/v1/health/ingest` | Data freshness — 503 when the last successful scrape is over 26 h old or there has never been one, for external uptime checks |
 
 All `/api/v1/` responses use a consistent JSON envelope: `{"ok": bool, "message": "...", "data": ...}`. The CSV export endpoint is exempt and returns a raw `StreamingResponse`.
 
