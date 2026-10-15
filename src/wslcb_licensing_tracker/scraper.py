@@ -56,13 +56,10 @@ class ScrapeOutcome:
 
 @dataclass(frozen=True)
 class ScrapeHealth:
-    """The run history a failure alert reports (#196).
+    """The run history a failure alert reports (#196) and /api/v1/health reads (#197).
 
-    Caveat: ``wslcb db cleanup-redundant`` deletes ``unchanged`` rows. After
-    one, ``last_success_at`` can fall back to an older ``success`` row, and
-    errors before a deleted ``unchanged`` row count as consecutive. Both err
-    conservative (an earlier deadline, more errors), and only after that
-    manual command.
+    ``wslcb db cleanup-redundant`` keeps the ``unchanged`` rows since the newest
+    ``success``, so both fields survive it exactly.
     """
 
     #: When the newest ``success``/``unchanged`` run finished; None if never.
@@ -369,16 +366,26 @@ async def cleanup_redundant_scrapes(
 ) -> dict[str, int]:
     """Remove scrape_log rows (and associated sources/files) for unchanged scrapes.
 
+    Keeps the ``unchanged`` rows since the newest ``success``: they are the
+    current state, which ``scrape_health()`` and /api/v1/health read (#197).
+    A later cleanup removes them once a ``success`` supersedes them.
+
     Returns a dict with counts of removed rows: ``scrape_logs``, ``sources``,
     ``record_sources``, ``files``.
     """
     result = {"scrape_logs": 0, "sources": 0, "record_sources": 0, "files": 0}
 
     async with get_db(engine) as conn:
-        # Find scrape_log rows with status='unchanged' that have no sources linked
+        newest_success = (
+            select(func.max(scrape_log.c.id))
+            .where(scrape_log.c.status == "success")
+            .scalar_subquery()
+        )
+        # Find superseded scrape_log rows with status='unchanged' that have no sources linked
         unchanged = await conn.execute(
             select(scrape_log.c.id, scrape_log.c.snapshot_path)
             .where(scrape_log.c.status == "unchanged")
+            .where(scrape_log.c.id < newest_success)
             .where(~exists(select(sources.c.id).where(sources.c.scrape_log_id == scrape_log.c.id)))
         )
         rows = unchanged.mappings().all()

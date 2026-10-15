@@ -56,7 +56,8 @@ async def test_get_last_content_hash_returns_none_when_no_eligible_rows():
 @_needs_db
 @pytest.mark.asyncio(loop_scope="session")
 async def test_cleanup_redundant_scrapes_removes_unchanged_rows(pg_engine):
-    """cleanup_redundant_scrapes deletes unchanged scrape_log rows with no linked sources."""
+    """cleanup_redundant_scrapes deletes unchanged scrape_log rows with no linked sources,
+    once a later success supersedes them."""
     async with pg_engine.connect() as conn:
         row = await conn.execute(
             text(
@@ -66,6 +67,14 @@ async def test_cleanup_redundant_scrapes_removes_unchanged_rows(pg_engine):
             {"started_at": datetime.now(UTC)},
         )
         inserted_id = row.scalar_one()
+        success = await conn.execute(
+            text(
+                "INSERT INTO scrape_log (started_at, status) "
+                "VALUES (:started_at, 'success') RETURNING id"
+            ),
+            {"started_at": datetime.now(UTC)},
+        )
+        success_id = success.scalar_one()
         await conn.commit()
 
     result = await cleanup_redundant_scrapes(pg_engine, delete_files=False)
@@ -80,6 +89,42 @@ async def test_cleanup_redundant_scrapes_removes_unchanged_rows(pg_engine):
             {"id": inserted_id},
         )
         assert remaining.fetchone() is None
+        await conn.execute(text("DELETE FROM scrape_log WHERE id = :id"), {"id": success_id})
+        await conn.commit()
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_cleanup_redundant_scrapes_keeps_unchanged_rows_since_the_last_success(pg_engine):
+    """Those rows are the current state: deleting them would move scrape_health's
+    last_success_at back, and could flip /api/v1/health's ``stale`` (#197)."""
+    async with pg_engine.connect() as conn:
+        ids = []
+        for status in ("success", "unchanged", "error", "unchanged"):
+            row = await conn.execute(
+                text(
+                    "INSERT INTO scrape_log (started_at, finished_at, status) "
+                    "VALUES (now(), now(), :status) RETURNING id"
+                ),
+                {"status": status},
+            )
+            ids.append(row.scalar_one())
+        await conn.commit()
+        before = await scrape_health(conn)
+
+    try:
+        await cleanup_redundant_scrapes(pg_engine, delete_files=False)
+        async with pg_engine.connect() as conn:
+            kept = await conn.execute(
+                text("SELECT id FROM scrape_log WHERE id = ANY(:ids) ORDER BY id"),
+                {"ids": ids},
+            )
+            assert [r[0] for r in kept] == ids
+            assert await scrape_health(conn) == before
+    finally:
+        async with pg_engine.connect() as conn:
+            await conn.execute(text("DELETE FROM scrape_log WHERE id = ANY(:ids)"), {"ids": ids})
+            await conn.commit()
 
 
 # ── save_html_snapshot ───────────────────────────────────────────────
