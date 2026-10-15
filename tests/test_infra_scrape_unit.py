@@ -109,6 +109,14 @@ class TestMonitorTiming:
         grace = _monitor_field("grace_seconds")
         assert jitter + SCRAPE_BUDGET_SECONDS + DST_SECONDS <= grace
 
+    def test_health_goes_stale_when_the_monitor_alerts(self):
+        """/api/v1/health's ``stale`` flag uses the monitor's own deadline (#197),
+        so the endpoint and the alert never disagree about an outage."""
+        from wslcb_licensing_tracker.scraper import STALE_AFTER
+
+        deadline = _monitor_field("interval_seconds") + _monitor_field("grace_seconds")
+        assert STALE_AFTER.total_seconds() == deadline
+
     def test_fall_back_really_is_an_hour_longer(self):
         """The DST term above is real, not a guess: 06:30 to 06:30 across 2026-11-01."""
         from zoneinfo import ZoneInfo

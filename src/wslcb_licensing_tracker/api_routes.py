@@ -27,6 +27,7 @@ from .engine import get_db
 from .queries_export import export_records_cursor
 from .queries_filter import get_cities_for_state
 from .queries_stats import get_stats
+from .scraper import ScrapeFreshness, scrape_freshness
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,21 @@ def _ok(
     renders with plain ``json.dumps``, which chokes on the tz-aware datetimes
     that reach /stats via the scrape_log row (#170).
 
-    Every envelope-producing route builds its response here, ``headers`` included,
-    so no endpoint hand-rolls JSONResponse and drops back to raw ``json.dumps``.
+    Every envelope-producing route builds its response here or in ``_fail``,
+    ``headers`` included, so no endpoint hand-rolls JSONResponse and drops back
+    to raw ``json.dumps``.
     """
     return JSONResponse(
         {"ok": True, "message": message, "data": jsonable_encoder(data)},
         headers=headers,
+    )
+
+
+def _fail(data: object, message: str, status_code: int = 503) -> JSONResponse:
+    """Return an ``ok: false`` envelope response, encoded as ``_ok`` encodes."""
+    return JSONResponse(
+        {"ok": False, "message": message, "data": jsonable_encoder(data)},
+        status_code=status_code,
     )
 
 
@@ -110,38 +120,75 @@ async def api_stats(
 # ---------------------------------------------------------------------------
 
 
+def _db_unreachable(exc: Exception) -> JSONResponse:
+    """The 503 both health routes return when the database can't be reached."""
+    logger.warning("Health check failed: %s", exc)
+    # The health routes are unauthenticated by design (systemd + uptime monitors),
+    # so the body carries a fixed string: driver errors render host/port/user/database
+    # into their text. The real cause goes to the log line above.
+    return _fail({"db": "error", "detail": "database unreachable"}, "Database unreachable")
+
+
+async def _read_freshness(conn: AsyncConnection) -> ScrapeFreshness | None:
+    """scrape_freshness(), or None when scrape_log can't be read (logged)."""
+    try:
+        return await scrape_freshness(conn)
+    except Exception as exc:  # noqa: BLE001 — a degraded report, not a dead process
+        logger.warning("Health check could not read scrape freshness: %s", exc)
+        return None
+
+
 @router.get("/health")
 async def api_health(request: Request) -> JSONResponse:
-    """Lightweight health check: verifies the process is alive and the DB is reachable.
+    """Liveness check: verifies the process is alive and the DB is reachable.
 
     Returns HTTP 200 when healthy, HTTP 503 when the database cannot be
     reached.  No authentication required — this endpoint must be reachable
     by systemd and external uptime monitors.
+
+    ``data.scrape`` reports scrape freshness (#197), or null when it can't be
+    read. Stale data never fails the check: ``wslcb-healthcheck`` restarts the
+    web app on any non-2xx, and a restart can't fix an upstream outage.
+    ``/health/ingest`` is the check that fails on stale data.
     """
     try:
         async with get_db(request.app.state.engine) as conn:
             await conn.execute(text("SELECT 1"))
-        return JSONResponse(
-            {
-                "ok": True,
-                "message": "Healthy",
-                "data": {"db": "ok", "build": get_build_id()},
-            },
-            status_code=200,
-        )
+            scrape = await _read_freshness(conn)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Health check failed: %s", exc)
-        # /health is unauthenticated by design (systemd + uptime monitors), so the
-        # body carries a fixed string: driver errors render host/port/user/database
-        # into their text. The real cause goes to the log line above.
-        return JSONResponse(
-            {
-                "ok": False,
-                "message": "Database unreachable",
-                "data": {"db": "error", "detail": "database unreachable"},
-            },
-            status_code=503,
+        return _db_unreachable(exc)
+    if scrape is None:
+        message = "Healthy; scrape freshness unknown"
+    elif scrape["stale"]:
+        message = "Healthy; scrape stale"
+    else:
+        message = "Healthy"
+    return _ok({"db": "ok", "build": get_build_id(), "scrape": scrape}, message)
+
+
+@router.get("/health/ingest")
+async def api_health_ingest(request: Request) -> JSONResponse:
+    """Readiness of the data: HTTP 503 when the scrape is stale (#197).
+
+    For external uptime checks that should alarm on an ingest outage. Never
+    point ``wslcb-healthcheck`` here — it would restart the web app for the
+    whole of an outage the restart can't fix. A ``scrape_log`` read failure is
+    also a 503, reported apart from an unreachable database.
+    """
+    try:
+        async with get_db(request.app.state.engine) as conn:
+            await conn.execute(text("SELECT 1"))
+            scrape = await _read_freshness(conn)
+    except Exception as exc:  # noqa: BLE001
+        return _db_unreachable(exc)
+    if scrape is None:
+        return _fail(
+            {"db": "ok", "detail": "scrape freshness unavailable"},
+            "Scrape freshness unavailable",
         )
+    if scrape["stale"]:
+        return _fail(scrape, "Scrape stale")
+    return _ok(scrape, "Scrape fresh")
 
 
 # ---------------------------------------------------------------------------

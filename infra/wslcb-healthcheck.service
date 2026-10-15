@@ -6,6 +6,9 @@ After=wslcb-web.service
 Type=oneshot
 User=exedev
 # Curl the health endpoint; restart the web service if it returns non-200.
+# Liveness only: /api/v1/health stays 200 when the scrape is stale (#197).
+# Never poll /api/v1/health/ingest here; it 503s for a whole upstream outage,
+# and a restart can't fix that.
 # Requires /etc/sudoers.d/wslcb-healthcheck granting exedev passwordless
 # sudo for this exact command (see AGENTS.md deployment section).
 ExecStart=/bin/bash -c '/usr/bin/curl -sf http://localhost:8000/api/v1/health || /usr/bin/sudo /usr/bin/systemctl restart wslcb-web.service'

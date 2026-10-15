@@ -78,3 +78,16 @@ checkout and venv the backup runs. Until all three are set the run logs `scrape
 check-in not configured` (a WARNING) or `half-configured` (an ERROR). A landed
 check-in shows only as httpx's `"HTTP/1.1 202 Accepted"`; the proof is the
 monitor's fresh last check-in.
+
+**Freshness on demand (#197).** The check-in raises the alarm; `GET
+/api/v1/health` shows the current state to anyone who looks. Its
+`data.scrape` carries `last_success_at`, `last_attempt_status`,
+`consecutive_errors` and `stale`, true past `STALE_AFTER` (26 h, this
+monitor's interval plus grace, held equal by `tests/test_infra_scrape_unit.py`)
+or with no successful run ever. `/health` stays 200 when stale:
+`wslcb-healthcheck` restarts the web app on any non-2xx, and a restart can't
+fix an upstream outage. `GET /api/v1/health/ingest` returns the same object
+with a 503 when stale, for an external uptime check; never point
+`wslcb-healthcheck` at it. If `scrape_log` can't be read, `data.scrape` is
+null (`/health` still 200, "scrape freshness unknown") and `/health/ingest`
+503s "Scrape freshness unavailable" with `db: ok`.

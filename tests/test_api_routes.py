@@ -1,6 +1,6 @@
 """Tests for versioned API routes (/api/v1/).
 
-Covers envelope structure, /cities, /stats, /export, and /health.
+Covers envelope structure, /cities, /stats, /export, /health, and /health/ingest.
 Uses FastAPI TestClient with async dependency overrides; no disk DB,
 no network calls.
 """
@@ -8,6 +8,7 @@ no network calls.
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,6 +33,30 @@ async def _async_empty_gen() -> AsyncGenerator[dict, None]:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+#: scrape_freshness() payloads (#197): last good fetch 2 h ago; the 2026-10-13
+#: outage two days in; a database that has never been scraped.
+_FRESH = {
+    "last_success_at": datetime(2026, 10, 12, 14, 31, tzinfo=UTC),
+    "last_attempt_status": "success",
+    "consecutive_errors": 0,
+    "stale": False,
+    "stale_after_hours": 26,
+}
+_STALE = {
+    "last_success_at": datetime(2026, 10, 12, 14, 31, tzinfo=UTC),
+    "last_attempt_status": "error",
+    "consecutive_errors": 4,
+    "stale": True,
+    "stale_after_hours": 26,
+}
+_NO_HISTORY = {
+    "last_success_at": None,
+    "last_attempt_status": None,
+    "consecutive_errors": 0,
+    "stale": True,
+    "stale_after_hours": 26,
+}
 
 
 @pytest.fixture
@@ -78,11 +103,18 @@ def client(mock_conn, mock_engine):
         patch("wslcb_licensing_tracker.api_routes.export_records_cursor"),
         patch("wslcb_licensing_tracker.api_routes.get_db"),
         patch("wslcb_licensing_tracker.app.get_current_user", new_callable=AsyncMock),
+        patch("wslcb_licensing_tracker.api_routes.scrape_freshness", new_callable=AsyncMock),
     )
-    mock_cities, mock_stats, mock_export, mock_get_db, mock_get_current_user = [
-        p.start() for p in patches
-    ]
+    (
+        mock_cities,
+        mock_stats,
+        mock_export,
+        mock_get_db,
+        mock_get_current_user,
+        mock_freshness,
+    ) = [p.start() for p in patches]
     mock_get_current_user.return_value = None
+    mock_freshness.return_value = _FRESH
 
     mock_cities.return_value = ["SEATTLE", "TACOMA"]
     mock_stats.return_value = {
@@ -401,6 +433,125 @@ class TestHealthEndpoint:
             plain_client = TestClient(app)
             resp = plain_client.get("/api/v1/health")
         assert resp.status_code == 503
+
+
+class TestHealthScrapeFreshness:
+    """/health reports scrape freshness but answers 200 regardless (#197).
+
+    wslcb-healthcheck restarts the web app on any non-2xx; a restart can't
+    fix an upstream outage, so staleness must never fail liveness.
+    """
+
+    @pytest.mark.parametrize(
+        ("freshness", "message"),
+        [
+            (_FRESH, "Healthy"),
+            (_STALE, "Healthy; scrape stale"),
+            (_NO_HISTORY, "Healthy; scrape stale"),
+        ],
+    )
+    def test_200_with_scrape_object(self, client, freshness, message):
+        with patch(
+            "wslcb_licensing_tracker.api_routes.scrape_freshness",
+            new_callable=AsyncMock,
+            return_value=freshness,
+        ):
+            resp = client.get("/api/v1/health")
+        assert resp.status_code == 200
+        body = resp.json()
+        _assert_envelope(body, ok=True)
+        assert body["message"] == message
+        assert body["data"]["db"] == "ok"
+        scrape = body["data"]["scrape"]
+        assert scrape["stale"] is freshness["stale"]
+        assert scrape["consecutive_errors"] == freshness["consecutive_errors"]
+        assert scrape["last_attempt_status"] == freshness["last_attempt_status"]
+
+    def test_last_success_at_is_iso_8601(self, client):
+        resp = client.get("/api/v1/health")
+        assert resp.json()["data"]["scrape"]["last_success_at"] == "2026-10-12T14:31:00+00:00"
+
+    def test_freshness_failure_is_not_a_liveness_failure(self, client, caplog):
+        """The DB answered SELECT 1; a scrape_log read failing is a degraded
+        report, not a dead process."""
+        with patch(
+            "wslcb_licensing_tracker.api_routes.scrape_freshness",
+            new_callable=AsyncMock,
+            side_effect=Exception("relation scrape_log does not exist"),
+        ):
+            with caplog.at_level("WARNING"):
+                resp = client.get("/api/v1/health")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["scrape"] is None
+        assert resp.json()["message"] == "Healthy; scrape freshness unknown"
+        assert "scrape_log does not exist" not in resp.text
+        assert "scrape_log does not exist" in caplog.text
+
+    def test_healthcheck_unit_polls_liveness_not_ingest(self):
+        """The restart-on-failure timer must not watch the freshness check."""
+        unit = Path(__file__).resolve().parent.parent / "infra" / "wslcb-healthcheck.service"
+        (exec_start,) = [
+            line for line in unit.read_text().splitlines() if line.startswith("ExecStart=")
+        ]
+        assert "http://localhost:8000/api/v1/health ||" in exec_start
+        assert "/health/ingest" not in exec_start
+
+
+class TestHealthIngestEndpoint:
+    """/health/ingest: 503 when the data is stale, for external uptime checks (#197)."""
+
+    def test_fresh_returns_200(self, client):
+        resp = client.get("/api/v1/health/ingest")
+        assert resp.status_code == 200
+        body = resp.json()
+        _assert_envelope(body, ok=True)
+        assert body["data"]["stale"] is False
+
+    @pytest.mark.parametrize("freshness", [_STALE, _NO_HISTORY])
+    def test_stale_returns_503(self, client, freshness):
+        with patch(
+            "wslcb_licensing_tracker.api_routes.scrape_freshness",
+            new_callable=AsyncMock,
+            return_value=freshness,
+        ):
+            resp = client.get("/api/v1/health/ingest")
+        assert resp.status_code == 503
+        body = resp.json()
+        _assert_envelope(body, ok=False)
+        assert body["message"] == "Scrape stale"
+        assert body["data"]["consecutive_errors"] == freshness["consecutive_errors"]
+
+    def test_unreadable_freshness_is_not_reported_as_db_down(self, client, caplog):
+        """The DB answered; only scrape_log failed. Point triage at the right part."""
+        with patch(
+            "wslcb_licensing_tracker.api_routes.scrape_freshness",
+            new_callable=AsyncMock,
+            side_effect=Exception("permission denied for table scrape_log"),
+        ):
+            with caplog.at_level("WARNING"):
+                resp = client.get("/api/v1/health/ingest")
+        assert resp.status_code == 503
+        body = resp.json()
+        _assert_envelope(body, ok=False)
+        assert body["message"] == "Scrape freshness unavailable"
+        assert body["data"] == {"db": "ok", "detail": "scrape freshness unavailable"}
+        assert "permission denied" not in resp.text
+        assert "permission denied" in caplog.text
+
+    def test_db_error_returns_503_without_leaking(self, client):
+        dsn_ish = "connection to server at 10.0.0.7 port 5432 failed"
+        with patch("wslcb_licensing_tracker.api_routes.get_db") as mock_get_db:
+
+            @asynccontextmanager
+            async def _broken_get_db_ctx(engine):
+                raise Exception(dsn_ish)
+                yield  # unreachable — required by @asynccontextmanager
+
+            mock_get_db.side_effect = _broken_get_db_ctx
+            resp = client.get("/api/v1/health/ingest")
+        assert resp.status_code == 503
+        assert "10.0.0.7" not in resp.text
+        assert resp.json()["data"] == {"db": "error", "detail": "database unreachable"}
 
 
 # ---------------------------------------------------------------------------
