@@ -9,7 +9,7 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-web.service` | uvicorn on port 8000; `ExecStartPost` polls `/api/v1/health` up to 20×(3 s) |
 | `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter; each run checks in to co-status ([`MONITORING.md`](MONITORING.md), #196) |
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
-| `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure. Liveness only: a stale scrape stays 200 (#197, [`MONITORING.md`](MONITORING.md)) |
+| `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure. Liveness only; a stale scrape stays 200 (#197) |
 | `wslcb-address-validation.timer` | Weekly address backfill + TTL renewal, Sunday 2:00 AM Pacific, ±5 min jitter |
 | `wslcb-disk-hygiene.timer` | Weekly cache/worktree/data-straggler cleanup, Sunday 3:00 AM Pacific, ±5 min jitter (#138) |
 | `wslcb-backup.service` + `.timer` | Nightly DB dump + `data/` archive to GCS, 08:17 AM Pacific ±10 min; dynamic user, keys as credentials, co-status dead-man check-in (#185). Install, restore and drills: [`RECOVERY.md`](RECOVERY.md) — not part of the copy block below, as it needs its key files first |
