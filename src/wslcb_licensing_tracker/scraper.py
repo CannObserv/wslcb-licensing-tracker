@@ -7,6 +7,10 @@ Also the scrape's side of its co-status check-in (#196): ``scrape()`` returns a
 ``scrape_log``, and ``ok_variables()`` / ``alert_variables()`` / ``fault_key()``
 shape what the monitor's templates see. The CLI sends it. ``scrape_freshness()``
 reports the same history to ``/api/v1/health`` (#197).
+
+``start_log()`` / ``ingest_page()`` / ``fail_log()`` are shared with
+``relay.py`` (#201): a change to the live path's archive → parse → ingest →
+log tail changes relayed captures too.
 """
 
 import gzip
