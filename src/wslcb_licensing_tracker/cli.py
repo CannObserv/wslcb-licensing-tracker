@@ -72,8 +72,8 @@ from .link_records import build_all_links as run_build_all_links
 from .log_config import setup_logging
 from .models import admin_users
 from .parser import SECTION_DIR_MAP
+from .relay import RelayResult, inbox_dir
 from .relay import import_inbox as run_import_inbox
-from .relay import inbox_dir
 from .replay_extracts import generate_replay_extracts as run_generate_replay_extracts
 from .scraper import ScrapeHealth, alert_variables, fault_key, ok_variables, scrape_health
 from .scraper import cleanup_redundant_scrapes as run_cleanup_redundant
@@ -195,7 +195,7 @@ def import_relayed(rate_limit: float) -> None:
     monitor reports whether the server itself can reach WSLCB (#201).
     """
 
-    async def _run(engine: AsyncEngine) -> list:
+    async def _run(engine: AsyncEngine) -> list[RelayResult]:
         results = await run_import_inbox(engine, inbox_dir(os.environ))
         if any(r.status == "success" for r in results):
             # Same non-fatal post-ingest step as the scrape.
