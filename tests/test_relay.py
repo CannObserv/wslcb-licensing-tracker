@@ -222,3 +222,32 @@ class TestImportInbox:
         assert await import_inbox(pg_engine, tmp_path / "absent", now=NOW) == []
         (tmp_path / "empty").mkdir()
         assert await import_inbox(pg_engine, tmp_path / "empty", now=NOW) == []
+
+    async def test_unexpected_error_keeps_the_capture_and_fails_the_run(
+        self, pg_engine, tmp_path, monkeypatch
+    ):
+        """A DB fault isn't the capture's fault: it stays queued for a retry."""
+
+        async def broken(conn, *_a, **_kw):
+            await conn.execute(text("SELECT 1/0"))  # leaves the transaction aborted
+
+        monkeypatch.setattr(relay, "ingest_page", broken)
+        inbox = tmp_path / "inbox"
+        path = _drop(inbox, NOW - timedelta(minutes=5), _page("dbfault"))
+
+        with pytest.raises(Exception) as caught:
+            await import_inbox(pg_engine, inbox, now=NOW)
+
+        assert not isinstance(caught.value, RelayRejectedError)
+        assert path.exists()
+        assert not (inbox / "rejected").exists()
+        async with pg_engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT status, origin FROM scrape_log"
+                        " WHERE origin = 'relay' ORDER BY id DESC LIMIT 1"
+                    )
+                )
+            ).one()
+        assert tuple(row) == ("error", "relay")

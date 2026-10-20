@@ -172,6 +172,26 @@ async def test_cleanup_keeps_the_servers_last_success_past_a_relay(pg_engine):
             await conn.commit()
 
 
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fail_log_recovers_an_aborted_transaction(pg_engine):
+    """A DB error mid-run leaves the transaction aborted; the error row still lands."""
+    from wslcb_licensing_tracker.scraper import fail_log, start_log
+
+    async with pg_engine.connect() as conn:
+        log_id = await start_log(conn)
+        with pytest.raises(Exception):  # noqa: B017 — any DB error aborts the txn
+            await conn.execute(text("SELECT 1/0"))
+        await fail_log(conn, log_id, RuntimeError("boom"))
+    async with pg_engine.connect() as conn:
+        status = (
+            await conn.execute(text("SELECT status FROM scrape_log WHERE id = :id"), {"id": log_id})
+        ).scalar_one()
+        await conn.execute(text("DELETE FROM scrape_log WHERE id = :id"), {"id": log_id})
+        await conn.commit()
+    assert status == "error"
+
+
 # ── save_html_snapshot ───────────────────────────────────────────────
 
 
