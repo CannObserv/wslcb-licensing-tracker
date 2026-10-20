@@ -13,7 +13,7 @@ and an unchanged one is already archived. A rejected capture moves to
 ``rejected/`` for inspection, and its row is marked ``error``. Any other
 failure (a DB fault, say) is not the capture's: its row is marked ``error``,
 the file stays queued for the next run, and the run raises. Uploads still in
-flight (``*.part``) are left alone.
+flight (``*.part``) are left alone, and removed once older than ``MAX_AGE``.
 
 Never checks in to co-status: that monitor reports whether the *server* can
 reach WSLCB (docs/MONITORING.md).
@@ -146,11 +146,24 @@ def _check_age(captured_at: datetime, now: datetime) -> None:
         raise RelayRejectedError(msg)
 
 
-def _pending(inbox: Path) -> list[Path]:
-    """Files waiting in *inbox*, oldest capture first; uploads in flight excluded."""
+def _pending(inbox: Path, now: datetime) -> list[Path]:
+    """Files waiting in *inbox*, oldest capture first; uploads in flight excluded.
+
+    A ``*.part`` older than ``MAX_AGE`` is an upload whose rename never came
+    (ssh failed after scp); it could never be imported, so it is removed.
+    """
     if not inbox.is_dir():
         return []
-    return sorted(p for p in inbox.iterdir() if p.is_file() and not p.name.endswith(".part"))
+    pending = []
+    for p in inbox.iterdir():
+        if not p.is_file():
+            continue
+        if not p.name.endswith(".part"):
+            pending.append(p)
+        elif now.timestamp() - p.stat().st_mtime > MAX_AGE.total_seconds():
+            logger.warning("Removing abandoned upload %s", p.name)
+            p.unlink()
+    return sorted(pending)
 
 
 def _move_to_rejected(path: Path) -> None:
@@ -210,10 +223,10 @@ async def import_inbox(
     *now* defaults to UTC now; the age check measures against it. Returns
     one result per file; a missing or empty inbox returns ``[]``.
     """
-    files = _pending(inbox)
+    now = now or datetime.now(UTC)
+    files = _pending(inbox, now)
     if not files:
         logger.info("Relay inbox %s is empty or absent; nothing to import", inbox)
         return []
-    now = now or datetime.now(UTC)
     async with get_db(engine) as conn:
         return [await _import_one(conn, path, now) for path in files]
