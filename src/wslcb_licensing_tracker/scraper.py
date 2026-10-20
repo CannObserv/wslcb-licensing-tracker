@@ -132,31 +132,57 @@ async def get_last_content_hash(conn: AsyncConnection) -> str | None:
     return row[0] if row else None
 
 
+#: When a successful run's page was fetched: a relay's capture time (#201),
+#: else the run's own finish.
+_FETCHED_AT = func.coalesce(
+    scrape_log.c.captured_at, scrape_log.c.finished_at, scrape_log.c.started_at
+)
+
+
 async def scrape_health(conn: AsyncConnection) -> ScrapeHealth:
-    """Last successful fetch and the errors since, from ``scrape_log``."""
-    last = (
+    """Freshest fetched page, and the server's errors since its own last success.
+
+    Either path's success counts as fresh data, dated by when the page was
+    fetched. The error count reads server runs only: it reports whether the
+    server can reach WSLCB, which a relay (#201) says nothing about.
+    """
+    last_success_at = (
         await conn.execute(
-            select(
-                scrape_log.c.id,
-                func.coalesce(scrape_log.c.finished_at, scrape_log.c.started_at),
-            )
-            .where(scrape_log.c.status.in_(_SUCCESS_STATUSES))
-            .order_by(scrape_log.c.id.desc())
-            .limit(1)
+            select(func.max(_FETCHED_AT)).where(scrape_log.c.status.in_(_SUCCESS_STATUSES))
         )
-    ).first()
-    errors = select(func.count()).select_from(scrape_log).where(scrape_log.c.status == "error")
-    if last is not None:
-        errors = errors.where(scrape_log.c.id > last[0])
+    ).scalar_one()
+    server = scrape_log.c.origin == "server"
+    last_server_success = (
+        select(func.max(scrape_log.c.id))
+        .where(scrape_log.c.status.in_(_SUCCESS_STATUSES), server)
+        .scalar_subquery()
+    )
+    errors = (
+        select(func.count())
+        .select_from(scrape_log)
+        .where(
+            scrape_log.c.status == "error",
+            server,
+            scrape_log.c.id > func.coalesce(last_server_success, 0),
+        )
+    )
     count = (await conn.execute(errors)).scalar_one()
-    return ScrapeHealth(last[1] if last is not None else None, count)
+    return ScrapeHealth(last_success_at, count)
 
 
 async def scrape_freshness(conn: AsyncConnection, now: datetime | None = None) -> ScrapeFreshness:
-    """Read ``scrape_log`` into a ``ScrapeFreshness``; *now* defaults to UTC now."""
+    """Read ``scrape_log`` into a ``ScrapeFreshness``; *now* defaults to UTC now.
+
+    ``last_attempt_status`` is the server's latest run, like the error count.
+    """
     health = await scrape_health(conn)
     last_status = (
-        await conn.execute(select(scrape_log.c.status).order_by(scrape_log.c.id.desc()).limit(1))
+        await conn.execute(
+            select(scrape_log.c.status)
+            .where(scrape_log.c.origin == "server")
+            .order_by(scrape_log.c.id.desc())
+            .limit(1)
+        )
     ).scalar_one_or_none()
     now = now or datetime.now(UTC)
     last = health.last_success_at

@@ -169,17 +169,24 @@ def test_save_html_snapshot_increments_version(tmp_path, monkeypatch):
 async def _fresh_scrape_log(conn, *rows):
     """Empty scrape_log inside the test's transaction, then insert *rows*.
 
-    Each row is ``(status, started_at)``; ids ascend in the order given.
+    Each row is ``(status, started_at)`` for a server run, or
+    ``(status, started_at, captured_at)`` for a relay (#201); ids ascend in
+    the order given.
     """
     await conn.execute(text("UPDATE sources SET scrape_log_id = NULL"))
     await conn.execute(text("DELETE FROM scrape_log"))
-    for status, started_at in rows:
+    for status, started_at, *relay in rows:
         await conn.execute(
             text(
-                "INSERT INTO scrape_log (started_at, finished_at, status) "
-                "VALUES (:at, :at, :status)"
+                "INSERT INTO scrape_log (started_at, finished_at, status, origin, captured_at) "
+                "VALUES (:at, :at, :status, :origin, :captured)"
             ),
-            {"at": started_at, "status": status},
+            {
+                "at": started_at,
+                "status": status,
+                "origin": "relay" if relay else "server",
+                "captured": relay[0] if relay else None,
+            },
         )
 
 
@@ -218,6 +225,63 @@ class TestScrapeHealth:
     async def test_never_succeeded(self, pg_conn):
         await _fresh_scrape_log(pg_conn, ("error", _T0), ("error", _T0 + timedelta(hours=6)))
         assert await scrape_health(pg_conn) == ScrapeHealth(None, 2)
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+class TestScrapeHealthWithRelays:
+    """Relays (#201) refresh the data but say nothing about the server's own fetch."""
+
+    async def test_relay_success_is_fresh_data_dated_by_capture(self, pg_conn):
+        captured = _T0 + timedelta(hours=23, minutes=40)
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0),
+            ("error", _T0 + timedelta(hours=23)),
+            ("success", _T0 + timedelta(hours=24), captured),  # imported 20 min later
+        )
+        assert (await scrape_health(pg_conn)).last_success_at == captured
+
+    async def test_server_errors_keep_counting_across_relays(self, pg_conn):
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0),
+            ("error", _T0 + timedelta(hours=23)),
+            ("success", _T0 + timedelta(hours=23, minutes=10), _T0 + timedelta(hours=23)),
+            ("error", _T0 + timedelta(hours=29)),
+            ("unchanged", _T0 + timedelta(hours=29, minutes=10), _T0 + timedelta(hours=29)),
+        )
+        assert (await scrape_health(pg_conn)).consecutive_errors == 2
+
+    async def test_relay_rejections_are_not_server_errors(self, pg_conn):
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0),
+            ("error", _T0 + timedelta(hours=6), _T0 + timedelta(hours=6)),
+        )
+        assert await scrape_health(pg_conn) == ScrapeHealth(_T0, 0)
+
+    async def test_latest_capture_wins_not_latest_row(self, pg_conn):
+        """A relay imported after a server success, but captured before it, doesn't
+        pull freshness backwards."""
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0 + timedelta(hours=6)),
+            ("unchanged", _T0 + timedelta(hours=6, minutes=5), _T0 + timedelta(hours=1)),
+        )
+        assert (await scrape_health(pg_conn)).last_success_at == _T0 + timedelta(hours=6)
+
+    async def test_freshness_last_attempt_is_the_servers(self, pg_conn):
+        await _fresh_scrape_log(
+            pg_conn,
+            ("error", _T0),
+            ("success", _T0 + timedelta(minutes=10), _T0 + timedelta(minutes=9)),
+        )
+        freshness = await scrape_freshness(pg_conn, now=_T0 + timedelta(hours=1))
+        assert freshness["last_attempt_status"] == "error"
+        assert freshness["consecutive_errors"] == 1
+        assert freshness["stale"] is False
+        assert freshness["last_success_at"] == _T0 + timedelta(minutes=9)
 
 
 # ── scrape freshness, for /api/v1/health (#197) ───────────────────────
