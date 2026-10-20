@@ -433,9 +433,10 @@ async def cleanup_redundant_scrapes(
 ) -> dict[str, int]:
     """Remove scrape_log rows (and associated sources/files) for unchanged scrapes.
 
-    Keeps the ``unchanged`` rows since the newest ``success``: they are the
-    current state, which ``scrape_health()`` and /api/v1/health read (#197).
-    A later cleanup removes them once a ``success`` supersedes them.
+    Keeps the ``unchanged`` rows since the newest ``success`` of the same
+    origin: they are the current state, which ``scrape_health()`` and
+    /api/v1/health read (#197, #201). A later cleanup removes them once a
+    ``success`` of their origin supersedes them.
 
     Returns a dict with counts of removed rows: ``scrape_logs``, ``sources``,
     ``record_sources``, ``files``.
@@ -443,9 +444,12 @@ async def cleanup_redundant_scrapes(
     result = {"scrape_logs": 0, "sources": 0, "record_sources": 0, "files": 0}
 
     async with get_db(engine) as conn:
+        # Per origin (#201): a relay success must not supersede the server's
+        # own unchanged rows, which anchor scrape_health()'s server error count.
+        later = scrape_log.alias("later")
         newest_success = (
-            select(func.max(scrape_log.c.id))
-            .where(scrape_log.c.status == "success")
+            select(func.max(later.c.id))
+            .where(later.c.status == "success", later.c.origin == scrape_log.c.origin)
             .scalar_subquery()
         )
         # Find superseded scrape_log rows with status='unchanged' that have no sources linked
