@@ -130,6 +130,48 @@ async def test_cleanup_redundant_scrapes_keeps_unchanged_rows_since_the_last_suc
             await conn.commit()
 
 
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_cleanup_keeps_the_servers_last_success_past_a_relay(pg_engine):
+    """A relay success (#201) must not supersede the server's own unchanged row:
+    it anchors scrape_health's server error count."""
+    rows = [
+        ("success", "server"),
+        ("error", "server"),
+        ("unchanged", "server"),  # the server's last success
+        ("success", "relay"),
+        ("error", "server"),
+    ]
+    async with pg_engine.connect() as conn:
+        ids = []
+        for status, origin in rows:
+            row = await conn.execute(
+                text(
+                    "INSERT INTO scrape_log (started_at, finished_at, status, origin, captured_at)"
+                    " VALUES (now(), now(), :status, :origin,"
+                    " CASE WHEN :origin = 'relay' THEN now() END) RETURNING id"
+                ),
+                {"status": status, "origin": origin},
+            )
+            ids.append(row.scalar_one())
+        await conn.commit()
+        before = await scrape_health(conn)
+
+    try:
+        await cleanup_redundant_scrapes(pg_engine, delete_files=False)
+        async with pg_engine.connect() as conn:
+            kept = await conn.execute(
+                text("SELECT id FROM scrape_log WHERE id = ANY(:ids) ORDER BY id"),
+                {"ids": ids},
+            )
+            assert ids[2] in [r[0] for r in kept]
+            assert await scrape_health(conn) == before
+    finally:
+        async with pg_engine.connect() as conn:
+            await conn.execute(text("DELETE FROM scrape_log WHERE id = ANY(:ids)"), {"ids": ids})
+            await conn.commit()
+
+
 # ── save_html_snapshot ───────────────────────────────────────────────
 
 
