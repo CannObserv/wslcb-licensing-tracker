@@ -212,6 +212,7 @@ class TestImportInbox:
         (inbox / "notes.txt").write_text("hi")
         partial = inbox / (capture_name(NOW) + ".part")
         partial.write_bytes(b"in flight")
+        os.utime(partial, (NOW.timestamp(), NOW.timestamp()))
 
         results = await import_inbox(pg_engine, inbox, now=NOW)
 
@@ -251,3 +252,16 @@ class TestImportInbox:
                 )
             ).one()
         assert tuple(row) == ("error", "relay")
+
+    async def test_abandoned_partials_are_pruned(self, pg_engine, tmp_path, caplog):
+        """An upload whose rename never came (ssh failed after scp) is cleared once stale."""
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+        stale = inbox / (capture_name(NOW - timedelta(hours=7)) + ".part")
+        stale.write_bytes(b"orphan")
+        then = (NOW - relay.MAX_AGE - timedelta(minutes=1)).timestamp()
+        os.utime(stale, (then, then))
+
+        assert await import_inbox(pg_engine, inbox, now=NOW) == []
+        assert not stale.exists()
+        assert "abandoned upload" in caplog.text
