@@ -121,6 +121,9 @@ Laptop side:
    - `docs/DEPLOYMENT.md`: VM inbox setup, and the laptop install (key,
      `ssh-add --apple-use-keychain`, ssh config stanza, plist,
      `launchctl bootstrap`/`kickstart`/`bootout`)
+     *Revised during execution:* the runbook went to a new `docs/RELAY.md`.
+     DEPLOYMENT.md had only 65 tokens of budget left, so it gets just the
+     task instance and copy-block line.
    - `docs/SCHEMA.md`: migration 0008
    - `.env.example`: `WSLCB_RELAY_INBOX`
    - `.skills/doc-sensitive-paths` / `doc-sections` if `relay.py` should
