@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for the WSLCB relay (#201). A LaunchAgent, not cron: it runs in
+  the operator's login session, so ssh reaches the macOS ssh-agent and
+  Keychain. Times are the Mac's local clock, 10 minutes after the VM's own
+  00:30/06:30 Pacific scrape. Install (docs/DEPLOYMENT.md § Relayed scrape)
+  replaces @HOME@ and @HOST@ and copies this to ~/Library/LaunchAgents/.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.cannobserv.wslcb-relay</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@HOME@/.local/bin/wslcb-relay-capture.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WSLCB_RELAY_HOST</key>
+    <string>@HOST@</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>0</integer>
+      <key>Minute</key>
+      <integer>40</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>6</integer>
+      <key>Minute</key>
+      <integer>40</integer>
+    </dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>@HOME@/Library/Logs/wslcb-relay.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/Library/Logs/wslcb-relay.log</string>
+</dict>
+</plist>
