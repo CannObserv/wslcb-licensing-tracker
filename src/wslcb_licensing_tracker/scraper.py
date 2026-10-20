@@ -270,8 +270,13 @@ async def start_log(
 
 
 async def fail_log(conn: AsyncConnection, log_id: int, exc: BaseException) -> None:
-    """Mark a run ``error`` with the exception's text; never raises."""
+    """Mark a run ``error`` with the exception's text; never raises.
+
+    Rolls back first: a DB error mid-run leaves the transaction aborted, and
+    the UPDATE would fail with it.
+    """
     try:
+        await conn.rollback()
         await conn.execute(
             update(scrape_log)
             .where(scrape_log.c.id == log_id)

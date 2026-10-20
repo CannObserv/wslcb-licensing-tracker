@@ -10,8 +10,10 @@ it looks like the real report, and ingests it through the live scrape's own
 
 Imported captures leave the inbox: ``ingest_page()`` archives a changed page,
 and an unchanged one is already archived. A rejected capture moves to
-``rejected/`` for inspection, and its row is marked ``error``. Uploads still
-in flight (``*.part``) are left alone.
+``rejected/`` for inspection, and its row is marked ``error``. Any other
+failure (a DB fault, say) is not the capture's: its row is marked ``error``,
+the file stays queued for the next run, and the run raises. Uploads still in
+flight (``*.part``) are left alone.
 
 Never checks in to co-status: that monitor reports whether the *server* can
 reach WSLCB (docs/MONITORING.md).
@@ -157,13 +159,12 @@ def _move_to_rejected(path: Path) -> None:
     path.replace(dest / path.name)
 
 
-async def _rejected(conn: AsyncConnection, path: Path, log_id: int, exc: Exception) -> RelayResult:
+async def _rejected(
+    conn: AsyncConnection, path: Path, log_id: int, exc: RelayRejectedError
+) -> RelayResult:
     """Mark the run failed and move the capture to ``rejected/``."""
-    reason = str(exc) or type(exc).__name__
-    if isinstance(exc, RelayRejectedError):
-        logger.warning("Rejected relayed capture %s: %s", path.name, reason)
-    else:
-        logger.error("Relayed capture %s failed to import", path.name, exc_info=exc)
+    reason = str(exc)
+    logger.warning("Rejected relayed capture %s: %s", path.name, reason)
     await fail_log(conn, log_id, exc)
     _move_to_rejected(path)
     return RelayResult(path.name, "rejected", log_id, reason)
@@ -191,8 +192,12 @@ async def _import_one(conn: AsyncConnection, path: Path, now: datetime) -> Relay
                 "captured_at": captured_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
         )
-    except Exception as exc:  # noqa: BLE001 — any failure rejects this capture, not the rest
+    except RelayRejectedError as exc:
         return await _rejected(conn, path, log_id, exc)
+    except Exception as exc:
+        logger.exception("Relayed capture %s failed to import; left queued", path.name)
+        await fail_log(conn, log_id, exc)
+        raise
     _discard(path)
     return RelayResult(path.name, outcome.status, log_id)
 

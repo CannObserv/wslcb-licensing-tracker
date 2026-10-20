@@ -81,3 +81,7 @@ source type and the script stay in the repo for the next block.
   `~/wslcb-relay-inbox/rejected/`, and makes the import and the Mac's script
   exit non-zero. Look there, and in `~/Library/Logs/wslcb-relay.log` on the
   Mac.
+- **Any other failure** (a DB fault, say) is not the capture's. Its row is
+  marked `error`, the file stays queued in the inbox, and the run fails. To
+  retry once fixed, run `sudo systemctl start wslcb-task@import-relayed`
+  within the 6 h age limit.
