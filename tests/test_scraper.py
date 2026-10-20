@@ -3,6 +3,7 @@
 import gzip
 import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -24,6 +25,8 @@ from wslcb_licensing_tracker.scraper import (
     scrape_freshness,
     scrape_health,
 )
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 _needs_db = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -329,6 +332,49 @@ class TestScrapeOutcome:
                 )
             ).scalar_one()
         assert status == "unchanged"
+
+    async def test_changed_page_ingests_under_a_live_scrape_source(
+        self, pg_engine, monkeypatch, tmp_path
+    ):
+        """A changed page is archived, ingested, and attributed to a live_scrape source."""
+        import wslcb_licensing_tracker.scraper as mod
+
+        body = (FIXTURES_DIR / "full_snapshot.html").read_text()
+        monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_client(_FakeResponse(200, body)))
+        monkeypatch.setattr(mod, "get_last_content_hash", AsyncMock(return_value=None))
+
+        outcome = await scrape(pg_engine)
+
+        assert outcome.status == "success"
+        assert outcome.new + outcome.approved + outcome.discontinued + outcome.skipped == 3
+        async with pg_engine.connect() as conn:
+            log = (
+                await conn.execute(
+                    text(
+                        "SELECT status, origin, captured_at, content_hash FROM scrape_log"
+                        " WHERE id = :id"
+                    ),
+                    {"id": outcome.scrape_log_id},
+                )
+            ).one()
+            src = (
+                await conn.execute(
+                    text(
+                        "SELECT st.slug, s.url, s.snapshot_path, s.captured_at, s.metadata"
+                        " FROM sources s JOIN source_types st ON st.id = s.source_type_id"
+                        " WHERE s.scrape_log_id = :id"
+                    ),
+                    {"id": outcome.scrape_log_id},
+                )
+            ).one()
+        assert (log.status, log.origin, log.captured_at) == ("success", "server", None)
+        assert log.content_hash == compute_content_hash(body)
+        assert src.slug == "live_scrape"
+        assert src.url == "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
+        assert src.captured_at is not None
+        assert src.metadata == "{}"
+        assert (tmp_path / src.snapshot_path).exists()
 
     async def test_http_error_still_raises_and_logs(self, pg_engine, monkeypatch):
         """The exit status is the unit's failure signal; the check-in doesn't replace it."""
