@@ -90,6 +90,7 @@ wslcb-licensing-tracker/
 ├── db.py                   # Async location/source/provenance helpers + shared constants
 ├── pipeline.py             # Async ingestion pipeline (insert_record, ingest_batch)
 ├── scraper.py              # Async scraper (WSLCB page fetch, archive, ingest)
+├── relay.py                # Import operator-relayed captures during an IP block (#201)
 ├── backfill_snapshots.py   # Async backfill from archived HTML snapshots
 ├── backfill_diffs.py       # Async backfill from CO diff archives
 ├── replay_extracts.py      # Replay-generated provenance extracts (#154)
@@ -160,7 +161,8 @@ wslcb-licensing-tracker/
 │   ├── build-css.sh            # Rebuild Tailwind output (run manually or via pre-commit)
 │   ├── download-tailwind.sh    # Download platform-specific Tailwind CLI binary
 │   ├── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
-│   └── setup-backup-role.sql   # Once per cluster: the backup's read-only `wslcb_backup` role (#185)
+│   ├── setup-backup-role.sql   # Once per cluster: the backup's read-only `wslcb_backup` role (#185)
+│   └── relay/                  # Operator's Mac: relay-capture.sh + LaunchAgent plist (#201)
 ├── alembic.ini             # Alembic config (repo root, not inside alembic/)
 ├── alembic/                # Alembic schema migrations
 │   ├── env.py
@@ -172,12 +174,14 @@ wslcb-licensing-tracker/
 │       ├── 0004_nullable_std_address_line_2.py
 │       ├── 0005_address_validation_attempted_at.py
 │       ├── 0006_co_replay_source_type.py
-│       └── 0007_replay_extract_role.py
+│       ├── 0007_replay_extract_role.py
+│       └── 0008_relayed_scrape.py
 ├── infra/                  # systemd unit and timer files (copy to /etc/systemd/system/)
 │   ├── wslcb-web.service           # Web app service
 │   ├── wslcb-task@.service         # Oneshot task template
 │   ├── wslcb-scraper.timer         # Twice-daily scraper timer
 │   ├── wslcb-task@scrape.service.d/ # Scrape check-in drop-in: key credential, 2 h timeout (#196; key file first)
+│   ├── wslcb-task@import-relayed.service.d/ # Relay import: 30 min timeout, no check-in (#201)
 │   ├── wslcb-healthcheck.service   # Health check service (restarts web on failure)
 │   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
 │   ├── wslcb-address-validation.timer # Weekly address backfill timer
@@ -230,6 +234,9 @@ wslcb-licensing-tracker/
 │   ├── test_substances.py    # Regulated substance CRUD tests
 │   ├── test_cli.py              # Click CLI group and subcommand tests
 │   ├── test_cli_scrape.py       # Scrape CLI: post-scrape backfill, co-status check-in (#196)
+│   ├── test_relay.py            # Relay import: names, validation, inbox drain (#201)
+│   ├── test_cli_relay.py        # `wslcb ingest import-relayed` exit codes, no check-in (#201)
+│   ├── test_relay_laptop.py     # relay-capture.sh (stubbed curl/scp/ssh), plist, drop-in (#201)
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
 │   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
 │   ├── test_backup.py           # Dump verify/tiers + archive mirror rules, against GCS fakes (#185)
@@ -254,6 +261,7 @@ wslcb-licensing-tracker/
 └── docs/                   # Operations and architecture documentation
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
+    ├── RELAY.md             # Relayed scrape during the WSLCB block: VM + Mac install, monitoring (#201)
     ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
     ├── SCHEMA.md            # Full table/column reference and migration history
     ├── SKILLS.md            # AI agent skill inventory and trigger phrases
@@ -508,6 +516,8 @@ Every license record is linked to the source artifact(s) it was extracted from v
 | 3 | `internet_archive` | Wayback Machine snapshots |
 | 4 | `co_diff_archive` | Cannabis Observer diff-detected change snapshots |
 | 5 | `manual` | Manually entered or corrected records |
+| 6 | `co_replay` | Reconstructed from CO diff chain replay (#154) |
+| 7 | `relayed_scrape` | WSLCB page captured off-host by the operator during an IP block (#201) |
 
 ### Roles
 

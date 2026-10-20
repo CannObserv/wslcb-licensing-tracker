@@ -7,6 +7,10 @@ Also the scrape's side of its co-status check-in (#196): ``scrape()`` returns a
 ``scrape_log``, and ``ok_variables()`` / ``alert_variables()`` / ``fault_key()``
 shape what the monitor's templates see. The CLI sends it. ``scrape_freshness()``
 reports the same history to ``/api/v1/health`` (#197).
+
+``start_log()`` / ``ingest_page()`` / ``fail_log()`` are shared with
+``relay.py`` (#201): a change to the live path's archive → parse → ingest →
+log tail changes relayed captures too.
 """
 
 import gzip
@@ -132,31 +136,57 @@ async def get_last_content_hash(conn: AsyncConnection) -> str | None:
     return row[0] if row else None
 
 
+#: When a successful run's page was fetched: a relay's capture time (#201),
+#: else the run's own finish.
+_FETCHED_AT = func.coalesce(
+    scrape_log.c.captured_at, scrape_log.c.finished_at, scrape_log.c.started_at
+)
+
+
 async def scrape_health(conn: AsyncConnection) -> ScrapeHealth:
-    """Last successful fetch and the errors since, from ``scrape_log``."""
-    last = (
+    """Freshest fetched page, and the server's errors since its own last success.
+
+    Either path's success counts as fresh data, dated by when the page was
+    fetched. The error count reads server runs only: it reports whether the
+    server can reach WSLCB, which a relay (#201) says nothing about.
+    """
+    last_success_at = (
         await conn.execute(
-            select(
-                scrape_log.c.id,
-                func.coalesce(scrape_log.c.finished_at, scrape_log.c.started_at),
-            )
-            .where(scrape_log.c.status.in_(_SUCCESS_STATUSES))
-            .order_by(scrape_log.c.id.desc())
-            .limit(1)
+            select(func.max(_FETCHED_AT)).where(scrape_log.c.status.in_(_SUCCESS_STATUSES))
         )
-    ).first()
-    errors = select(func.count()).select_from(scrape_log).where(scrape_log.c.status == "error")
-    if last is not None:
-        errors = errors.where(scrape_log.c.id > last[0])
+    ).scalar_one()
+    server = scrape_log.c.origin == "server"
+    last_server_success = (
+        select(func.max(scrape_log.c.id))
+        .where(scrape_log.c.status.in_(_SUCCESS_STATUSES), server)
+        .scalar_subquery()
+    )
+    errors = (
+        select(func.count())
+        .select_from(scrape_log)
+        .where(
+            scrape_log.c.status == "error",
+            server,
+            scrape_log.c.id > func.coalesce(last_server_success, 0),
+        )
+    )
     count = (await conn.execute(errors)).scalar_one()
-    return ScrapeHealth(last[1] if last is not None else None, count)
+    return ScrapeHealth(last_success_at, count)
 
 
 async def scrape_freshness(conn: AsyncConnection, now: datetime | None = None) -> ScrapeFreshness:
-    """Read ``scrape_log`` into a ``ScrapeFreshness``; *now* defaults to UTC now."""
+    """Read ``scrape_log`` into a ``ScrapeFreshness``; *now* defaults to UTC now.
+
+    ``last_attempt_status`` is the server's latest run, like the error count.
+    """
     health = await scrape_health(conn)
     last_status = (
-        await conn.execute(select(scrape_log.c.status).order_by(scrape_log.c.id.desc()).limit(1))
+        await conn.execute(
+            select(scrape_log.c.status)
+            .where(scrape_log.c.origin == "server")
+            .order_by(scrape_log.c.id.desc())
+            .limit(1)
+        )
     ).scalar_one_or_none()
     now = now or datetime.now(UTC)
     last = health.last_success_at
@@ -220,142 +250,188 @@ def alert_variables(exc: BaseException, health: ScrapeHealth | None, host: str) 
     }
 
 
-async def scrape(engine: AsyncEngine) -> ScrapeOutcome:  # noqa: C901, PLR0915
-    """Run a full scrape: fetch, archive, parse, ingest, and log."""
-    logger.info("Starting scrape of %s", WSLCB_SOURCE_URL)
-
-    async with get_db(engine) as conn:
-        # Log scrape start
-        result = await conn.execute(
+async def start_log(
+    conn: AsyncConnection,
+    *,
+    origin: Literal["server", "relay"] = "server",
+    captured_at: datetime | None = None,
+) -> int:
+    """Open a ``running`` ``scrape_log`` row and commit it; return its id."""
+    log_id = (
+        await conn.execute(
             pg_insert(scrape_log)
             .values(
                 started_at=datetime.now(UTC),
                 status="running",
+                origin=origin,
+                captured_at=captured_at,
             )
             .returning(scrape_log.c.id)
         )
-        log_id = result.scalar_one()
-        await conn.commit()
+    ).scalar_one()
+    await conn.commit()
+    return log_id
 
+
+async def fail_log(conn: AsyncConnection, log_id: int, exc: BaseException) -> None:
+    """Mark a run ``error`` with the exception's text; never raises.
+
+    Rolls back first: a DB error mid-run leaves the transaction aborted, and
+    the UPDATE would fail with it.
+    """
+    try:
+        await conn.rollback()
+        await conn.execute(
+            update(scrape_log)
+            .where(scrape_log.c.id == log_id)
+            .values(
+                finished_at=datetime.now(UTC),
+                status="error",
+                error_message=str(exc),
+            )
+        )
+        await conn.commit()
+    except Exception:
+        logger.exception("Failed to update scrape_log on error")
+
+
+async def ingest_page(  # noqa: PLR0913
+    conn: AsyncConnection,
+    html: str,
+    log_id: int,
+    *,
+    source_type: int,
+    captured_at: datetime,
+    metadata: dict | None = None,
+) -> ScrapeOutcome:
+    """Archive, parse, and ingest one fetched copy of the page; finish its log row.
+
+    Shared by the live scrape and the relay import (#201), so the two paths
+    cannot drift. *captured_at* is when the page was fetched, which names the
+    snapshot and dates the source. A page whose hash matches the last
+    successful run of either path is logged ``unchanged`` and not ingested.
+    Raises on a page with no data tables; the caller marks the row failed.
+    """
+    content_hash = compute_content_hash(html)
+    last_hash = await get_last_content_hash(conn)
+
+    if content_hash == last_hash:
+        logger.info(
+            "Page unchanged (hash %s...); skipping parse/ingest",
+            content_hash[:12],
+        )
+        await conn.execute(
+            update(scrape_log)
+            .where(scrape_log.c.id == log_id)
+            .values(
+                finished_at=datetime.now(UTC),
+                status="unchanged",
+                content_hash=content_hash,
+            )
+        )
+        await conn.commit()
+        return ScrapeOutcome(log_id, "unchanged")
+
+    snapshot_path = None
+    try:
+        snapshot_path = save_html_snapshot(html, captured_at)
+        logger.debug("Saved snapshot to %s", snapshot_path)
+    except Exception as snap_err:  # noqa: BLE001
+        logger.warning("Failed to save HTML snapshot: %s", snap_err)
+
+    rel_path = str(snapshot_path.relative_to(DATA_DIR)) if snapshot_path else None
+    source_id = await get_or_create_source(
+        conn,
+        source_type,
+        snapshot_path=rel_path,
+        url=WSLCB_SOURCE_URL,
+        captured_at=captured_at,
+        scrape_log_id=log_id,
+        metadata=metadata,
+    )
+
+    soup = BeautifulSoup(html, "lxml")
+    all_tables = soup.find_all("table")
+    data_tables = []
+    for t in all_tables:
+        th = t.find("th")
+        if th and th.get_text(strip=True).replace("\xa0", " ") in SECTION_MAP:
+            header_text = th.get_text(strip=True).replace("\xa0", " ")
+            data_tables.append((SECTION_MAP[header_text], t))
+
+    if not data_tables:
+        msg = "Could not find data tables in page"
+        raise ValueError(msg)
+
+    counts = {"new": 0, "approved": 0, "discontinued": 0, "skipped": 0}
+
+    for section_type, table in data_tables:
+        records = parse_records_from_table(table, section_type)
+        logger.debug("  %s: parsed %d records", section_type, len(records))
+        opts = IngestOptions(
+            link_outcomes=True,
+            source_id=source_id,
+        )
+        batch_result = await ingest_batch(conn, records, opts)
+
+        key = section_type.split("_")[0] if "_" in section_type else section_type
+        if key == "new":
+            counts["new"] = batch_result.inserted
+        elif key == "approved":
+            counts["approved"] = batch_result.inserted
+        elif key == "discontinued":
+            counts["discontinued"] = batch_result.inserted
+        counts["skipped"] += batch_result.skipped
+
+    await conn.commit()  # commit records first; log update follows in a second commit
+
+    await conn.execute(
+        update(scrape_log)
+        .where(scrape_log.c.id == log_id)
+        .values(
+            finished_at=datetime.now(UTC),
+            status="success",
+            content_hash=content_hash,
+            records_new=counts["new"],
+            records_approved=counts["approved"],
+            records_discontinued=counts["discontinued"],
+            records_skipped=counts["skipped"],
+        )
+    )
+    await conn.commit()
+
+    logger.info(
+        "Scrape complete: new=%d approved=%d discontinued=%d skipped=%d",
+        counts["new"],
+        counts["approved"],
+        counts["discontinued"],
+        counts["skipped"],
+    )
+    return ScrapeOutcome(log_id, "success", **counts)
+
+
+async def scrape(engine: AsyncEngine) -> ScrapeOutcome:
+    """Run a full scrape: fetch, archive, parse, ingest, and log."""
+    logger.info("Starting scrape of %s", WSLCB_SOURCE_URL)
+
+    async with get_db(engine) as conn:
+        log_id = await start_log(conn)
         try:
             async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
                 resp = await client.get(WSLCB_SOURCE_URL)
             resp.raise_for_status()
             html = resp.text
             logger.debug("Fetched %d bytes", len(html))
-
-            content_hash = compute_content_hash(html)
-            last_hash = await get_last_content_hash(conn)
-
-            if content_hash == last_hash:
-                logger.info(
-                    "Page unchanged (hash %s...); skipping parse/ingest",
-                    content_hash[:12],
-                )
-                await conn.execute(
-                    update(scrape_log)
-                    .where(scrape_log.c.id == log_id)
-                    .values(
-                        finished_at=datetime.now(UTC),
-                        status="unchanged",
-                        content_hash=content_hash,
-                    )
-                )
-                await conn.commit()
-                return ScrapeOutcome(log_id, "unchanged")
-
-            scrape_time = datetime.now(UTC)
-            snapshot_path = None
-            try:
-                snapshot_path = save_html_snapshot(html, scrape_time)
-                logger.debug("Saved snapshot to %s", snapshot_path)
-            except Exception as snap_err:  # noqa: BLE001
-                logger.warning("Failed to save HTML snapshot: %s", snap_err)
-
-            rel_path = str(snapshot_path.relative_to(DATA_DIR)) if snapshot_path else None
-            source_id = await get_or_create_source(
+            return await ingest_page(
                 conn,
-                SOURCE_TYPE_LIVE_SCRAPE,
-                snapshot_path=rel_path,
-                url=WSLCB_SOURCE_URL,
-                captured_at=scrape_time,
-                scrape_log_id=log_id,
+                html,
+                log_id,
+                source_type=SOURCE_TYPE_LIVE_SCRAPE,
+                captured_at=datetime.now(UTC),
             )
-
-            soup = BeautifulSoup(html, "lxml")
-            all_tables = soup.find_all("table")
-            data_tables = []
-            for t in all_tables:
-                th = t.find("th")
-                if th and th.get_text(strip=True).replace("\xa0", " ") in SECTION_MAP:
-                    header_text = th.get_text(strip=True).replace("\xa0", " ")
-                    data_tables.append((SECTION_MAP[header_text], t))
-
-            if not data_tables:
-                msg = "Could not find data tables in page"
-                raise ValueError(msg)  # noqa: TRY301
-
-            counts = {"new": 0, "approved": 0, "discontinued": 0, "skipped": 0}
-
-            for section_type, table in data_tables:
-                records = parse_records_from_table(table, section_type)
-                logger.debug("  %s: parsed %d records", section_type, len(records))
-                opts = IngestOptions(
-                    link_outcomes=True,
-                    source_id=source_id,
-                )
-                batch_result = await ingest_batch(conn, records, opts)
-
-                key = section_type.split("_")[0] if "_" in section_type else section_type
-                if key == "new":
-                    counts["new"] = batch_result.inserted
-                elif key == "approved":
-                    counts["approved"] = batch_result.inserted
-                elif key == "discontinued":
-                    counts["discontinued"] = batch_result.inserted
-                counts["skipped"] += batch_result.skipped
-
-            await conn.commit()  # commit records first; log update follows in a second commit
-
-            await conn.execute(
-                update(scrape_log)
-                .where(scrape_log.c.id == log_id)
-                .values(
-                    finished_at=datetime.now(UTC),
-                    status="success",
-                    content_hash=content_hash,
-                    records_new=counts["new"],
-                    records_approved=counts["approved"],
-                    records_discontinued=counts["discontinued"],
-                    records_skipped=counts["skipped"],
-                )
-            )
-            await conn.commit()
-
-            logger.info(
-                "Scrape complete: new=%d approved=%d discontinued=%d skipped=%d",
-                counts["new"],
-                counts["approved"],
-                counts["discontinued"],
-                counts["skipped"],
-            )
-            return ScrapeOutcome(log_id, "success", **counts)
-
         except Exception as exc:
             logger.exception("Scrape failed")
-            try:
-                await conn.execute(
-                    update(scrape_log)
-                    .where(scrape_log.c.id == log_id)
-                    .values(
-                        finished_at=datetime.now(UTC),
-                        status="error",
-                        error_message=str(exc),
-                    )
-                )
-                await conn.commit()
-            except Exception:
-                logger.exception("Failed to update scrape_log on error")
+            await fail_log(conn, log_id, exc)
             raise
 
 
@@ -366,9 +442,10 @@ async def cleanup_redundant_scrapes(
 ) -> dict[str, int]:
     """Remove scrape_log rows (and associated sources/files) for unchanged scrapes.
 
-    Keeps the ``unchanged`` rows since the newest ``success``: they are the
-    current state, which ``scrape_health()`` and /api/v1/health read (#197).
-    A later cleanup removes them once a ``success`` supersedes them.
+    Keeps the ``unchanged`` rows since the newest ``success`` of the same
+    origin: they are the current state, which ``scrape_health()`` and
+    /api/v1/health read (#197, #201). A later cleanup removes them once a
+    ``success`` of their origin supersedes them.
 
     Returns a dict with counts of removed rows: ``scrape_logs``, ``sources``,
     ``record_sources``, ``files``.
@@ -376,9 +453,12 @@ async def cleanup_redundant_scrapes(
     result = {"scrape_logs": 0, "sources": 0, "record_sources": 0, "files": 0}
 
     async with get_db(engine) as conn:
+        # Per origin (#201): a relay success must not supersede the server's
+        # own unchanged rows, which anchor scrape_health()'s server error count.
+        later = scrape_log.alias("later")
         newest_success = (
-            select(func.max(scrape_log.c.id))
-            .where(scrape_log.c.status == "success")
+            select(func.max(later.c.id))
+            .where(later.c.status == "success", later.c.origin == scrape_log.c.origin)
             .scalar_subquery()
         )
         # Find superseded scrape_log rows with status='unchanged' that have no sources linked

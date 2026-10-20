@@ -374,6 +374,7 @@ class TestSourceTypeRows:
             SOURCE_TYPE_INTERNET_ARCHIVE,
             SOURCE_TYPE_LIVE_SCRAPE,
             SOURCE_TYPE_MANUAL,
+            SOURCE_TYPE_RELAYED_SCRAPE,
             SOURCE_TYPE_ROWS,
         )
 
@@ -385,6 +386,7 @@ class TestSourceTypeRows:
             "co_diff_archive": SOURCE_TYPE_CO_DIFF_ARCHIVE,
             "manual": SOURCE_TYPE_MANUAL,
             "co_replay": SOURCE_TYPE_CO_REPLAY,
+            "relayed_scrape": SOURCE_TYPE_RELAYED_SCRAPE,
         }
 
     def test_rows_have_complete_fields(self):
@@ -410,3 +412,61 @@ class TestSourceTypeRows:
         )
         db_rows = [dict(r) for r in result.mappings()]
         assert db_rows == SOURCE_TYPE_ROWS
+
+
+class TestScrapeLogOrigin:
+    """scrape_log records which path produced each run (#201)."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_origin_defaults_to_server(self, pg_conn):
+        """A row inserted without an origin is a server run, with no capture time."""
+        row_id = (
+            await pg_conn.execute(
+                pg_insert(scrape_log)
+                .values(started_at=datetime.now(UTC), status="running")
+                .returning(scrape_log.c.id)
+            )
+        ).scalar_one()
+        row = (
+            await pg_conn.execute(
+                select(scrape_log.c.origin, scrape_log.c.captured_at).where(
+                    scrape_log.c.id == row_id
+                )
+            )
+        ).one()
+        assert row.origin == "server"
+        assert row.captured_at is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_relay_origin_carries_capture_time(self, pg_conn):
+        """A relay row stores the off-host capture time beside its own timestamps."""
+        captured = datetime(2026, 10, 20, 13, 40, tzinfo=UTC)
+        row_id = (
+            await pg_conn.execute(
+                pg_insert(scrape_log)
+                .values(
+                    started_at=datetime.now(UTC),
+                    status="running",
+                    origin="relay",
+                    captured_at=captured,
+                )
+                .returning(scrape_log.c.id)
+            )
+        ).scalar_one()
+        got = (
+            await pg_conn.execute(select(scrape_log.c.captured_at).where(scrape_log.c.id == row_id))
+        ).scalar_one()
+        assert got == captured
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_unknown_origin_rejected(self, pg_conn):
+        """The CHECK constraint admits only server and relay."""
+        from sqlalchemy.exc import IntegrityError
+
+        with pytest.raises(IntegrityError):
+            async with pg_conn.begin_nested():
+                await pg_conn.execute(
+                    pg_insert(scrape_log).values(
+                        started_at=datetime.now(UTC), status="running", origin="laptop"
+                    )
+                )

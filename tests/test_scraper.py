@@ -3,6 +3,7 @@
 import gzip
 import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -24,6 +25,8 @@ from wslcb_licensing_tracker.scraper import (
     scrape_freshness,
     scrape_health,
 )
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 _needs_db = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -127,6 +130,68 @@ async def test_cleanup_redundant_scrapes_keeps_unchanged_rows_since_the_last_suc
             await conn.commit()
 
 
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_cleanup_keeps_the_servers_last_success_past_a_relay(pg_engine):
+    """A relay success (#201) must not supersede the server's own unchanged row:
+    it anchors scrape_health's server error count."""
+    rows = [
+        ("success", "server"),
+        ("error", "server"),
+        ("unchanged", "server"),  # the server's last success
+        ("success", "relay"),
+        ("error", "server"),
+    ]
+    async with pg_engine.connect() as conn:
+        ids = []
+        for status, origin in rows:
+            row = await conn.execute(
+                text(
+                    "INSERT INTO scrape_log (started_at, finished_at, status, origin, captured_at)"
+                    " VALUES (now(), now(), :status, :origin,"
+                    " CASE WHEN :origin = 'relay' THEN now() END) RETURNING id"
+                ),
+                {"status": status, "origin": origin},
+            )
+            ids.append(row.scalar_one())
+        await conn.commit()
+        before = await scrape_health(conn)
+
+    try:
+        await cleanup_redundant_scrapes(pg_engine, delete_files=False)
+        async with pg_engine.connect() as conn:
+            kept = await conn.execute(
+                text("SELECT id FROM scrape_log WHERE id = ANY(:ids) ORDER BY id"),
+                {"ids": ids},
+            )
+            assert ids[2] in [r[0] for r in kept]
+            assert await scrape_health(conn) == before
+    finally:
+        async with pg_engine.connect() as conn:
+            await conn.execute(text("DELETE FROM scrape_log WHERE id = ANY(:ids)"), {"ids": ids})
+            await conn.commit()
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_fail_log_recovers_an_aborted_transaction(pg_engine):
+    """A DB error mid-run leaves the transaction aborted; the error row still lands."""
+    from wslcb_licensing_tracker.scraper import fail_log, start_log
+
+    async with pg_engine.connect() as conn:
+        log_id = await start_log(conn)
+        with pytest.raises(Exception):  # noqa: B017 — any DB error aborts the txn
+            await conn.execute(text("SELECT 1/0"))
+        await fail_log(conn, log_id, RuntimeError("boom"))
+    async with pg_engine.connect() as conn:
+        status = (
+            await conn.execute(text("SELECT status FROM scrape_log WHERE id = :id"), {"id": log_id})
+        ).scalar_one()
+        await conn.execute(text("DELETE FROM scrape_log WHERE id = :id"), {"id": log_id})
+        await conn.commit()
+    assert status == "error"
+
+
 # ── save_html_snapshot ───────────────────────────────────────────────
 
 
@@ -166,17 +231,24 @@ def test_save_html_snapshot_increments_version(tmp_path, monkeypatch):
 async def _fresh_scrape_log(conn, *rows):
     """Empty scrape_log inside the test's transaction, then insert *rows*.
 
-    Each row is ``(status, started_at)``; ids ascend in the order given.
+    Each row is ``(status, started_at)`` for a server run, or
+    ``(status, started_at, captured_at)`` for a relay (#201); ids ascend in
+    the order given.
     """
     await conn.execute(text("UPDATE sources SET scrape_log_id = NULL"))
     await conn.execute(text("DELETE FROM scrape_log"))
-    for status, started_at in rows:
+    for status, started_at, *relay in rows:
         await conn.execute(
             text(
-                "INSERT INTO scrape_log (started_at, finished_at, status) "
-                "VALUES (:at, :at, :status)"
+                "INSERT INTO scrape_log (started_at, finished_at, status, origin, captured_at) "
+                "VALUES (:at, :at, :status, :origin, :captured)"
             ),
-            {"at": started_at, "status": status},
+            {
+                "at": started_at,
+                "status": status,
+                "origin": "relay" if relay else "server",
+                "captured": relay[0] if relay else None,
+            },
         )
 
 
@@ -215,6 +287,63 @@ class TestScrapeHealth:
     async def test_never_succeeded(self, pg_conn):
         await _fresh_scrape_log(pg_conn, ("error", _T0), ("error", _T0 + timedelta(hours=6)))
         assert await scrape_health(pg_conn) == ScrapeHealth(None, 2)
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+class TestScrapeHealthWithRelays:
+    """Relays (#201) refresh the data but say nothing about the server's own fetch."""
+
+    async def test_relay_success_is_fresh_data_dated_by_capture(self, pg_conn):
+        captured = _T0 + timedelta(hours=23, minutes=40)
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0),
+            ("error", _T0 + timedelta(hours=23)),
+            ("success", _T0 + timedelta(hours=24), captured),  # imported 20 min later
+        )
+        assert (await scrape_health(pg_conn)).last_success_at == captured
+
+    async def test_server_errors_keep_counting_across_relays(self, pg_conn):
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0),
+            ("error", _T0 + timedelta(hours=23)),
+            ("success", _T0 + timedelta(hours=23, minutes=10), _T0 + timedelta(hours=23)),
+            ("error", _T0 + timedelta(hours=29)),
+            ("unchanged", _T0 + timedelta(hours=29, minutes=10), _T0 + timedelta(hours=29)),
+        )
+        assert (await scrape_health(pg_conn)).consecutive_errors == 2
+
+    async def test_relay_rejections_are_not_server_errors(self, pg_conn):
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0),
+            ("error", _T0 + timedelta(hours=6), _T0 + timedelta(hours=6)),
+        )
+        assert await scrape_health(pg_conn) == ScrapeHealth(_T0, 0)
+
+    async def test_latest_capture_wins_not_latest_row(self, pg_conn):
+        """A relay imported after a server success, but captured before it, doesn't
+        pull freshness backwards."""
+        await _fresh_scrape_log(
+            pg_conn,
+            ("success", _T0 + timedelta(hours=6)),
+            ("unchanged", _T0 + timedelta(hours=6, minutes=5), _T0 + timedelta(hours=1)),
+        )
+        assert (await scrape_health(pg_conn)).last_success_at == _T0 + timedelta(hours=6)
+
+    async def test_freshness_last_attempt_is_the_servers(self, pg_conn):
+        await _fresh_scrape_log(
+            pg_conn,
+            ("error", _T0),
+            ("success", _T0 + timedelta(minutes=10), _T0 + timedelta(minutes=9)),
+        )
+        freshness = await scrape_freshness(pg_conn, now=_T0 + timedelta(hours=1))
+        assert freshness["last_attempt_status"] == "error"
+        assert freshness["consecutive_errors"] == 1
+        assert freshness["stale"] is False
+        assert freshness["last_success_at"] == _T0 + timedelta(minutes=9)
 
 
 # ── scrape freshness, for /api/v1/health (#197) ───────────────────────
@@ -329,6 +458,49 @@ class TestScrapeOutcome:
                 )
             ).scalar_one()
         assert status == "unchanged"
+
+    async def test_changed_page_ingests_under_a_live_scrape_source(
+        self, pg_engine, monkeypatch, tmp_path
+    ):
+        """A changed page is archived, ingested, and attributed to a live_scrape source."""
+        import wslcb_licensing_tracker.scraper as mod
+
+        body = (FIXTURES_DIR / "full_snapshot.html").read_text()
+        monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_client(_FakeResponse(200, body)))
+        monkeypatch.setattr(mod, "get_last_content_hash", AsyncMock(return_value=None))
+
+        outcome = await scrape(pg_engine)
+
+        assert outcome.status == "success"
+        assert outcome.new + outcome.approved + outcome.discontinued + outcome.skipped == 3
+        async with pg_engine.connect() as conn:
+            log = (
+                await conn.execute(
+                    text(
+                        "SELECT status, origin, captured_at, content_hash FROM scrape_log"
+                        " WHERE id = :id"
+                    ),
+                    {"id": outcome.scrape_log_id},
+                )
+            ).one()
+            src = (
+                await conn.execute(
+                    text(
+                        "SELECT st.slug, s.url, s.snapshot_path, s.captured_at, s.metadata"
+                        " FROM sources s JOIN source_types st ON st.id = s.source_type_id"
+                        " WHERE s.scrape_log_id = :id"
+                    ),
+                    {"id": outcome.scrape_log_id},
+                )
+            ).one()
+        assert (log.status, log.origin, log.captured_at) == ("success", "server", None)
+        assert log.content_hash == compute_content_hash(body)
+        assert src.slug == "live_scrape"
+        assert src.url == "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
+        assert src.captured_at is not None
+        assert src.metadata == "{}"
+        assert (tmp_path / src.snapshot_path).exists()
 
     async def test_http_error_still_raises_and_logs(self, pg_engine, monkeypatch):
         """The exit status is the unit's failure signal; the check-in doesn't replace it."""

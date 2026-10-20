@@ -91,3 +91,10 @@ with a 503 when stale, for an external uptime check; never point
 `wslcb-healthcheck` at it. If `scrape_log` can't be read, `data.scrape` is
 null (`/health` still 200, "scrape freshness unknown") and `/health/ingest`
 503s "Scrape freshness unavailable" with `db: ok`.
+
+## Relayed scrape (#201)
+
+`wslcb-task@import-relayed` never checks in. `co-wslcb-scrape` keeps reporting
+the server's own fault until WSLCB lifts its block (#198). `/health` counts a
+relay's success as fresh data, but never as a server attempt. Details:
+[`RELAY.md`](RELAY.md) § Monitoring.

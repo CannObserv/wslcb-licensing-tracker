@@ -2,7 +2,7 @@
 
 All operational commands are exposed as click subcommands grouped by domain:
 
-- ``ingest``: scrape, backfill-snapshots, backfill-diffs, generate-replay-extracts,
+- ``ingest``: scrape, import-relayed, backfill-snapshots, backfill-diffs, generate-replay-extracts,
   backfill-addresses, refresh-addresses, compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
 - ``admin``: add-user, list-users, remove-user
@@ -16,6 +16,7 @@ Usage::
 
     wslcb scrape                       # top-level alias (systemd compat)
     wslcb ingest scrape                # grouped form
+    wslcb ingest import-relayed        # ingest operator-relayed captures (#201)
     wslcb ingest backfill-snapshots    # replay archived HTML
     wslcb ingest backfill-diffs        # replay diff archives
     wslcb ingest generate-replay-extracts  # write per-record provenance extracts (#154)
@@ -71,6 +72,8 @@ from .link_records import build_all_links as run_build_all_links
 from .log_config import setup_logging
 from .models import admin_users
 from .parser import SECTION_DIR_MAP
+from .relay import RelayResult, inbox_dir
+from .relay import import_inbox as run_import_inbox
 from .replay_extracts import generate_replay_extracts as run_generate_replay_extracts
 from .scraper import ScrapeHealth, alert_variables, fault_key, ok_variables, scrape_health
 from .scraper import cleanup_redundant_scrapes as run_cleanup_redundant
@@ -174,6 +177,42 @@ async def _scrape_history(engine: AsyncEngine) -> ScrapeHealth | None:
     except Exception:  # noqa: BLE001 — the alert matters more than its detail
         logger.warning("Could not read scrape history for the alert", exc_info=True)
         return None
+
+
+@ingest.command("import-relayed")
+@click.option(
+    "--rate-limit",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Seconds between address API calls.",
+)
+def import_relayed(rate_limit: float) -> None:
+    """Import operator-relayed captures of the WSLCB page from the relay inbox.
+
+    The inbox is ``WSLCB_RELAY_INBOX`` (default ``~/wslcb-relay-inbox``).
+    Exits 1 if any capture was rejected. Never checks in to co-status: that
+    monitor reports whether the server itself can reach WSLCB (#201).
+    """
+
+    async def _run(engine: AsyncEngine) -> list[RelayResult]:
+        results = await run_import_inbox(engine, inbox_dir(os.environ))
+        if any(r.status == "success" for r in results):
+            # Same non-fatal post-ingest step as the scrape.
+            try:
+                async with get_db(engine) as conn:
+                    await run_backfill_addresses(conn, rate_limit=rate_limit)
+            except Exception:  # noqa: BLE001 — intentionally broad; backfill failure is non-fatal
+                logger.warning("Post-import address backfill failed", exc_info=True)
+        return results
+
+    results = _run_with_engine(_run)
+    if not results:
+        click.echo("relay inbox: nothing to import")
+    for r in results:
+        click.echo(f"{r.name}: {r.status}" + (f": {r.reason}" if r.reason else ""))
+    if any(r.status == "rejected" for r in results):
+        sys.exit(1)
 
 
 @ingest.command("backfill-snapshots")
@@ -754,6 +793,7 @@ def restore_archive(prefix: str, into: Path, subtree: str, bucket: str) -> None:
 
 _ALIASES = [
     (scrape, "scrape"),
+    (import_relayed, "import-relayed"),
     (backfill_snapshots, "backfill-snapshots"),
     (backfill_diffs, "backfill-diffs"),
     (backfill_addresses, "backfill-addresses"),

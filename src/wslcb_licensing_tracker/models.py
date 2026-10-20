@@ -97,6 +97,12 @@ scrape_log = Table(
     Column("snapshot_path", Text),
     Column("content_hash", Text),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    # Which path produced the run (#201): the server's own fetch, or an
+    # off-host capture relayed in during an IP block (#198). A relay row
+    # carries the capture time; freshness is dated by it.
+    Column("origin", Text, nullable=False, server_default="'server'"),
+    Column("captured_at", DateTime(timezone=True)),
+    CheckConstraint("origin IN ('server', 'relay')", name="ck_scrape_log_origin"),
 )
 
 source_types = Table(

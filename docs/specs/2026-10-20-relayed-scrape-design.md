@@ -70,8 +70,9 @@ Whichever arrives second with the same page logs `unchanged`.
 - Relayed imports **do not** check in to co-status.
 - Relayed `success`/`unchanged` **do** count as fresh data for `/api/v1/health`
   (`scrape_freshness`) and for the alert's `last_success_at` /
-  `window_expires`. The data really was captured. Accepted consequence:
-  `consecutive_errors` in the server's alert resets after each relay.
+  `window_expires`. The data really was captured. (An earlier draft said
+  `consecutive_errors` would reset after each relay; the server-rows-only
+  rule below supersedes that, settled during implementation.)
 - `scrape_log` must record which path produced each row (server vs relay), so
   the run history and any later query can tell them apart. A column is the
   obvious way. See builder's call below.
