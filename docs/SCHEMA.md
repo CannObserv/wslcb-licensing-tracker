@@ -168,12 +168,15 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `status` values: `'running'`, `'success'`, `'error'`, `'unchanged'` (page content identical to last scrape)
 - `content_hash` — SHA-256 hex digest of the fetched HTML; used to detect unchanged pages and skip redundant parsing/ingestion
 - `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed or scrape was `unchanged`
+- `origin` — `'server'` (the VM's own fetch; default) or `'relay'` (an operator capture imported by `wslcb ingest import-relayed`, #201); CHECK constraint `ck_scrape_log_origin` (Alembic `0008`)
+- `captured_at` — a relay's off-host fetch time; `NULL` for server runs. `scrape_health()` dates freshness by `coalesce(captured_at, finished_at, started_at)` and counts errors from `origin = 'server'` rows only ([`RELAY.md`](RELAY.md) § Monitoring)
 
 ### `source_types` (provenance enum)
-- Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`, `6=co_replay`
+- Fixed-ID reference table: `1=live_scrape`, `2=co_archive`, `3=internet_archive`, `4=co_diff_archive`, `5=manual`, `6=co_replay`, `7=relayed_scrape`
 - Python constants in `db.py`: `SOURCE_TYPE_LIVE_SCRAPE`, etc.
 - Seeded by `init_db()` via `INSERT OR IGNORE`
 - `co_replay` (Alembic `0006`, #154) — replay-generated provenance extracts: per-record reconstructed `<tbody>` files under `data/wslcb/licensinginfo-replay/`, written by `wslcb ingest generate-replay-extracts`
+- `relayed_scrape` (Alembic `0008`, #201) — the WSLCB page captured off-host by the operator during an IP block (#198) and imported by `wslcb ingest import-relayed`; label "Relayed Capture". Its `metadata` is `{"relay": "owner-laptop", "captured_at": …}` — never an IP or hostname
 
 ### `sources` (provenance artifacts)
 - One row per source artifact (a specific HTML snapshot file or scrape run)
@@ -219,6 +222,7 @@ Schema is managed by **Alembic** against PostgreSQL. Revisions live in
 | `0005_address_validation_attempted_at` | `locations.address_validation_attempted_at`, backfilled from `address_validated_at` (#150) |
 | `0006_co_replay_source_type` | Seeds the `co_replay` source type (#154) |
 | `0007_replay_extract_role` | Allows the `replay_extract` `record_sources` role (#154) |
+| `0008_relayed_scrape` | Seeds the `relayed_scrape` source type; `scrape_log.origin` + `scrape_log.captured_at` (#201) |
 
 Each revision's `down_revision` points at the previous number, so the chain is
 strictly linear — no branches or merge points.

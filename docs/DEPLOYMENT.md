@@ -18,6 +18,7 @@ Operations reference for the exe.dev VM deployment.
 
 ```
 wslcb-task@scrape
+wslcb-task@import-relayed
 wslcb-task@refresh-addresses
 wslcb-task@backfill-addresses
 wslcb-task@backfill-snapshots
@@ -37,6 +38,9 @@ default scheduling priority.
 the copy block below, because it needs its key file first; install it from
 [`MONITORING.md`](MONITORING.md).
 
+`wslcb-task@import-relayed` (relay, never checks in):
+[`RELAY.md`](RELAY.md).
+
 ### Sudoers rule (install once)
 
 ```bash
@@ -52,7 +56,7 @@ Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`
 sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
      infra/wslcb-address-validation.timer infra/wslcb-disk-hygiene.timer \
      infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
-sudo cp -r infra/wslcb-task@disk-hygiene.service.d /etc/systemd/system/
+sudo cp -r infra/wslcb-task@disk-hygiene.service.d infra/wslcb-task@import-relayed.service.d /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-address-validation.timer
 sudo systemctl enable --now wslcb-disk-hygiene.timer
