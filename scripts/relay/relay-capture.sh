@@ -37,7 +37,13 @@ gzip -c "$work/page.html" > "$work/$name"
 log "uploading $name to $HOST:$INBOX"
 scp -q -o BatchMode=yes "$work/$name" "$HOST:$INBOX/$name.part"
 # The import skips *.part, so it never sees a half-written upload.
+# systemctl start returns only a status; the import's per-capture lines
+# ("<name>: rejected: <reason>") are in the journal, so fetch this run's
+# plain-text ones (not the JSON log lines) and exit with the import's status.
 log "importing on $HOST"
 ssh -o BatchMode=yes "$HOST" \
-  "mv '$INBOX/$name.part' '$INBOX/$name' && sudo -n systemctl start $UNIT"
+  "mv '$INBOX/$name.part' '$INBOX/$name' && t=\$(date +%s) && {
+     sudo -n systemctl start $UNIT; rc=\$?
+     journalctl -q -o cat --no-pager -u $UNIT --since @\$t | grep -v '^{'
+     exit \$rc; }"
 log "done: $name"

@@ -13,8 +13,10 @@ after the VM's own scrape. `scripts/relay/relay-capture.sh` does the following:
 2. Gzips it as `<UTC fetch time>.html.gz`.
 3. `scp`s it to the inbox as `.part`.
 4. Renames it into place and runs
-   `sudo -n systemctl start wslcb-task@import-relayed`, waiting for it so the
-   Mac sees the import's result.
+   `sudo -n systemctl start wslcb-task@import-relayed`, waiting for it. Then
+   it prints that run's result lines from the journal (`<name>: success`,
+   `<name>: rejected: <reason>`, …) into the Mac's log, and exits with the
+   import's status.
 
 The import (`wslcb ingest import-relayed`) ingests through the scrape's own path
 under the `relayed_scrape` source type ("Relayed Capture" on record pages). How

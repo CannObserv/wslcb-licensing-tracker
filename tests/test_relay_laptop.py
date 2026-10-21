@@ -22,7 +22,8 @@ DROPIN = REPO_ROOT / "infra" / "wslcb-task@import-relayed.service.d" / "timeout.
 UNIT = "wslcb-task@import-relayed.service"
 
 _STUB = """#!/bin/bash
-echo "$(basename "$0") $*" >> "$STUB_LOG"
+args="$*"
+echo "$(basename "$0") ${{args//$'\n'/ }}" >> "$STUB_LOG"  # one line per call
 {body}
 """
 
