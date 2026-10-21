@@ -171,6 +171,16 @@ class TestPlist:
             {"Hour": 6, "Minute": 40},
         ]
 
+    def test_max_age_spans_one_short_gap_but_not_the_long_one(self, plist):
+        """A capture left queued by a failed run gets exactly one retry (#201 CR 12)."""
+        from datetime import timedelta
+
+        from wslcb_licensing_tracker.relay import MAX_AGE
+
+        minutes = sorted(t["Hour"] * 60 + t["Minute"] for t in plist["StartCalendarInterval"])
+        gaps = [b - a for a, b in zip(minutes, [*minutes[1:], minutes[0] + 24 * 60], strict=True)]
+        assert timedelta(minutes=min(gaps)) < MAX_AGE < timedelta(minutes=max(gaps))
+
     def test_runs_the_installed_script_with_its_host(self, plist):
         assert plist["ProgramArguments"] == [
             "/bin/bash",
