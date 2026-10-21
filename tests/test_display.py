@@ -5,6 +5,10 @@ Pure unit tests — no database, no network.
 
 from datetime import UTC, datetime
 
+import pytest
+
+from wslcb_licensing_tracker.db import SOURCE_TYPE_ROWS
+
 # ── format_outcome ─────────────────────────────────────────────────
 
 
@@ -100,6 +104,29 @@ class TestFormatOutcome:
 
 
 # ── summarize_provenance ───────────────────────────────────────
+
+
+class TestSourceTypeChips:
+    """Every source type gets its own chip; none falls through to "Other" (#201)."""
+
+    @pytest.mark.parametrize("slug", [row["slug"] for row in SOURCE_TYPE_ROWS])
+    def test_every_source_type_has_a_chip(self, slug):
+        from wslcb_licensing_tracker.display import _SOURCE_TYPE_DISPLAY
+
+        assert slug in _SOURCE_TYPE_DISPLAY
+
+    def test_relayed_capture_chip(self):
+        from wslcb_licensing_tracker.display import summarize_provenance
+
+        sources = [
+            {
+                "source_type": "relayed_scrape",
+                "captured_at": "2026-10-21T13:51:56",
+                "role": "first_seen",
+            }
+        ]
+        group = summarize_provenance(sources)["groups"]["relayed_scrape"]
+        assert group["label"] == "Relayed Capture"
 
 
 class TestSummarizeProvenance:
