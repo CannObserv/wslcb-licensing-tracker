@@ -77,7 +77,7 @@ source type and the script stay in the repo for the next block.
   stale after `STALE_AFTER`. Check that relays are arriving with
   `journalctl -u wslcb-task@import-relayed`, or `SELECT … FROM scrape_log
   WHERE origin = 'relay'`.
-- **A rejected capture** (over 6 h old, from the future, not gzip, under
+- **A rejected capture** (over 7 h old, from the future, not gzip, under
   1 MB, no `</html>`, a section missing, or no records) gets an `error` row
   with `origin = 'relay'` and its reason, is moved to
   `~/wslcb-relay-inbox/rejected/`, and makes the import and the Mac's script
@@ -86,11 +86,12 @@ source type and the script stay in the repo for the next block.
 - **Any other failure** (a DB fault, say) is not the capture's. Its row is
   marked `error`, its result reads `failed`, the file stays queued in the
   inbox, and the run stops there and exits non-zero. Captures imported
-  earlier in the same run are still reported and backfilled. To retry once
-  fixed, run `sudo systemctl start wslcb-task@import-relayed` within the 6 h
-  age limit.
+  earlier in the same run are still reported and backfilled. The next run
+  retries it: the 7 h age limit outlasts the 6 h gap from 00:40 to 06:40. To
+  retry sooner, run `sudo systemctl start wslcb-task@import-relayed`.
 - **A capture that keeps failing** (a parser bug, say) blocks the inbox until
-  the age limit rejects it as too old, so it costs one cycle at most. A
+  the age limit rejects it as too old, which takes at most one retry, and
+  clears within a day because the 18 h gap outlasts the limit. A
   "capture is … h old" rejection right after `failed` runs is not the real
   cause: the earlier `failed` lines in
   `journalctl -u wslcb-task@import-relayed` are.
