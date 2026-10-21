@@ -96,6 +96,22 @@ class TestValidateReport:
             validate_report(page)
 
 
+class TestPending:
+    def test_an_upload_renamed_mid_scan_is_skipped(self, tmp_path):
+        """A .part that is listed, then renamed by a concurrent upload, isn't fatal."""
+        from pathlib import PosixPath
+
+        class _Racy(PosixPath):
+            def iterdir(self):
+                yield from super().iterdir()
+                yield self / "gone.html.gz.part"
+
+            def is_file(self):
+                return self.name == "gone.html.gz.part" or super().is_file()
+
+        assert relay._pending(_Racy(tmp_path), NOW) == []
+
+
 async def _log(engine, log_id):
     async with engine.connect() as conn:
         return (
