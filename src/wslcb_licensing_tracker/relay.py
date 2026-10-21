@@ -43,9 +43,11 @@ logger = logging.getLogger(__name__)
 #: Inbox location when ``WSLCB_RELAY_INBOX`` is unset. It sits outside
 #: ``data/``, which the nightly backup mirrors create-only (#185).
 DEFAULT_INBOX = Path.home() / "wslcb-relay-inbox"
-#: A capture older than this when imported is refused: it would date the
-#: freshness reading by a page that is no longer current.
-MAX_AGE = timedelta(hours=6)
+#: A capture older than this when imported is refused, as superseded by a
+#: newer one. It is longer than the relay's short gap (00:40 → 06:40), so a
+#: capture left queued by a failed run gets one retry, and shorter than the
+#: long gap (18 h), so a stuck one clears within a day (#201 CR 12).
+MAX_AGE = timedelta(hours=7)
 #: Clock skew tolerated between the laptop and this host.
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 #: The real report is ~13 MB. A block or error page is a few hundred bytes.

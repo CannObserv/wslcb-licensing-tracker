@@ -194,13 +194,22 @@ class TestImportInbox:
 
     async def test_stale_capture_is_rejected(self, pg_engine, tmp_path):
         inbox = tmp_path / "inbox"
-        path = _drop(inbox, NOW - timedelta(hours=7), _page("stale"))
+        path = _drop(inbox, NOW - timedelta(hours=8), _page("stale"))
 
         results = await import_inbox(pg_engine, inbox, now=NOW)
 
         assert [r.status for r in results] == ["rejected"]
         assert "old" in results[0].reason
         assert (inbox / "rejected" / path.name).exists()
+
+    async def test_a_capture_queued_across_the_short_gap_still_imports(self, pg_engine, tmp_path):
+        """Left queued by a failed 00:40 run, a capture is ~6 h old at the 06:40 retry."""
+        inbox = tmp_path / "inbox"
+        _drop(inbox, NOW - timedelta(hours=6, minutes=10), _page("retry"))
+
+        results = await import_inbox(pg_engine, inbox, now=NOW)
+
+        assert [r.status for r in results] == ["success"]
 
     async def test_future_capture_is_rejected(self, pg_engine, tmp_path):
         inbox = tmp_path / "inbox"

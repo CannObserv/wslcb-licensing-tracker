@@ -85,7 +85,9 @@ Whichever arrives second with the same page logs `unchanged`.
   - A rejected relay doesn't touch the server's numbers. It surfaces as a
     non-zero exit on the laptop and an `error` row tagged as a relay.
   - The import rejects a capture more than 6 h old (a queued or retried
-    capture), so stale pages never refresh the freshness reading.
+    capture), so stale pages never refresh the freshness reading. *Raised
+    to 7 h in implementation (CR 12): 6 h equalled the schedule's short gap,
+    so a queued capture could never be retried.*
   - This changes how `scrape_health()` / `scrape_freshness()` filter. The
     #197 JSON shape stays the same.
 
