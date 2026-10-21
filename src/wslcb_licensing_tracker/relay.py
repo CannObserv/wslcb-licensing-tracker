@@ -160,9 +160,14 @@ def _pending(inbox: Path, now: datetime) -> list[Path]:
             continue
         if not p.name.endswith(".part"):
             pending.append(p)
-        elif now.timestamp() - p.stat().st_mtime > MAX_AGE.total_seconds():
+            continue
+        try:
+            mtime = p.stat().st_mtime
+        except FileNotFoundError:
+            continue  # renamed into place by a concurrent upload; the next run takes it
+        if now.timestamp() - mtime > MAX_AGE.total_seconds():
             logger.warning("Removing abandoned upload %s", p.name)
-            p.unlink()
+            p.unlink(missing_ok=True)
     return sorted(pending)
 
 
