@@ -51,6 +51,19 @@ class TestCmdImportRelayed:
         backfill.assert_called_once()  # the good capture still gets its addresses
         checkin.assert_not_called()
 
+    def test_a_failed_capture_exits_nonzero_after_reporting_the_rest(
+        self, imp, backfill, checkin, *_
+    ):
+        imp.return_value = [
+            RelayResult("20261020T074000Z.html.gz", "success", 8),
+            RelayResult("20261020T134000Z.html.gz", "failed", 9, "OperationalError: gone"),
+        ]
+        result = CliRunner().invoke(main, ["ingest", "import-relayed"])
+        assert result.exit_code == 1
+        assert "20261020T074000Z.html.gz: success" in result.output
+        assert "failed: OperationalError: gone" in result.output
+        backfill.assert_called_once()
+
     def test_backfill_failure_is_not_fatal(self, imp, backfill, checkin, *_):
         imp.return_value = [RelayResult("20261020T134000Z.html.gz", "success", 9)]
         backfill.side_effect = Exception("API down")
