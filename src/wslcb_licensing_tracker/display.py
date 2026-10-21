@@ -98,6 +98,15 @@ _SOURCE_TYPE_DISPLAY: dict[str, dict[str, str]] = {
         "css_text": "text-co-purple",
         "css_border": "border-co-purple-100",
     },
+    "relayed_scrape": {
+        # The live page, relayed in by the operator during an IP block (#198,
+        # #201): Live Scrape's colours, its own icon and label.
+        "icon": "📡",
+        "label": "Relayed Capture",
+        "css_bg": "bg-green-50",
+        "css_text": "text-green-700",
+        "css_border": "border-green-200",
+    },
     "internet_archive": {
         "icon": "🏛️",
         "label": "Internet Archive",
