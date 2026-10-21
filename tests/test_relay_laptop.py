@@ -31,7 +31,12 @@ def _stubs(tmp_path: Path, curl_body: str) -> dict[str, str]:
     """A PATH whose curl/scp/ssh are recording stubs; returns the run's env."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    bodies = {"curl": curl_body, "scp": "exit 0", "ssh": "exit 0"}
+    bodies = {
+        "curl": curl_body,
+        "scp": "exit 0",
+        # The remote command is the last argument; keep it whole for TestRemoteCommand.
+        "ssh": 'printf "%s" "${@: -1}" > "$STUB_LOG.remote"',
+    }
     for name, body in bodies.items():
         stub = bin_dir / name
         stub.write_text(_STUB.format(body=body))
@@ -80,7 +85,7 @@ class TestScript:
         parse_capture_name(name)  # the VM accepts the name the laptop writes
         assert ssh.startswith("ssh ") and "vm.example" in ssh
         assert f"mv 'wslcb-relay-inbox/{name}.part' 'wslcb-relay-inbox/{name}'" in ssh
-        assert ssh.endswith(f"&& sudo -n systemctl start {UNIT}")
+        assert f"sudo -n systemctl start {UNIT}" in ssh
 
     def test_fetch_failure_uploads_nothing(self, tmp_path):
         env = _stubs(tmp_path, "exit 22")
@@ -105,6 +110,53 @@ class TestScript:
         assert re.search(r'INBOX="\$\{WSLCB_RELAY_INBOX:-(\S+)\}"', SCRIPT.read_text())[1] == (
             DEFAULT_INBOX.name
         )
+
+
+class TestRemoteCommand:
+    """What runs on the VM: the import, then its summary lines back to the Mac's log."""
+
+    def _remote(self, tmp_path) -> str:
+        env = _stubs(tmp_path, _write_output("<html>page</html>"))
+        assert _run(env).returncode == 0
+        return Path(env["STUB_LOG"] + ".remote").read_text()
+
+    def _vm(self, tmp_path, remote: str, start_rc: int) -> subprocess.CompletedProcess:
+        """Run *remote* as the VM would, with sudo/journalctl stubbed."""
+        vm = tmp_path / "vm"
+        name = re.search(r"mv '(wslcb-relay-inbox/\S+\.part)'", remote)[1]
+        (vm / "wslcb-relay-inbox").mkdir(parents=True)
+        (vm / name).write_text("upload")
+        bin_dir = vm / "bin"
+        bin_dir.mkdir()
+        stubs = {
+            "sudo": f"exit {start_rc}",
+            "journalctl": (
+                'echo \'{"level": "INFO", "message": "Importing"}\'\n'
+                "echo '20261021T134000Z.html.gz: rejected: capture is 118 bytes'"
+            ),
+        }
+        for tool, body in stubs.items():
+            (bin_dir / tool).write_text(f"#!/bin/bash\n{body}\n")
+            (bin_dir / tool).chmod(0o755)
+        return subprocess.run(  # noqa: S603 — the script's own remote command, stubbed tools
+            ["/bin/bash", "-c", remote],
+            cwd=vm,
+            env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_summary_lines_come_back_without_the_json_log(self, tmp_path):
+        result = self._vm(tmp_path, self._remote(tmp_path), start_rc=0)
+        assert result.returncode == 0
+        assert "rejected: capture is 118 bytes" in result.stdout
+        assert '"level"' not in result.stdout
+
+    def test_the_import_exit_status_is_the_commands(self, tmp_path):
+        result = self._vm(tmp_path, self._remote(tmp_path), start_rc=3)
+        assert result.returncode == 3
+        assert "rejected: capture is 118 bytes" in result.stdout
 
 
 class TestPlist:
