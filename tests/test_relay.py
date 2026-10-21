@@ -96,6 +96,22 @@ class TestValidateReport:
             validate_report(page)
 
 
+class TestPending:
+    def test_an_upload_renamed_mid_scan_is_skipped(self, tmp_path):
+        """A .part that is listed, then renamed by a concurrent upload, isn't fatal."""
+        from pathlib import PosixPath
+
+        class _Racy(PosixPath):
+            def iterdir(self):
+                yield from super().iterdir()
+                yield self / "gone.html.gz.part"
+
+            def is_file(self):
+                return self.name == "gone.html.gz.part" or super().is_file()
+
+        assert relay._pending(_Racy(tmp_path), NOW) == []
+
+
 async def _log(engine, log_id):
     async with engine.connect() as conn:
         return (
@@ -224,34 +240,38 @@ class TestImportInbox:
         (tmp_path / "empty").mkdir()
         assert await import_inbox(pg_engine, tmp_path / "empty", now=NOW) == []
 
-    async def test_unexpected_error_keeps_the_capture_and_fails_the_run(
+    async def test_unexpected_error_keeps_the_capture_and_stops_the_run(
         self, pg_engine, tmp_path, monkeypatch
     ):
-        """A DB fault isn't the capture's fault: it stays queued for a retry."""
+        """A DB fault isn't the capture's fault: it stays queued for a retry, and
+        what already landed in this run is still reported."""
+        real = relay.ingest_page
+        calls = []
 
-        async def broken(conn, *_a, **_kw):
-            await conn.execute(text("SELECT 1/0"))  # leaves the transaction aborted
+        async def flaky(conn, *args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                await conn.execute(text("SELECT 1/0"))  # leaves the transaction aborted
+            return await real(conn, *args, **kwargs)
 
-        monkeypatch.setattr(relay, "ingest_page", broken)
+        monkeypatch.setattr(relay, "ingest_page", flaky)
         inbox = tmp_path / "inbox"
-        path = _drop(inbox, NOW - timedelta(minutes=5), _page("dbfault"))
+        first = _drop(inbox, NOW - timedelta(hours=2), _page("fault-1"))
+        second = _drop(inbox, NOW - timedelta(hours=1), _page("fault-2"))
+        third = _drop(inbox, NOW - timedelta(minutes=5), _page("fault-3"))
 
-        with pytest.raises(Exception) as caught:
-            await import_inbox(pg_engine, inbox, now=NOW)
+        results = await import_inbox(pg_engine, inbox, now=NOW)
 
-        assert not isinstance(caught.value, RelayRejectedError)
-        assert path.exists()
+        assert [(r.name, r.status) for r in results] == [
+            (first.name, "success"),
+            (second.name, "failed"),
+        ]
+        assert "division by zero" in results[1].reason
+        assert not first.exists()
+        assert second.exists() and third.exists()  # queued, not rejected
         assert not (inbox / "rejected").exists()
-        async with pg_engine.connect() as conn:
-            row = (
-                await conn.execute(
-                    text(
-                        "SELECT status, origin FROM scrape_log"
-                        " WHERE origin = 'relay' ORDER BY id DESC LIMIT 1"
-                    )
-                )
-            ).one()
-        assert tuple(row) == ("error", "relay")
+        log = await _log(pg_engine, results[1].scrape_log_id)
+        assert (log.status, log.origin) == ("error", "relay")
 
     async def test_abandoned_partials_are_pruned(self, pg_engine, tmp_path, caplog):
         """An upload whose rename never came (ssh failed after scp) is cleared once stale."""

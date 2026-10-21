@@ -12,8 +12,10 @@ Imported captures leave the inbox: ``ingest_page()`` archives a changed page,
 and an unchanged one is already archived. A rejected capture moves to
 ``rejected/`` for inspection, and its row is marked ``error``. Any other
 failure (a DB fault, say) is not the capture's: its row is marked ``error``,
-the file stays queued for the next run, and the run raises. Uploads still in
-flight (``*.part``) are left alone, and removed once older than ``MAX_AGE``.
+the file stays queued for the next run, its result is ``failed``, and the run
+stops there, since the next capture would likely fail the same way. Uploads
+still in flight (``*.part``) are left alone, and removed once older than
+``MAX_AGE``.
 
 Never checks in to co-status: that monitor reports whether the *server* can
 reach WSLCB (docs/MONITORING.md).
@@ -65,7 +67,7 @@ class RelayResult:
     """What became of one inbox file."""
 
     name: str
-    status: Literal["success", "unchanged", "rejected"]
+    status: Literal["success", "unchanged", "rejected", "failed"]
     scrape_log_id: int
     reason: str = ""
 
@@ -160,9 +162,14 @@ def _pending(inbox: Path, now: datetime) -> list[Path]:
             continue
         if not p.name.endswith(".part"):
             pending.append(p)
-        elif now.timestamp() - p.stat().st_mtime > MAX_AGE.total_seconds():
+            continue
+        try:
+            mtime = p.stat().st_mtime
+        except FileNotFoundError:
+            continue  # renamed into place by a concurrent upload; the next run takes it
+        if now.timestamp() - mtime > MAX_AGE.total_seconds():
             logger.warning("Removing abandoned upload %s", p.name)
-            p.unlink()
+            p.unlink(missing_ok=True)
     return sorted(pending)
 
 
@@ -207,10 +214,10 @@ async def _import_one(conn: AsyncConnection, path: Path, now: datetime) -> Relay
         )
     except RelayRejectedError as exc:
         return await _rejected(conn, path, log_id, exc)
-    except Exception as exc:
+    except Exception as exc:  # reported as ``failed``; the file stays queued
         logger.exception("Relayed capture %s failed to import; left queued", path.name)
         await fail_log(conn, log_id, exc)
-        raise
+        return RelayResult(path.name, "failed", log_id, f"{type(exc).__name__}: {exc}")
     _discard(path)
     return RelayResult(path.name, outcome.status, log_id)
 
@@ -221,12 +228,18 @@ async def import_inbox(
     """Import every capture waiting in *inbox*, oldest first.
 
     *now* defaults to UTC now; the age check measures against it. Returns
-    one result per file; a missing or empty inbox returns ``[]``.
+    one result per file attempted, stopping after the first ``failed``; a
+    missing or empty inbox returns ``[]``.
     """
     now = now or datetime.now(UTC)
     files = _pending(inbox, now)
     if not files:
         logger.info("Relay inbox %s is empty or absent; nothing to import", inbox)
         return []
+    results = []
     async with get_db(engine) as conn:
-        return [await _import_one(conn, path, now) for path in files]
+        for path in files:
+            results.append(await _import_one(conn, path, now))
+            if results[-1].status == "failed":
+                break
+    return results

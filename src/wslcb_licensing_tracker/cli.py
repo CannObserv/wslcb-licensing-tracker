@@ -191,7 +191,7 @@ def import_relayed(rate_limit: float) -> None:
     """Import operator-relayed captures of the WSLCB page from the relay inbox.
 
     The inbox is ``WSLCB_RELAY_INBOX`` (default ``~/wslcb-relay-inbox``).
-    Exits 1 if any capture was rejected. Never checks in to co-status: that
+    Exits 1 if any capture was rejected or failed. Never checks in to co-status: that
     monitor reports whether the server itself can reach WSLCB (#201).
     """
 
@@ -211,7 +211,7 @@ def import_relayed(rate_limit: float) -> None:
         click.echo("relay inbox: nothing to import")
     for r in results:
         click.echo(f"{r.name}: {r.status}" + (f": {r.reason}" if r.reason else ""))
-    if any(r.status == "rejected" for r in results):
+    if any(r.status in ("rejected", "failed") for r in results):
         sys.exit(1)
 
 

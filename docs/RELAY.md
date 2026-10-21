@@ -82,6 +82,13 @@ source type and the script stay in the repo for the next block.
   exit non-zero. Look there, and in `~/Library/Logs/wslcb-relay.log` on the
   Mac.
 - **Any other failure** (a DB fault, say) is not the capture's. Its row is
-  marked `error`, the file stays queued in the inbox, and the run fails. To
-  retry once fixed, run `sudo systemctl start wslcb-task@import-relayed`
-  within the 6 h age limit.
+  marked `error`, its result reads `failed`, the file stays queued in the
+  inbox, and the run stops there and exits non-zero. Captures imported
+  earlier in the same run are still reported and backfilled. To retry once
+  fixed, run `sudo systemctl start wslcb-task@import-relayed` within the 6 h
+  age limit.
+- **A capture that keeps failing** (a parser bug, say) blocks the inbox until
+  the age limit rejects it as too old, so it costs one cycle at most. A
+  "capture is … h old" rejection right after `failed` runs is not the real
+  cause: the earlier `failed` lines in
+  `journalctl -u wslcb-task@import-relayed` are.
