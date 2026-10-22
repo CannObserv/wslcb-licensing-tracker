@@ -122,7 +122,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 ### `entity_review_flags` (operator review flags, #206)
 - `entity_id` (FK `ON DELETE CASCADE`), `flagged_by`, `reason`, `created_at`, `resolved_at`, `resolved_by`, `resolution`
 - Open = `resolved_at IS NULL` (partial index `idx_erf_open`). An open flag protects a noise-named entity from the `reclassify-entities` purge
-- Operator input: no automated pass deletes one; `merge_duplicate_entities()` moves them to the surviving entity
+- Operator input: `merge_duplicate_entities()` moves them to the surviving entity; deleting an entity (noise purge) deletes them with it
 
 ### `classification_runs` (Jev run records, #206)
 - One row per Jev classification run: `origin` (`post_scrape`, `post_import`, `cli`, `admin`; CHECK `ck_classification_runs_origin`), `model`, `started_at`, `finished_at`, `names_sent`, `batches_ok`, `batches_failed`, `input_tokens` (BIGINT), `error`

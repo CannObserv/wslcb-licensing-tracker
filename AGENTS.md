@@ -73,7 +73,7 @@ backed up under `data/remediation-backups/`. Ad-hoc edits remain forbidden.
 | `record_links` | `link_records.build_all_links()` | `wslcb db rebuild-links` |
 | `data/wslcb/licensinginfo-replay/` extract files | `replay_extracts.generate_replay_extracts()` | `wslcb ingest generate-replay-extracts` |
 
-Jev rows in `entity_classifications` cost money and drift ~1%: never bulk-delete; roll back with `wslcb db ignore-jev`. Manual rows and `entity_review_flags` are operator input that no automated pass changes (#206).
+Jev rows in `entity_classifications` cost money and drift ~1%: never bulk-delete; roll back with `wslcb db ignore-jev`. Nothing automated overrides a current manual row or deletes an open flag; purging an entity deletes all its rows (#206).
 
 `reprocess_endorsements()` is idempotent — deletes existing rows before inserting fresh ones. `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL.
 
