@@ -9,9 +9,10 @@ strings, deduplicating by name, and linking them to license records.
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Enrichment version written by reprocess_entities.
 # Bump this integer when entity processing logic changes.
-_ENTITY_REPROCESS_VERSION = 2
+_ENTITY_REPROCESS_VERSION = 3
 
 # Meta-labels that WSLCB embeds in applicant lists as truncation notices.
 # These are not real people or organizations and must be excluded from entity creation.
@@ -33,17 +34,395 @@ ADDITIONAL_NAMES_MARKERS: frozenset[str] = frozenset(
     }
 )
 
-# Patterns that indicate an organization rather than a person.
-_ORG_PATTERNS = re.compile(
-    r"\b(LLC|L\.?L\.?C\.?|INC\.?|CORP\.?|CORPORATION|TRUST|LTD\.?|LIMITED"
-    r"|PARTNERS|PARTNERSHIP|HOLDINGS|GROUP|ENTERPRISE|ENTERPRISES"
-    r"|ASSOCIATION|FOUNDATION|COMPANY|CO\.|L\.?P\.?)\b"
+# ---------------------------------------------------------------------------
+# Noise filter (#203)
+# ---------------------------------------------------------------------------
+# Applicant-list parts that are not names at all: WAC citations, ownership-count
+# annotations, and fragments of a business name split on a stray ';'.  Census of
+# production on 2026-10-22; see docs/research/person-vs-org-classification.md.
+# Real names that merely carry an appended citation
+# (``7-ELEVEN, INC. PER WAC 314-07-035``) are *not* noise and are left as-is.
+
+# Exact fragments observed in production.
+_NOISE_EXACT: frozenset[str] = frozenset(
+    {
+        "TRUSTEE",
+        "SOCIETY",
+        "RESERVATION",
+        "(ESTATE PROJECT)",
+        "ADVISORY COUNCIL MEMBERS",
+    }
 )
+
+_NOISE_PATTERNS = re.compile(
+    r"^(?:"
+    # WAC citation with nothing else: PER WAC 314-07-035, (PER WAC …(1)), ON LIC PER WAC …
+    r"\(?\s*(?:ON\s+LIC(?:ENSE)?\s+)?(?:AS\s+)?(?:PER\s+)?WAC\b[\s\d.\-()]*"
+    # Ownership-count annotations: 17 SHAREHOLDERS W/10% OR LESS, 4 MBRS W/LESS …
+    r"|\d+\s+(?:SHAREHOLDERS?|STOCKHOLDERS?|MBRS|MEMBERS?|OWNERS?)\b.*"
+    # Non-profit annotation: NO PEOPLE REQUIRED[ - NON PROFIT ARTS]
+    r"|NO\s+PEOPLE\s+REQUIRED\b.*"
+    # A bare legal suffix split off its business name
+    r"|(?:LLC|L\.L\.C\.?|INC\.?|CORP\.?|CORPORATION|PARTNERSHIP|LTD\.?|LIMITED|LLP|LP)"
+    r")$"
+)
+
+
+def is_noise_name(name: str) -> bool:
+    """Return True if a cleaned applicant-list part is not a person or organization name.
+
+    Catches strings with no letters (``035``, ``314-07-035``, ``5``), single
+    characters, bare WAC citations, ownership-count annotations, bare legal
+    suffixes, and a short list of fragments observed in production.
+    """
+    if len(name) <= 1 or not re.search(r"[A-Z]", name):
+        return True
+    return name in _NOISE_EXACT or _NOISE_PATTERNS.match(name) is not None
+
+
+# ---------------------------------------------------------------------------
+# Person vs. organization classifier (#203)
+# ---------------------------------------------------------------------------
+# One regex per category.  Only the binary ``entity_type`` is persisted; the
+# category is exposed by ``entity_category()`` for diagnostics and a later
+# finer-grained subtype.  Estates, trusts, tribes, governments and clubs are all
+# ``organization``.  Validated against docs/research/person-vs-org/gold.csv.
+#
+# Token boundaries use lookarounds, not ``\b``: ``CO\.\b`` can never match
+# before a space or end of string.  Avoid bare words that are common surnames
+# (CHURCH, POST, INN, PIZZA, YOUNG, TRUSTY, LODGE, BAR, GRILL, KITCHEN, TEMPLE,
+# WASHINGTON, …) — use anchored multi-token forms instead.
+
+_B = r"(?<![A-Z0-9'])"  # token start
+_E = r"(?![A-Z0-9'])"  # token end
+
+
+def _words(*alts: str) -> str:
+    return _B + "(?:" + "|".join(alts) + ")" + _E
+
+
+# WSLCB truncates entries at 30 (older: 45) characters.  The tail rules below
+# only fire on names at least this long.
+_TRUNCATION_MIN_LEN = 28
+
+_TRUST = re.compile(
+    _words(
+        r"TRUSTS?",
+        r"TRUSTEES?",
+        r"TRUSTE",
+        r"TRST",
+        r"TTEES?",
+        r"TRSTE",
+        r"REVOC\w*",
+        r"IRREV\w*",
+        r"IRREVOKABLE",
+        r"ILIT",
+        r"FBO",
+        r"SURVIVOR'?S",
+        r"TRUS",
+    )
+    + r"|"
+    + _B
+    + r"(?:LIVING|FAMILY|REVOCABLE|BUSINESS|LAND|MARITAL|BYPASS|CHARITABLE|GRANTOR|\d{4})"
+    r"\s+TRU?S?T?" + _E
+)
+_TRUST_TRUNCATED = re.compile(_B + r"FAMILY(?:\s+T)?$")
+
+_LEGAL_SUFFIX = re.compile(
+    _words(
+        r"LLC",
+        r"L\.L\.C\.?",
+        r"L\.LC",
+        r"LLP",
+        r"L\.L\.P\.?",
+        r"PLLC",
+        r"INC\.?",
+        r"INCORPORATED",
+        r"CORP\.?",
+        r"CORPORATION",
+        r"LTD\.?",
+        r"LIMITED",
+        r"CO\.?",
+        r"COMPANY",
+        r"CO-OP",
+        r"LP",
+        r"L\.P\.?",
+        r"PTY",
+        r"GMBH",
+        r"S\.A\.?",
+        r"S\.P\.A\.?",
+        r"SPA",
+        r"N\.?V\.?",
+        r"PARTNERS",
+        r"PARTNERSHIP",
+        r"HOLDINGS",
+        r"GROUP",
+        r"ENTERPRISES?",
+        r"ASSOCIATION",
+        r"ASSOCIATES",
+        r"FOUNDATION",
+        r"DBA",
+        r"D/B/A",
+    )
+    # Suffixes that double as initials only count at the end of the name.
+    + r"|,\s*S\.?L\.?$|[\s,]P\.[CS]\.?$"
+)
+
+# Truncated legal-suffix tails: ``, LL`` / ``L.L`` anywhere; ``, L`` and word
+# prefixes only on names long enough to have been cut off.
+_TRUNC_ANYWHERE = re.compile(r",\s*LL\.?$|" + _B + r"L\.L\.?$")
+_TRUNC_LONG = re.compile(r",\s*L\.?$")
+# word -> shortest prefix accepted as a truncated tail
+_TRUNCATED_WORDS: dict[str, int] = {
+    "INCORPORATED": 4,
+    "CORPORATION": 5,
+    "COMPANY": 4,
+    "LIMITED": 4,
+    "PARTNERSHIP": 5,
+    "HOLDINGS": 5,
+    "ENTERPRISES": 5,
+    "ASSOCIATION": 5,
+    "ASSOCIATES": 5,
+    "FOUNDATION": 5,
+    "INVESTMENTS": 5,
+    "HOSPITALITY": 5,
+    "MANAGEMENT": 5,
+    "RESTAURANT": 5,
+    "DEVELOPMENT": 5,
+    "VENTURES": 5,
+    "INTERNATIONAL": 6,
+    "PROPERTIES": 5,
+    "DISTRIBUTING": 6,
+    "DISTRIBUTION": 6,
+    "DISTRIBUTORS": 6,
+    "ENTERTAINMENT": 6,
+    "BREWING": 5,
+    "BREWERY": 5,
+    "DISTILLERY": 6,
+    "WINERY": 5,
+    "VINEYARDS": 5,
+}
+_TAIL_TOKEN = re.compile(r"([A-Z]+)\W*$")
+
+_GOVERNMENT_TRIBE = re.compile(
+    _words(
+        r"TRIBES?",
+        r"TRIBAL",
+        r"INDIANS",
+        r"CONFEDERATED",
+        r"RESERVATION",
+        r"COUNTY",
+        r"DISTRICT",
+        r"UNIVERSITY",
+        r"COLLEGE",
+        r"SCHOOLS?",
+        r"DEPARTMENT",
+        r"COMMISSION",
+        r"MUNICIPAL",
+        r"GOVERNMENT",
+        r"AUTHORITY",
+        r"REGIONAL",
+        r"(?:CITY|TOWN|COUNTY|STATE|PORT|VILLAGE|BOARD|NATION|BAND|CHAMBER) OF",
+        r"INDIAN NATION",
+        r"CITY LIGHT",
+        r"PUBLIC UTILITY",
+    )
+)
+
+_ORG_KEYWORD = re.compile(
+    _words(
+        # clubs, fraternal, civic, religious
+        r"CLUB",
+        r"YACHT",
+        r"GOLF",
+        r"LEGION",
+        r"VFW",
+        r"ELKS",
+        r"MOOSE\s?LODGE\w*",
+        r"AERIE",
+        r"FRATERNAL",
+        r"BENEVOLENT",
+        r"ORDER OF",
+        r"AUXILIARY",
+        r"SOCIETY",
+        r"MUSEUM",
+        r"THEATRE",
+        r"THEATER",
+        r"PRESBYTERIAN",
+        r"LUTHERAN",
+        r"CATHOLIC",
+        r"DIOCESE",
+        r"MINISTRIES",
+        r"CHURCH OF",
+        r"(?:BAPTIST|METHODIST|EPISCOPAL|COMMUNITY|LIFE|BIBLE|CHRISTIAN|UNITED|EVANGELICAL)"
+        r" CHURCH",
+        r"LODGE\s*(?:NO\b\.?|#|\d)",
+        r"POST\s*(?:NO\b\.?\s*)?#?\s*\d+",
+        # alcohol / food / hospitality
+        r"WINERY",
+        r"WINERIES",
+        r"WINES",
+        r"VINEYARDS?",
+        r"VINTNERS",
+        r"WINEGROWERS",
+        r"CELLARS",
+        r"BREWING",
+        r"BREWERY",
+        r"BREWERIES",
+        r"BREWERS",
+        r"BREWPUB",
+        r"BREWHOUSE",
+        r"TAPROOM",
+        r"TAPHOUSE",
+        r"ALEHOUSE",
+        r"DISTILLERY",
+        r"DISTILLERIES",
+        r"DISTILLING",
+        r"DISTILLERS",
+        r"SPIRITS",
+        r"CIDERY",
+        r"CIDER",
+        r"CIDERWORKS",
+        r"MEADERY",
+        r"TAVERN",
+        r"SALOON",
+        r"PUB",
+        r"RESTAURANTS?",
+        r"CAFE",
+        r"CAFES",
+        r"CAFFE",
+        r"COFFEE",
+        r"ESPRESSO",
+        r"BAKERY",
+        r"PIZZERIA",
+        r"EATERY",
+        r"TAQUERIA",
+        r"CANTINA",
+        r"BISTRO",
+        r"BRASSERIE",
+        r"TRATTORIA",
+        r"STEAKHOUSE",
+        r"ROADHOUSE",
+        r"LOUNGE",
+        r"NIGHTCLUB",
+        r"CATERING",
+        r"FOODS",
+        r"FOODSERVICE",
+        r"GROCERY",
+        r"SUPERMARKET",
+        r"LIQUORS?",
+        r"BEVERAGES?",
+        r"HOSPITALITY",
+        r"HOTELS?",
+        r"MOTEL",
+        r"RESORTS?",
+        r"GAMING",
+        r"(?:&|AND) BAR",
+        r"BAR (?:&|AND)",
+        r"(?:WINE|DESSERT|SPORTS|COCKTAIL|OYSTER|TAPAS|SUSHI|PIANO|TIKI) BAR",
+        r"(?:FIRED|STYLE|CERTIFIED) PIZZA",
+        r"PIZZA (?:CO|COMPANY|HUT|PARLOR|HOUSE|SHOP|FACTORY)",
+        # commerce
+        r"DISTRIBUTING",
+        r"DISTRIBUTION",
+        r"DISTRIBUTORS",
+        r"IMPORTS",
+        r"IMPORTING",
+        r"IMPORTERS",
+        r"EXPORTS",
+        r"TRADING",
+        r"INDUSTRIES",
+        r"INVESTMENTS?",
+        r"INVESTORS",
+        r"VENTURES?",
+        r"PROPERTIES",
+        r"REALTY",
+        r"REAL ESTATE",
+        r"ESTATES",
+        r"DEVELOPMENTS?",
+        r"MANAGEMENT",
+        r"MGMT",
+        r"SERVICES",
+        r"SOLUTIONS",
+        r"CONSULTING",
+        r"CONSULTANTS",
+        r"ENTERTAINMENT",
+        r"PRODUCTIONS",
+        r"STUDIOS",
+        r"HEALTHCARE",
+        r"PHARMACY",
+        r"RETIREMENT",
+        r"SENIOR LIVING",
+        r"COOPERATIVE",
+        r"SMOKE SHOP",
+        r"PETROLEUM",
+        r"FRANCHISOR",
+        r"FRANCHISE",
+        r"OPCO",
+        r"PROPCO",
+        r"TECHNOLOGIES",
+        r"LABORATORIES",
+        r"LOGISTICS",
+        r"LEASING",
+        r"AIRPORT",
+        r"SHIPPING",
+        r"INTERNATIONAL",
+        r"PROJECTS?",
+        r"COLLECTIVE",
+    )
+)
+
+# GIVEN ESTATE SURNAME, NAME - ESTATE, NAME-ESTATE, ESTATE OF NAME.
+_ESTATE = re.compile(r"(?<![A-Z])ESTATE(?![A-Z])")
+
+
+def _is_truncated_suffix(name: str) -> bool:
+    if _TRUNC_ANYWHERE.search(name):
+        return True
+    if len(name) < _TRUNCATION_MIN_LEN:
+        return False
+    if _TRUNC_LONG.search(name):
+        return True
+    m = _TAIL_TOKEN.search(name)
+    if not m:
+        return False
+    tail = m.group(1)
+    return any(
+        len(tail) >= min_len and word.startswith(tail) for word, min_len in _TRUNCATED_WORDS.items()
+    )
+
+
+def _is_trust(name: str) -> bool:
+    if _TRUST.search(name):
+        return True
+    return len(name) >= _TRUNCATION_MIN_LEN and _TRUST_TRUNCATED.search(name) is not None
+
+
+# Checked in order; first match wins.  Estate is last so ESTATE WINES /
+# REAL ESTATE fall to their org category first.
+_CATEGORY_CHECKS: tuple[tuple[str, Callable[[str], bool]], ...] = (
+    ("trust", _is_trust),
+    ("legal_suffix", lambda n: _LEGAL_SUFFIX.search(n) is not None),
+    ("truncated_suffix", _is_truncated_suffix),
+    ("government_tribe", lambda n: _GOVERNMENT_TRIBE.search(n) is not None),
+    ("org_keyword", lambda n: _ORG_KEYWORD.search(n) is not None),
+    ("estate", lambda n: _ESTATE.search(n) is not None),
+)
+
+
+def entity_category(name: str) -> str | None:
+    """Return the non-person category matched by *name*, or None for a person.
+
+    Categories, checked in order: ``trust``, ``legal_suffix``,
+    ``truncated_suffix``, ``government_tribe``, ``org_keyword``, ``estate``.
+    *name* is expected to be cleaned (uppercase; see ``clean_entity_name``).
+    """
+    return next((cat for cat, check in _CATEGORY_CHECKS if check(name)), None)
 
 
 def _classify_entity_type(name: str) -> str:
     """Classify an entity name as 'person' or 'organization'."""
-    return "organization" if _ORG_PATTERNS.search(name) else "person"
+    return "organization" if entity_category(name) else "person"
 
 
 async def get_or_create_entity(conn: AsyncConnection, name: str, entity_type: str = "") -> int:
@@ -77,6 +456,35 @@ async def get_or_create_entity(conn: AsyncConnection, name: str, entity_type: st
     return row_id
 
 
+def extract_entity_names(
+    applicants_str: str | None,
+    *,
+    record_id: int | None = None,
+    role: str = "applicant",
+) -> list[str]:
+    """Return the cleaned, de-duplicated entity names in a semicolon-delimited applicants string.
+
+    The first element (the business name) is skipped, as are
+    ``ADDITIONAL_NAMES_MARKERS`` and non-name strings (``is_noise_name``).
+    *record_id* / *role* only label the debug log lines.
+    """
+    if not applicants_str or ";" not in applicants_str:
+        return []
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in applicants_str.split(";")[1:]:
+        clean = clean_entity_name(strip_duplicate_marker(raw.strip()))
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        if clean in ADDITIONAL_NAMES_MARKERS or is_noise_name(clean):
+            logger.debug("Skipping non-name %r in record %s (role %s)", clean, record_id, role)
+            continue
+        names.append(clean)
+    return names
+
+
 async def parse_and_link_entities(
     conn: AsyncConnection,
     record_id: int,
@@ -103,28 +511,8 @@ async def parse_and_link_entities(
             )
         )
 
-    if not applicants_str or ";" not in applicants_str:
-        return 0
-
-    parts = [p.strip() for p in applicants_str.split(";")]
-
-    # First element is the business name — skip it.
-    seen_names: set[str] = set()
-    entity_names: list[str] = []
-    for raw in parts[1:]:
-        if not raw:
-            continue
-        clean = clean_entity_name(strip_duplicate_marker(raw))
-        if clean and clean not in seen_names:
-            seen_names.add(clean)
-            entity_names.append(clean)
-
     linked = 0
-    for name in entity_names:
-        if name in ADDITIONAL_NAMES_MARKERS:
-            logger.debug("Skipping meta-label %r in record %d (role %s)", name, record_id, role)
-            continue
-
+    for name in extract_entity_names(applicants_str, record_id=record_id, role=role):
         entity_id = await get_or_create_entity(conn, name)
         stmt = (
             pg_insert(record_entities)
@@ -379,6 +767,151 @@ async def reprocess_entities(
         )
 
     return {"records_processed": records_processed, "entities_linked": entities_linked}
+
+
+async def reclassify_entities(
+    conn: AsyncConnection,
+    *,
+    dry_run: bool = False,
+    sample_limit: int = 25,
+) -> dict:
+    """Re-apply the current classifier and noise filter to existing ``entities`` rows.
+
+    ``get_or_create_entity()`` never updates an existing row, so a classifier
+    change reaches stored entities only through this pass (#203).  It:
+
+    1. sets ``entity_type`` to ``_classify_entity_type(name)`` where it differs;
+    2. deletes entities whose name ``is_noise_name()`` — their
+       ``record_entities`` links first — and renumbers the remaining
+       positions of each affected ``(record_id, role)`` to stay contiguous.
+
+    Idempotent: a second run reports zero changes.  Caller commits.
+
+    Returns:
+    -------
+    dict
+        ``entities_examined``, ``reclassified``, ``transitions``
+        (``"old->new"`` counts), ``reclassified_sample``, ``noise_entities``,
+        ``noise_links``, ``noise_sample``.
+    """
+    rows = (
+        await conn.execute(
+            select(entities.c.id, entities.c.name, entities.c.entity_type).order_by(entities.c.id)
+        )
+    ).fetchall()
+
+    changes, noise_ids, transitions = _plan_reclassification(rows)
+    noise_set = set(noise_ids)
+    noise_sample = [{"id": eid, "name": n} for eid, n, _ in rows if eid in noise_set][:sample_limit]
+
+    noise_links = 0
+    if noise_ids:
+        noise_links = (
+            await conn.execute(
+                select(func.count()).where(record_entities.c.entity_id.in_(noise_ids))
+            )
+        ).scalar_one()
+
+    if not dry_run:
+        await _apply_type_changes(conn, changes)
+        if noise_ids:
+            await _purge_entities(conn, noise_ids)
+            logger.info(
+                "Removed %d noise entit(ies) and %d record link(s)", len(noise_ids), noise_links
+            )
+
+    logger.info(
+        "reclassify_entities%s: examined %d, reclassified %d %s, noise %d (%d link(s))",
+        " (dry-run)" if dry_run else "",
+        len(rows),
+        len(changes),
+        transitions,
+        len(noise_ids),
+        noise_links,
+    )
+    return {
+        "entities_examined": len(rows),
+        "reclassified": len(changes),
+        "transitions": transitions,
+        "reclassified_sample": changes[:sample_limit],
+        "noise_entities": len(noise_ids),
+        "noise_links": noise_links,
+        "noise_sample": noise_sample,
+    }
+
+
+def _plan_reclassification(rows: list) -> tuple[list[dict], list[int], dict[str, int]]:
+    """Split ``(id, name, entity_type)`` rows into type changes and noise ids."""
+    changes: list[dict] = []
+    noise_ids: list[int] = []
+    transitions: dict[str, int] = {}
+    for eid, name, old_type in rows:
+        if is_noise_name(name):
+            noise_ids.append(eid)
+            continue
+        new_type = _classify_entity_type(name)
+        if new_type != old_type:
+            key = f"{old_type or '(blank)'}->{new_type}"
+            transitions[key] = transitions.get(key, 0) + 1
+            changes.append(
+                {
+                    "id": eid,
+                    "name": name,
+                    "old": old_type,
+                    "new": new_type,
+                    "category": entity_category(name),
+                }
+            )
+    return changes, noise_ids, transitions
+
+
+async def _apply_type_changes(conn: AsyncConnection, changes: list[dict]) -> None:
+    """Write planned ``entity_type`` changes in batches, logging each one."""
+    for new_type in ("person", "organization"):
+        ids = [c["id"] for c in changes if c["new"] == new_type]
+        for i in range(0, len(ids), 1000):
+            await conn.execute(
+                update(entities)
+                .where(entities.c.id.in_(ids[i : i + 1000]))
+                .values(entity_type=new_type)
+            )
+    for c in changes:
+        logger.info(
+            "Reclassified entity %d %r: %s -> %s (%s)",
+            c["id"],
+            c["name"],
+            c["old"],
+            c["new"],
+            c["category"],
+        )
+
+
+async def _purge_entities(conn: AsyncConnection, entity_ids: list[int]) -> None:
+    """Delete *entity_ids* and their links, then re-compact link positions."""
+    affected = (
+        await conn.execute(
+            select(record_entities.c.record_id, record_entities.c.role)
+            .where(record_entities.c.entity_id.in_(entity_ids))
+            .distinct()
+        )
+    ).fetchall()
+    await conn.execute(delete(record_entities).where(record_entities.c.entity_id.in_(entity_ids)))
+    await conn.execute(delete(entities).where(entities.c.id.in_(entity_ids)))
+    for record_id, role in affected:
+        await conn.execute(
+            text("""
+                UPDATE record_entities re SET position = r.rn - 1
+                FROM (
+                    SELECT entity_id,
+                           ROW_NUMBER() OVER (ORDER BY position, entity_id) AS rn
+                    FROM record_entities
+                    WHERE record_id = :rid AND role = :role
+                ) r
+                WHERE re.record_id = :rid AND re.role = :role
+                  AND re.entity_id = r.entity_id AND re.position <> r.rn - 1
+            """),
+            {"rid": record_id, "role": role},
+        )
 
 
 async def get_entity_by_id(

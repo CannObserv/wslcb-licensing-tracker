@@ -440,6 +440,7 @@ uv run wslcb db check --fix
 uv run wslcb db rebuild-links
 uv run wslcb db reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
 uv run wslcb db reprocess-entities [--record-id 12345] [--dry-run]
+uv run wslcb db reclassify-entities [--dry-run]   # re-apply entity_type classifier + drop non-name entities (#203)
 
 # Backfill
 uv run wslcb ingest backfill-snapshots

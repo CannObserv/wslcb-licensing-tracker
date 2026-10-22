@@ -4,7 +4,8 @@ All operational commands are exposed as click subcommands grouped by domain:
 
 - ``ingest``: scrape, import-relayed, backfill-snapshots, backfill-diffs, generate-replay-extracts,
   backfill-addresses, refresh-addresses, compress-snapshots, compress-diffs
-- ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities
+- ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities,
+  reclassify-entities
 - ``admin``: add-user, list-users, remove-user
 - ``ops``: disk-hygiene, backup, restore, restore-archive
 
@@ -65,6 +66,7 @@ from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
 from .engine import create_engine_from_env, get_db
+from .entities import reclassify_entities as run_reclassify_entities
 from .entities import reprocess_entities as run_reprocess_entities
 from .integrity import print_report
 from .integrity import run_all_checks as run_integrity_checks
@@ -521,6 +523,37 @@ def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
             f"Reprocessed {result['records_processed']:,} record(s); "
             f"{result['entities_linked']:,} entity link(s) written."
         )
+
+
+@db.command("reclassify-entities")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+def reclassify_entities(dry_run: bool) -> None:
+    """Re-apply the person/organization classifier and drop non-name entities.
+
+    reprocess-entities never updates an existing entity's type; this does.
+    Idempotent. Back up entities/record_entities before a real run.
+    """
+
+    async def _run(engine: AsyncEngine) -> dict:
+        async with get_db(engine) as conn:
+            result = await run_reclassify_entities(conn, dry_run=dry_run)
+            if not dry_run:
+                await conn.commit()
+            return result
+
+    r = _run_with_engine(_run)
+    prefix = "[dry-run] Would reclassify" if dry_run else "Reclassified"
+    click.echo(f"{prefix} {r['reclassified']:,} of {r['entities_examined']:,} entities.")
+    for key, n in sorted(r["transitions"].items()):
+        click.echo(f"  {key}: {n:,}")
+    for c in r["reclassified_sample"]:
+        click.echo(f"    {c['id']:>7} {c['old']} -> {c['new']} ({c['category']}): {c['name']}")
+    prefix = "[dry-run] Would remove" if dry_run else "Removed"
+    click.echo(
+        f"{prefix} {r['noise_entities']:,} non-name entities ({r['noise_links']:,} record link(s))."
+    )
+    for n in r["noise_sample"]:
+        click.echo(f"    {n['id']:>7} {n['name']}")
 
 
 # ---------------------------------------------------------------------------
