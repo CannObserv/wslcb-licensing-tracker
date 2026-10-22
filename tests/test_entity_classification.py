@@ -306,10 +306,9 @@ async def test_protected_and_confirmed_noise_ids(pg_conn):
     noise = await get_or_create_entity(pg_conn, "T206 CONFIRMED NOISE")
     noise_flagged = await get_or_create_entity(pg_conn, "T206 NOISE BUT FLAGGED")
     resolved_flag = await get_or_create_entity(pg_conn, "T206 RESOLVED FLAG")
-    for eid in (manual_person,):
-        await record_manual(
-            pg_conn, eid, entity_type="person", entity_subtype=None, created_by="a@x"
-        )
+    await record_manual(
+        pg_conn, manual_person, entity_type="person", entity_subtype=None, created_by="a@x"
+    )
     for eid in (noise, noise_flagged):
         await record_manual(
             pg_conn, eid, entity_type="not_a_name", entity_subtype=None, created_by="a@x"
