@@ -18,8 +18,9 @@
    Revision 1 said "~26".
 2. **TypeSafe Jev (`jev-1.14.0`) is the best automated option measured.** It
    flagged 0/300 random persons, caught 198/198 hidden orgs and 86/87 estates,
-   and returns a calibrated confidence. It costs **~$1.50 to classify all
-   67K entities**, with p50 latency of 88 ms.
+   and returns a calibrated confidence. Batched 25 names per request, it costs
+   **~$0.65 to classify all 67K entities** with no accuracy loss (unbatched:
+   ~$1.50).
 3. **`probablepeople` stays rejected.** It wrongly flags 8% of random persons,
    more often for non-Western names (15% vs 6%, p≈0.03).
 4. **Recommended:** fix the regex now (zero deps), then add Jev as an offline,
@@ -130,7 +131,7 @@ does not generate text, so there is nothing to parse and rows can't be dropped.
 |---|---|
 | Model | `jev-latest` resolved to **`jev-1.14.0`**, even though the Models page (2026-10-22) still says `jev-latest` → 1.13. **Pin the versioned ID.** |
 | Price | $0.042 / Mtok input; output free (docs) |
-| Measured tokens | ~526 input tokens per name (5-way prompt + context) → **$0.000022/name, ≈ $1.48 for all 67,227 entities** |
+| Measured tokens | Unbatched: ~526 input tokens per name (5-way prompt + context) → $0.000022/name, ≈ $1.48 for all 67,227 entities. **Batched 25/request: ~238 → ≈ $0.65** (see Batching below) |
 | Latency | p50 **88 ms**, p95 150 ms (concurrency 8, from this VM) |
 | Throughput | 838 names in ~10 s at concurrency 8, with no 429s observed |
 | Order sensitivity | Options reversed: 834/838 identical choices |
@@ -163,6 +164,39 @@ with explicit trust/estate options caught 86/87 and 34/39.
 (`CHRISTOPHER BANKE JACKSON 2013`, `BROTT AND CARRIE RITZEL FAMILY`), surnames
 that look like words (`TRUSTY` → trust at conf 0.37–0.50; `WANPEN POST` → org at
 0.55), and noise. Most are low-confidence, which is what the gate exists for.
+
+**Batching (measured 2026-10-22, `person-vs-org/batch_experiment.py`).** The
+results above sent one name per request. Jev's batching shares one `state`
+across many questions; each question is scored independently, with no limit on
+question count beyond the context limits (64k per request, 32k per question).
+The jaggedness notes warn that unrelated state content (here, the *other*
+names) is a distractor, so batch size was measured directly. The test used the
+834 non-ambiguous gold names, one Choice question per name (`names.n<i>`):
+
+| Names / request | 5-way correct | Persons wrongly flagged (A) | conf < 0.7 | Input tok / name | p50 per request |
+|---|---|---|---|---|---|
+| 1 (baseline) | 820 | 0/300 | 17 | 535 | 86 ms |
+| 10 | 823 | 0/300 | 17 | 256 | 97 ms |
+| 25, shuffled | 821–822 | 0/300 | 17–19 | 238 | 128–143 ms |
+| 50, shuffled | 825 | 0/300 | 18 | 233 | 155 ms |
+| 100 | 822 | 0/300 | 13 | 230 | 220 ms |
+| 25, defs in state, shuffled | 820 | 0/300 | 22 | 138 | 97 ms |
+
+- **No accuracy cost.** Every variant is within run-to-run drift: an unbatched
+  re-run alone disagreed with the stored `jev5` labels on 8 names. Mixing the
+  strata (shuffled) also made no difference.
+- **Cost falls ~55%.** At K ≥ 25 the shared context is amortised. Most of the
+  remaining ~230 tokens is the five label definitions, repeated in each
+  question's `criteria`. That gives ≈ $0.65 for all 67K entities, vs ≈ $1.50
+  unbatched.
+- Moving the definitions into the shared state cuts tokens to ~130/name
+  (≈ $0.37), with slightly more low-confidence answers. It departs from the
+  documented criteria-per-question pattern and saves ~$0.30 per full pass, so
+  it isn't worth it.
+- **Recommended: 25 names per request, criteria per question.** That is ~6K
+  tokens per request, far under both limits. Larger batches only shave a few
+  tokens per name while a single failure re-queues more names. The full 67K
+  backfill is ~2,700 requests (~1 min at concurrency 8).
 
 ### 5.2 `probablepeople` — ❌ REJECTED as primary classifier
 
@@ -232,8 +266,8 @@ address validation: never on the ingest hot path.
   (~470): 2/300 in stratum A plus 32/438 in pool B. The gold set's 32/834 is
   inflated by its deliberate hard-case enrichment.
 - Only send names that are new, or where the regex and the stored Jev label
-  disagree. One-off backfill of all 67K costs ≈ $1.50 and takes ~15 minutes
-  at concurrency 8.
+  disagree. Batch 25 names per request. One-off backfill of all 67K costs
+  ≈ $0.65 and takes ~1 minute at concurrency 8.
 - If the API is unavailable, everything degrades to the regex (Step 1).
 
 **Step 3 — filter noise at ingest.** `PER WAC 314-07-035`,
