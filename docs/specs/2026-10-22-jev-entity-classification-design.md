@@ -202,7 +202,9 @@ fan-out, as recommended by TypeSafe):
 Mapping:
 - `kind`=trust → (organization, trust); estate → (organization, estate).
 - organization → (organization, `org` answer). If `org` confidence is below
-  the threshold, the subtype is `unknown`.
+  the threshold, the subtype is `unknown`. At resolution, an `unknown` (or an
+  untrusted subtype, see the go-live bar) falls back to the regex's org
+  subtype when it has one.
 - person → (person, NULL).
 - not_a_name → stored as-is. Not resolved; goes to the review queue.
 

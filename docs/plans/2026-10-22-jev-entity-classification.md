@@ -27,7 +27,7 @@
 - Public badge copy, vendor-neutral: `Rules` / `AI · NN%` / `Reviewed`.
 - Go-live bar: per org subtype, Jev's `org` answer at or above the threshold must be right ≥ 90% of the time, or Jev never assigns that subtype.
 - Price constant: $0.042 per million input tokens.
-- Repo conventions: red/green TDD; `logging` with `%s`-style calls, never `print`; a module docstring on every `.py`; `datetime.now(UTC)`. Tests make no network calls (use `httpx.MockTransport`) and use `pg_conn`/`pg_engine`. Bare `TestClient(app)` route tests import `_stamp_engine` from `tests/_support.py`. Run `uv run pytest tests/ -v` before every commit. Commit format: `#EPIC [type]: …`.
+- Repo conventions: red/green TDD; `logging` with `%s`-style calls, never `print`; a module docstring on every `.py`; `datetime.now(UTC)`. Tests make no network calls (use `httpx.MockTransport`) and use `pg_conn`/`pg_engine`. Bare `TestClient(app)` route tests import `_stamp_engine` from `tests/_support.py`. Run `uv run pytest tests/ -v` before every commit. Commit format: `#<phase issue> [type]: …`.
 
 ## Review Focus
 
@@ -61,11 +61,17 @@
 
 | Phase | Tasks | Depends on |
 |---|---|---|
-| 1 Schema + resolution | 1.1–1.6 | — |
-| 2 Jev client + CLI + timer + monitoring | 2.1–2.5 | Phase 1 merged; 1.6 deployed before Phase 2 ships |
-| 3 Admin actions + review queue + health panel | 3.1–3.4 | Phases 1, 2 |
-| 4 Public UI + API fields | 4.1–4.2 | Phase 1 only (can run parallel to 2–3) |
-| 5 Rollout + validation | 5.1–5.4 | 5.1 needs 2.1; 5.2 needs 5.1; 5.3–5.4 need everything deployed |
+| 1 Schema + resolution (#206) | 1.1–1.6 | — |
+| 2 Jev client + CLI + timer + monitoring (#207) | 2.1–2.5 | Phase 1 merged; 1.6 deployed before Phase 2 ships |
+| 3 Admin actions + review queue + health panel (#208) | 3.1–3.4 | Phases 1, 2 |
+| 4 Public UI + API fields (#209) | 4.1–4.2 | Phase 1 only (can run parallel to 2–3) |
+| 5 Rollout + validation (#210) | 5.1–5.4 | 5.1 needs 2.1; 5.2 needs 5.1; 5.3–5.4 need everything deployed |
+
+Settled after the plan was drafted (designer calls; spec updated where noted):
+- **Subtype fallback is uniform.** A Jev org subtype that is `unknown` (low `org` confidence) *or* not yet trusted falls back to the regex's org subtype when it has one, else `unknown` (spec updated).
+- **API fields:** no `/api/v1` response exposes `entity_type` today, so the fields go into the query-layer dicts only. No new endpoint.
+- **Threshold:** an env var read at resolve time. A change takes effect at the next re-resolve (`reclassify-entities`), not instantly.
+- **Flag off blocks every Jev call**, including explicit CLI refreshes and the admin single-entity action (409). `--dry-run` still works.
 
 Tasks marked **⚠ OPERATOR-GATED** touch production. Do not run them without the operator's explicit go-ahead.
 
@@ -120,7 +126,7 @@ async def test_runs_origin_check(pg_conn):                           # origin='w
 - [ ] **Step 2: Run** `uv run pytest tests/test_models.py tests/test_schema.py -v`. Expected: FAIL (missing tables/columns).
 - [ ] **Step 3: Write the migration and models.** Follow the docstring style of `0008_relayed_scrape.py`. `downgrade()` drops the three tables, the indexes, the constraints and the two columns.
 - [ ] **Step 4: Run** the same tests, then `uv run alembic upgrade head && uv run alembic downgrade -1 && uv run alembic upgrade head` against the test DB. Expected: PASS; the round-trip is clean.
-- [ ] **Step 5: Commit**: `#EPIC feat: schema for entity classification sources, review flags, runs`
+- [ ] **Step 5: Commit**: `#206 feat: schema for entity classification sources, review flags, runs`
 
 ### Task 1.2: Regex subtypes and a regex row on create
 
@@ -174,7 +180,7 @@ In `test_category`, change the expected values to `government` / `tribe` for the
 - [ ] **Step 2: Run** `uv run pytest tests/test_entities_classify.py tests/test_entities.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Write the regex row only when the insert's `RETURNING` produced an id, not on the fallback-SELECT path.
 - [ ] **Step 4: Run** the same tests plus `uv run python docs/research/person-vs-org/evaluate.py regex`. Expected: PASS. The gold-set binary scores are unchanged from §9 (0/300, 0/92, 182/198, 36/39, 87/87). Revert the `predictions.csv` rewrite if only the column was touched with identical values.
-- [ ] **Step 5: Commit**: `#EPIC feat: regex entity subtypes; regex classification row on create`
+- [ ] **Step 5: Commit**: `#206 feat: regex entity subtypes; regex classification row on create`
 
 ### Task 1.3: The resolver
 
@@ -206,7 +212,9 @@ if manual and manual.entity_type != NOT_A_NAME:
     return manual.entity_type, manual.entity_subtype, "manual"
 if jev and jev.entity_type in ("person", "organization") and (jev.confidence or 0) >= threshold:
     sub = jev.entity_subtype
-    if jev.entity_type == "organization" and sub in JEV_ORG_SUBTYPES and sub not in trusted_org_subtypes:
+    if jev.entity_type == "organization" and (
+        sub == "unknown" or (sub in JEV_ORG_SUBTYPES and sub not in trusted_org_subtypes)
+    ):
         sub = regex.entity_subtype if regex and regex.entity_type == "organization" and regex.entity_subtype else "unknown"
     return jev.entity_type, sub, "jev"
 if regex:
@@ -227,7 +235,8 @@ R_PERSON = SourceAnswer("person", None); R_BIZ = SourceAnswer("organization", "b
     (None, SourceAnswer("organization", "nonprofit", .95), R_BIZ, frozenset(), ("organization", "business", "jev")),
     (None, SourceAnswer("organization", "nonprofit", .95), R_PERSON, frozenset(), ("organization", "unknown", "jev")),
     (None, SourceAnswer("organization", "nonprofit", .95), R_BIZ, frozenset({"nonprofit"}), ("organization", "nonprofit", "jev")),
-    (None, SourceAnswer("organization", "unknown", .95), R_BIZ, frozenset(), ("organization", "unknown", "jev")),
+    (None, SourceAnswer("organization", "unknown", .95), R_BIZ, frozenset(), ("organization", "business", "jev")),
+    (None, SourceAnswer("organization", "unknown", .95), R_PERSON, frozenset(), ("organization", "unknown", "jev")),
     (None, SourceAnswer("person", None, .9), R_BIZ, frozenset(), ("person", None, "jev")),
     (None, None, None, frozenset(), None),
 ])
@@ -248,7 +257,7 @@ def test_jev_confidence_threshold_default_valid_invalid(monkeypatch, caplog)  # 
 - [ ] **Step 2: Run** `uv run pytest tests/test_entity_classification.py tests/test_config.py -v`. Expected: FAIL (ImportError).
 - [ ] **Step 3: Implement** `entity_classification.py`. It must not import `entities.py`, which imports it in Task 1.4. Add the config helpers.
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: classification resolver (manual > jev >= threshold > regex)`
+- [ ] **Step 5: Commit**: `#206 feat: classification resolver (manual > jev >= threshold > regex)`
 
 ### Task 1.4: Reclassify, purge and merge through the resolver
 
@@ -287,7 +296,7 @@ Existing `TestReclassifyEntities` tests keep passing. In `test_cli.py`, extend `
 - [ ] **Step 2: Run** `uv run pytest tests/test_entities.py tests/test_cli.py -v`. Expected: the new tests FAIL.
 - [ ] **Step 3: Implement.** CLI echo adds: `{regex_rows_written:,} regex row(s) written; {subtype_changes:,} subtype change(s).` and `Kept {protected_noise_skipped:,} noise-named entities with a manual decision or open flag; {confirmed_noise:,} operator-confirmed non-names removed.`
 - [ ] **Step 4: Run** `uv run pytest tests/ -v`. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: reclassify/merge/purge go through the resolver and protect manual decisions`
+- [ ] **Step 5: Commit**: `#206 feat: reclassify/merge/purge go through the resolver and protect manual decisions`
 
 ### Task 1.5: Jev rollback command
 
@@ -303,7 +312,7 @@ Existing `TestReclassifyEntities` tests keep passing. In `test_cli.py`, extend `
 - [ ] **Step 2: Run** `uv run pytest tests/test_entity_classification.py tests/test_cli.py -k jev -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: wslcb db ignore-jev rollback (reversible, deletes nothing)`
+- [ ] **Step 5: Commit**: `#206 feat: wslcb db ignore-jev rollback (reversible, deletes nothing)`
 
 ### Task 1.6: ⚠ OPERATOR-GATED: production migration + regex backfill
 
@@ -374,7 +383,7 @@ def test_env_getters(monkeypatch):  # enabled false by default; "1" true; model 
 - [ ] **Step 2: Run** `uv run pytest tests/test_jev_client.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Mirror `address_client.py`'s module layout and its "pure transport, no DB" docstring.
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: jev_client transport (25-name batches, kind + org questions)`
+- [ ] **Step 5: Commit**: `#207 feat: jev_client transport (25-name batches, kind + org questions)`
 
 ### Task 2.2: `jev_classifier.py` orchestration
 
@@ -433,7 +442,7 @@ async def test_run_row_totals(pg_engine)                                  # name
 - [ ] **Step 2: Run** `uv run pytest tests/test_jev_classifier.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: jev_classifier: classify-once batching, run records, advisory lock`
+- [ ] **Step 5: Commit**: `#207 feat: jev_classifier: classify-once batching, run records, advisory lock`
 
 ### Task 2.3: `wslcb db classify-entities`
 
@@ -465,7 +474,7 @@ async def test_run_row_totals(pg_engine)                                  # name
 - [ ] **Step 2: Run** `uv run pytest tests/test_cli.py -k classify -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: wslcb db classify-entities (default, refresh, dry-run, limit)`
+- [ ] **Step 5: Commit**: `#207 feat: wslcb db classify-entities (default, refresh, dry-run, limit)`
 
 ### Task 2.4: CLASSIFY monitor, weekly check-in, post-ingest hooks
 
@@ -508,7 +517,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_jev_classifier.py tests/test_cli.py tests/test_cli_scrape.py tests/test_cli_relay.py tests/test_checkin.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `uv run pytest tests/ -v`. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: classify check-ins (weekly ok/alert, post-scrape alert-only) and post-ingest hooks`
+- [ ] **Step 5: Commit**: `#207 feat: classify check-ins (weekly ok/alert, post-scrape alert-only) and post-ingest hooks`
 
 ### Task 2.5: Weekly timer, drop-in, docs
 
@@ -530,7 +539,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_infra_classify_unit.py -v`. Expected: FAIL.
 - [ ] **Step 3: Create** the unit files and docs.
 - [ ] **Step 4: Run** `uv run pytest tests/ -v` and `systemd-analyze verify infra/wslcb-entity-classification.timer` (if available). Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: weekly entity-classification timer, check-in drop-in, monitoring docs`
+- [ ] **Step 5: Commit**: `#207 feat: weekly entity-classification timer, check-in drop-in, monitoring docs`
 
 ---
 
@@ -563,7 +572,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_classification_review.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: audited operator classification actions and review flags`
+- [ ] **Step 5: Commit**: `#208 feat: audited operator classification actions and review flags`
 
 ### Task 3.2: Queue, detail and health queries
 
@@ -600,7 +609,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_classification_review.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: review queue, classification detail, health/spend queries`
+- [ ] **Step 5: Commit**: `#208 feat: review queue, classification detail, health/spend queries`
 
 ### Task 3.3: Admin routes and the review page
 
@@ -635,7 +644,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_admin_entity_routes.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Plain forms with a redirect. HTMX is optional and must degrade to the redirect.
 - [ ] **Step 4: Run** `uv run pytest tests/ -v`. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: admin entity classification routes and review queue page`
+- [ ] **Step 5: Commit**: `#208 feat: admin entity classification routes and review queue page`
 
 ### Task 3.4: Admin panel on the entity page and the dashboard panel
 
@@ -667,7 +676,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_routes.py tests/test_admin_routes.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement**, then `scripts/build-css.sh`.
 - [ ] **Step 4: Run** `uv run pytest tests/ -v`; then check visually on port 8001 (`--log-config src/wslcb_licensing_tracker/log_config.json`). Expected: PASS; the panel renders.
-- [ ] **Step 5: Commit**: `#EPIC feat: entity-page admin classification panel and dashboard health panel`
+- [ ] **Step 5: Commit**: `#208 feat: entity-page admin classification panel and dashboard health panel`
 
 ---
 
@@ -695,7 +704,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_queries.py tests/test_entities.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same tests. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: entity queries expose subtype, source, confidence; subtype filter`
+- [ ] **Step 5: Commit**: `#209 feat: entity queries expose subtype, source, confidence; subtype filter`
 
 ### Task 4.2: Badge, subtype filter and pages
 
@@ -724,7 +733,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** `uv run pytest tests/test_display.py tests/test_routes.py -v`. Expected: FAIL.
 - [ ] **Step 3: Implement**, then `scripts/build-css.sh`.
 - [ ] **Step 4: Run** `uv run pytest tests/ -v`; check `/entities?type=organization&subtype=tribe` on port 8001. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: public subtype filter and provenance badges`
+- [ ] **Step 5: Commit**: `#209 feat: public subtype filter and provenance badges`
 
 ---
 
@@ -744,11 +753,11 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
   - `score`: offline. Prints the A-stratum persons wrongly flagged, 5-way accuracy, and per org subtype: `n_answered≥0.7`, `correct`, `precision`, `passes (≥0.90)`.
   - `supplement --n 60`: live. It samples regex-`tribe` and regex-`government` entities from production by `md5(name)` order and runs them through Jev. It writes `subtype_supplement.csv` for hand labels. Use it for any subtype with < 20 above-threshold gold answers.
 
-- [ ] **Step 1: Hand-label** the `subtype` column and commit the labels alone: `#EPIC docs: gold-set org subtype labels`.
+- [ ] **Step 1: Hand-label** the `subtype` column and commit the labels alone: `#210 docs: gold-set org subtype labels`.
 - [ ] **Step 2: Run** `uv run python docs/research/person-vs-org/subtype_eval.py run && … score`. Expected: A-stratum 0/300 persons flagged and 5-way accuracy within drift of 813/834. If not, stop and report.
 - [ ] **Step 3: Run** `supplement` for each thin subtype; label it; re-run `score`.
 - [ ] **Step 4: Write §10**: the per-subtype table, the pass/fail decisions, and tokens/name with both questions.
-- [ ] **Step 5: Commit**: `#EPIC docs: validate Jev org-subtype question on the gold set`
+- [ ] **Step 5: Commit**: `#210 docs: validate Jev org-subtype question on the gold set`
 
 ### Task 5.2: Apply the go-live result
 
@@ -760,7 +769,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 - [ ] **Step 2: Run** them. Expected: FAIL.
 - [ ] **Step 3: Set** the two constants. Cite §10 in a comment.
 - [ ] **Step 4: Run** `uv run pytest tests/ -v`. Expected: PASS.
-- [ ] **Step 5: Commit**: `#EPIC feat: trust Jev org subtypes that passed the 90% bar`
+- [ ] **Step 5: Commit**: `#210 feat: trust Jev org subtypes that passed the 90% bar`
 
 ### Task 5.3: ⚠ OPERATOR-GATED: enable Jev and run the backfill (rollout step 4)
 
