@@ -159,7 +159,11 @@ async def resolve_entities(
     for eid, etype, sub, source in rows:
         a = answers.get(eid, {})
         new = choose_classification(
-            a.get("manual"), a.get("jev"), a.get("regex"), threshold=threshold
+            a.get("manual"),
+            a.get("jev"),
+            a.get("regex"),
+            threshold=threshold,
+            trusted_org_subtypes=JEV_TRUSTED_ORG_SUBTYPES,
         )
         old = (etype, sub, source)
         if new is not None and new != old:

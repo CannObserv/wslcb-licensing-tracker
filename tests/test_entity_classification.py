@@ -385,3 +385,17 @@ async def test_ignore_by_model_only_touches_that_model(pg_conn):
     assert (result["rows"], result["entities"]) == (1, 1)
     assert (await _ignored_by_source(pg_conn, a))["jev"] == [True]
     assert (await _ignored_by_source(pg_conn, b))["jev"] == [False]
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_resolve_reads_trusted_subtypes_at_call_time(pg_conn, monkeypatch):
+    from wslcb_licensing_tracker import entity_classification
+
+    monkeypatch.delenv(THRESHOLD_ENV, raising=False)
+    eid = await get_or_create_entity(pg_conn, "T206 TRUSTED NONPROFIT LLC")
+    await _jev(pg_conn, eid, "organization", "nonprofit", 0.95)
+    await resolve_entities(pg_conn, [eid])
+    assert await _resolved(pg_conn, eid) == ("organization", "business", "jev")
+    monkeypatch.setattr(entity_classification, "JEV_TRUSTED_ORG_SUBTYPES", frozenset({"nonprofit"}))
+    await resolve_entities(pg_conn, [eid])
+    assert await _resolved(pg_conn, eid) == ("organization", "nonprofit", "jev")
