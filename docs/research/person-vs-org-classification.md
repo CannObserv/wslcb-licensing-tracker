@@ -5,6 +5,7 @@
 | Initial survey | 2025-06 (desk research; recommended `probablepeople`, never implemented) |
 | Revision 1 | 2026-10-22 (live-data spot checks; withdrew `probablepeople`) |
 | Revision 2 | 2026-10-22 (self-review; hand-labeled gold set; added TypeSafe Jev) — **this document** |
+| Update | 2026-10-22 — Step 1 + Step 3 shipped in #203 (§9) |
 | Code under study | `entities._classify_entity_type()` — one regex, default `person` |
 | Artifacts | [`person-vs-org/`](person-vs-org/): `gold.csv`, `predictions.csv`, `evaluate.py` |
 
@@ -24,6 +25,7 @@
 4. **Recommended:** fix the regex now (zero deps), then add Jev as an offline,
    version-pinned enrichment pass gated on confidence (§7). First settle the
    taxonomy question: what estates, trusts and noise strings *are* (§8).
+   *Update:* the regex fix and noise filter shipped in #203 (§9).
 
 ---
 
@@ -94,21 +96,24 @@ concentrated in pool B.
 
 `uv run python docs/research/person-vs-org/evaluate.py score`
 
-| Metric | regex (current) | regex (fixed†) | probablepeople | **Jev 5-way** | Jev binary | Haiku 5.5 |
-|---|---|---|---|---|---|---|
-| A: persons wrongly flagged | 0/300 | 0/300 | **24/300** | **0/300** | 1/300 | 0/300 |
-| B: persons wrongly flagged | 0/92 | 0/92 | 36/92 | 5/92 | 4/92 | 2/92 |
-| B: orgs caught | 0/198 | 148/198 | 185/198 | **198/198** | 198/198 | 197/198‡ |
-| B: trusts caught | 0/39 | 30/39 | 33/39 | 34/39 | 19/39 | 36/39 |
-| B: estates caught | 0/87 | 87/87 | 38/87 | 86/87 | 8/87 | 87/87 |
-| C: orgs/trusts caught | 100/100 | 100/100 | 97/100 | 100/100 | 100/100 | 100/100 |
-| 5-way accuracy (excl. A) | — | — | — | 813/834 | — | 824/834 |
-| Not-a-name caught | — | — | — | 15/18 | — | 16/18 |
-| Confidence returned | — | — | — | **calibrated** | yes | no |
+| Metric | regex (pre-#203) | regex (#203, shipped§) | regex (fixed†) | probablepeople | **Jev 5-way** | Jev binary | Haiku 5.5 |
+|---|---|---|---|---|---|---|---|
+| A: persons wrongly flagged | 0/300 | 0/300 | 0/300 | **24/300** | **0/300** | 1/300 | 0/300 |
+| B: persons wrongly flagged | 0/92 | 0/92 | 0/92 | 36/92 | 5/92 | 4/92 | 2/92 |
+| B: orgs caught | 0/198 | 182/198 | 148/198 | 185/198 | **198/198** | 198/198 | 197/198‡ |
+| B: trusts caught | 0/39 | 36/39 | 30/39 | 33/39 | 34/39 | 19/39 | 36/39 |
+| B: estates caught | 0/87 | 87/87 | 87/87 | 38/87 | 86/87 | 8/87 | 87/87 |
+| C: orgs/trusts caught | 100/100 | 100/100 | 100/100 | 97/100 | 100/100 | 100/100 | 100/100 |
+| 5-way accuracy (excl. A) | — | — | — | — | 813/834 | — | 824/834 |
+| Not-a-name caught | — | 18/18 | — | — | 15/18 | — | 16/18 |
+| Confidence returned | — | — | — | — | **calibrated** | yes | no |
 
 † Prototype only, not committed. Its patterns were written while looking at
 pool B, so these figures are **in-sample and optimistic**.
 ‡ Plus 1 trust: Haiku silently dropped 2 of 838 rows from its output.
+§ Column `regex203` in `predictions.csv`; regenerate with `evaluate.py regex`.
+Also tuned with pool B in view, so its gold-set recall is in-sample too; the
+out-of-sample check is the production review in §9. 0/816 real names called noise.
 
 ---
 
@@ -249,3 +254,36 @@ NER stacks (wrong task shape), and a general LLM as the pipeline classifier
    should low-confidence results silently keep the regex label?
 3. **Vendor dependency.** Is a third-party API acceptable for a derived
    column, given the regex fallback?
+
+## 9. Step 1 + Step 3 shipped (#203, 2026-10-22)
+
+`entities.entity_category()` holds one regex per category (trust, legal suffix,
+truncated suffix, government/tribe, org keyword, estate). Only the binary
+`entity_type` is stored. `is_noise_name()` skips non-name parts at ingest, and
+`wslcb db reclassify-entities [--dry-run]` applies both rules to existing rows.
+
+**Gold set:** 0/300 + 0/92 persons wrongly flagged; 182/198 orgs, 36/39 trusts,
+87/87 estates, 18/18 noise; 0/816 real names called noise. The remaining misses
+are orgs with no keyword (`FAMILY DOLLAR`, `LIBERTY BAR`,
+`INDIANOLA COUNTRY STORE`) and truncated trusts with no trust token left
+(`CHRISTOPHER BANKE JACKSON 2013`).
+
+**Production review:** before applying, the classifier was run offline over all
+67,227 entities. That gave 331 person→organization flips, and every one was
+eyeballed. The review removed four rules: `CASINO` (gold person
+`ERIC WILLIAM CASINO`), `MARINA` (14 given names), `PARISH` (6 surnames) and
+mid-name `P.C.` (`ANDREW P.C. WRIGHT`). After those fixes, all 26 flips outside
+the gold set were correct, as was a seeded random 50 of the 331. Few flips fall
+outside the gold set because pool B was a census of the org-ish names, so most
+regex misses had already been labeled.
+
+**Production apply:** organization 1,062 → 1,391; person 66,165 → 65,811. 25
+noise entities (62 links across 61 records) were removed. Backup:
+`data/remediation-backups/2026-10-22-203/`.
+
+**Deliberately left alone:**
+- Real names with an appended citation (`7-ELEVEN, INC. PER WAC 314-07-035`,
+  `JAMES AND WENDY HULL AS PER WAC 314-55-035`) are kept verbatim. Stripping the
+  suffix would rename and merge entities, which needs its own cleanup.
+- Short fragments (`IL`, `TY`, `CCFW`, `SMC`, `1744FOE`) are kept because they
+  may be initials or abbreviations.

@@ -10,6 +10,7 @@ import logging
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .entities import extract_entity_names
 from .models import locations as locations_table
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,8 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
 
     Returns a dict with counts for each category:
     - ``no_endorsements``: records with non-empty license_type but no record_endorsements rows
-    - ``no_entities``: records with applicants containing ';' but no record_entities rows
+    - ``no_entities``: records with applicant names (after the business name, excluding
+      markers and noise) but no record_entities rows
     - ``no_provenance``: records with no record_sources rows
     - ``no_enrichment_tracking``: records missing from record_enrichments for step 'endorsements'
     """
@@ -58,16 +60,18 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
     )
     no_endorsements = result.scalar_one()
 
+    # Candidates are filtered in Python: a record whose applicant parts are all
+    # markers / non-name strings (#203) correctly has no entity links.
     result = await conn.execute(
         text("""
-        SELECT COUNT(*) FROM license_records lr
+        SELECT lr.applicants FROM license_records lr
         WHERE lr.applicants LIKE '%;%'
           AND NOT EXISTS (
               SELECT 1 FROM record_entities re WHERE re.record_id = lr.id
           )
     """)
     )
-    no_entities = result.scalar_one()
+    no_entities = sum(1 for (applicants,) in result if extract_entity_names(applicants))
 
     result = await conn.execute(
         text("""

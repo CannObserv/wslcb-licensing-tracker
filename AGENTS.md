@@ -69,6 +69,7 @@ backed up under `data/remediation-backups/`. Ad-hoc edits remain forbidden.
 | `record_endorsements` | `endorsements.reprocess_endorsements()` | `wslcb db reprocess-endorsements` |
 | `license_records.resolved_endorsements` | `endorsements.reprocess_endorsements()` | `wslcb db reprocess-endorsements` |
 | `record_entities` | `entities.reprocess_entities()` | `wslcb db reprocess-entities` |
+| `entities.entity_type` (+ non-name entities) | `entities.reclassify_entities()` — reprocess never updates existing types | `wslcb db reclassify-entities` |
 | `record_links` | `link_records.build_all_links()` | `wslcb db rebuild-links` |
 | `data/wslcb/licensinginfo-replay/` extract files | `replay_extracts.generate_replay_extracts()` | `wslcb ingest generate-replay-extracts` |
 

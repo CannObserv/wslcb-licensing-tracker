@@ -5,10 +5,13 @@ Not part of the application. Usage (from repo root):
 
     uv run python docs/research/person-vs-org/evaluate.py score
     uv run python docs/research/person-vs-org/evaluate.py jev  # re-query Jev; needs .env key
+    uv run python docs/research/person-vs-org/evaluate.py regex  # re-run the shipped classifier
 
 ``jev`` rewrites the jev5 / jev5_conf / jev5_rev / jev2 columns of predictions.csv.
-The regex, probablepeople, and haiku columns were produced out-of-band (see
-../person-vs-org-classification.md, "Method").
+``regex`` rewrites the ``regex203`` column from the live
+``entities.entity_category()`` / ``is_noise_name()`` (#203). The ``regex``
+column is the pre-#203 classifier; it, probablepeople, and haiku were produced
+out-of-band (see ../person-vs-org-classification.md, "Method").
 
 Labels: P person, H household of persons, O organization, T trust, E estate,
 N not-a-name (noise), A ambiguous (excluded). Binary scoring maps P/H -> person,
@@ -103,6 +106,24 @@ async def run_jev() -> None:
                 preds[g["entity_id"]][cfg] = CODE[a["choice"]]
                 if cfg == "jev5":
                     preds[g["entity_id"]]["jev5_conf"] = round(a["confidence"], 3)
+    _write(preds)
+
+
+def run_regex() -> None:
+    """Rewrite the regex203 column from the shipped classifier and noise filter."""
+    from wslcb_licensing_tracker.entities import entity_category, is_noise_name  # noqa: PLC0415
+
+    code = {None: "P", "trust": "T", "estate": "E"}
+    gold = list(csv.DictReader(GOLD.open()))
+    preds = {r["entity_id"]: r for r in csv.DictReader(PREDS.open())}
+    for g in gold:
+        name = g["name"]
+        cat = None if is_noise_name(name) else entity_category(name)
+        preds[g["entity_id"]]["regex203"] = "N" if is_noise_name(name) else code.get(cat, "O")
+    _write(preds)
+
+
+def _write(preds: dict) -> None:
     fields = list(next(iter(preds.values())).keys())
     with PREDS.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -133,6 +154,12 @@ def score() -> None:
     def wrong(col: str, g: dict) -> bool:
         return not is_person(preds[g["entity_id"]][col])
 
+    noise = [g for g in gold if g["label"] == "N"]
+    names = [g for g in gold if g["label"] not in ("N", "A")]
+
+    def is_n(col: str, g: dict) -> bool:
+        return preds[g["entity_id"]][col] == "N"
+
     rows = [
         ("A persons wrongly flagged", a, None, wrong),
         ("B persons wrongly flagged", b, "PH", wrong),
@@ -140,6 +167,8 @@ def score() -> None:
         ("B T caught", b, "T", flagged),
         ("B E caught", b, "E", flagged),
         ("C orgs caught", c, None, flagged),
+        ("Not-a-name caught", noise, None, is_n),
+        ("Real names called noise", names, None, is_n),
     ]
     print(f"{'metric':28s}" + "".join(f"{col:>16s}" for col in cols))
     for label, pool, wanted, hit in rows:
@@ -150,4 +179,6 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "score"
     if cmd == "jev":
         asyncio.run(run_jev())
+    elif cmd == "regex":
+        run_regex()
     score()
