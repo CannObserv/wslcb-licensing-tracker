@@ -10,6 +10,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 |---|---|
 | `auditing-ci-cost` | "audit CI", "CI cost", "Actions spend" — no GitHub Actions here yet, so it is vendored ahead of need |
 | `brainstorming` | New feature without a prior design discussion |
+| `coordinating-epics` | "coordinate the epic", "burn down", "check-in", "I finished #N", "next issue" — serial, operator-paced epic burn-down; never writes code |
 | `curating-context` | Say "curate context", "context budget", or "trim AGENTS.md" — also the weekly maintenance run |
 | `dispatching-parallel-agents` | 2+ independent tasks with no shared state |
 | `enforcing-architecture` | "add a fitness function", "enforce this contract", "lock this rule" (also invoked by `reviewing-architecture` on a `fitness` directive) |
@@ -42,6 +43,14 @@ This project has no hosted CI at all — no `.github/` tree; the scheduled work 
 Explores user intent, requirements, and design before any implementation. Produces structured questions, trade-off analysis, and a design sketch before writing code. Writes specs to `docs/specs/` (overriding the skill's `docs/superpowers/specs/` default, #176).
 
 **Trigger:** User says "brainstorm", "design this", "let's design", or proposes a new feature without a prior design discussion.
+
+## coordinating-epics
+
+One coordinator thread holds one epic; the operator implements each child in its own thread and returns to report. Each check-in verifies the child from evidence (merged, CI by job on the final SHA, live on the host), edits the epic body only through the skill's guarded editor, carries contract changes and notes to later children, re-scans for issues filed since the last check-in, re-checks blockers and gates, and posts a brief on the next child. Also creates an epic (from a design doc, a backlog plus a rule, or an audit) and closes or parks it. The coordinator never writes code. Needs an authenticated `gh` (PAT from repo-root `.env`) and python3 ≥ 3.9. Serial counterpart to `orchestrating-issue-backlog`.
+
+This project has no hosted CI, so the CI leg of verification has no check-runs to read; "live on the host" means `wslcb-web.service` restarted and serving the change.
+
+**Trigger:** "coordinate the epic", "burn down", "check-in", "I finished #N", "next issue", "what's next on the epic".
 
 ## curating-context
 
