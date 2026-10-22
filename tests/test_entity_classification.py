@@ -406,3 +406,10 @@ async def test_resolve_reads_trusted_subtypes_at_call_time(pg_conn, monkeypatch)
     monkeypatch.setattr(entity_classification, "JEV_TRUSTED_ORG_SUBTYPES", frozenset({"nonprofit"}))
     await resolve_entities(pg_conn, [eid])
     assert await _resolved(pg_conn, eid) == ("organization", "nonprofit", "jev")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_clear_manual_missing_entity_raises(pg_conn):
+    missing = (await pg_conn.execute(select(func.max(entities.c.id)))).scalar_one() + 1000
+    with pytest.raises(LookupError):
+        await clear_manual(pg_conn, missing)

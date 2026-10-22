@@ -203,6 +203,15 @@ def _validate_manual(entity_type: str, entity_subtype: str | None) -> None:
         raise ValueError(msg)
 
 
+async def _require_entity(conn: AsyncConnection, entity_id: int) -> None:
+    found = (
+        await conn.execute(select(entities.c.id).where(entities.c.id == entity_id))
+    ).scalar_one_or_none()
+    if found is None:
+        msg = f"entity {entity_id} not found"
+        raise LookupError(msg)
+
+
 async def record_manual(  # noqa: PLR0913
     conn: AsyncConnection,
     entity_id: int,
@@ -218,12 +227,7 @@ async def record_manual(  # noqa: PLR0913
     ``LookupError`` when the entity does not exist; nothing is written then.
     """
     _validate_manual(entity_type, entity_subtype)
-    found = (
-        await conn.execute(select(entities.c.id).where(entities.c.id == entity_id))
-    ).scalar_one_or_none()
-    if found is None:
-        msg = f"entity {entity_id} not found"
-        raise LookupError(msg)
+    await _require_entity(conn, entity_id)
     row_id = (
         await conn.execute(
             insert(entity_classifications)
@@ -250,7 +254,11 @@ async def record_manual(  # noqa: PLR0913
 
 
 async def clear_manual(conn: AsyncConnection, entity_id: int) -> int:
-    """Ignore *entity_id*'s manual rows (kept as history), re-resolve, and return the count."""
+    """Ignore *entity_id*'s manual rows (kept as history), re-resolve, and return the count.
+
+    Raises ``LookupError`` when the entity does not exist.
+    """
+    await _require_entity(conn, entity_id)
     ec = entity_classifications
     result = await conn.execute(
         update(ec)
