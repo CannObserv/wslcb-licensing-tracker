@@ -951,7 +951,7 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
                 names[c.entity_id],
                 c.old,
                 c.new,
-                c.new[2],
+                entity_category(names[c.entity_id]),
             )
         if purge:
             logger.info(
