@@ -16,9 +16,17 @@ from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .entity_classification import (
+    SourceAnswer,
+    confirmed_noise_ids,
+    current_answers,
+    protected_ids,
+    resolve_entities,
+)
 from .models import (
     entities,
     entity_classifications,
+    entity_review_flags,
     license_records,
     record_enrichments,
     record_entities,
@@ -647,7 +655,9 @@ async def merge_duplicate_entities(conn: AsyncConnection) -> int:
 
     For each group of entities sharing the same ``lower(name)``, keeps the
     one with the lowest id as canonical and re-links all ``record_entities``
-    rows from the others to it, then deletes the duplicates.
+    rows from the others to it, then deletes the duplicates.  A duplicate's
+    manual classification rows and review flags move to the canonical entity,
+    which is then re-resolved; its regex/Jev rows are deleted with it (#206).
 
     Returns the number of entities merged (deleted).
     """
@@ -720,6 +730,20 @@ async def merge_duplicate_entities(conn: AsyncConnection) -> int:
                     .values(entity_id=canon_id)
                 )
 
+        # Operator input survives the merge (#206); regex/Jev rows cascade away.
+        await conn.execute(
+            update(entity_classifications)
+            .where(
+                (entity_classifications.c.entity_id == dirty_id)
+                & (entity_classifications.c.source == "manual")
+            )
+            .values(entity_id=canon_id)
+        )
+        await conn.execute(
+            update(entity_review_flags)
+            .where(entity_review_flags.c.entity_id == dirty_id)
+            .values(entity_id=canon_id)
+        )
         # Delete remaining dirty links (conflict cases) and the entity itself
         await conn.execute(delete(record_entities).where(record_entities.c.entity_id == dirty_id))
         await conn.execute(delete(entities).where(entities.c.id == dirty_id))
@@ -727,6 +751,7 @@ async def merge_duplicate_entities(conn: AsyncConnection) -> int:
         merged += 1
 
     if merged:
+        await resolve_entities(conn, sorted({canon for _, _, canon in dup_rows}))
         logger.info("Merged %d duplicate entities", merged)
 
     return merged
@@ -837,115 +862,153 @@ async def reclassify_entities(
     dry_run: bool = False,
     sample_limit: int = 25,
 ) -> dict:
-    """Re-apply the current classifier and noise filter to existing ``entities`` rows.
+    """Re-apply the regex classifier and noise filter to existing ``entities`` rows.
 
     ``get_or_create_entity()`` never updates an existing row, so a classifier
-    change reaches stored entities only through this pass (#203).  It:
+    change reaches stored entities only through this pass (#203).  It never
+    writes ``entities.entity_type`` directly (#206):
 
-    1. sets ``entity_type`` to ``_classify_entity_type(name)`` where it differs;
-    2. deletes entities whose name ``is_noise_name()`` — their
-       ``record_entities`` links first — and renumbers the remaining
-       positions of each affected ``(record_id, role)`` to stay contiguous.
+    1. purge set = noise-named entities (``is_noise_name``) without a manual
+       decision or open flag, plus operator-confirmed non-names
+       (``confirmed_noise_ids``);
+    2. for every other entity, appends a regex ``entity_classifications`` row
+       when its current one is missing or differs in type, subtype or model;
+    3. deletes the purge set with its ``record_entities`` links, renumbering
+       the remaining positions of each affected ``(record_id, role)``;
+    4. re-resolves every entity (manual > Jev >= threshold > regex).
 
+    ``dry_run`` runs the same steps inside a savepoint and rolls it back.
     Idempotent: a second run reports zero changes.  Caller commits.
 
     Returns:
     -------
     dict
-        ``entities_examined``, ``reclassified``, ``transitions``
-        (``"old->new"`` counts), ``reclassified_sample``, ``noise_entities``,
-        ``noise_links``, ``noise_sample``.
+        ``entities_examined``, ``reclassified`` (resolved ``entity_type``
+        changes), ``transitions`` (``"old->new"`` counts),
+        ``reclassified_sample``, ``subtype_changes``, ``regex_rows_written``,
+        ``noise_entities`` (entities removed), ``noise_links``,
+        ``noise_sample``, ``protected_noise_skipped``, ``confirmed_noise``.
     """
-    rows = (
-        await conn.execute(
-            select(entities.c.id, entities.c.name, entities.c.entity_type).order_by(entities.c.id)
-        )
-    ).fetchall()
+    if not dry_run:
+        return await _reclassify(conn, sample_limit=sample_limit, dry_run=False)
+    savepoint = await conn.begin_nested()
+    try:
+        return await _reclassify(conn, sample_limit=sample_limit, dry_run=True)
+    finally:
+        await savepoint.rollback()
 
-    changes, noise_ids, transitions = _plan_reclassification(rows)
-    noise_set = set(noise_ids)
-    noise_sample = [{"id": eid, "name": n} for eid, n, _ in rows if eid in noise_set][:sample_limit]
+
+async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool) -> dict:
+    rows = (
+        await conn.execute(select(entities.c.id, entities.c.name).order_by(entities.c.id))
+    ).fetchall()
+    names = dict(rows)
+
+    noise = {eid for eid, name in rows if is_noise_name(name)}
+    protected = await protected_ids(conn)
+    confirmed = await confirmed_noise_ids(conn)
+    purge = sorted((noise - protected) | confirmed)
+    purge_set = set(purge)
+
+    regex_rows = _plan_regex_rows(
+        [(eid, name) for eid, name in rows if eid not in purge_set], await current_answers(conn)
+    )
+    for i in range(0, len(regex_rows), 1000):
+        await conn.execute(insert(entity_classifications), regex_rows[i : i + 1000])
 
     noise_links = 0
-    if noise_ids:
+    if purge:
         noise_links = (
-            await conn.execute(
-                select(func.count()).where(record_entities.c.entity_id.in_(noise_ids))
-            )
+            await conn.execute(select(func.count()).where(record_entities.c.entity_id.in_(purge)))
         ).scalar_one()
+        await _purge_entities(conn, purge)
 
+    resolved = await resolve_entities(conn)
+    type_changes = [c for c in resolved.changes if c.old[0] != c.new[0]]
+    transitions: dict[str, int] = {}
+    for c in type_changes:
+        key = f"{c.old[0] or '(blank)'}->{c.new[0]}"
+        transitions[key] = transitions.get(key, 0) + 1
+    sample = [
+        {
+            "id": c.entity_id,
+            "name": names[c.entity_id],
+            "old": c.old[0],
+            "new": c.new[0],
+            "category": entity_category(names[c.entity_id]),
+        }
+        for c in type_changes[:sample_limit]
+    ]
+    subtype_changes = sum(1 for c in resolved.changes if c.old[1] != c.new[1])
+    protected_noise = len(noise & protected)
+
+    tag = " (dry-run)" if dry_run else ""
     if not dry_run:
-        await _apply_type_changes(conn, changes)
-        if noise_ids:
-            await _purge_entities(conn, noise_ids)
+        for c in type_changes:
             logger.info(
-                "Removed %d noise entit(ies) and %d record link(s)", len(noise_ids), noise_links
+                "Reclassified entity %d %r: %s -> %s (%s)",
+                c.entity_id,
+                names[c.entity_id],
+                c.old,
+                c.new,
+                c.new[2],
             )
-
+        if purge:
+            logger.info(
+                "Removed %d noise entit(ies) and %d record link(s)", len(purge), noise_links
+            )
     logger.info(
-        "reclassify_entities%s: examined %d, reclassified %d %s, noise %d (%d link(s))",
-        " (dry-run)" if dry_run else "",
+        "reclassify_entities%s: examined %d, %d regex row(s), reclassified %d %s, "
+        "%d subtype change(s), noise %d (%d link(s)), %d protected, %d confirmed",
+        tag,
         len(rows),
-        len(changes),
+        len(regex_rows),
+        len(type_changes),
         transitions,
-        len(noise_ids),
+        subtype_changes,
+        len(purge),
         noise_links,
+        protected_noise,
+        len(confirmed),
     )
     return {
         "entities_examined": len(rows),
-        "reclassified": len(changes),
+        "reclassified": len(type_changes),
         "transitions": transitions,
-        "reclassified_sample": changes[:sample_limit],
-        "noise_entities": len(noise_ids),
+        "reclassified_sample": sample,
+        "subtype_changes": subtype_changes,
+        "regex_rows_written": len(regex_rows),
+        "noise_entities": len(purge),
         "noise_links": noise_links,
-        "noise_sample": noise_sample,
+        "noise_sample": [{"id": eid, "name": names[eid]} for eid in purge[:sample_limit]],
+        "protected_noise_skipped": protected_noise,
+        "confirmed_noise": len(confirmed),
     }
 
 
-def _plan_reclassification(rows: list) -> tuple[list[dict], list[int], dict[str, int]]:
-    """Split ``(id, name, entity_type)`` rows into type changes and noise ids."""
-    changes: list[dict] = []
-    noise_ids: list[int] = []
-    transitions: dict[str, int] = {}
-    for eid, name, old_type in rows:
-        if is_noise_name(name):
-            noise_ids.append(eid)
-            continue
-        new_type = _classify_entity_type(name)
-        if new_type != old_type:
-            key = f"{old_type or '(blank)'}->{new_type}"
-            transitions[key] = transitions.get(key, 0) + 1
-            changes.append(
+def _plan_regex_rows(
+    rows: list[tuple[int, str]], answers: dict[int, dict[str, SourceAnswer]]
+) -> list[dict]:
+    """Return regex rows to insert for ``(id, name)`` pairs whose current regex answer is stale."""
+    out: list[dict] = []
+    for eid, name in rows:
+        entity_type, entity_subtype = regex_classification(name)
+        current = answers.get(eid, {}).get("regex")
+        if current is None or (current.entity_type, current.entity_subtype, current.model) != (
+            entity_type,
+            entity_subtype,
+            REGEX_MODEL,
+        ):
+            out.append(
                 {
-                    "id": eid,
-                    "name": name,
-                    "old": old_type,
-                    "new": new_type,
-                    "category": entity_category(name),
+                    "entity_id": eid,
+                    "source": "regex",
+                    "entity_type": entity_type,
+                    "entity_subtype": entity_subtype,
+                    "model": REGEX_MODEL,
                 }
             )
-    return changes, noise_ids, transitions
-
-
-async def _apply_type_changes(conn: AsyncConnection, changes: list[dict]) -> None:
-    """Write planned ``entity_type`` changes in batches, logging each one."""
-    for new_type in ("person", "organization"):
-        ids = [c["id"] for c in changes if c["new"] == new_type]
-        for i in range(0, len(ids), 1000):
-            await conn.execute(
-                update(entities)
-                .where(entities.c.id.in_(ids[i : i + 1000]))
-                .values(entity_type=new_type)
-            )
-    for c in changes:
-        logger.info(
-            "Reclassified entity %d %r: %s -> %s (%s)",
-            c["id"],
-            c["name"],
-            c["old"],
-            c["new"],
-            c["category"],
-        )
+    return out
 
 
 async def _purge_entities(conn: AsyncConnection, entity_ids: list[int]) -> None:

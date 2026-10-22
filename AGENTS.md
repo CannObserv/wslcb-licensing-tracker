@@ -69,9 +69,11 @@ backed up under `data/remediation-backups/`. Ad-hoc edits remain forbidden.
 | `record_endorsements` | `endorsements.reprocess_endorsements()` | `wslcb db reprocess-endorsements` |
 | `license_records.resolved_endorsements` | `endorsements.reprocess_endorsements()` | `wslcb db reprocess-endorsements` |
 | `record_entities` | `entities.reprocess_entities()` | `wslcb db reprocess-entities` |
-| `entities.entity_type` (+ non-name entities) | `entities.reclassify_entities()` — reprocess never updates existing types | `wslcb db reclassify-entities` |
+| `entity_classifications` regex rows; resolved `entities` type/subtype/source (+ non-name entities) | `entities.reclassify_entities()` | `wslcb db reclassify-entities` |
 | `record_links` | `link_records.build_all_links()` | `wslcb db rebuild-links` |
 | `data/wslcb/licensinginfo-replay/` extract files | `replay_extracts.generate_replay_extracts()` | `wslcb ingest generate-replay-extracts` |
+
+Jev rows in `entity_classifications` cost money and drift ~1%: never bulk-delete; roll back with `wslcb db ignore-jev`. Manual rows and `entity_review_flags` are operator input that no automated pass changes (#206).
 
 `reprocess_endorsements()` is idempotent — deletes existing rows before inserting fresh ones. `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL.
 

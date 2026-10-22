@@ -528,9 +528,10 @@ def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
 @db.command("reclassify-entities")
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
 def reclassify_entities(dry_run: bool) -> None:
-    """Re-apply the person/organization classifier and drop non-name entities.
+    """Re-apply the regex classifier, re-resolve classifications, drop non-name entities.
 
-    reprocess-entities never updates an existing entity's type; this does.
+    reprocess-entities never updates an existing entity's type; this does,
+    through the resolver: manual decisions and Jev answers are kept (#206).
     Idempotent. Back up entities/record_entities before a real run.
     """
 
@@ -548,12 +549,20 @@ def reclassify_entities(dry_run: bool) -> None:
         click.echo(f"  {key}: {n:,}")
     for c in r["reclassified_sample"]:
         click.echo(f"    {c['id']:>7} {c['old']} -> {c['new']} ({c['category']}): {c['name']}")
+    click.echo(
+        f"{r['regex_rows_written']:,} regex row(s) written; "
+        f"{r['subtype_changes']:,} subtype change(s)."
+    )
     prefix = "[dry-run] Would remove" if dry_run else "Removed"
     click.echo(
         f"{prefix} {r['noise_entities']:,} non-name entities ({r['noise_links']:,} record link(s))."
     )
     for n in r["noise_sample"]:
         click.echo(f"    {n['id']:>7} {n['name']}")
+    click.echo(
+        f"Kept {r['protected_noise_skipped']:,} noise-named entities with a manual decision "
+        f"or open flag (protected); {r['confirmed_noise']:,} operator-confirmed non-names removed."
+    )
 
 
 # ---------------------------------------------------------------------------

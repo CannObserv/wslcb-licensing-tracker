@@ -237,6 +237,10 @@ class TestDbGroup:
             "noise_entities": 2,
             "noise_links": 5,
             "noise_sample": [{"id": 9, "name": "PER WAC 314-07-035"}],
+            "regex_rows_written": 997,
+            "subtype_changes": 40,
+            "protected_noise_skipped": 1,
+            "confirmed_noise": 1,
         }
         result = CliRunner().invoke(main, ["db", "reclassify-entities", "--dry-run"])
         assert result.exit_code == 0, result.output
@@ -245,6 +249,10 @@ class TestDbGroup:
         assert "person->organization: 3" in result.output
         assert "GLEASON & KOATZ LLP" in result.output
         assert "PER WAC 314-07-035" in result.output
+        assert "997 regex row(s)" in result.output
+        assert "40 subtype change(s)" in result.output
+        assert "protected" in result.output or "Kept 1" in result.output
+        assert "1 operator-confirmed" in result.output
 
 
 class TestAdminGroup:

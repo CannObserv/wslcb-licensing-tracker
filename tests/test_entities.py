@@ -11,7 +11,12 @@ from wslcb_licensing_tracker.entities import (
     parse_and_link_entities,
     reclassify_entities,
 )
-from wslcb_licensing_tracker.models import entities, entity_classifications, record_entities
+from wslcb_licensing_tracker.models import (
+    entities,
+    entity_classifications,
+    entity_review_flags,
+    record_entities,
+)
 from wslcb_licensing_tracker.pipeline import insert_record
 
 
@@ -253,3 +258,198 @@ class TestReclassifyEntities:
             )
         ).fetchall()
         assert [tuple(r) for r in rows] == [("JANE ROE", 0), ("JOHN DOE", 1)]
+
+
+async def _manual(conn, eid: int, entity_type: str, subtype: str | None = None) -> None:
+    from wslcb_licensing_tracker.entity_classification import record_manual
+
+    await record_manual(
+        conn, eid, entity_type=entity_type, entity_subtype=subtype, created_by="op@example.com"
+    )
+
+
+async def _flag(conn, eid: int) -> None:
+    await conn.execute(
+        pg_insert(entity_review_flags).values(
+            entity_id=eid, flagged_by="op@example.com", reason="?"
+        )
+    )
+
+
+async def _triple(conn, eid: int) -> tuple:
+    return tuple(
+        (
+            await conn.execute(
+                select(
+                    entities.c.entity_type,
+                    entities.c.entity_subtype,
+                    entities.c.classification_source,
+                ).where(entities.c.id == eid)
+            )
+        ).one()
+    )
+
+
+async def _exists(conn, eid: int) -> bool:
+    n = (await conn.execute(select(func.count()).where(entities.c.id == eid))).scalar_one()
+    return n == 1
+
+
+class TestReclassifyThroughResolver:
+    """#206: reclassify writes regex rows and resolves; operator input is protected."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_reclassify_writes_regex_rows_and_resolves(self, pg_conn):
+        eid = await _seed_entity(pg_conn, "T206 GLEASON & KOATZ LLP", "person")
+        first = await reclassify_entities(pg_conn)
+        assert first["regex_rows_written"] >= 1
+        assert first["subtype_changes"] >= 1
+        assert await _triple(pg_conn, eid) == ("organization", "business", "regex")
+        regex_rows = (
+            await pg_conn.execute(
+                select(entity_classifications.c.model).where(
+                    (entity_classifications.c.entity_id == eid)
+                    & (entity_classifications.c.source == "regex")
+                )
+            )
+        ).fetchall()
+        assert [r[0] for r in regex_rows] == ["regex-1"]
+        second = await reclassify_entities(pg_conn)
+        assert second["regex_rows_written"] == 0
+        assert second["reclassified"] == 0
+        assert second["subtype_changes"] == 0
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_reclassify_never_overrides_manual(self, pg_conn):
+        eid = await _seed_entity(pg_conn, "T206 KOATZ & GLEASON LLP", "person")
+        await _manual(pg_conn, eid, "person")
+        await reclassify_entities(pg_conn)
+        assert await _triple(pg_conn, eid) == ("person", None, "manual")
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_noise_purge_skips_manual_and_flagged(self, pg_conn):
+        trustee = await _seed_entity(pg_conn, "TRUSTEE", "person")
+        digits = await _seed_entity(pg_conn, "035", "person")
+        await _manual(pg_conn, trustee, "person")
+        await _flag(pg_conn, digits)
+        result = await reclassify_entities(pg_conn)
+        assert await _exists(pg_conn, trustee)
+        assert await _exists(pg_conn, digits)
+        assert result["protected_noise_skipped"] >= 2
+        assert await _triple(pg_conn, trustee) == ("person", None, "manual")
+        # the kept noise-named entity still gets a regex answer
+        n = (
+            await pg_conn.execute(
+                select(func.count()).where(
+                    (entity_classifications.c.entity_id == digits)
+                    & (entity_classifications.c.source == "regex")
+                )
+            )
+        ).scalar_one()
+        assert n == 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_confirmed_noise_is_purged(self, pg_conn, standard_new_application):
+        standard_new_application["license_number"] = "entity_noise_206"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        await parse_and_link_entities(
+            pg_conn,
+            record_id,
+            "ACME LLC; T206 JOHN DOE XYZ; T206 JANE ROE",
+            delete_existing=True,
+        )
+        noise = (
+            await pg_conn.execute(
+                select(entities.c.id).where(entities.c.name == "T206 JOHN DOE XYZ")
+            )
+        ).scalar_one()
+        await _manual(pg_conn, noise, "not_a_name")
+        result = await reclassify_entities(pg_conn)
+        assert result["confirmed_noise"] >= 1
+        assert not await _exists(pg_conn, noise)
+        rows = (
+            await pg_conn.execute(
+                select(entities.c.name, record_entities.c.position)
+                .join(entities, entities.c.id == record_entities.c.entity_id)
+                .where(record_entities.c.record_id == record_id)
+            )
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [("T206 JANE ROE", 0)]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_flag_keeps_confirmed_noise(self, pg_conn):
+        eid = await _seed_entity(pg_conn, "T206 NOT A NAME BUT FLAGGED", "person")
+        await _manual(pg_conn, eid, "not_a_name")
+        await _flag(pg_conn, eid)
+        await reclassify_entities(pg_conn)
+        assert await _exists(pg_conn, eid)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_reclassify_dry_run_writes_nothing(self, pg_conn):
+        eid = await _seed_entity(pg_conn, "T206 DRY RUN HOLDINGS", "person")
+        noise = await _seed_entity(pg_conn, "PER WAC 314-07-035", "person")
+
+        async def _count():
+            return (
+                await pg_conn.execute(select(func.count()).select_from(entity_classifications))
+            ).scalar_one()
+
+        before = await _count()
+        result = await reclassify_entities(pg_conn, dry_run=True)
+        assert result["regex_rows_written"] >= 1
+        assert result["reclassified"] >= 1
+        assert result["noise_entities"] >= 1
+        assert await _count() == before
+        assert await _triple(pg_conn, eid) == ("person", None, "regex")
+        assert await _exists(pg_conn, noise)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_reprocess_entities_leaves_classification_untouched(
+        self, pg_conn, standard_new_application
+    ):
+        from wslcb_licensing_tracker.entities import reprocess_entities
+
+        standard_new_application["license_number"] = "entity_reprocess_206"
+        standard_new_application["applicants"] = "ACME LLC; T206 REPROCESS PERSON"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        await parse_and_link_entities(
+            pg_conn, record_id, standard_new_application["applicants"], delete_existing=True
+        )
+        eid = (
+            await pg_conn.execute(
+                select(entities.c.id).where(entities.c.name == "T206 REPROCESS PERSON")
+            )
+        ).scalar_one()
+        await _manual(pg_conn, eid, "organization", "nonprofit")
+
+        async def _rows():
+            return (
+                await pg_conn.execute(
+                    select(entity_classifications).where(entity_classifications.c.entity_id == eid)
+                )
+            ).fetchall()
+
+        before = (await _rows(), await _triple(pg_conn, eid))
+        await reprocess_entities(pg_conn, record_id=record_id)
+        assert (await _rows(), await _triple(pg_conn, eid)) == before
+        assert before[1] == ("organization", "nonprofit", "manual")
+
+
+class TestMergeMovesOperatorInput:
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_merge_moves_manual_rows_and_flags(self, pg_conn):
+        canon = await _seed_entity(pg_conn, "T206 MERGE TARGET", "person")
+        dup = await _seed_entity(pg_conn, "t206 merge target", "person")
+        assert canon < dup
+        await _manual(pg_conn, dup, "organization", "nonprofit")
+        await _flag(pg_conn, dup)
+        merged = await merge_duplicate_entities(pg_conn)
+        assert merged >= 1
+        assert not await _exists(pg_conn, dup)
+        assert await _triple(pg_conn, canon) == ("organization", "nonprofit", "manual")
+        flags = (
+            await pg_conn.execute(
+                select(func.count()).where(entity_review_flags.c.entity_id == canon)
+            )
+        ).scalar_one()
+        assert flags == 1
