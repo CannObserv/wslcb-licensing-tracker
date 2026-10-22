@@ -20,6 +20,7 @@ from wslcb_licensing_tracker.entity_classification import (
     protected_ids,
     record_manual,
     resolve_entities,
+    set_jev_ignored,
 )
 from wslcb_licensing_tracker.models import entities, entity_classifications, entity_review_flags
 
@@ -322,3 +323,65 @@ async def test_protected_and_confirmed_noise_ids(pg_conn):
     ours = {manual_person, flagged, noise, noise_flagged, resolved_flag}
     assert prot & ours == {manual_person, flagged, noise_flagged}
     assert conf & ours == {noise}
+
+
+# ── Jev rollback (Task 1.5) ──────────────────────────────────────────
+
+
+async def _ignored_by_source(conn, eid: int) -> dict[str, list[bool]]:
+    rows = (
+        await conn.execute(
+            select(entity_classifications.c.source, entity_classifications.c.ignored_at)
+            .where(entity_classifications.c.entity_id == eid)
+            .order_by(entity_classifications.c.id)
+        )
+    ).fetchall()
+    out: dict[str, list[bool]] = {}
+    for source, ignored_at in rows:
+        out.setdefault(source, []).append(ignored_at is not None)
+    return out
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_ignore_and_restore_jev_rows(pg_conn, monkeypatch):
+    monkeypatch.delenv(THRESHOLD_ENV, raising=False)
+    jev_eid = await get_or_create_entity(pg_conn, "T206 IGNORE ME MART")
+    manual_eid = await get_or_create_entity(pg_conn, "T206 IGNORE MANUAL")
+    await _jev(pg_conn, jev_eid, "organization", "trust", 0.9)
+    await _jev(pg_conn, manual_eid, "organization", "trust", 0.9)
+    await record_manual(
+        pg_conn, manual_eid, entity_type="person", entity_subtype=None, created_by="a@x"
+    )
+    await resolve_entities(pg_conn, [jev_eid])
+    assert await _resolved(pg_conn, jev_eid) == ("organization", "trust", "jev")
+
+    result = await set_jev_ignored(pg_conn, ignored=True)
+    assert result["rows"] >= 2
+    assert result["entities"] >= 2
+    assert result["changed"] >= 1
+    assert await _resolved(pg_conn, jev_eid) == ("person", None, "regex")
+    assert await _resolved(pg_conn, manual_eid) == ("person", None, "manual")
+    assert await _ignored_by_source(pg_conn, manual_eid) == {
+        "regex": [False],
+        "jev": [True],
+        "manual": [False],
+    }
+    # a second ignore touches nothing
+    assert (await set_jev_ignored(pg_conn, ignored=True))["rows"] == 0
+
+    restored = await set_jev_ignored(pg_conn, ignored=False)
+    assert restored["rows"] >= 2
+    assert await _resolved(pg_conn, jev_eid) == ("organization", "trust", "jev")
+    assert await _ignored_by_source(pg_conn, jev_eid) == {"regex": [False], "jev": [False]}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_ignore_by_model_only_touches_that_model(pg_conn):
+    a = await get_or_create_entity(pg_conn, "T206 MODEL A")
+    b = await get_or_create_entity(pg_conn, "T206 MODEL B")
+    await _jev(pg_conn, a, "organization", "trust", 0.9, model="jev-t206-old")
+    await _jev(pg_conn, b, "organization", "trust", 0.9, model="jev-t206-new")
+    result = await set_jev_ignored(pg_conn, ignored=True, model="jev-t206-old")
+    assert (result["rows"], result["entities"]) == (1, 1)
+    assert (await _ignored_by_source(pg_conn, a))["jev"] == [True]
+    assert (await _ignored_by_source(pg_conn, b))["jev"] == [False]

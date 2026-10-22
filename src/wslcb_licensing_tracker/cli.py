@@ -5,7 +5,7 @@ All operational commands are exposed as click subcommands grouped by domain:
 - ``ingest``: scrape, import-relayed, backfill-snapshots, backfill-diffs, generate-replay-extracts,
   backfill-addresses, refresh-addresses, compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities,
-  reclassify-entities
+  reclassify-entities, ignore-jev
 - ``admin``: add-user, list-users, remove-user
 - ``ops``: disk-hygiene, backup, restore, restore-archive
 
@@ -28,6 +28,7 @@ Usage::
     wslcb db rebuild-links             # rebuild application→outcome links
     wslcb db check                     # run integrity checks
     wslcb db check --fix               # run checks and auto-fix safe issues
+    wslcb db ignore-jev [--undo]       # roll back (or restore) Jev classifications (#206)
     wslcb admin add-user EMAIL         # add admin user
     wslcb admin list-users             # list admin users
     wslcb admin remove-user EMAIL      # remove admin user
@@ -68,6 +69,7 @@ from .endorsements import reprocess_endorsements as run_reprocess_endorsements
 from .engine import create_engine_from_env, get_db
 from .entities import reclassify_entities as run_reclassify_entities
 from .entities import reprocess_entities as run_reprocess_entities
+from .entity_classification import set_jev_ignored as run_set_jev_ignored
 from .integrity import print_report
 from .integrity import run_all_checks as run_integrity_checks
 from .link_records import build_all_links as run_build_all_links
@@ -549,8 +551,9 @@ def reclassify_entities(dry_run: bool) -> None:
         click.echo(f"  {key}: {n:,}")
     for c in r["reclassified_sample"]:
         click.echo(f"    {c['id']:>7} {c['old']} -> {c['new']} ({c['category']}): {c['name']}")
+    wrote = "[dry-run] Would write" if dry_run else "Wrote"
     click.echo(
-        f"{r['regex_rows_written']:,} regex row(s) written; "
+        f"{wrote} {r['regex_rows_written']:,} regex row(s); "
         f"{r['subtype_changes']:,} subtype change(s)."
     )
     prefix = "[dry-run] Would remove" if dry_run else "Removed"
@@ -559,9 +562,40 @@ def reclassify_entities(dry_run: bool) -> None:
     )
     for n in r["noise_sample"]:
         click.echo(f"    {n['id']:>7} {n['name']}")
+    kept = "[dry-run] Would keep" if dry_run else "Kept"
     click.echo(
-        f"Kept {r['protected_noise_skipped']:,} noise-named entities with a manual decision "
+        f"{kept} {r['protected_noise_skipped']:,} noise-named entities with a manual decision "
         f"or open flag (protected); {r['confirmed_noise']:,} operator-confirmed non-names removed."
+    )
+
+
+@db.command("ignore-jev")
+@click.option("--model", default=None, help="Only rows from this Jev model ID.")
+@click.option("--undo", is_flag=True, help="Restore previously ignored Jev rows.")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+def ignore_jev(model: str | None, undo: bool, dry_run: bool) -> None:
+    """Ignore stored Jev classifications and re-resolve (reversible; deletes nothing).
+
+    Affected entities fall back to their manual or regex answer. --undo
+    restores the ignored rows.
+    """
+
+    async def _run(engine: AsyncEngine) -> dict:
+        async with get_db(engine) as conn:
+            savepoint = await conn.begin_nested() if dry_run else None
+            result = await run_set_jev_ignored(conn, ignored=not undo, model=model)
+            if savepoint is not None:
+                await savepoint.rollback()
+            else:
+                await conn.commit()
+            return result
+
+    r = _run_with_engine(_run)
+    prefix = "[dry-run] " if dry_run else ""
+    verb = "Restored" if undo else "Ignored"
+    click.echo(
+        f"{prefix}{verb} {r['rows']:,} jev row(s) across {r['entities']:,} entities; "
+        f"{r['changed']:,} resolved classification(s) changed."
     )
 
 

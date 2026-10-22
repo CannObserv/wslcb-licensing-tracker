@@ -440,7 +440,8 @@ uv run wslcb db check --fix
 uv run wslcb db rebuild-links
 uv run wslcb db reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
 uv run wslcb db reprocess-entities [--record-id 12345] [--dry-run]
-uv run wslcb db reclassify-entities [--dry-run]   # re-apply entity_type classifier + drop non-name entities (#203)
+uv run wslcb db reclassify-entities [--dry-run]   # regex rows + re-resolve classifications; drop non-name entities (#203, #206)
+uv run wslcb db ignore-jev [--model ID] [--undo] [--dry-run]  # reversible Jev rollback: entities fall back to manual/regex (#206)
 
 # Backfill
 uv run wslcb ingest backfill-snapshots

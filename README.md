@@ -98,7 +98,8 @@ wslcb-licensing-tracker/
 ├── endorsements.py         # Async endorsement pipeline
 ├── endorsements_seed.py    # Async endorsement seeding and repair
 ├── endorsements_admin.py   # Async admin helpers for endorsement management
-├── entities.py             # Async entity normalization
+├── entities.py             # Async entity normalization + regex classifier
+├── entity_classification.py # Classification resolver (manual > Jev > regex), manual rows, Jev rollback (#206)
 ├── address_client.py       # HTTP transport for the address-validator service
 ├── address_validator.py    # Async address validation DB layer
 ├── link_records.py         # Async application→outcome record linking
@@ -202,7 +203,7 @@ wslcb-licensing-tracker/
 │   ├── test_display.py          # Presentation formatting tests
 │   ├── test_models.py           # SQLAlchemy Table definition tests
 │   ├── test_app.py              # App lifespan and startup tests
-│   ├── test_config.py           # Runtime config helper tests (get_build_id)
+│   ├── test_config.py           # Runtime config helper tests (get_build_id, Jev threshold)
 │   ├── test_log_config.py       # Structured-logging regression tests (#162)
 │   ├── test_routes.py           # Public route tests
 │   ├── test_api_routes.py       # Versioned API route tests
@@ -224,6 +225,7 @@ wslcb-licensing-tracker/
 │   ├── test_endorsements_seed.py # Endorsement seeding tests (require TEST_DATABASE_URL)
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
 │   ├── test_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
+│   ├── test_entity_classification.py # Classification resolver + Jev rollback (require TEST_DATABASE_URL)
 │   ├── test_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
 │   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196), freshness (#197)
 │   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
@@ -499,6 +501,8 @@ Names are normalized at ingestion time:
 
 The first element of the `applicants` string (the business name) is excluded from entity extraction — only the individual people and organizations are stored.
 
+Each entity is classified `person` or `organization`, with an `entity_subtype` for organizations (business, nonprofit, trust, estate, tribe, government, unknown) and a `classification_source` (regex, Jev or manual). Every source's answer is kept in `entity_classifications`; the shown values are resolved from them (#206, see [`docs/SCHEMA.md`](docs/SCHEMA.md)).
+
 The same cleaning is applied to the `applicants` and `previous_applicants` string columns on `license_records`, so FTS search results and CSV exports are consistent with entity names.
 
 Entities are classified as `person` or `organization` by a heuristic that checks for business-indicator patterns (`LLC`, `INC`, `CORP`, `TRUST`, etc.).
@@ -592,7 +596,8 @@ Test structure:
 | `tests/test_endorsements.py` | Endorsement pipeline — processing, repair, alias system (require `TEST_DATABASE_URL`) |
 | `tests/test_endorsements_seed.py` | Endorsement seeding and code-map repair (require `TEST_DATABASE_URL`) |
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
-| `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing (require `TEST_DATABASE_URL`) |
+| `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require `TEST_DATABASE_URL`) |
+| `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require `TEST_DATABASE_URL`) |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions (require `TEST_DATABASE_URL`) |
 | `tests/test_scraper.py` | Scraper — content hash deduplication, redundant data cleanup, run history + freshness |
 | `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill |

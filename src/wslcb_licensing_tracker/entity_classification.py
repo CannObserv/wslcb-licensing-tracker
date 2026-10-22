@@ -300,3 +300,40 @@ async def confirmed_noise_ids(conn: AsyncConnection) -> set[int]:
     m = _current_manual()
     stmt = select(m.c.entity_id).where((m.c.entity_type == NOT_A_NAME) & ~_open_flag(m.c.entity_id))
     return set((await conn.execute(stmt)).scalars().all())
+
+
+async def set_jev_ignored(
+    conn: AsyncConnection, *, ignored: bool, model: str | None = None
+) -> dict[str, int]:
+    """Ignore (or restore) Jev rows, optionally one model's, and re-resolve the affected entities.
+
+    The reversible rollback for Jev answers: rows are marked, never deleted.
+    Regex and manual rows are not touched.  Caller commits.
+
+    Returns ``{"rows": int, "entities": int, "changed": int}`` — rows marked,
+    distinct entities they belong to, and resolved triples that changed.
+    """
+    ec = entity_classifications
+    where = (ec.c.source == "jev") & (
+        ec.c.ignored_at.is_(None) if ignored else ec.c.ignored_at.is_not(None)
+    )
+    if model is not None:
+        where &= ec.c.model == model
+    stmt = (
+        update(ec)
+        .where(where)
+        .values(ignored_at=func.now() if ignored else None)
+        .returning(ec.c.entity_id)
+    )
+    entity_ids = (await conn.execute(stmt)).scalars().all()
+    affected = sorted(set(entity_ids))
+    changed = len((await resolve_entities(conn, affected)).changes) if affected else 0
+    logger.info(
+        "%s %d jev row(s)%s across %d entities; %d resolved classification(s) changed",
+        "Ignored" if ignored else "Restored",
+        len(entity_ids),
+        f" (model {model})" if model else "",
+        len(affected),
+        changed,
+    )
+    return {"rows": len(entity_ids), "entities": len(affected), "changed": changed}

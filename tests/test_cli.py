@@ -251,8 +251,40 @@ class TestDbGroup:
         assert "PER WAC 314-07-035" in result.output
         assert "997 regex row(s)" in result.output
         assert "40 subtype change(s)" in result.output
-        assert "protected" in result.output or "Kept 1" in result.output
+        assert "Would keep 1 noise-named entities" in result.output
+        assert "protected" in result.output
         assert "1 operator-confirmed" in result.output
+
+
+class TestIgnoreJev:
+    """wslcb db ignore-jev (#206)."""
+
+    RESULT = {"rows": 12, "entities": 10, "changed": 4}
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_set_jev_ignored", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_ignore_jev_passes_options(self, mock_engine, mock_ig, mock_gdb):
+        mock_engine.return_value = mock_async_engine()
+        mock_ig.return_value = self.RESULT
+        result = CliRunner().invoke(main, ["db", "ignore-jev", "--model", "jev-1.14.0"])
+        assert result.exit_code == 0, result.output
+        assert mock_ig.await_args.kwargs == {"ignored": True, "model": "jev-1.14.0"}
+        assert (
+            "Ignored 12 jev row(s) across 10 entities; 4 resolved classification(s) changed."
+            in (result.output)
+        )
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_set_jev_ignored", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_undo_and_dry_run(self, mock_engine, mock_ig, mock_gdb):
+        mock_engine.return_value = mock_async_engine()
+        mock_ig.return_value = self.RESULT
+        result = CliRunner().invoke(main, ["db", "ignore-jev", "--undo", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert mock_ig.await_args.kwargs == {"ignored": False, "model": None}
+        assert "[dry-run] Restored 12 jev row(s)" in result.output
 
 
 class TestAdminGroup:
