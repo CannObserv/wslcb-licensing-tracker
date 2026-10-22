@@ -154,3 +154,30 @@ def test_print_report_returns_nonzero_for_issues():
         "entity_duplicates": {"count": 0, "details": []},
     }
     assert print_report(report) == 5  # 3 + 2
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_no_entities_ignores_records_with_only_non_name_parts(
+    pg_conn, standard_new_application
+):
+    """#203: a record whose applicant parts are all noise/markers needs no entity links."""
+    from wslcb_licensing_tracker.pipeline import insert_record
+
+    before = (await check_unenriched_records(pg_conn))["no_entities"]
+
+    noise_only = dict(
+        standard_new_application,
+        license_number="integ_noise_1",
+        applicants="THE VERA PROJECT; NO PEOPLE REQUIRED; PER WAC 314-07-035",
+    )
+    await insert_record(pg_conn, noise_only)
+    assert (await check_unenriched_records(pg_conn))["no_entities"] == before
+
+    real = dict(
+        standard_new_application,
+        license_number="integ_noise_2",
+        applicants="ACME LLC; JOHN DOE",
+    )
+    await insert_record(pg_conn, real)
+    assert (await check_unenriched_records(pg_conn))["no_entities"] == before + 1

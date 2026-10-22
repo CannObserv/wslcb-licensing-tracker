@@ -216,6 +216,36 @@ class TestDbGroup:
         assert result.exit_code == 0
         assert "10" in result.output
 
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_reclassify_entities", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_reclassify_entities_dry_run(self, mock_engine, mock_rc, mock_gdb):
+        mock_engine.return_value = mock_async_engine()
+        mock_rc.return_value = {
+            "entities_examined": 1000,
+            "reclassified": 3,
+            "transitions": {"person->organization": 3},
+            "reclassified_sample": [
+                {
+                    "id": 7,
+                    "name": "GLEASON & KOATZ LLP",
+                    "old": "person",
+                    "new": "organization",
+                    "category": "legal_suffix",
+                }
+            ],
+            "noise_entities": 2,
+            "noise_links": 5,
+            "noise_sample": [{"id": 9, "name": "PER WAC 314-07-035"}],
+        }
+        result = CliRunner().invoke(main, ["db", "reclassify-entities", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert mock_rc.await_args.kwargs["dry_run"] is True
+        assert "dry-run" in result.output
+        assert "person->organization: 3" in result.output
+        assert "GLEASON & KOATZ LLP" in result.output
+        assert "PER WAC 314-07-035" in result.output
+
 
 class TestAdminGroup:
     """Commands under the admin group."""
