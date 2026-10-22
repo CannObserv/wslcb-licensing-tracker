@@ -285,7 +285,7 @@ entity_review_flags = Table(
     Column("id", Integer, Identity(), primary_key=True),
     Column("entity_id", Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
     Column("flagged_by", Text, nullable=False),
-    Column("reason", Text, nullable=False, server_default="''"),
+    Column("reason", Text, nullable=False, server_default=""),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("resolved_at", DateTime(timezone=True)),
     Column("resolved_by", Text),
