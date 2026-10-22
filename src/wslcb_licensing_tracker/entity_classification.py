@@ -147,7 +147,7 @@ async def resolve_entities(
         entities.c.classification_source,
     )
     if entity_ids is None:
-        rows = (await conn.execute(select(*cols))).fetchall()
+        rows = (await conn.execute(select(*cols).order_by(entities.c.id))).fetchall()
     else:
         ids = list(dict.fromkeys(entity_ids))
         rows = []
