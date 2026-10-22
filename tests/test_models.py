@@ -23,6 +23,9 @@ EXPECTED_TABLES = {
     "regulated_substances",
     "regulated_substance_endorsements",
     "data_migrations",
+    "entity_classifications",
+    "entity_review_flags",
+    "classification_runs",
 }
 
 
@@ -82,3 +85,17 @@ def test_license_records_unique_constraint_name():
     """license_records natural key unique constraint has the expected name."""
     constraint_names = {c.name for c in models.license_records.constraints}
     assert "uq_license_records_natural_key" in constraint_names
+
+
+def test_classification_tables_present():
+    """#206: classification history, review flags and run records; resolved columns on entities."""
+    for name in ("entity_classifications", "entity_review_flags", "classification_runs"):
+        assert name in models.metadata.tables
+    assert {"entity_subtype", "classification_source"} <= set(models.entities.c.keys())
+
+
+def test_classification_fks_cascade():
+    """Deleting an entity deletes its classification rows and flags."""
+    for table in (models.entity_classifications, models.entity_review_flags):
+        fk = next(iter(table.c.entity_id.foreign_keys))
+        assert fk.ondelete.upper() == "CASCADE"

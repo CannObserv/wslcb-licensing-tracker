@@ -105,7 +105,27 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `insert_record()` in `pipeline.py` also cleans `business_name` and `previous_business_name` via `clean_entity_name()` before storage, so all name columns are consistently uppercased and stripped of stray punctuation
 - `has_additional_names` — `INTEGER NOT NULL DEFAULT 0`; set to `1` at ingest time when `applicants` or `previous_applicants` contains an `ADDITIONAL_NAMES_MARKERS` token. Used to show the notice *"+ WSLCB source signaled additional entities may be on file"* on the detail page. Backfilled by migration 010.
 - `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — shadow columns storing the as-parsed values from the source *before* name cleaning (uppercase, punctuation stripping); going forward, `insert_record()` saves the raw values here, then writes cleaned values to the primary columns; for existing records, these were backfilled with the already-cleaned values (originals lost)
-- `merge_duplicate_entities()` runs at web app startup (via `backfill_entities()` in the `app.py` lifespan) — cleans `business_name`, `previous_business_name`, `applicants`, and `previous_applicants` in `license_records` via `clean_record_strings()`, then merges duplicate entities and renames dirty ones in place; all work is committed in a single transaction
+- `merge_duplicate_entities()` merges entities whose names differ only by case into the lowest id, moving its links. It ran once, through `backfill_entities()` in data migration `0005_backfill_entities` (`data_migration.py`), not at every startup
+
+### `entity_classifications` (per-source classification answers, #206)
+- Append-only: one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
+- `entity_id` — FK to `entities(id)`, `ON DELETE CASCADE`
+- `entity_type` — `person`, `organization` or `not_a_name` (CHECK `ck_ec_entity_type`); `not_a_name` is stored as an answer and never resolved onto `entities`
+- `entity_subtype` — NULL or one of the seven subtypes (CHECK `ck_ec_subtype`)
+- `confidence`, `probabilities` (JSONB), `input_tokens` — Jev only; `input_tokens` is this entity's share of its batch
+- `model` — `jev-…` for Jev, `regex-<n>` (`entities.REGEX_MODEL`) for regex, NULL for manual
+- `created_at`, `created_by` (admin email on manual rows), `note`
+- `ignored_at` — set by `wslcb db ignore-jev` (Jev rows) or a cleared manual override; an ignored row never takes part in resolution
+- A source's *current* answer is its latest (`max(id)`) non-ignored row. Indexes `idx_ec_entity_source (entity_id, source, id)`, `idx_ec_source_model (source, model)`
+
+### `entity_review_flags` (operator review flags, #206)
+- `entity_id` (FK `ON DELETE CASCADE`), `flagged_by`, `reason`, `created_at`, `resolved_at`, `resolved_by`, `resolution`
+- Open = `resolved_at IS NULL` (partial index `idx_erf_open`). An open flag protects a noise-named entity from the `reclassify-entities` purge
+- Operator input: no automated pass deletes one; `merge_duplicate_entities()` moves them to the surviving entity
+
+### `classification_runs` (Jev run records, #206)
+- One row per Jev classification run: `origin` (`post_scrape`, `post_import`, `cli`, `admin`; CHECK `ck_classification_runs_origin`), `model`, `started_at`, `finished_at`, `names_sent`, `batches_ok`, `batches_failed`, `input_tokens` (BIGINT), `error`
+- Indexed on `started_at`. Written from #207 on
 
 ### `record_entities` (junction table)
 - Links `license_records` ↔ `entities` with role and position
@@ -224,6 +244,7 @@ Schema is managed by **Alembic** against PostgreSQL. Revisions live in
 | `0006_co_replay_source_type` | Seeds the `co_replay` source type (#154) |
 | `0007_replay_extract_role` | Allows the `replay_extract` `record_sources` role (#154) |
 | `0008_relayed_scrape` | Seeds the `relayed_scrape` source type; `scrape_log.origin` + `scrape_log.captured_at` (#201) |
+| `0009_entity_classification` | `entities.entity_subtype` + `entities.classification_source`; `entity_classifications`, `entity_review_flags`, `classification_runs` (#206) |
 
 Each revision's `down_revision` points at the previous number, so the chain is
 strictly linear — no branches or merge points.

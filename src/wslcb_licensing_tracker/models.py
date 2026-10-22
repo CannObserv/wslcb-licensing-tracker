@@ -7,6 +7,7 @@ No ORM mappers — all Table objects, no declarative_base().
 """
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 
 metadata = MetaData()
 
@@ -202,6 +203,9 @@ entities = Table(
     Column("name", Text, nullable=False),
     Column("entity_type", Text, nullable=False, server_default="''"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    # Resolved from entity_classifications by entity_classification.resolve_entities (#206).
+    Column("entity_subtype", Text),
+    Column("classification_source", Text, nullable=False, server_default="regex"),
     UniqueConstraint("name", name="uq_entities_name"),
     # NOTE: migration creates this as a functional index: lower(name).
     # SQLAlchemy Core can't express functional indexes inline on Table objects,
@@ -209,6 +213,16 @@ entities = Table(
     # Do NOT "fix" this to match — alembic autogenerate will flag the
     # discrepancy but it is harmless and expected.
     Index("idx_entities_name_lower", "name"),
+    Index("idx_entities_subtype", "entity_subtype"),
+    CheckConstraint(
+        "entity_subtype IS NULL OR entity_subtype IN "
+        "('business', 'nonprofit', 'trust', 'estate', 'tribe', 'government', 'unknown')",
+        name="ck_entities_subtype",
+    ),
+    CheckConstraint(
+        "classification_source IN ('regex', 'jev', 'manual')",
+        name="ck_entities_classification_source",
+    ),
 )
 
 record_entities = Table(
@@ -232,6 +246,72 @@ record_entities = Table(
     Column("position", Integer, nullable=False, server_default="0"),
     Index("idx_re_entity", "entity_id"),
     Index("idx_re_role", "role"),
+)
+
+# Append-only per-source classification answers (#206).  The latest
+# non-ignored row per (entity, source) is that source's current answer.
+entity_classifications = Table(
+    "entity_classifications",
+    metadata,
+    Column("id", Integer, Identity(), primary_key=True),
+    Column("entity_id", Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("source", Text, nullable=False),
+    Column("entity_type", Text, nullable=False),
+    Column("entity_subtype", Text),
+    Column("confidence", Float),
+    Column("probabilities", JSONB),
+    Column("model", Text),
+    Column("input_tokens", Float),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("created_by", Text),
+    Column("note", Text),
+    Column("ignored_at", DateTime(timezone=True)),
+    CheckConstraint("source IN ('regex', 'jev', 'manual')", name="ck_ec_source"),
+    CheckConstraint(
+        "entity_type IN ('person', 'organization', 'not_a_name')", name="ck_ec_entity_type"
+    ),
+    CheckConstraint(
+        "entity_subtype IS NULL OR entity_subtype IN "
+        "('business', 'nonprofit', 'trust', 'estate', 'tribe', 'government', 'unknown')",
+        name="ck_ec_subtype",
+    ),
+    Index("idx_ec_entity_source", "entity_id", "source", "id"),
+    Index("idx_ec_source_model", "source", "model"),
+)
+
+entity_review_flags = Table(
+    "entity_review_flags",
+    metadata,
+    Column("id", Integer, Identity(), primary_key=True),
+    Column("entity_id", Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("flagged_by", Text, nullable=False),
+    Column("reason", Text, nullable=False, server_default="''"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("resolved_at", DateTime(timezone=True)),
+    Column("resolved_by", Text),
+    Column("resolution", Text),
+    Index("idx_erf_open", "entity_id", postgresql_where=text("resolved_at IS NULL")),
+)
+
+# One row per Jev classification run (#206; written from #207).
+classification_runs = Table(
+    "classification_runs",
+    metadata,
+    Column("id", Integer, Identity(), primary_key=True),
+    Column("origin", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("finished_at", DateTime(timezone=True)),
+    Column("names_sent", Integer, nullable=False, server_default="0"),
+    Column("batches_ok", Integer, nullable=False, server_default="0"),
+    Column("batches_failed", Integer, nullable=False, server_default="0"),
+    Column("input_tokens", BigInteger, nullable=False, server_default="0"),
+    Column("error", Text),
+    CheckConstraint(
+        "origin IN ('post_scrape', 'post_import', 'cli', 'admin')",
+        name="ck_classification_runs_origin",
+    ),
+    Index("idx_classification_runs_started", "started_at"),
 )
 
 record_links = Table(
