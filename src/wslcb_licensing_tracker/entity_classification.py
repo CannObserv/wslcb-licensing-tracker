@@ -313,7 +313,9 @@ async def set_jev_ignored(
     """Ignore (or restore) Jev rows, optionally one model's, and re-resolve the affected entities.
 
     The reversible rollback for Jev answers: rows are marked, never deleted.
-    Regex and manual rows are not touched.  Caller commits.
+    Regex and manual rows are not touched.  Restoring (``ignored=False``)
+    clears every ignored Jev row in scope, not just one earlier ignore.
+    Caller commits.
 
     Returns ``{"rows": int, "entities": int, "changed": int}`` — rows marked,
     distinct entities they belong to, and resolved triples that changed.
