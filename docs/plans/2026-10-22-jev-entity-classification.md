@@ -318,7 +318,7 @@ Existing `TestReclassifyEntities` tests keep passing. In `test_cli.py`, extend `
 
 Run this right after Phase 1 merges, and before deploying any later phase. Rollout step 1.
 
-- [ ] **Step 1: Back up.** `sudo systemctl start wslcb-backup.service; journalctl -u wslcb-backup -n 20 -o cat --no-pager`. Expected: the run succeeds. Then `mkdir -p data/remediation-backups/<date>-EPIC` and `\copy` `entities` and `record_entities` as JSON lines into it, as for `2026-10-22-203/`.
+- [ ] **Step 1: Back up.** `sudo systemctl start wslcb-backup.service; journalctl -u wslcb-backup -n 20 -o cat --no-pager`. Expected: the run succeeds. Then `mkdir -p data/remediation-backups/<date>-206` and `\copy` `entities` and `record_entities` as JSON lines into it, as for `2026-10-22-203/`.
 - [ ] **Step 2: Counts before.** Save `SELECT entity_type, count(*) FROM entities GROUP BY 1` to `counts_before.txt`.
 - [ ] **Step 3: Migrate.** `uv run alembic upgrade head`. Expected: `alembic current` = `0009`.
 - [ ] **Step 4: Dry-run.** `uv run wslcb db reclassify-entities --dry-run | tee …/dry-run.txt`. Expected: `regex_rows_written` ≈ the entity count (~67K); `reclassified` 0 (the #203 rules are unchanged); the noise counts match #203's residue (≈0). Stop and report if `reclassified` is not 0.
@@ -774,7 +774,7 @@ def test_import_relayed_classifies_without_any_checkin(...)  # failure swallowed
 ### Task 5.3: ⚠ OPERATOR-GATED: enable Jev and run the backfill (rollout step 4)
 
 - [ ] **Step 1: Check preconditions.** Phases 1–4 and 5.2 are deployed (`git log` on the host = main; `sudo systemctl restart wslcb-web.service`). The dashboard shows "Disabled".
-- [ ] **Step 2: Back up.** `sudo systemctl start wslcb-backup.service` must succeed. Save the type × subtype × source counts to `data/remediation-backups/<date>-EPIC-jev/counts_before.txt`.
+- [ ] **Step 2: Back up.** `sudo systemctl start wslcb-backup.service` must succeed. Save the type × subtype × source counts to `data/remediation-backups/<date>-210-jev/counts_before.txt`.
 - [ ] **Step 3: Configure.** Append `CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION=1` and `CO_WSLCB_LICENSING_TRACKER_TYPESAFE_API_KEY=…` to `/etc/wslcb-licensing-tracker/.env`. Type the key at a prompt and never echo it. Restart web. The dashboard shows "Enabled" with no problems.
 - [ ] **Step 4: Dry-run.** `sudo systemd-run --uid=exedev --working-directory=/home/exedev/wslcb-licensing-tracker -p EnvironmentFile=/etc/wslcb-licensing-tracker/.env --wait --pipe -- .venv/bin/python -m wslcb_licensing_tracker.cli db classify-entities --dry-run --limit 100000 | tee …/dry-run.txt`. Expected: ≈ 67K names, ≈ 2.7K requests, est. ≤ $2. Stop if it is far off.
 - [ ] **Step 5: Backfill.** The same command without `--dry-run`, teed to `apply.txt`. Expected: exit 0, 0 failed batches, ~1–3 min. Re-run to drain if needed; a second run sends 0.
