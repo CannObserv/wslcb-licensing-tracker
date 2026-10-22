@@ -115,6 +115,14 @@ R_BIZ = SourceAnswer("organization", "business")
             frozenset(),
             ("organization", "business", "regex"),
         ),
+        # a NULL Jev org subtype falls back like unknown
+        (
+            None,
+            SourceAnswer("organization", None, 0.95),
+            R_BIZ,
+            frozenset(),
+            ("organization", "business", "jev"),
+        ),
         (None, None, None, frozenset(), None),
     ],
 )

@@ -76,15 +76,16 @@ def choose_classification(
 ) -> Triple | None:
     """Return the resolved triple for one entity's current answers, or None if it has none.
 
-    A Jev org subtype that is ``unknown`` or not yet trusted falls back to the
-    regex's org subtype when it has one, else ``unknown``.
+    A Jev org subtype that is ``unknown`` (or missing) or not yet trusted falls
+    back to the regex's org subtype when it has one, else ``unknown``.
     """
     if manual and manual.entity_type != NOT_A_NAME:
         return manual.entity_type, manual.entity_subtype, "manual"
     if jev and jev.entity_type in ENTITY_TYPES and (jev.confidence or 0) >= threshold:
         sub = jev.entity_subtype
         if jev.entity_type == "organization" and (
-            sub == "unknown" or (sub in JEV_ORG_SUBTYPES and sub not in trusted_org_subtypes)
+            sub in (None, "unknown")
+            or (sub in JEV_ORG_SUBTYPES and sub not in trusted_org_subtypes)
         ):
             sub = (
                 regex.entity_subtype
