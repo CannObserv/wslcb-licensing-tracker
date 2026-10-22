@@ -7,10 +7,13 @@ Pure-function tests — no database. Cases come from the hand-labeled gold set
 import pytest
 
 from wslcb_licensing_tracker.entities import (
+    REGEX_MODEL,
+    REGEX_SUBTYPE,
     _classify_entity_type,
     entity_category,
     extract_entity_names,
     is_noise_name,
+    regex_classification,
 )
 
 # ── defects named in #203 ────────────────────────────────────────────
@@ -142,14 +145,57 @@ def test_estate_category(name):
         ("LEVY PREMIUM FOODSERVICE LIMIT", "truncated_suffix"),
         ("CATOCTIN CREEK MAPLE SYRUP COMP", "truncated_suffix"),
         ("FORGE CELLARS", "org_keyword"),
-        ("CITY OF LONGVIEW", "government_tribe"),
-        ("LOWER ELWHA KLALLAM TRIBE", "government_tribe"),
+        ("CITY OF LONGVIEW", "government"),
+        ("LOWER ELWHA KLALLAM TRIBE", "tribe"),
         ("REAL ESTATE PARTNERS OF WA", "legal_suffix"),
         ("GRGICH HILLS ESTATE WINES", "org_keyword"),
     ],
 )
 def test_category(name, category):
     assert entity_category(name) == category
+
+
+# ── regex subtypes (#206) ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("SMITH FAMILY TRUST", ("organization", "trust")),
+        ("DARRYL R ESTATE WILCOX", ("organization", "estate")),
+        ("GLEASON & KOATZ LLP", ("organization", "business")),
+        ("FAVIA ERICKSON WINEGROWERS, LL", ("organization", "business")),
+        ("FORGE CELLARS", ("organization", "business")),
+        ("CITY OF LONGVIEW", ("organization", "government")),
+        ("PORT OF SEATTLE", ("organization", "government")),
+        ("CHAMBER OF COMMERCE", ("organization", "government")),
+        ("LOWER ELWHA KLALLAM TRIBE", ("organization", "tribe")),
+        ("CONFEDERATED TRIBES OF THE COLVILLE RESERVATION", ("organization", "tribe")),
+        ("SPOKANE INDIAN NATION", ("organization", "tribe")),
+        ("NATION OF THE NOOKSACK", ("organization", "tribe")),
+        ("BAND OF CHEROKEE", ("organization", "tribe")),
+        # tribe is checked before government
+        ("CONFEDERATED TRIBES OF OKANOGAN COUNTY", ("organization", "tribe")),
+        ("JOHN DOE", ("person", None)),
+    ],
+)
+def test_regex_classification(name, expected):
+    assert regex_classification(name) == expected
+
+
+def test_regex_never_claims_nonprofit():
+    assert "nonprofit" not in REGEX_SUBTYPE.values()
+
+
+def test_every_category_has_a_subtype():
+    from wslcb_licensing_tracker.entities import _CATEGORY_CHECKS
+
+    assert {cat for cat, _ in _CATEGORY_CHECKS} == set(REGEX_SUBTYPE)
+
+
+def test_regex_model_is_independent_of_reprocess_version():
+    # A name-cleaning bump of _ENTITY_REPROCESS_VERSION must not re-stamp regex rows.
+    assert REGEX_MODEL == "regex-1"
 
 
 def test_truncated_tail_requires_truncation_length():

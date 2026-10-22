@@ -11,7 +11,7 @@ from wslcb_licensing_tracker.entities import (
     parse_and_link_entities,
     reclassify_entities,
 )
-from wslcb_licensing_tracker.models import entities, record_entities
+from wslcb_licensing_tracker.models import entities, entity_classifications, record_entities
 from wslcb_licensing_tracker.pipeline import insert_record
 
 
@@ -31,6 +31,53 @@ class TestGetOrCreateEntity:
     async def test_raises_on_empty_name(self, pg_conn):
         with pytest.raises(ValueError):
             await get_or_create_entity(pg_conn, "")
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_create_writes_regex_row_and_resolved_columns(self, pg_conn):
+        """#206: a new entity gets its resolved columns and one regex classification row."""
+        eid = await get_or_create_entity(pg_conn, "T206 LOWER ELWHA KLALLAM TRIBE")
+        row = (
+            await pg_conn.execute(
+                select(
+                    entities.c.entity_type,
+                    entities.c.entity_subtype,
+                    entities.c.classification_source,
+                ).where(entities.c.id == eid)
+            )
+        ).one()
+        assert tuple(row) == ("organization", "tribe", "regex")
+
+        async def _rows():
+            return (
+                await pg_conn.execute(
+                    select(
+                        entity_classifications.c.source,
+                        entity_classifications.c.entity_type,
+                        entity_classifications.c.entity_subtype,
+                        entity_classifications.c.model,
+                        entity_classifications.c.confidence,
+                    ).where(entity_classifications.c.entity_id == eid)
+                )
+            ).fetchall()
+
+        assert [tuple(r) for r in await _rows()] == [
+            ("regex", "organization", "tribe", "regex-1", None)
+        ]
+        # The fallback-SELECT path writes nothing.
+        assert await get_or_create_entity(pg_conn, "t206 lower elwha klallam tribe") == eid
+        assert len(await _rows()) == 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_create_person_has_null_subtype(self, pg_conn):
+        eid = await get_or_create_entity(pg_conn, "T206 JOHN Q DOE")
+        row = (
+            await pg_conn.execute(
+                select(entities.c.entity_type, entities.c.entity_subtype).where(
+                    entities.c.id == eid
+                )
+            )
+        ).one()
+        assert tuple(row) == ("person", None)
 
 
 class TestParseAndLinkEntities:

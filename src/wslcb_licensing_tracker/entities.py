@@ -12,18 +12,32 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .models import entities, license_records, record_enrichments, record_entities
+from .models import (
+    entities,
+    entity_classifications,
+    license_records,
+    record_enrichments,
+    record_entities,
+)
 from .text_utils import clean_entity_name, strip_duplicate_marker
 
 logger = logging.getLogger(__name__)
 
 # Enrichment version written by reprocess_entities.
 # Bump this integer when entity processing logic changes.
-_ENTITY_REPROCESS_VERSION = 3
+_ENTITY_REPROCESS_VERSION = 4
+
+# Version of the regex classifier rules (``_CATEGORY_CHECKS`` + ``REGEX_SUBTYPE``),
+# stored as ``entity_classifications.model`` on regex rows (#206).  Bump it only
+# when the rules change: ``reclassify_entities`` then writes a fresh regex row
+# for every entity.  Kept separate from ``_ENTITY_REPROCESS_VERSION`` so a
+# name-cleaning change does not re-stamp ~67K identical regex answers.
+_REGEX_CLASSIFIER_VERSION = 1
+REGEX_MODEL = f"regex-{_REGEX_CLASSIFIER_VERSION}"
 
 # Meta-labels that WSLCB embeds in applicant lists as truncation notices.
 # These are not real people or organizations and must be excluded from entity creation.
@@ -83,10 +97,10 @@ def is_noise_name(name: str) -> bool:
 # ---------------------------------------------------------------------------
 # Person vs. organization classifier (#203)
 # ---------------------------------------------------------------------------
-# One regex per category.  Only the binary ``entity_type`` is persisted; the
-# category is exposed by ``entity_category()`` for diagnostics and a later
-# finer-grained subtype.  Estates, trusts, tribes, governments and clubs are all
-# ``organization``.  Validated against docs/research/person-vs-org/gold.csv.
+# One regex per category.  ``entity_type`` is binary; the category maps to an
+# ``entity_subtype`` through ``REGEX_SUBTYPE`` (#206).  Estates, trusts, tribes,
+# governments and clubs are all ``organization``.  Validated against
+# docs/research/person-vs-org/gold.csv.
 #
 # Token boundaries use lookarounds, not ``\b``: ``CO\.\b`` can never match
 # before a space or end of string.  Avoid bare words that are common surnames
@@ -204,13 +218,22 @@ _TRUNCATED_WORDS: dict[str, int] = {
 }
 _TAIL_TOKEN = re.compile(r"([A-Z]+)\W*$")
 
-_GOVERNMENT_TRIBE = re.compile(
+# Tribe is checked before government, so CONFEDERATED TRIBES … COUNTY is a tribe.
+_TRIBE = re.compile(
     _words(
         r"TRIBES?",
         r"TRIBAL",
         r"INDIANS",
         r"CONFEDERATED",
         r"RESERVATION",
+        r"INDIAN NATION",
+        r"NATION OF",
+        r"BAND OF",
+    )
+)
+
+_GOVERNMENT = re.compile(
+    _words(
         r"COUNTY",
         r"DISTRICT",
         r"UNIVERSITY",
@@ -222,8 +245,7 @@ _GOVERNMENT_TRIBE = re.compile(
         r"GOVERNMENT",
         r"AUTHORITY",
         r"REGIONAL",
-        r"(?:CITY|TOWN|COUNTY|STATE|PORT|VILLAGE|BOARD|NATION|BAND|CHAMBER) OF",
-        r"INDIAN NATION",
+        r"(?:CITY|TOWN|COUNTY|STATE|PORT|VILLAGE|BOARD|CHAMBER) OF",
         r"CITY LIGHT",
         r"PUBLIC UTILITY",
     )
@@ -404,7 +426,8 @@ _CATEGORY_CHECKS: tuple[tuple[str, Callable[[str], bool]], ...] = (
     ("trust", _is_trust),
     ("legal_suffix", lambda n: _LEGAL_SUFFIX.search(n) is not None),
     ("truncated_suffix", _is_truncated_suffix),
-    ("government_tribe", lambda n: _GOVERNMENT_TRIBE.search(n) is not None),
+    ("tribe", lambda n: _TRIBE.search(n) is not None),
+    ("government", lambda n: _GOVERNMENT.search(n) is not None),
     ("org_keyword", lambda n: _ORG_KEYWORD.search(n) is not None),
     ("estate", lambda n: _ESTATE.search(n) is not None),
 )
@@ -414,22 +437,46 @@ def entity_category(name: str) -> str | None:
     """Return the non-person category matched by *name*, or None for a person.
 
     Categories, checked in order: ``trust``, ``legal_suffix``,
-    ``truncated_suffix``, ``government_tribe``, ``org_keyword``, ``estate``.
+    ``truncated_suffix``, ``tribe``, ``government``, ``org_keyword``, ``estate``.
     *name* is expected to be cleaned (uppercase; see ``clean_entity_name``).
     """
     return next((cat for cat, check in _CATEGORY_CHECKS if check(name)), None)
 
 
+# Regex category -> entity_subtype.  The regex never claims ``nonprofit`` (an
+# INC may be either); only Jev or an operator can.
+REGEX_SUBTYPE: dict[str, str] = {
+    "trust": "trust",
+    "estate": "estate",
+    "tribe": "tribe",
+    "government": "government",
+    "legal_suffix": "business",
+    "truncated_suffix": "business",
+    "org_keyword": "business",
+}
+
+
+def regex_classification(name: str) -> tuple[str, str | None]:
+    """Return the regex's ``(entity_type, entity_subtype)`` for a cleaned *name*.
+
+    ``("person", None)`` when no category matches.
+    """
+    cat = entity_category(name)
+    return ("organization", REGEX_SUBTYPE[cat]) if cat else ("person", None)
+
+
 def _classify_entity_type(name: str) -> str:
     """Classify an entity name as 'person' or 'organization'."""
-    return "organization" if entity_category(name) else "person"
+    return regex_classification(name)[0]
 
 
-async def get_or_create_entity(conn: AsyncConnection, name: str, entity_type: str = "") -> int:
+async def get_or_create_entity(conn: AsyncConnection, name: str) -> int:
     """Return the entity id for *name*, creating if needed.
 
     Names are cleaned via ``clean_entity_name`` and uppercased.
     Uses ON CONFLICT DO NOTHING + RETURNING + fallback SELECT for idempotency.
+    A real insert also writes the entity's regex ``entity_classifications``
+    row; the resolved columns start as the regex answer (#206).
 
     Raises ``ValueError`` if *name* is empty after cleaning.
     """
@@ -438,16 +485,31 @@ async def get_or_create_entity(conn: AsyncConnection, name: str, entity_type: st
         msg = "Entity name must not be empty"
         raise ValueError(msg)
 
-    resolved_type = entity_type or _classify_entity_type(normalized)
+    entity_type, entity_subtype = regex_classification(normalized)
 
     stmt = (
         pg_insert(entities)
-        .values(name=normalized, entity_type=resolved_type)
+        .values(
+            name=normalized,
+            entity_type=entity_type,
+            entity_subtype=entity_subtype,
+            classification_source="regex",
+        )
         .on_conflict_do_nothing(index_elements=["name"])
         .returning(entities.c.id)
     )
     row_id = (await conn.execute(stmt)).scalar_one_or_none()
-    if row_id is None:
+    if row_id is not None:
+        await conn.execute(
+            insert(entity_classifications).values(
+                entity_id=row_id,
+                source="regex",
+                entity_type=entity_type,
+                entity_subtype=entity_subtype,
+                model=REGEX_MODEL,
+            )
+        )
+    else:
         row_id = (
             await conn.execute(
                 select(entities.c.id).where(func.lower(entities.c.name) == normalized.lower())
