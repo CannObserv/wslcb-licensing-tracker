@@ -274,7 +274,8 @@ class TestGetEntities:
         assert result == {"entities": [], "total": 0}
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_rows_carry_source_and_jev_confidence(self, pg_conn):
+    async def test_rows_carry_source_and_jev_confidence(self, pg_conn, monkeypatch):
+        monkeypatch.delenv("CO_WSLCB_LICENSING_TRACKER_JEV_CONFIDENCE_THRESHOLD", raising=False)
         person = await get_or_create_entity(pg_conn, "T209 JOHN DOE")
         tribe = await get_or_create_entity(pg_conn, "T209 LOWER ELWHA TRIBE")
         acme = await get_or_create_entity(pg_conn, "T209 ACME LLC")
