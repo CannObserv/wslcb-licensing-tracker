@@ -22,6 +22,8 @@
    and returns a calibrated confidence. Batched 25 names per request, it costs
    **~$0.65 to classify all 67K entities** with no accuracy loss (unbatched:
    ~$1.50).
+   *Update:* production asks a second (org-subtype) question per name, which
+   raises that to ~545 tokens/name, ≈ $1.54 for 67K (§10).
 3. **`probablepeople` stays rejected.** It wrongly flags 8% of random persons,
    more often for non-Western names (15% vs 6%, p≈0.03).
 4. **Recommended:** fix the regex now (zero deps), then add Jev as an offline,
