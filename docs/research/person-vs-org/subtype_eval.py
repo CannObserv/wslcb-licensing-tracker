@@ -1,4 +1,4 @@
-# ruff: noqa: INP001, T201, EM101, EM102, TRY003 — research script; prints and exits are its CLI output.
+# ruff: noqa: INP001, T201, EM102, TRY003 — research script; prints and exits are its CLI output.
 r"""Production-path Jev evaluation of the org-subtype question on the gold set (#210; research).
 
 Not part of the application. Usage (from repo root):
@@ -13,8 +13,9 @@ Not part of the application. Usage (from repo root):
 ``run`` sends the 834 non-ambiguous gold names through the shipped
 ``jev_client.classify_batch`` (25 per request, a kind and an org question per
 name), in ``entity_id`` order as production batches them, and rewrites the
-``prod_kind`` / ``prod_kind_conf`` / ``prod_org`` / ``prod_org_conf`` columns
-of predictions.csv.  The key is ``CO_WSLCB_LICENSING_TRACKER_TYPESAFE_API_KEY``,
+``<tag>_kind`` / ``_kind_conf`` / ``_org`` / ``_org_conf`` columns of
+predictions.csv (``--tag``, default ``prod``; subtype_wordings.csv pins each tag
+to the ORG_CRITERIA it was sent with).  The key is ``CO_WSLCB_LICENSING_TRACKER_TYPESAFE_API_KEY``,
 else ``TYPESAFE_API_KEY`` in the repo ``.env`` (``evaluate._key()``).  The
 first batch is sent alone; the run stops if it, plus the spend already in
 subtype_spend.csv (every live send is appended there), passes
@@ -26,7 +27,9 @@ production by ``md5(name)``, gold ids excluded (each pool: the regex's subtype,
 or a keyword the regex may miss), into subtype_supplement.csv.
 The operator runs it.  The rows are hand-labeled (``label``, ``subtype``,
 ``subtype_sure``) and committed; only then does ``supplement`` send them, and
-it writes the answers to a separate subtype_supplement_preds.csv.
+it writes the answers to a separate subtype_supplement_preds.csv.  Jev never
+saw these names while the wording was drafted, so they are the held-out check:
+a subtype with >= ``HELD_OUT_MIN`` held-out answers below the bar fails.
 
 ``run`` and ``supplement`` refuse to send while their label file has
 uncommitted changes: labels are fixed before Jev is seen.
@@ -39,6 +42,8 @@ the org answer is too (``map_answer``).  ``score`` counts exactly those.
 import argparse
 import asyncio
 import csv
+import hashlib
+import json
 import math
 import subprocess
 import sys
@@ -61,7 +66,11 @@ SUPP_PREDS = HERE / "subtype_supplement_preds.csv"
 # total, so run + supplement + any re-run share one approval.
 SPEND = HERE / "subtype_spend.csv"
 SPEND_FIELDS = ["at", "cmd", "requests", "tokens", "usd"]
-PROD_COLS = ("prod_kind", "prod_kind_conf", "prod_org", "prod_org_conf")
+# Each ORG_CRITERIA wording writes its own columns, ``<tag>_kind`` etc.; this file
+# pins every tag to the wording it was sent with (#210: ``prod`` = as shipped
+# by #207, ``prod2`` = the reworded criteria).
+WORDINGS = HERE / "subtype_wordings.csv"
+HELD_OUT_MIN = 10
 THRESHOLD = 0.7
 BAR = 0.90
 MIN_EVIDENCE = 20
@@ -142,6 +151,31 @@ def _key() -> str:
     return jev_client.get_api_key() or ev._key()  # noqa: SLF001
 
 
+def _cols(tag: str) -> tuple[str, str, str, str]:
+    return f"{tag}_kind", f"{tag}_kind_conf", f"{tag}_org", f"{tag}_org_conf"
+
+
+def _wording_sha() -> str:
+    return hashlib.sha256(json.dumps(jev_client.ORG_CRITERIA, sort_keys=True).encode()).hexdigest()
+
+
+def _pin_wording(tag: str) -> None:
+    """Exit if *tag* was sent with a different ORG_CRITERIA; record it if new."""
+    sha = _wording_sha()
+    pinned = {r["tag"]: r["sha256"] for r in _rows(WORDINGS)} if WORDINGS.exists() else {}
+    if tag in pinned and pinned[tag] != sha:
+        raise SystemExit(f"tag {tag!r} was sent with another ORG_CRITERIA; use a new --tag")
+    if tag not in pinned:
+        new = not WORDINGS.exists()
+        with WORDINGS.open("a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["tag", "sha256", "org_criteria"])
+            if new:
+                w.writeheader()
+            w.writerow(
+                {"tag": tag, "sha256": sha, "org_criteria": json.dumps(jev_client.ORG_CRITERIA)}
+            )
+
+
 async def _classify(cmd: str, names: list[str]) -> tuple[list[jev_client.JevAnswer], dict]:
     """Send *names* 25 per request; return the answers in order and the token stats.
 
@@ -216,44 +250,52 @@ def _print_stats(stats: dict) -> None:
     )
 
 
-def _prod_cols(a: jev_client.JevAnswer) -> dict:
+def _prod_cols(a: jev_client.JevAnswer, tag: str) -> dict:
+    kind, kind_conf, org, org_conf = _cols(tag)
     return {
-        "prod_kind": ev.CODE[a.kind],
-        "prod_kind_conf": round(a.kind_confidence, 3),
-        "prod_org": a.org,
-        "prod_org_conf": round(a.org_confidence, 3),
+        kind: ev.CODE[a.kind],
+        kind_conf: round(a.kind_confidence, 3),
+        org: a.org,
+        org_conf: round(a.org_confidence, 3),
     }
 
 
-async def run() -> None:
-    """Classify the non-ambiguous gold names and rewrite the prod_* columns."""
+async def run(tag: str) -> None:
+    """Classify the non-ambiguous gold names and rewrite the *tag* columns."""
     _require_committed(ev.GOLD, "subtype")
+    _pin_wording(tag)
     gold = sorted(
         (g for g in _rows(ev.GOLD) if g["label"] != "A"), key=lambda g: int(g["entity_id"])
     )
-    answers, stats = await _classify("run", [g["name"] for g in gold])
+    answers, stats = await _classify(f"run:{tag}", [g["name"] for g in gold])
+    cols = _cols(tag)
     preds = {r["entity_id"]: r for r in _rows(ev.PREDS)}
     for r in preds.values():
-        r.update(dict.fromkeys(PROD_COLS, ""))
+        r.update(dict.fromkeys(cols, ""))
     for g, a in zip(gold, answers, strict=True):
-        preds[g["entity_id"]].update(_prod_cols(a))
-    fields = [c for c in next(iter(preds.values())) if c not in PROD_COLS] + list(PROD_COLS)
+        preds[g["entity_id"]].update(_prod_cols(a, tag))
+    fields = [c for c in next(iter(preds.values())) if c not in cols] + list(cols)
     _write(ev.PREDS, list(preds.values()), fields)
     _print_stats(stats)
 
 
-async def supplement() -> None:
-    """Classify the labeled supplement rows into subtype_supplement_preds.csv."""
+async def supplement(tag: str) -> None:
+    """Classify the labeled supplement rows into subtype_supplement_preds.csv's *tag* columns."""
     _require_committed(SUPP, "subtype")
+    _pin_wording(tag)
     rows = [r for r in _rows(SUPP) if r["label"] != "A"]
     if any(not r["label"] for r in rows):
         raise SystemExit(f"{SUPP.name} has unlabeled rows")
     _require_subtypes(rows, SUPP.name)
-    answers, stats = await _classify("supplement", [r["name"] for r in rows])
-    out = [
-        {"entity_id": r["entity_id"], **_prod_cols(a)} for r, a in zip(rows, answers, strict=True)
-    ]
-    _write(SUPP_PREDS, out, ["entity_id", *PROD_COLS])
+    answers, stats = await _classify(f"supplement:{tag}", [r["name"] for r in rows])
+    cols = _cols(tag)
+    old = {r["entity_id"]: r for r in _rows(SUPP_PREDS)} if SUPP_PREDS.exists() else {}
+    out = []
+    for r, a in zip(rows, answers, strict=True):
+        kept = {k: v for k, v in old.get(r["entity_id"], {}).items() if k not in cols}
+        out.append({**kept, "entity_id": r["entity_id"], **_prod_cols(a, tag)})
+    fields = list(dict.fromkeys(k for row in out for k in row))
+    _write(SUPP_PREDS, out, fields)
     _print_stats(stats)
 
 
@@ -279,12 +321,13 @@ def supplement_sql(n: int) -> str:
     return f"SET default_transaction_read_only = on;\nCOPY ({query}) TO STDOUT WITH CSV HEADER;\n"
 
 
-def _assigned(p: dict, t: float) -> str | None:
+def _assigned(p: dict, t: float, tag: str) -> str | None:
     """The org subtype production would store and resolve for this answer, else None."""
-    if p.get("prod_kind") != "O" or float(p["prod_kind_conf"]) < t:
+    kind, kind_conf, org, org_conf = _cols(tag)
+    if p.get(kind) != "O" or float(p[kind_conf]) < t:
         return None
     answer = jev_client.JevAnswer(
-        "organization", float(p["prod_kind_conf"]), p["prod_org"], float(p["prod_org_conf"]), {}
+        "organization", float(p[kind_conf]), p[org], float(p[org_conf]), {}
     )
     _, sub = map_answer(answer, threshold=t)
     return sub if sub in JEV_ORG_SUBTYPES else None
@@ -311,63 +354,70 @@ def _wilson_low(ok: int, n: int, z: float = 1.96) -> float:
     return (centre - margin) / (1 + z * z / n)
 
 
-def _verdict(n: int, precision: float) -> str:
+def _verdict(n: int, precision: float, held_n: int, held_ok: int) -> str:
+    """Gold + supplement decide; the held-out supplement alone can veto (operator, #210)."""
+    if held_n >= HELD_OUT_MIN and held_ok / held_n < BAR:
+        return "fail(held)"
     if n < MIN_EVIDENCE:
         return "insufficient"
     return "pass" if precision >= BAR else "fail"
 
 
-def score() -> None:
-    """Print the kind regression gate and the per-subtype precision table."""
+def score(tag: str) -> None:
+    """Print the kind regression gate and the per-subtype precision table for *tag*."""
+    kind, kind_conf, _, org_conf = _cols(tag)
     gold = [g for g in _rows(ev.GOLD) if g["label"] != "A"]
     _require_subtypes(gold, ev.GOLD.name)
     preds = {r["entity_id"]: r for r in _rows(ev.PREDS)}
-    if not preds[gold[0]["entity_id"]].get("prod_kind"):
-        raise SystemExit("predictions.csv has no prod_* answers; run `run` first")
-    a_fp = sum(preds[g["entity_id"]]["prod_kind"] != "P" for g in gold if g["stratum"] == "A")
+    if not preds[gold[0]["entity_id"]].get(kind):
+        raise SystemExit(f"predictions.csv has no {tag}_* answers; run `run --tag {tag}` first")
+    a_fp = sum(preds[g["entity_id"]][kind] != "P" for g in gold if g["stratum"] == "A")
     five = sum(
-        preds[g["entity_id"]]["prod_kind"] == ("P" if g["label"] in "PH" else g["label"])
-        for g in gold
+        preds[g["entity_id"]][kind] == ("P" if g["label"] in "PH" else g["label"]) for g in gold
     )
-    print(f"A persons wrongly flagged: {a_fp}/300   5-way: {five}/{len(gold)}")
+    print(f"[{tag}] A persons wrongly flagged: {a_fp}/300   5-way: {five}/{len(gold)}")
 
     pool = [(g, preds[g["entity_id"]], "gold") for g in gold]
     if SUPP.exists() and SUPP_PREDS.exists():
-        sp = {r["entity_id"]: r for r in _rows(SUPP_PREDS)}
+        sp = {r["entity_id"]: r for r in _rows(SUPP_PREDS) if r.get(kind)}
         supp = [r for r in _rows(SUPP) if r["entity_id"] in sp]
         _require_subtypes(supp, SUPP.name)
         pool += [(r, sp[r["entity_id"]], "supp") for r in supp]
     for t in (THRESHOLD, 0.8, 0.9):
-        print(f"\nthreshold {t}  (bar {BAR:.0%}, min {MIN_EVIDENCE} answers)")
+        print(
+            f"\nthreshold {t}  (bar {BAR:.0%}, min {MIN_EVIDENCE} answers; "
+            f"held-out veto at >= {HELD_OUT_MIN})"
+        )
         print(
             f"{'subtype':12s}{'labeled':>8s}{'answered':>10s}{'correct':>9s}"
-            f"{'precision':>11s}{'95% low':>9s}{'recall':>8s}"
-            f"{'  verdict':12s}{'  of which supp':>16s}"
+            f"{'precision':>11s}{'95% low':>9s}{'recall':>8s}{'held-out':>10s}  verdict"
         )
         for sub in JEV_ORG_SUBTYPES:
-            hits = [(g, src) for g, p, src in pool if _assigned(p, t) == sub]
+            hits = [(g, src) for g, p, src in pool if _assigned(p, t, tag) == sub]
             ok = sum(_gold_subtype(g) == sub for g, _ in hits)
             n_gold = sum(_gold_subtype(g) == sub for g, _, _ in pool)
             prec = ok / len(hits) if hits else 0.0
-            supp = sum(src == "supp" for _, src in hits)
+            held = [g for g, src in hits if src == "supp"]
+            held_ok = sum(_gold_subtype(g) == sub for g in held)
+            verdict = _verdict(len(hits), prec, len(held), held_ok)
             print(
                 f"{sub:12s}{n_gold:8d}{len(hits):10d}{ok:9d}{prec:11.1%}"
-                f"{_wilson_low(ok, len(hits)):9.1%}"
-                f"{ok / n_gold if n_gold else 0:8.1%}  {_verdict(len(hits), prec):12s}{supp:14d}"
+                f"{_wilson_low(ok, len(hits)):9.1%}{ok / n_gold if n_gold else 0:8.1%}"
+                f"{f'{held_ok}/{len(held)}':>10s}  {verdict}"
             )
 
     print(f"\nerrors at {THRESHOLD} (gold label/subtype -> Jev org answer):")
     for g, p, src in pool:
-        sub = _assigned(p, THRESHOLD)
+        sub = _assigned(p, THRESHOLD, tag)
         if sub and _gold_subtype(g) != sub:
             print(
                 f"  [{src}] {g['name']!r}: {g['label']}/{g['subtype'] or '-'} -> {sub} "
-                f"(kind {p['prod_kind_conf']}, org {p['prod_org_conf']})"
+                f"(kind {p[kind_conf]}, org {p[org_conf]})"
             )
 
     print(f"\nregex org subtypes a trusted Jev answer would override, at {THRESHOLD}:")
     for g, p, src in pool:
-        sub = _assigned(p, THRESHOLD)
+        sub = _assigned(p, THRESHOLD, tag)
         rtype, rsub = regex_classification(g["name"])
         if sub and rtype == "organization" and rsub in JEV_ORG_SUBTYPES and rsub != sub:
             right = "right" if _gold_subtype(g) == sub else "WRONG"
@@ -379,15 +429,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["run", "score", "supplement-sql", "supplement"])
     ap.add_argument("--n", type=int, default=60)
+    ap.add_argument("--tag", default="prod", help="column prefix, one per ORG_CRITERIA wording")
     args = ap.parse_args()
     if args.cmd == "supplement-sql":
         sys.stdout.write(supplement_sql(args.n))
         return
     if args.cmd == "run":
-        asyncio.run(run())
+        asyncio.run(run(args.tag))
     elif args.cmd == "supplement":
-        asyncio.run(supplement())
-    score()
+        asyncio.run(supplement(args.tag))
+    score(args.tag)
 
 
 if __name__ == "__main__":
