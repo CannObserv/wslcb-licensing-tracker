@@ -212,6 +212,7 @@ class TestCmdScrapeClassification:
         (call,) = self._classify_calls(checkin)
         assert call.args[0] == "alert"
         assert call.kwargs["metadata"] == {"fault": "auth_failed"}
+        assert call.args[1]["backlog"] == "n/a"  # not counted after an ingest (#210)
 
     def _no_classify_checkin(self, scrape, classify, checkin, **summary):
         self._scrape_ok(scrape)

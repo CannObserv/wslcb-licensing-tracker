@@ -702,6 +702,18 @@ async def test_checkin_payload(case, summary, backlog, status, fault):
         assert variables["error"] == fault
 
 
+@pytest.mark.parametrize(
+    ("summary", "status"),
+    [(_s(batches_ok=3, batches_failed=1), "alert"), (_s(batches_ok=200), "ok")],
+)
+async def test_uncounted_backlog_reads_n_a_and_never_alerts(summary, status):
+    # Post-ingest passes don't count the backlog: "n/a", not a 0 that reads as measured (#210).
+    got_status, variables, _ = jc.checkin_payload(summary, backlog=None, host="h1")
+    assert got_status == status
+    assert variables["backlog"] == jc.NOT_COUNTED
+    assert set(variables) == _VARIABLES
+
+
 async def test_exception_payload(monkeypatch):
     monkeypatch.setenv(f"{ENV_PREFIX}ENABLE_JEV_CLASSIFICATION", "1")
     status, variables, metadata = jc.exception_payload(
@@ -713,6 +725,9 @@ async def test_exception_payload(monkeypatch):
     assert variables["error"] == "RuntimeError: db went away"
     assert variables["enabled"] == "true"
     assert variables["outcome"] == "failed"
+    # The run never got a summary: its counts are unknown, not blank (#210).
+    for count in ("names_sent", "batches_ok", "batches_failed", "backlog"):
+        assert variables[count] == jc.NOT_COUNTED == "n/a"
 
 
 async def test_a_deadline_closes_the_run_and_frees_the_lock(isolated, jev_on):
