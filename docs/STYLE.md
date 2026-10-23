@@ -61,6 +61,7 @@ Fixed hex values (not Tailwind classes) — visually distinct from brand accent.
   - CO Archive / CO Diff Archive: `bg-co-purple-50 text-co-purple border-co-purple-100`
   - Internet Archive: `bg-amber-50 text-amber-700 border-amber-200`
   - Repaired: `bg-sky-50 text-sky-700 border-sky-200`
+- **Entity classification badges** (#209): macro `badge(entity)` in `partials/classification_badge.html`, built by `display.classification_badge`. Pill shape and colours reuse the source chips: **Rules** (regex) = Manual's gray, **AI · NN%** (Jev; NN = person/organization confidence) = CO Archive purple, **Reviewed** (manual) = Live Scrape green. The `title` explains the source and flags a Jev type whose subtype came from the rules. Public wording stays vendor-neutral: no vendor or model id in text, `title` or `data-*`. Org subtype sits inside the type chip: `Organization · Trust`. Classes come from Python, which Tailwind doesn't scan, so keep them to classes already used in a template.
 - **Provenance display**: collapsed badges with count + date range; `<details>` expands when >3 sources
 - **Search filter grid**: `grid-cols-1 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))]`
 - **Search button**: always bottom-right of filter card (alongside "Clear filters" at bottom-left)

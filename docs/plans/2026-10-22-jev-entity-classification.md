@@ -349,6 +349,7 @@ Run this right after Phase 1 merges, and before deploying any later phase. Rollo
   - `class JevError(Exception)` with `status: int | None` and the property `auth: bool` (status 401/403).
   - `async classify_batch(names: Sequence[str], *, api_key: str, model: str, client: httpx.AsyncClient, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> JevBatch`. Raises `ValueError` when `len(names)` is 0 or > 25. Raises `JevError` for: a non-retryable status; retries exhausted; `httpx.TransportError`; a malformed response (missing key, choice outside the criteria, confidence not in [0, 1]). It never logs the key.
 - `ORG_CRITERIA` (new; Task 5.1 validates it; changing it later means re-scoring):
+  *(2026-10-23, #209: the block below is the original draft. It was reworded on the operator's instruction (#210); the shipped text is `jev_client.ORG_CRITERIA`, validated in research §10.)*
 
 ```python
 ORG_CRITERIA = {

@@ -94,6 +94,8 @@ The owner made these decisions:
 - Requests are batched: **25 names per request**, label definitions in each
   question's `criteria` (measured in the research doc §5.1, *Batching*: no
   accuracy loss, ~238 input tokens/name, ≈ $0.65 for all 67K entities).
+  *(2026-10-23, #209: superseded. With the org-subtype question added it is
+  ~545 tokens/name, ≈ $1.54 for 67K; see research §10 and `jev_client.ORG_CRITERIA`.)*
 - Classify once (above).
 - New environment variables use the prefix `CO_WSLCB_LICENSING_TRACKER_` (#204).
 

@@ -102,7 +102,7 @@ Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/
 
 ### Templates
 - HTMX for partial updates; `/search` detects `HX-Request` header.
-- Custom Jinja2 filters in `app.py`: `section_label`, `phone_format`, `build_qs`.
+- Custom Jinja2 filters in `app.py`: `section_label`, `phone_format`, `build_qs`, `classification_badge`, `subtype_label`.
 - See [`docs/STYLE.md`](docs/STYLE.md) for brand colors and CSS conventions.
 
 ### Data Integrity
