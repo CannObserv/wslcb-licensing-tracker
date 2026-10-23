@@ -83,6 +83,8 @@ def choose_classification(
         return manual.entity_type, manual.entity_subtype, "manual"
     if jev and jev.entity_type in ENTITY_TYPES and (jev.confidence or 0) >= threshold:
         sub = jev.entity_subtype
+        # A stored org row always has a subtype (ck_ec_subtype_matches_type, #212);
+        # None stays handled for callers passing SourceAnswer directly.
         if jev.entity_type == "organization" and (
             sub in (None, "unknown")
             or (sub in JEV_ORG_SUBTYPES and sub not in trusted_org_subtypes)

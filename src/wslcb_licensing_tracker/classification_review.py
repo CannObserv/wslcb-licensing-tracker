@@ -220,6 +220,7 @@ async def accept_answer(
     if answer.entity_type == NOT_A_NAME:
         return await mark_not_a_name(conn, entity_id, admin_email=admin_email, note=note)
     subtype = answer.entity_subtype
+    # Defensive: ck_ec_subtype_matches_type (#212) keeps such a row out of the DB.
     if answer.entity_type == "organization" and subtype is None:
         subtype = "unknown"
     return await _record_and_resolve(
