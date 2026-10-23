@@ -11,7 +11,7 @@
         <div>
             <h1 class="text-xl font-bold text-gray-900">{{ entity.name }}</h1>
             <p class="text-sm text-gray-500 mt-1 flex items-center gap-1">
-                {% if entity.entity_type in ('organization', 'person') %}{{ cb.type_chip(entity) }}{% endif %}
+                {{ cb.type_chip(entity) }}
                 {{ cb.badge(entity) }}
             </p>
         </div>

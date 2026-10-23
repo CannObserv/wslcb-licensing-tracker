@@ -825,6 +825,18 @@ class TestEntitySubtypeAndBadges:
         assert "Reviewed" in body
         assert "Reviewed by an operator" in body
 
+    def test_entity_page_untyped_matches_list(self):
+        untyped = {
+            "id": 6,
+            "name": "SEE ATTACHED",
+            "entity_type": "",
+            "entity_subtype": None,
+            "classification_source": "regex",
+        }
+        body = self._detail(untyped).text
+        assert "Unknown" in body
+        assert "Rules" in body
+
     def test_public_pages_are_vendor_neutral(self, monkeypatch):
         monkeypatch.delenv("ADMIN_DEV_EMAIL", raising=False)
         pages = [
