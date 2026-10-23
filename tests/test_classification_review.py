@@ -5,14 +5,19 @@ are seeded by inserting into ``entity_classifications`` directly.
 """
 
 import json
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, insert, select
+from sqlalchemy import delete, func, insert, select, update
 
 from wslcb_licensing_tracker import classification_review as cr
+from wslcb_licensing_tracker.config import ENV_PREFIX
 from wslcb_licensing_tracker.entities import get_or_create_entity, reclassify_entities
+from wslcb_licensing_tracker.entity_classification import record_manual, resolve_entities
+from wslcb_licensing_tracker.jev_classifier import awaiting_count
 from wslcb_licensing_tracker.models import (
     admin_audit_log,
+    classification_runs,
     entities,
     entity_classifications,
     entity_review_flags,
@@ -303,3 +308,263 @@ async def test_flag_entity_validation(pg_conn):
     assert action == "entity.flag"
     assert details["reason"] == "maybe a trust"
     assert details["flag_id"] == flag_id
+
+
+# ── 3.2 queue, detail, health ────────────────────────────────────────
+
+
+async def _manual(conn, eid: int, entity_type: str = "person", subtype: str | None = None) -> None:
+    await record_manual(
+        conn, eid, entity_type=entity_type, entity_subtype=subtype, created_by="m@example.com"
+    )
+
+
+async def _queue(conn, tab: str, ids: list[int]) -> list[dict]:
+    """The tab's items for *ids* only, in queue order (the test DB holds others' entities)."""
+    return [
+        i for i in await cr.review_queue(conn, tab=tab, limit=1_000_000) if i["entity_id"] in ids
+    ]
+
+
+async def test_queue_membership_matrix(pg_conn):
+    flag = await _entity(pg_conn, "M FLAG")
+    await _flag(pg_conn, flag)
+    flag_manual = await _entity(pg_conn, "M FLAG MANUAL")
+    await _manual(pg_conn, flag_manual)
+    await _flag(pg_conn, flag_manual)
+    low = await _entity(pg_conn, "M LOW")
+    await _jev(pg_conn, low, "person", None, 0.5)
+    noise = await _entity(pg_conn, "M NOISE")
+    await _jev(pg_conn, noise, "not_a_name", None, 0.9)
+    disagree = await _entity(pg_conn, "M DISAGREE LLC")
+    await _jev(pg_conn, disagree, "person", None, 0.9)
+    manual_only = await _entity(pg_conn, "M MANUAL ONLY")
+    await _jev(pg_conn, manual_only, "person", None, 0.3)
+    await _manual(pg_conn, manual_only)
+    unknown = await _entity(pg_conn, "M UNKNOWN")
+    await _jev(pg_conn, unknown, "organization", "business", 0.9)
+    unknown_manual = await _entity(pg_conn, "M UNKNOWN MANUAL")
+    await _manual(pg_conn, unknown_manual, "organization", "unknown")
+    unknown_flag = await _entity(pg_conn, "M UNKNOWN FLAG")
+    await _jev(pg_conn, unknown_flag, "organization", "business", 0.9)
+    await _flag(pg_conn, unknown_flag)
+    ids = [
+        flag,
+        flag_manual,
+        low,
+        noise,
+        disagree,
+        manual_only,
+        unknown,
+        unknown_manual,
+        unknown_flag,
+    ]
+    await resolve_entities(pg_conn, ids)
+    assert (await _resolved(pg_conn, unknown))[:2] == ("organization", "unknown")
+
+    main = {i["entity_id"]: i["reasons"] for i in await _queue(pg_conn, "main", ids)}
+    assert main == {
+        flag: ["flag"],
+        flag_manual: ["flag"],
+        low: ["low_confidence"],
+        noise: ["not_a_name"],
+        unknown_flag: ["flag", "unknown_subtype"],
+    }
+    unknown_tab = {i["entity_id"]: i["reasons"] for i in await _queue(pg_conn, "unknown", ids)}
+    assert unknown_tab == {unknown: ["unknown_subtype"]}
+
+
+async def test_queue_dedups_with_both_reasons(pg_conn):
+    eid = await _entity(pg_conn, "DEDUP")
+    await _jev(pg_conn, eid, "person", None, 0.45)
+    await _flag(pg_conn, eid, "one")
+    await _flag(pg_conn, eid, "two")
+
+    [item] = await _queue(pg_conn, "main", [eid])
+
+    assert item["reasons"] == ["flag", "low_confidence"]
+    assert [f["reason"] for f in item["flags"]] == ["one", "two"]
+    assert item["flags"][0]["flagged_by"] == "other@example.com"
+    assert item["jev"] == {
+        "entity_type": "person",
+        "entity_subtype": None,
+        "confidence": 0.45,
+        "model": "jev-1.14.0",
+    }
+    assert item["regex"] == {"entity_type": "person", "entity_subtype": None}
+    assert (item["name"], item["entity_type"], item["classification_source"]) == (
+        "T208 DEDUP",
+        "person",
+        "regex",
+    )
+
+
+async def test_queue_order(pg_conn):
+    flagged_jev = await _entity(pg_conn, "O FLAGGED JEV")
+    await _jev(pg_conn, flagged_jev, "person", None, 0.6)
+    await _flag(pg_conn, flagged_jev)
+    flagged = await _entity(pg_conn, "O FLAGGED")
+    await _flag(pg_conn, flagged)
+    mid = await _entity(pg_conn, "O MID")
+    await _jev(pg_conn, mid, "person", None, 0.5)
+    lowest = await _entity(pg_conn, "O LOWEST")
+    await _jev(pg_conn, lowest, "person", None, 0.3)
+    noise = await _entity(pg_conn, "O NOISE")
+    await _jev(pg_conn, noise, "not_a_name", None, 0.9)
+    ids = [flagged_jev, flagged, mid, lowest, noise]
+
+    order = [i["entity_id"] for i in await _queue(pg_conn, "main", ids)]
+
+    assert order == [flagged_jev, flagged, lowest, mid, noise]
+
+
+async def test_queue_limit(pg_conn):
+    for n in range(3):
+        await _flag(pg_conn, await _entity(pg_conn, f"LIMIT {n}"))
+    assert len(await cr.review_queue(pg_conn, tab="main", limit=2)) == 2
+
+
+async def test_review_counts_match_queue(pg_conn):
+    await _flag(pg_conn, await _entity(pg_conn, "C FLAG"))
+    u = await _entity(pg_conn, "C UNKNOWN")
+    await _jev(pg_conn, u, "organization", "business", 0.9)
+    await resolve_entities(pg_conn, [u])
+
+    counts = await cr.review_counts(pg_conn)
+
+    assert counts == {
+        "main": len(await cr.review_queue(pg_conn, tab="main", limit=1_000_000)),
+        "unknown": len(await cr.review_queue(pg_conn, tab="unknown", limit=1_000_000)),
+    }
+    assert counts["main"] >= 1
+    assert counts["unknown"] >= 1
+
+
+async def test_detail_shows_each_source_and_history(pg_conn):
+    eid = await _entity(pg_conn, "DETAIL")
+    old = await _jev(pg_conn, eid, "organization", "business", 0.8, model="jev-old")
+    ec = entity_classifications
+    await pg_conn.execute(update(ec).where(ec.c.id == old).values(ignored_at=func.now()))
+    await _jev(pg_conn, eid, "person", None, 0.55)
+    await record_manual(
+        pg_conn,
+        eid,
+        entity_type="organization",
+        entity_subtype="trust",
+        created_by=ADMIN,
+        note="family trust",
+    )
+    await _flag(pg_conn, eid, "check")
+
+    detail = await cr.classification_detail(pg_conn, eid)
+
+    current = detail["current"]
+    assert set(current) == {"regex", "jev", "manual"}
+    assert current["regex"]["model"] == "regex-1"
+    assert (current["jev"]["confidence"], current["jev"]["model"]) == (0.55, "jev-1.14.0")
+    assert current["manual"]["entity_subtype"] == "trust"
+    assert (current["manual"]["created_by"], current["manual"]["note"]) == (ADMIN, "family trust")
+    history = detail["history"]
+    assert [(h["source"], h["model"]) for h in history] == [
+        ("manual", None),
+        ("jev", "jev-1.14.0"),
+        ("jev", "jev-old"),
+        ("regex", "regex-1"),
+    ]
+    assert [h["ignored_at"] is not None for h in history] == [False, False, True, False]
+    assert [f["reason"] for f in detail["open_flags"]] == ["check"]
+
+
+def _run(started: str, **kw) -> dict:
+    """One ``classification_runs`` row; every row has every key (executemany needs that)."""
+    return {
+        "origin": "cli",
+        "model": "jev-1.14.0",
+        "started_at": datetime.fromisoformat(started),
+        "finished_at": None,
+        "batches_ok": 0,
+        "batches_failed": 0,
+        "input_tokens": 0,
+        "error": None,
+        **kw,
+    }
+
+
+async def test_health_numbers(pg_conn, monkeypatch):
+    for var in ("ENABLE_JEV_CLASSIFICATION", "TYPESAFE_API_KEY", "JEV_MODEL"):
+        monkeypatch.delenv(f"{ENV_PREFIX}{var}", raising=False)
+    cruns = classification_runs
+    await pg_conn.execute(delete(cruns))
+    t = datetime.fromisoformat
+    await pg_conn.execute(
+        insert(cruns),
+        [
+            # last month: counts all-time only
+            _run(
+                "2026-09-30T23:00+00:00",
+                finished_at=t("2026-09-30T23:10+00:00"),
+                batches_ok=2,
+                input_tokens=1000,
+            ),
+            _run(
+                "2026-10-01T01:00+00:00",
+                finished_at=t("2026-10-01T01:05+00:00"),
+                batches_ok=1,
+                batches_failed=1,
+                input_tokens=500,
+            ),
+            # died or still running
+            _run("2026-10-02T00:00+00:00", batches_ok=1, input_tokens=250),
+            # outside the 7-day window
+            _run("2026-09-20T00:00+00:00", finished_at=t("2026-09-20T00:01+00:00"), error="x"),
+            _run(
+                "2026-10-02T10:00+00:00",
+                finished_at=t("2026-10-02T10:01+00:00"),
+                batches_failed=3,
+                error="consecutive_failures",
+            ),
+        ],
+    )
+
+    h = await cr.classification_health(pg_conn, now=t("2026-10-03T12:00+00:00"))
+
+    assert (h["enabled"], h["key_present"], h["model"]) == (False, False, "jev-1.14.0")
+    assert h["last_success_at"] == t("2026-10-01T01:05+00:00")
+    assert h["failures_7d"] == 5
+    assert h["unfinished_runs"] == 1
+    assert (h["tokens_month"], h["tokens_all"]) == (750, 1750)
+    assert h["spend_month_usd"] == pytest.approx(750 * 0.042 / 1e6)
+    assert h["spend_all_usd"] == pytest.approx(1750 * 0.042 / 1e6)
+    assert h["awaiting"] == await awaiting_count(pg_conn)
+    assert (h["queue_main"], h["queue_unknown"]) == tuple(
+        (await cr.review_counts(pg_conn)).values()
+    )
+    assert h["problems"] == ["recent_failures"]
+
+
+async def test_health_empty(pg_conn):
+    await pg_conn.execute(delete(classification_runs))
+    h = await cr.classification_health(pg_conn, now=datetime.now(UTC))
+    assert h["last_success_at"] is None
+    assert (h["failures_7d"], h["tokens_month"], h["tokens_all"], h["unfinished_runs"]) == (
+        0,
+        0,
+        0,
+        0,
+    )
+    assert h["spend_all_usd"] == 0
+    assert h["problems"] == []
+
+
+async def test_health_missing_key_problem(pg_conn, monkeypatch):
+    await pg_conn.execute(delete(classification_runs))
+    monkeypatch.setenv(f"{ENV_PREFIX}ENABLE_JEV_CLASSIFICATION", "true")
+    monkeypatch.delenv(f"{ENV_PREFIX}TYPESAFE_API_KEY", raising=False)
+    h = await cr.classification_health(pg_conn, now=datetime.now(UTC))
+    assert h["enabled"] is True
+    assert h["problems"] == ["missing_api_key"]
+
+    monkeypatch.setenv(f"{ENV_PREFIX}TYPESAFE_API_KEY", "k")
+    h = await cr.classification_health(pg_conn, now=datetime.now(UTC))
+    assert h["key_present"] is True
+    assert h["problems"] == []
