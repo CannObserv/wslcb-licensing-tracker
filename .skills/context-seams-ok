@@ -21,5 +21,35 @@ docs/SKILLS.md :: Graduates an accepted architecture-review finding
 # Nothing here refers to a relocated block — the policy block is still in
 # AGENTS.md, which is exactly what these three lines say.
 docs/SOCRATICODE.md :: Detail doc for the `## Code Exploration Policy` block in
-docs/SOCRATICODE.md :: this file wholesale. Repo-specific exploration notes belong in
-docs/SOCRATICODE.md :: `AGENTS.md` block should be on its degraded variant.
+docs/SOCRATICODE.md :: after it, not in `AGENTS.md`.
+docs/SOCRATICODE.md :: the `AGENTS.md` block is on its degraded variant |
+
+# #208 run (2026-10-23). The curating-context paragraph moved to docs/SKILLS.md
+# and names AGENTS.md as the file whose budget it owns: the subject, not a pointer.
+docs/SKILLS.md :: `curating-context` owns `AGENTS.md`'s 6,000-token budget (#165).
+
+# Source back-references swept because body lines left AGENTS.md. Each names the
+# policy file generically or a section that did not move (Frozen vs. Derived,
+# the diff-ingestion bullet in Architecture, the docs-dir override line).
+.claude/hooks/context-budget-guard.sh :: AGENTS.md
+.claude/hooks/skills-submodule-update.sh :: exit-2 of AGENTS.md's gate
+.claude/hooks/socraticode-health.sh :: AGENTS.md
+.socraticodecontextartifacts.json :: Code exploration reference: the full SocratiCode tool table
+skills/shipping-work-python-fastapi/scripts/doc-check.sh :: AGENTS.md
+src/wslcb_licensing_tracker/backup.py :: The frozen tables (AGENTS.md)
+src/wslcb_licensing_tracker/parser.py :: a bug; see AGENTS.md.
+tests/test_doc_sensitive_paths.py :: (scratch / "AGENTS.md")
+tests/test_docs_layout.py :: AGENTS.md
+.claude/hooks/context-budget-guard.sh :: CLAUDE.md is followed to its target, which is the cohort norm.
+
+# Doc-split sweeps (DEPLOYMENT.md -> MEMORY_PRESSURE.md, SCHEMA.md -> MIGRATIONS.md):
+# each of these points at a DEPLOYMENT/SCHEMA section that did not move.
+docs/MEMORY_PRESSURE.md :: (see [After changing service files](DEPLOYMENT.md#after-changing-service-files))
+docs/MONITORING.md :: Jev classification ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Entity classification)
+docs/RELAY.md :: plus the [`DEPLOYMENT.md`](DEPLOYMENT.md) copy block, which installs the
+docs/SKILLS.md :: The advice printed on a hit — which doc sections to spot-check
+docs/SOCRATICODE.md :: [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
+docs/SOCRATICODE.md :: [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
+infra/wslcb-healthcheck.service :: (see docs/DEPLOYMENT.md "Sudoers rule")
+.socraticodecontextartifacts.json :: "path": "docs/DEPLOYMENT.md",
+.socraticodecontextartifacts.json :: "path": "docs/SCHEMA.md",

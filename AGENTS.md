@@ -91,7 +91,7 @@ Replay-extract boundary (#154): the extract *files* are derived (natural-key pat
 - Each module: `logger = logging.getLogger(__name__)`.
 - Entry points call `setup_logging()` from `log_config.py` before doing any work.
 - Use `%s`/`%d` style in log calls (not f-strings).
-- **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json`, or uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` lines bypass the JSON formatter and journald gets mixed plain-text/JSON logs (#162). That file and `setup_logging()` share one formatter via `build_json_formatter()` — change the JSON schema in that factory only. `log_config.json` also attaches `ColorMessageFilter` to all three uvicorn loggers, stripping uvicorn's ANSI-coloured `color_message` extra at the record (#163) — keep it on the *loggers*, not the handler or the formatter's `reserved_attrs`: a filter placed on one sink is resurrected by the next one, and a logger never inherits an ancestor's filters.
+- **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json`, or uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` lines bypass the JSON formatter and journald gets mixed plain-text/JSON logs (#162). That file and `setup_logging()` share one formatter via `build_json_formatter()` — change the JSON schema in that factory only. `log_config.json` also attaches `ColorMessageFilter` to every uvicorn logger, stripping uvicorn's ANSI-coloured `color_message` extra at the record (#163) — keep it on the *loggers*, not the handler or the formatter's `reserved_attrs`: a filter placed on one sink is resurrected by the next one, and a logger never inherits an ancestor's filters.
 
 ### Testing
 Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/ -v` must pass before committing.
@@ -147,7 +147,7 @@ scripts/build-css.sh        # manual CSS rebuild if changing templates or tailwi
 | File | Content |
 |---|---|
 | `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION`, scrape/classify check-in id/URL, Jev vars (#196, #207; [`MONITORING.md`](docs/MONITORING.md)) |
-| `/etc/wslcb-licensing-tracker/backup.env` + two `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
+| `/etc/wslcb-licensing-tracker/backup.env` + its `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
 | `.env` (repo root, gitignored) | Dev/agent: `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL`, plus GitHub PATs for the `gh` CLI |
 | `.env.example` (committed) | Canonical list of every env var the project consumes, with comments |
 
@@ -174,27 +174,25 @@ See **Code Exploration Policy** above.
 
 ### Project skills
 
-Vendored skills refresh via the `SessionStart` hook `.claude/hooks/skills-submodule-update.sh` (a symlink into `skills-vendor/gregoryfoster-skills`, so upstream fixes to the hook itself propagate). It is `main`-only, gated to once per UTC day by `.git/skills-update.lock`, logs to `.git/skills-update.log`, and re-installs `.skills/doctor.sh` on every session. Don't add a second updater — an inline `UserPromptSubmit` one-liner used to do this and raced the same submodule while never refreshing the doctor (#164).
+SessionStart hooks (daily vendored-skills refresh; SocratiCode prefetch reminder and daily health check) and the `curating-context` budget guard: [`docs/SKILLS.md`](docs/SKILLS.md) under `managing-skills`, `init-socraticode`, `curating-context`. Never add a second skills updater (#164).
 
-`init-socraticode` owns two more `SessionStart` hooks, both symlinks into `skills-vendor/` for the same reason (#186): `.claude/hooks/socraticode-reminder.sh` prints the deferred-tool prefetch each session, and `.claude/hooks/socraticode-health.sh` runs a once-per-day infra check gated by `.git/socraticode-health.lock`, logging to `.git/socraticode-health.log`. The health hook **reports only** — it never re-indexes, starts Docker, or edits a file. Its `graph unresolved 76%` line is a note, not a defect — it counts external/builtin edges by construction (verdict `ok`; see `docs/SOCRATICODE.md`).
-
-SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this host has no swap and co-hosts `wslcb-web.service`, and a per-launch `npx socraticode@latest` install was the measured memory peak, not the indexing (#175). Never "fix" the driver back to `npx`; confirm with `mcp-driver.mjs resolve`. The plugin session is pinned too: `.claude/settings.json` *declares* `SOCRATICODE_SPEC`, but only VS Code's machine-scoped `claudeCode.environmentVariables` *delivers* it to the launch — verify with `ps`, never `claude mcp list` (#180). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) **Memory pressure**.
-
-`curating-context` owns this file's 6,000-token budget (#165). Its `PostToolUse` guard `.claude/hooks/context-budget-guard.sh` warns — never blocks — when an edit pushes `AGENTS.md` or a live `docs/*.md` further over budget; budgets live in `.skills/context-budget` and `.skills/context-doc-budget`, run history in `.skills/context-metrics.jsonl`.
+SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this host has no swap and co-hosts `wslcb-web.service`, and a per-launch `npx socraticode@latest` install was the measured memory peak, not the indexing (#175). Never "fix" the driver back to `npx`; confirm with `mcp-driver.mjs resolve`. The plugin session is pinned too: `.claude/settings.json` *declares* `SOCRATICODE_SPEC`, but only VS Code's machine-scoped `claudeCode.environmentVariables` *delivers* it to the launch — verify with `ps`, never `claude mcp list` (#180). See [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md).
 
 Dated analyses go under `docs/research/`, `docs/plans/`, or `docs/specs/`, which are excluded from the live surface. Vendored superpowers skills default to `docs/superpowers/{specs,plans}/`; this project overrides that — specs → `docs/specs/`, plans → `docs/plans/` (their own "user preferences override" clause applies; `tests/test_docs_layout.py` guards it, #176).
 
-`shipping-work-python-fastapi`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172) and `.skills/doc-sections`, the advice printed on a hit (#173). Keep the two in step.
+`shipping-work-python-fastapi`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172) and `.skills/doc-sections`, the advice printed on a hit (#173). Keep both files in step.
 
 See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases.
 
 ## Reference
 
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
+- [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md) — no swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175, #180)
 - [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape, classify): installs + fields
 - [`docs/RELAY.md`](docs/RELAY.md) — relayed scrape while WSLCB blocks the host (#198/#201): Mac LaunchAgent install, monitoring, retirement
 - [`docs/RECOVERY.md`](docs/RECOVERY.md) — nightly GCS backup (DB + `data/` archive), restore, drills; log in [`docs/RECOVERY-REHEARSALS.md`](docs/RECOVERY-REHEARSALS.md)
-- [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference and migration history
+- [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference
+- [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) — Alembic chain, revision history, adding a migration
 - [`docs/SOURCE_PAGE.md`](docs/SOURCE_PAGE.md) — WSLCB source page structure and field label quirks (needed when touching `parser.py`)
 - [`docs/STYLE.md`](docs/STYLE.md) — brand colors and CSS conventions
 - [`docs/SKILLS.md`](docs/SKILLS.md) — project skill descriptions and trigger phrases

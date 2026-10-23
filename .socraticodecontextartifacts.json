@@ -3,12 +3,22 @@
     {
       "name": "database-schema",
       "path": "docs/SCHEMA.md",
-      "description": "Table and column reference with FK relationships and full Alembic migration history. Check before writing any migration, DB query, or schema-dependent feature."
+      "description": "Table and column reference with FK relationships and constraints. Check before writing any DB query or schema-dependent feature; the migration chain is the database-migrations artifact."
+    },
+    {
+      "name": "database-migrations",
+      "path": "docs/MIGRATIONS.md",
+      "description": "Alembic chain: revision history 0001 onward, how to add and verify a migration (set DATABASE_URL; unset targets prod), and how it differs from data_migration.py. Check before writing any migration."
     },
     {
       "name": "deployment",
       "path": "docs/DEPLOYMENT.md",
       "description": "Server lifecycle, systemd service management, address validation workflow, backfill commands, and full ops reference. Check before touching infra, services, or env config."
+    },
+    {
+      "name": "memory-pressure",
+      "path": "docs/MEMORY_PRESSURE.md",
+      "description": "No swap, co-hosted prod: the memory budget, earlyoom and slice configs in infra/, how to verify them, and the SocratiCode version pins. Check before changing memory settings, earlyoom, or the SocratiCode pin."
     },
     {
       "name": "source-page",

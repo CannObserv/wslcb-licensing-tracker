@@ -141,7 +141,10 @@ apply it. Left in, vendored trees outrank first-party code in `codebase_search`.
 The project's non-code knowledge reachable through `codebase_context_search` is
 whatever `.socraticodecontextartifacts.json` lists — currently
 [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
-[`docs/DEPLOYMENT.md`](DEPLOYMENT.md), [`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md),
+[`docs/MIGRATIONS.md`](MIGRATIONS.md) (`database-migrations`),
+[`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
+[`docs/MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md) (`memory-pressure`),
+[`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md),
 [`docs/STYLE.md`](STYLE.md), `infra/`, this file, and three directories of
 dated prose indexed recursively: `docs/research/` (which carries
 [`architecture-review.md`](research/architecture-review.md)), `docs/plans/`
@@ -149,7 +152,8 @@ and `docs/specs/`. Those three are also excluded from the code index (below),
 so they answer only through context search — and, being dated, may describe a
 design since superseded (the SQLite→PostgreSQL phase plans). For a question
 about current behaviour, scope with `artifactName` to a current-state artifact
-— `database-schema`, `deployment`, `source-page`, `style` or `infra` — never
+— `database-schema`, `database-migrations`, `deployment`, `memory-pressure`,
+`source-page`, `style` or `infra` — never
 `plans`, `specs` or `research`.
 
 ### Entry points

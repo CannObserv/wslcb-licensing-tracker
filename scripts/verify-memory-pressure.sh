@@ -183,7 +183,7 @@ else
              # An unreadable version would skip the comparison below and pass.
              [ -n "$pin_v" ] || blocked "could not read the pinned version from '$src' — the session pin is unchecked against it" ;;
     "")      blocked "mcp-driver.mjs resolve produced no source" ;;
-    *)       fail "SocratiCode resolves to '$src' — it installs at launch; see docs/DEPLOYMENT.md" ;;
+    *)       fail "SocratiCode resolves to '$src' — it installs at launch; see docs/MEMORY_PRESSURE.md" ;;
   esac
 fi
 # Claude Code lets settings.local.json override the committed file, and
@@ -205,13 +205,13 @@ for f in "$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json"; do
 done
 case "$spec_state" in
   unread) blocked "could not read $spec_src (malformed JSON, or no node) — the session pin is unchecked" ;;
-  unset)  fail "SOCRATICODE_SPEC is not declared — the plugin session installs socraticode@latest at launch; see docs/DEPLOYMENT.md" ;;
+  unset)  fail "SOCRATICODE_SPEC is not declared — the plugin session installs socraticode@latest at launch; see docs/MEMORY_PRESSURE.md" ;;
   set)
     # The same literal test_infra_memory_pressure.py requires: x.y.z, no range.
     if ! [[ $spec =~ ^socraticode@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      fail "SOCRATICODE_SPEC is declared '$spec' ($spec_src), not a literal version — it installs at launch; see docs/DEPLOYMENT.md"
+      fail "SOCRATICODE_SPEC is declared '$spec' ($spec_src), not a literal version — it installs at launch; see docs/MEMORY_PRESSURE.md"
     elif [ -n "$pin_v" ] && [ "${spec#socraticode@}" != "$pin_v" ]; then
-      fail "the session pin is declared $spec ($spec_src) but the driver's pin is v$pin_v — re-pin both; see docs/DEPLOYMENT.md"
+      fail "the session pin is declared $spec ($spec_src) but the driver's pin is v$pin_v — re-pin both; see docs/MEMORY_PRESSURE.md"
     else
       pass "the session pin is declared $spec ($spec_src)"
     fi ;;
@@ -223,7 +223,7 @@ vsc="$HOME/.vscode-server" vsc_settings="$HOME/.vscode-server/data/Machine/setti
 if [ ! -d "$vsc" ]; then
   blocked "no VS Code server — delivery of SOCRATICODE_SPEC to claude's startup environment is unchecked (from a terminal, export it in the launching shell)"
 elif [ ! -f "$vsc_settings" ]; then
-  fail "$vsc_settings is missing — nothing delivers SOCRATICODE_SPEC to claude's startup environment; see docs/DEPLOYMENT.md"
+  fail "$vsc_settings is missing — nothing delivers SOCRATICODE_SPEC to claude's startup environment; see docs/MEMORY_PRESSURE.md"
 elif [ "$spec_state" = set ]; then
   delivered=$(node -e 'let s; try { s = require(process.argv[1]) } catch { process.exit(3) }
                        const e = (s?.["claudeCode.environmentVariables"] ?? []).find((v) => v?.name === "SOCRATICODE_SPEC")
@@ -233,9 +233,9 @@ elif [ "$spec_state" = set ]; then
     0) if [ "$delivered" = "$spec" ]; then
          pass "VS Code starts claude with SOCRATICODE_SPEC=$delivered"
        else
-         fail "VS Code starts claude with SOCRATICODE_SPEC=$delivered, but $spec_src declares $spec — re-pin every place docs/DEPLOYMENT.md 'Memory pressure' lists"
+         fail "VS Code starts claude with SOCRATICODE_SPEC=$delivered, but $spec_src declares $spec — re-pin every place docs/MEMORY_PRESSURE.md lists"
        fi ;;
-    4) fail "VS Code's claudeCode.environmentVariables sets no SOCRATICODE_SPEC — the declared pin never reaches the launch; see docs/DEPLOYMENT.md" ;;
+    4) fail "VS Code's claudeCode.environmentVariables sets no SOCRATICODE_SPEC — the declared pin never reaches the launch; see docs/MEMORY_PRESSURE.md" ;;
     *) blocked "could not read $vsc_settings (comments or malformed JSON, or no node) — delivery is unchecked" ;;
   esac
 fi
@@ -253,14 +253,14 @@ while read -r pid ppid _ _ launched _; do
   elif [ "$launched" = "$spec" ]; then
     pass "the running session server ($pid) launched $launched"
   else
-    fail "the running session server ($pid) launched $launched — SOCRATICODE_SPEC missed claude's startup environment; see docs/DEPLOYMENT.md"
+    fail "the running session server ($pid) launched $launched — SOCRATICODE_SPEC missed claude's startup environment; see docs/MEMORY_PRESSURE.md"
   fi
 done < <(ps -eo pid=,ppid=,args= | awk '$3 == "npm" && $4 == "exec" && $5 ~ /^socraticode(@|$)/')
 [ "$observed" -eq 1 ] || note "no Claude session server is running — the launch was not observed"
 
 [ "$QUIET" -eq 1 ] || { echo; case $RC in
   0) echo "All checks passed — the stack is in force." ;;
-  1) echo "FAILED — see above; docs/DEPLOYMENT.md 'Memory pressure'." >&2 ;;
+  1) echo "FAILED — see above; docs/MEMORY_PRESSURE.md." >&2 ;;
   2) echo "INCOMPLETE — a check could not run; nothing was disproven." >&2 ;;
 esac; }
 exit $RC

@@ -49,7 +49,7 @@ WEB_UNIT = INFRA / "wslcb-web.service"
 SLICE_DROPIN = INFRA / "system.slice.d-10-wslcb-memory.conf"
 EARLYOOM = INFRA / "default-earlyoom"
 CLAUDE_SETTINGS = REPO_ROOT / ".claude" / "settings.json"
-DEPLOYMENT_DOC = REPO_ROOT / "docs" / "DEPLOYMENT.md"
+MEMORY_DOC = REPO_ROOT / "docs" / "MEMORY_PRESSURE.md"
 # Host state, not committed: VS Code Remote's machine-scoped settings, the one
 # place claudeCode.environmentVariables can live (it cannot be a workspace key).
 VSCODE_SERVER = Path.home() / ".vscode-server"
@@ -205,17 +205,17 @@ def test_socraticode_session_pins_a_literal_version():
     spec = _session_spec()
     assert re.fullmatch(r"socraticode@\d+\.\d+\.\d+", spec), (
         f"SOCRATICODE_SPEC is {spec!r}; pin the session to the driver's version "
-        "in .claude/settings.json (docs/DEPLOYMENT.md 'Memory pressure')"
+        "in .claude/settings.json (docs/MEMORY_PRESSURE.md)"
     )
 
 
-def test_deployment_doc_names_the_session_pin():
+def test_memory_doc_names_the_session_pin():
     """The doc states the pinned version; a re-pin must not leave it behind (#180 CR 4)."""
-    doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
+    doc = MEMORY_DOC.read_text(encoding="utf-8")
     match = re.search(r"both\s+name\s+\*\*(\d+\.\d+\.\d+)\*\*", doc)  # survives a rewrap
-    assert match, "docs/DEPLOYMENT.md 'Memory pressure' no longer states the pinned version"
+    assert match, "docs/MEMORY_PRESSURE.md no longer states the pinned version"
     assert f"socraticode@{match.group(1)}" == _session_spec(), (
-        f"docs/DEPLOYMENT.md says both launches name {match.group(1)}, but "
+        f"docs/MEMORY_PRESSURE.md says both launches name {match.group(1)}, but "
         f".claude/settings.json pins {_session_spec()!r}"
     )
 
@@ -231,7 +231,7 @@ def test_vscode_starts_claude_with_the_declared_session_spec():
         pytest.skip("no VS Code server on this host")
     assert VSCODE_MACHINE_SETTINGS.is_file(), (
         f"{VSCODE_MACHINE_SETTINGS} is missing, so nothing delivers SOCRATICODE_SPEC "
-        "to claude's startup environment (docs/DEPLOYMENT.md 'Memory pressure')"
+        "to claude's startup environment (docs/MEMORY_PRESSURE.md)"
     )
     settings = json.loads(VSCODE_MACHINE_SETTINGS.read_text(encoding="utf-8"))
     delivered = {
@@ -240,5 +240,5 @@ def test_vscode_starts_claude_with_the_declared_session_spec():
     assert delivered.get("SOCRATICODE_SPEC") == _session_spec(), (
         f"VS Code starts claude with SOCRATICODE_SPEC={delivered.get('SOCRATICODE_SPEC')!r}, "
         f"but .claude/settings.json declares {_session_spec()!r} — re-pin every place "
-        "docs/DEPLOYMENT.md 'Memory pressure' lists"
+        "docs/MEMORY_PRESSURE.md lists"
     )

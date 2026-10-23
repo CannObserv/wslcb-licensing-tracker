@@ -56,6 +56,8 @@ This project has no hosted CI, so the CI leg of verification has no check-runs t
 
 Curates the agent-context surface — `AGENTS.md` plus the reference docs it links — against a 6,000-token budget. Measures exactly via the Anthropic `count_tokens` endpoint (needs an Anthropic API credential in the repo-root `.env`; the skill's Phase 0 preflight names the variable), verifies falsifiable claims before removing them, classifies each section keep/demote/tighten/delete, relocates rather than deletes, then appends a telemetry row to `.skills/context-metrics.jsonl`.
 
+`curating-context` owns `AGENTS.md`'s 6,000-token budget (#165). Its `PostToolUse` guard `.claude/hooks/context-budget-guard.sh` warns — never blocks — when an edit pushes `AGENTS.md` or a live `docs/*.md` further over budget; budgets live in `.skills/context-budget` and `.skills/context-doc-budget`, run history in `.skills/context-metrics.jsonl`.
+
 **Trigger:** "curate context", "context budget", "hone AGENTS.md", "trim AGENTS.md", "prune context"; also the weekly maintenance run.
 
 ## dispatching-parallel-agents
@@ -76,11 +78,15 @@ Installs, configures, and indexes SocratiCode semantic code search on the projec
 
 Re-running it on a project that already has SocratiCode **is** the audit: every phase is idempotent, and Phase 6 re-measures the yield.
 
+`init-socraticode` owns two more `SessionStart` hooks, both symlinks into `skills-vendor/` for the same reason (#186): `.claude/hooks/socraticode-reminder.sh` prints the deferred-tool prefetch each session, and `.claude/hooks/socraticode-health.sh` runs a once-per-day infra check gated by `.git/socraticode-health.lock`, logging to `.git/socraticode-health.log`. The health hook **reports only** — it never re-indexes, starts Docker, or edits a file. Its `graph unresolved 76%` line is a note, not a defect — it counts external/builtin edges by construction (verdict `ok`; see `docs/SOCRATICODE.md`).
+
 **Trigger:** "init socraticode", "set up code search", "index this project", "socraticode setup".
 
 ## managing-skills
 
 Manages external skill repos using the git submodule + symlink pattern. Adds skill repos as submodules under `skills-vendor/`, symlinks individual skills into `skills/` and `.claude/skills/` for discovery, handles updates and removal.
+
+Vendored skills refresh via the `SessionStart` hook `.claude/hooks/skills-submodule-update.sh` (a symlink into `skills-vendor/gregoryfoster-skills`, so upstream fixes to the hook itself propagate). It is `main`-only, gated to once per UTC day by `.git/skills-update.lock`, logs to `.git/skills-update.log`, and re-installs `.skills/doctor.sh` on every session. Don't add a second updater — an inline `UserPromptSubmit` one-liner used to do this and raced the same submodule while never refreshing the doctor (#164).
 
 **Trigger:** "add skill repo", "add external skills", "manage skills", "update vendor skills".
 
