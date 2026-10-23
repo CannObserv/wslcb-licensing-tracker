@@ -404,6 +404,19 @@ async def test_ignore_by_model_only_touches_that_model(pg_conn):
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_resolve_applies_the_shipped_trusted_set(pg_conn, monkeypatch):
+    # No monkeypatch of the trusted set: what #210 task 5.3's backfill will do.
+    monkeypatch.delenv(THRESHOLD_ENV, raising=False)
+    trusted = await get_or_create_entity(pg_conn, "T210 CORNER MARKET")
+    await _jev(pg_conn, trusted, "organization", "business", 0.95)
+    untrusted = await get_or_create_entity(pg_conn, "T210 MAKAH")
+    await _jev(pg_conn, untrusted, "organization", "tribe", 0.95)
+    await resolve_entities(pg_conn, [trusted, untrusted])
+    assert await _resolved(pg_conn, trusted) == ("organization", "business", "jev")
+    assert await _resolved(pg_conn, untrusted) == ("organization", "unknown", "jev")
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_resolve_reads_trusted_subtypes_at_call_time(pg_conn, monkeypatch):
     from wslcb_licensing_tracker import entity_classification
 
