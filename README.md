@@ -100,6 +100,8 @@ wslcb-licensing-tracker/
 ├── endorsements_admin.py   # Async admin helpers for endorsement management
 ├── entities.py             # Async entity normalization + regex classifier
 ├── entity_classification.py # Classification resolver (manual > Jev > regex), manual rows, Jev rollback (#206)
+├── jev_client.py           # HTTP transport for TypeSafe Jev classification (#207)
+├── jev_classifier.py       # Jev orchestration: candidates, batches, run rows, check-in payload (#207)
 ├── address_client.py       # HTTP transport for the address-validator service
 ├── address_validator.py    # Async address validation DB layer
 ├── link_records.py         # Async application→outcome record linking
@@ -114,7 +116,7 @@ wslcb-licensing-tracker/
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
 ├── disk_hygiene.py         # Weekly cache/worktree/data-straggler cleanup (#138)
 ├── backup.py               # Nightly pg_dump + data/ archive mirror to GCS, create-only (#185)
-├── checkin.py              # co-status dead-man check-ins: backup (#185), scrape (#196)
+├── checkin.py              # co-status dead-man check-ins: backup (#185), scrape (#196), classify (#207)
 ├── restore.py              # Fetch/verify/restore a dump; fetch archive files (#185)
 ├── log_config.py           # Centralized logging configuration
 ├── config.py               # Runtime config helpers (get_build_id); env vars in .env.example
@@ -183,6 +185,8 @@ wslcb-licensing-tracker/
 │   ├── wslcb-scraper.timer         # Twice-daily scraper timer
 │   ├── wslcb-task@scrape.service.d/ # Scrape check-in drop-in: key credential, 2 h timeout (#196; key file first)
 │   ├── wslcb-task@import-relayed.service.d/ # Relay import: 30 min timeout, no check-in (#201)
+│   ├── wslcb-entity-classification.timer # Weekly Jev classification, the classify dead-man (#207)
+│   ├── wslcb-task@classify-entities.service.d/ # Classify check-in drop-in: key credential, 1 h timeout (#207; key file first)
 │   ├── wslcb-healthcheck.service   # Health check service (restarts web on failure)
 │   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
 │   ├── wslcb-address-validation.timer # Weekly address backfill timer
@@ -248,6 +252,9 @@ wslcb-licensing-tracker/
 │   ├── test_backup_restore_rehearsal.py  # Real pg_dump → fake bucket → pg_restore round trip (#185)
 │   ├── test_infra_backup_units.py  # wslcb-backup unit sandbox + timer pins (#185)
 │   ├── test_infra_scrape_unit.py   # scrape check-in drop-in + monitor timing pins (#196)
+│   ├── test_infra_classify_unit.py # classify timer + check-in drop-in + monitor window pins (#207)
+│   ├── test_jev_client.py       # Jev transport: request shape, retries, malformed answers (#207)
+│   ├── test_jev_classifier.py   # Classify-once runs, lock, failures, check-in payload (require TEST_DATABASE_URL)
 │   ├── gcs_fakes.py             # SDK-faithful google-cloud-storage fakes (#185)
 │   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
@@ -598,6 +605,8 @@ Test structure:
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
 | `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require `TEST_DATABASE_URL`) |
 | `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require `TEST_DATABASE_URL`) |
+| `tests/test_jev_client.py` | Jev transport — request shape, 429/529 retry, auth errors, malformed responses fail the batch |
+| `tests/test_jev_classifier.py` | Jev runs — classify once, modes, advisory lock, failure stops, run rows, check-in payload (require `TEST_DATABASE_URL`) |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions (require `TEST_DATABASE_URL`) |
 | `tests/test_scraper.py` | Scraper — content hash deduplication, redundant data cleanup, run history + freshness |
 | `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill |
