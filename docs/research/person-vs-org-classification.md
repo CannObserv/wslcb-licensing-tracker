@@ -427,7 +427,7 @@ COMMUNITY CO (0.61) and BCP (0.48) drop below 0.7, so they store `unknown`
 and fall back to the regex subtype.
 
 **What trust changes.** A trusted subtype also *overrides* the regex's. Under
-`prod2` at 0.7, Jev nonprofit replaces a regex `business` on 23 names (19 gold,
+`prod2` at 0.7, Jev nonprofit replaces a regex `business` on 24 names (20 gold,
 4 supplement), all correct but SOCIETY.
 
 ### Decision (pinned in #210 task 5.2)
@@ -445,9 +445,9 @@ and fall back to the regex subtype.
 
 - **Nonprofit is marginal and partly tuned.** The rewording was drafted
   against `prod`'s gold errors, so `prod2`'s gold score is a development
-  number; the held-out check is only 4 nonprofit answers. 25/26 leaves one
-  error of headroom before 23/26 = 88.5 % would fail; Jev drifts ~0.8 % per
-  run (§5.1).
+  number; the held-out check is only 4 nonprofit answers. At 25/26, one
+  more error still passes (24/26 = 92.3 %); two would fail (23/26 = 88.5 %).
+  Jev drifts ~0.8 % per run (§5.1).
 - **The supplement only measures inside keyword pools**, and its batches were
   homogeneous (one 20-name request). §5.1 found no composition effect.
 - **One run per wording.**
