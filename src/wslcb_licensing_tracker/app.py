@@ -33,12 +33,15 @@ from . import (
     api_routes,
 )
 from .admin_auth import AdminRedirectException, get_current_user
+from .classification_review import classification_detail
 from .config import get_build_id
 from .data_migration import run_pending_migrations
 from .db import DATA_DIR, get_record_sources
 from .display import format_outcome, summarize_provenance
 from .engine import create_engine_from_env, get_db
 from .entities import get_entity_by_id
+from .entity_classification import ENTITY_SUBTYPES, ENTITY_TYPES
+from .jev_client import is_classification_enabled
 from .link_records import get_outcome_status, get_reverse_link_info
 from .log_config import setup_logging
 from .parser import (
@@ -475,7 +478,11 @@ async def entities_list(
 
 @app.get("/entity/{entity_id}", response_class=HTMLResponse)
 async def entity_detail(request: Request, entity_id: int) -> HTMLResponse:
-    """Render the detail page for a single entity."""
+    """Render the detail page for a single entity.
+
+    Signed-in admins also get the classification panel (#208).
+    """
+    current_user = await get_current_user(request)
     async with get_db(request.app.state.engine) as conn:
         entity = await get_entity_by_id(conn, entity_id)
         if not entity:
@@ -488,13 +495,17 @@ async def entity_detail(request: Request, entity_id: int) -> HTMLResponse:
         records = await get_entity_records(conn, entity_id)
         # Count distinct license numbers
         license_numbers = {r["license_number"] for r in records}
-    return await _tpl(
-        request,
-        "entity.html",
-        {
+        ctx = {
             "request": request,
             "entity": entity,
             "records": records,
             "unique_licenses": len(license_numbers),
-        },
-    )
+        }
+        if current_user:
+            ctx |= {
+                "classification": await classification_detail(conn, entity_id),
+                "jev_enabled": is_classification_enabled(),
+                "entity_types": ENTITY_TYPES,
+                "entity_subtypes": ENTITY_SUBTYPES,
+            }
+    return await _tpl(request, "entity.html", ctx)

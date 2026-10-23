@@ -46,6 +46,8 @@ Admin = Annotated[dict[str, Any], Depends(require_admin)]
 Next = Annotated[str | None, Form(alias="next")]
 
 BUSY_RETRY_AFTER_SECONDS = 60
+# Items per review page: each carries its action forms (~5 KB of HTML).
+REVIEW_PAGE_SIZE = 100
 
 
 def _safe_next(next_: str | None, entity_id: int) -> str:
@@ -94,7 +96,7 @@ async def admin_entity_review(request: Request, admin: Admin, tab: str = "main")
     if tab not in TABS:
         tab = "main"
     async with get_db(request.app.state.engine) as conn:
-        items = await review_queue(conn, tab=tab)
+        items = await review_queue(conn, tab=tab, limit=REVIEW_PAGE_SIZE)
         counts = await review_counts(conn)
     return await render_admin(
         request,

@@ -458,6 +458,11 @@ async def test_detail_shows_each_source_and_history(pg_conn):
 
     detail = await cr.classification_detail(pg_conn, eid)
 
+    assert detail["resolved"] == {
+        "entity_type": "organization",
+        "entity_subtype": "trust",
+        "classification_source": "manual",
+    }
     current = detail["current"]
     assert set(current) == {"regex", "jev", "manual"}
     assert current["regex"]["model"] == "regex-1"
@@ -473,6 +478,8 @@ async def test_detail_shows_each_source_and_history(pg_conn):
     ]
     assert [h["ignored_at"] is not None for h in history] == [False, False, True, False]
     assert [f["reason"] for f in detail["open_flags"]] == ["check"]
+    with pytest.raises(LookupError):
+        await cr.classification_detail(pg_conn, 2_000_000_000)
 
 
 def _run(started: str, **kw) -> dict:

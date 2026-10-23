@@ -745,3 +745,133 @@ class TestDashboardEntitiesLink:
             )
         finally:
             _stop(patches)
+
+
+# ---------------------------------------------------------------------------
+# Entity page admin classification panel (#208)
+# ---------------------------------------------------------------------------
+
+
+class TestEntityAdminPanel:
+    """The classification panel renders for admins only."""
+
+    _ENTITY = {
+        "id": 7,
+        "name": "HOPE HOUSE",
+        "entity_type": "person",
+        "entity_subtype": None,
+        "classification_source": "manual",
+        "created_at": None,
+    }
+    _ROW = {
+        "entity_type": "organization",
+        "entity_subtype": "nonprofit",
+        "confidence": 0.55,
+        "model": "jev-1.14.0",
+        "created_at": None,
+        "created_by": None,
+        "note": None,
+        "ignored_at": None,
+    }
+    _DETAIL = {
+        "resolved": {
+            "entity_type": "person",
+            "entity_subtype": None,
+            "classification_source": "manual",
+        },
+        "current": {
+            "jev": {**_ROW, "id": 2, "source": "jev"},
+            "regex": {
+                **_ROW,
+                "id": 1,
+                "source": "regex",
+                "entity_type": "person",
+                "entity_subtype": None,
+                "confidence": None,
+                "model": "regex-1",
+            },
+            "manual": {
+                **_ROW,
+                "id": 3,
+                "source": "manual",
+                "entity_type": "person",
+                "entity_subtype": None,
+                "confidence": None,
+                "model": None,
+                "created_by": "admin@example.com",
+                "note": "checked by hand",
+            },
+        },
+        "history": [],
+        "open_flags": [{"id": 1, "reason": "second look", "flagged_by": "x@y", "created_at": None}],
+    }
+
+    def _get(self, *, admin: bool, monkeypatch, jev_enabled: bool = False):
+        monkeypatch.delenv("ADMIN_DEV_EMAIL", raising=False)
+        env = "CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION"
+        if jev_enabled:
+            monkeypatch.setenv(env, "true")
+        else:
+            monkeypatch.delenv(env, raising=False)
+        client, patches = _make_client()
+        detail = AsyncMock(return_value=self._DETAIL)
+        extra = [
+            patch(
+                "wslcb_licensing_tracker.app.get_entity_by_id",
+                new_callable=AsyncMock,
+                return_value=dict(self._ENTITY),
+            ),
+            patch(
+                "wslcb_licensing_tracker.app.get_entity_records",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("wslcb_licensing_tracker.app.classification_detail", new=detail),
+        ]
+        if admin:
+            extra.append(
+                patch(
+                    "wslcb_licensing_tracker.admin_auth._lookup_admin",
+                    return_value={"id": 1, "email": "admin@example.com", "role": "admin"},
+                )
+            )
+        for p in extra:
+            p.start()
+        try:
+            headers = {"X-ExeDev-Email": "admin@example.com"} if admin else {}
+            return client.get("/entity/7", headers=headers), detail
+        finally:
+            for p in extra:
+                p.stop()
+            _stop(patches)
+
+    def test_entity_page_admin_panel_for_admin_only(self, monkeypatch):
+        resp, detail = self._get(admin=True, monkeypatch=monkeypatch)
+        assert resp.status_code == 200
+        body = resp.text
+        for text in (
+            "Set classification",
+            "jev-1.14.0",
+            "regex-1",
+            "55%",
+            "checked by hand",
+            "second look",
+            "Flag for review",
+            "Clear manual override",
+            'action="/admin/entities/7/classify"',
+            'value="/entity/7"',
+        ):
+            assert text in body, text
+        assert "Re-classify with Jev" not in body  # flag off
+        detail.assert_awaited_once()
+
+        resp, detail = self._get(admin=False, monkeypatch=monkeypatch)
+        assert resp.status_code == 200
+        assert "Set classification" not in resp.text
+        assert "jev-1.14.0" not in resp.text
+        detail.assert_not_awaited()
+
+    def test_jev_button_only_when_enabled(self, monkeypatch):
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch, jev_enabled=True)
+        assert "Re-classify with Jev" in resp.text
+        assert 'action="/admin/entities/7/jev"' in resp.text

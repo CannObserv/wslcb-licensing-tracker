@@ -7,6 +7,7 @@ Both routers are included into the main app in app.py; the shared
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
@@ -17,6 +18,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .admin_audit import get_audit_log, log_action
 from .admin_auth import require_admin
+from .classification_review import classification_health
 from .engine import get_db
 from .integrity import (
     check_endorsement_anomalies,
@@ -64,7 +66,7 @@ async def admin_dashboard(
     request: Request,
     admin: Annotated[dict[str, Any], Depends(require_admin)],
 ) -> HTMLResponse:
-    """Admin dashboard — record counts, scrape status, data quality metrics."""
+    """Admin dashboard — record counts, scrape status, data quality, Jev health/spend."""
     async with get_db(request.app.state.engine) as conn:
         agg = (
             (
@@ -127,6 +129,8 @@ async def admin_dashboard(
             await conn.execute(select(func.count()).select_from(admin_users_table))
         ).scalar_one()
 
+        classification = await classification_health(conn, now=datetime.now(UTC))
+
     return await render_admin(
         request,
         "admin/dashboard.html",
@@ -151,6 +155,7 @@ async def admin_dashboard(
                 "placeholder_endorsements": endorsement_issues["placeholder_endorsements"],
             },
             "user_count": user_count,
+            "classification": classification,
         },
     )
 

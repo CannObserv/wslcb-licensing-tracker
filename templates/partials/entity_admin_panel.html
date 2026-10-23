@@ -1,0 +1,95 @@
+{# Entity-page classification panel, admins only (#208).  Context:
+   ``classification`` (classification_review.classification_detail),
+   ``jev_enabled``, ``entity_types``, ``entity_subtypes``, ``entity``. #}
+{% import "partials/entity_classification_forms.html" as f %}
+{% set c = classification %}
+{% set here = "/entity/" ~ entity.id %}
+{% set source_labels = {'manual': 'Reviewed', 'jev': 'AI (Jev)', 'regex': 'Rules'} %}
+<section aria-labelledby="classification-heading" class="mt-6 bg-white rounded-lg shadow-sm border border-co-purple-100 overflow-hidden">
+    <div class="px-6 py-4 bg-co-purple-50 border-b border-co-purple-100 flex flex-wrap items-center justify-between gap-2">
+        <h2 id="classification-heading" class="text-sm font-semibold text-co-purple">Classification <span class="font-normal text-gray-500">(admin)</span></h2>
+        <span class="text-xs text-gray-600">
+            Resolved: <span class="font-medium text-gray-900">{{ f.answer_label(c.resolved.entity_type, c.resolved.entity_subtype) }}</span>
+            from {{ source_labels.get(c.resolved.classification_source, c.resolved.classification_source) }}
+        </span>
+    </div>
+
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                    {% for h in ['Source', 'Type', 'Subtype', 'Confidence', 'Model', 'When', 'By / note'] %}
+                    <th class="text-left px-4 py-2 font-medium text-gray-600 whitespace-nowrap">{{ h }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for source in ['manual', 'jev', 'regex'] %}
+                {% set row = c.current.get(source) %}
+                <tr class="{% if source == c.resolved.classification_source %}bg-co-purple-50{% endif %}">
+                    <td class="px-4 py-2 whitespace-nowrap">
+                        {{ source_labels[source] }}
+                        {% if source == c.resolved.classification_source %}<span class="text-xs text-co-purple">· wins</span>{% endif %}
+                    </td>
+                    {% if row %}
+                    <td class="px-4 py-2">{{ 'not a name' if row.entity_type == 'not_a_name' else row.entity_type }}</td>
+                    <td class="px-4 py-2">{{ row.entity_subtype or '—' }}</td>
+                    <td class="px-4 py-2">{% if row.confidence is not none %}{{ '%.0f' | format(row.confidence * 100) }}%{% else %}—{% endif %}</td>
+                    <td class="px-4 py-2 font-mono text-xs">{{ row.model or '—' }}</td>
+                    <td class="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{{ row.created_at.strftime('%Y-%m-%d') if row.created_at else '—' }}</td>
+                    <td class="px-4 py-2 text-xs text-gray-600">{{ row.created_by or '' }}{% if row.created_by and row.note %} — {% endif %}{{ row.note or '' }}</td>
+                    {% else %}
+                    <td colspan="6" class="px-4 py-2 text-xs text-gray-400">No current answer</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if c.history | length > c.current | length %}
+    <details class="px-6 py-3 border-t border-gray-100 text-xs">
+        <summary class="cursor-pointer text-co-purple hover:text-co-purple-700">History ({{ c.history | length }} rows, newest first)</summary>
+        <ul class="mt-2 space-y-1 list-none text-gray-600">
+            {% for h in c.history %}
+            <li class="{% if h.ignored_at %}line-through text-gray-400{% endif %}">
+                {{ h.created_at.strftime('%Y-%m-%d') if h.created_at else '' }} ·
+                {{ source_labels.get(h.source, h.source) }}:
+                {{ f.answer_label(h.entity_type, h.entity_subtype) }}
+                {% if h.confidence is not none %}· {{ '%.0f' | format(h.confidence * 100) }}%{% endif %}
+                {% if h.model %}<span class="font-mono">{{ h.model }}</span>{% endif %}
+                {% if h.created_by %}· {{ h.created_by }}{% endif %}
+                {% if h.note %}· {{ h.note }}{% endif %}
+                {% if h.ignored_at %}(ignored {{ h.ignored_at.strftime('%Y-%m-%d') }}){% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+
+    {% if c.open_flags %}
+    <div class="px-6 py-3 border-t border-gray-100 bg-red-50">
+        <h3 class="text-xs font-semibold text-red-800 mb-1">Open flags</h3>
+        <ul class="text-xs text-red-800 space-y-0.5 list-none">
+            {% for flag in c.open_flags %}
+            <li>{{ flag.reason }} <span class="text-red-600">— {{ flag.flagged_by }}{% if flag.created_at %}, {{ flag.created_at.strftime('%Y-%m-%d') }}{% endif %}</span></li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <div class="px-6 py-4 border-t border-gray-100 space-y-3">
+        <div>
+            <h3 class="text-xs font-semibold text-gray-700 mb-1.5">Set classification</h3>
+            {{ f.classify_form(entity.id, here, entity_types, entity_subtypes, c.resolved.entity_type, c.resolved.entity_subtype, label="Set classification") }}
+        </div>
+        <div>
+            <h3 class="text-xs font-semibold text-gray-700 mb-1.5">Flag for review</h3>
+            {{ f.flag_form(entity.id, here) }}
+        </div>
+        <div class="flex flex-wrap gap-2">
+            {% if jev_enabled %}{{ f.jev_form(entity.id, here) }}{% endif %}
+            {% if 'manual' in c.current %}{{ f.clear_form(entity.id, here) }}{% endif %}
+        </div>
+    </div>
+</section>

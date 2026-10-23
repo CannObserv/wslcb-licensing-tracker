@@ -464,10 +464,13 @@ async def review_counts(conn: AsyncConnection) -> dict[str, int]:
 async def classification_detail(conn: AsyncConnection, entity_id: int) -> dict:
     """Return the entity's answers for the admin panel.
 
-    ``current``: ``{source: row}``, each source's latest non-ignored row;
-    ``history``: every row, newest first, ignored ones included (with
-    ``ignored_at``); ``open_flags``.
+    ``resolved``: the entity's ``entity_type`` / ``entity_subtype`` /
+    ``classification_source``; ``current``: ``{source: row}``, each source's
+    latest non-ignored row; ``history``: every row, newest first, ignored ones
+    included (with ``ignored_at``); ``open_flags``.  ``LookupError`` when the
+    entity does not exist.
     """
+    etype, sub, source = await _triple(conn, entity_id)
     ec = entity_classifications
     rows = (
         (
@@ -497,7 +500,12 @@ async def classification_detail(conn: AsyncConnection, entity_id: int) -> dict:
         if row["ignored_at"] is None:
             current.setdefault(row["source"], row)
     flags = await _open_flags(conn, [entity_id])
-    return {"current": current, "history": history, "open_flags": flags.get(entity_id, [])}
+    return {
+        "resolved": {"entity_type": etype, "entity_subtype": sub, "classification_source": source},
+        "current": current,
+        "history": history,
+        "open_flags": flags.get(entity_id, []),
+    }
 
 
 def _spend(tokens: int) -> float:

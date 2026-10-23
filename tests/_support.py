@@ -9,7 +9,7 @@ modules to conftest's path. Import from here instead::
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -53,3 +53,40 @@ def _stamp_engine():
     """
     with stamped_engine():
         yield
+
+
+# A ``classification_review.classification_health`` result: flag off, nothing run.
+HEALTH = {
+    "enabled": False,
+    "key_present": False,
+    "model": "jev-1.14.0",
+    "threshold": 0.7,
+    "last_success_at": None,
+    "awaiting": 67202,
+    "failures_7d": 0,
+    "unfinished_runs": 0,
+    "tokens_month": 0,
+    "tokens_all": 0,
+    "spend_month_usd": 0.0,
+    "spend_all_usd": 0.0,
+    "queue_main": 0,
+    "queue_unknown": 0,
+    "problems": [],
+}
+
+
+@pytest.fixture(autouse=True, name="classification_health")
+def _classification_health_stub():
+    """Autouse: stub the admin dashboard's Jev health query (#208).
+
+    The dashboard tests feed ``conn.execute`` a fixed sequence of mocked
+    results; the health query would consume more.  Import
+    ``_classification_health_stub``; tests that check the panel take the
+    ``classification_health`` fixture and set its ``return_value``.
+    """
+    with patch(
+        "wslcb_licensing_tracker.admin_routes.classification_health",
+        new_callable=AsyncMock,
+        return_value=dict(HEALTH),
+    ) as mock:
+        yield mock

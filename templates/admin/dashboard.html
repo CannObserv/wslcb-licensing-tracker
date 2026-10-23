@@ -127,6 +127,74 @@
         </div>
     </section>
 
+    {# ── Entity classification (#208) ───────────────────────────────── #}
+    <section>
+        {% set c = classification %}
+        {% set problem_labels = {'missing_api_key': 'API key missing', 'recent_failures': 'Recent failures'} %}
+        <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Entity classification</h2>
+        {% if c.problems %}
+        <div class="bg-red-50 border border-red-200 rounded-lg px-4 py-2.5 mb-3 text-sm text-red-800">
+            {% for p in c.problems %}<span class="font-medium">⚠️ {{ problem_labels.get(p, p) }}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <a href="/admin/entities/review"
+               class="bg-white border border-gray-200 rounded-lg px-4 py-3 text-center hover:border-co-purple hover:bg-co-purple-50 transition-colors">
+                <div class="text-2xl font-bold text-co-purple">{{ c.queue_main }}</div>
+                <div class="text-xs text-gray-500 mt-1">Review queue</div>
+            </a>
+            <a href="/admin/entities/review?tab=unknown"
+               class="bg-white border border-gray-200 rounded-lg px-4 py-3 text-center hover:border-co-purple hover:bg-co-purple-50 transition-colors">
+                <div class="text-2xl font-bold text-gray-900">{{ c.queue_unknown }}</div>
+                <div class="text-xs text-gray-500 mt-1">Subtype unknown</div>
+            </a>
+            <div class="bg-white border border-gray-200 rounded-lg px-4 py-3 text-center">
+                <div class="text-2xl font-bold text-gray-900">{{ '{:,}'.format(c.awaiting) }}</div>
+                <div class="text-xs text-gray-500 mt-1">Awaiting AI</div>
+            </div>
+            <div class="bg-white border {% if c.failures_7d %}border-red-200{% else %}border-gray-200{% endif %} rounded-lg px-4 py-3 text-center">
+                <div class="text-2xl font-bold {% if c.failures_7d %}text-red-700{% else %}text-gray-900{% endif %}">{{ c.failures_7d }}</div>
+                <div class="text-xs text-gray-500 mt-1">Failures (7 d)</div>
+            </div>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100 text-sm">
+            <div class="flex items-center justify-between px-4 py-2.5">
+                <span class="text-gray-700">Jev calls</span>
+                {% if c.enabled %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-700">Enabled</span>
+                {% else %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">Disabled</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between px-4 py-2.5">
+                <span class="text-gray-700">Model · threshold</span>
+                <span class="text-xs text-gray-600"><span class="font-mono">{{ c.model }}</span> · {{ '%.0f' | format(c.threshold * 100) }}%</span>
+            </div>
+            <div class="flex items-center justify-between px-4 py-2.5">
+                <span class="text-gray-700">Last successful call</span>
+                <span class="text-xs text-gray-600 font-mono">{{ c.last_success_at.strftime('%Y-%m-%d %H:%M') ~ ' UTC' if c.last_success_at else '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between px-4 py-2.5">
+                <span class="text-gray-700">Failures (7 d) <span class="text-xs text-gray-400">failed batches + errored runs</span></span>
+                <span class="text-xs text-gray-600">{{ c.failures_7d }}</span>
+            </div>
+            {% if c.unfinished_runs %}
+            <div class="flex items-center justify-between px-4 py-2.5">
+                <span class="text-gray-700">Unfinished runs <span class="text-xs text-gray-400">still running, or died</span></span>
+                <span class="text-xs font-medium text-amber-700">{{ c.unfinished_runs }}</span>
+            </div>
+            {% endif %}
+            <div class="flex items-center justify-between px-4 py-2.5">
+                <span class="text-gray-700">Tokens · est. spend, this month</span>
+                <span class="text-xs text-gray-600">{{ '{:,}'.format(c.tokens_month) }} · ${{ '%.4f' | format(c.spend_month_usd) }}</span>
+            </div>
+            <div class="flex items-center justify-between px-4 py-2.5">
+                <span class="text-gray-700">Tokens · est. spend, all time</span>
+                <span class="text-xs text-gray-600">{{ '{:,}'.format(c.tokens_all) }} · ${{ '%.4f' | format(c.spend_all_usd) }}</span>
+            </div>
+        </div>
+    </section>
+
     {# ── Quick links ──────────────────────────────────────────────── #}
     <section>
         <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Links</h2>

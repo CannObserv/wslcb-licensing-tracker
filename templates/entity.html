@@ -30,4 +30,9 @@
     <div class="px-6 py-8 text-center text-sm text-gray-500">No records found for this entity.</div>
     {% endif %}
 </div>
+
+{# Admin-only classification panel (#208); kept apart from the public header above. #}
+{% if current_user and classification %}
+{% include "partials/entity_admin_panel.html" %}
+{% endif %}
 {% endblock %}
