@@ -16,8 +16,9 @@ name), in ``entity_id`` order as production batches them, and rewrites the
 ``prod_kind`` / ``prod_kind_conf`` / ``prod_org`` / ``prod_org_conf`` columns
 of predictions.csv.  The key is ``CO_WSLCB_LICENSING_TRACKER_TYPESAFE_API_KEY``,
 else ``TYPESAFE_API_KEY`` in the repo ``.env`` (``evaluate._key()``).  The
-first batch is sent alone; the run stops if it implies more than
-``SPEND_CAP_USD`` for the set.
+first batch is sent alone; the run stops if it, plus the spend already in
+subtype_spend.csv (every live send is appended there), passes
+``SPEND_CAP_USD``.
 
 ``supplement-sql`` prints a read-only SQL script (``COPY … TO STDOUT``) that samples regex
 ``tribe`` / ``government`` entities and a nonprofit keyword pool from
@@ -39,6 +40,7 @@ import asyncio
 import csv
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import evaluate as ev  # sibling module; run from repo root or this directory
@@ -53,6 +55,10 @@ from wslcb_licensing_tracker.jev_classifier import map_answer
 HERE = Path(__file__).parent
 SUPP = HERE / "subtype_supplement.csv"
 SUPP_PREDS = HERE / "subtype_supplement_preds.csv"
+# Every live send, appended (and committed): SPEND_CAP_USD is checked against the
+# total, so run + supplement + any re-run share one approval.
+SPEND = HERE / "subtype_spend.csv"
+SPEND_FIELDS = ["at", "cmd", "requests", "tokens", "usd"]
 PROD_COLS = ("prod_kind", "prod_kind_conf", "prod_org", "prod_org_conf")
 THRESHOLD = 0.7
 BAR = 0.90
@@ -95,12 +101,46 @@ def _require_committed(path: Path, column: str) -> None:
         raise SystemExit(f"{path.name} has uncommitted changes; commit the labels first")
 
 
+def _usd(tokens: int) -> float:
+    return tokens * JEV_USD_PER_MILLION_INPUT_TOKENS / 1e6
+
+
+def _spent_usd() -> float:
+    """Total recorded live spend so far."""
+    return sum(float(r["usd"]) for r in _rows(SPEND)) if SPEND.exists() else 0.0
+
+
+def _record_spend(cmd: str, requests: int, tokens: int) -> None:
+    new = not SPEND.exists()
+    with SPEND.open("a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=SPEND_FIELDS)
+        if new:
+            w.writeheader()
+        at = datetime.now(UTC).isoformat(timespec="seconds")
+        w.writerow(
+            {
+                "at": at,
+                "cmd": cmd,
+                "requests": requests,
+                "tokens": tokens,
+                "usd": f"{_usd(tokens):.6f}",
+            }
+        )
+
+
 def _key() -> str:
     return jev_client.get_api_key() or ev._key()  # noqa: SLF001
 
 
-async def _classify(names: list[str]) -> tuple[list[jev_client.JevAnswer], dict]:
-    """Send *names* 25 per request; return the answers in order and the token stats."""
+async def _classify(cmd: str, names: list[str]) -> tuple[list[jev_client.JevAnswer], dict]:
+    """Send *names* 25 per request; return the answers in order and the token stats.
+
+    Refuses when the recorded spend plus what the first batch implies would pass
+    ``SPEND_CAP_USD``; every billed batch is recorded in ``SPEND``.
+    """
+    prior = _spent_usd()
+    if prior >= SPEND_CAP_USD:
+        raise SystemExit(f"${prior:.4f} already spent; the cap is ${SPEND_CAP_USD:.2f}")
     size = jev_client.BATCH_SIZE
     chunks = [names[i : i + size] for i in range(0, len(names), size)]
     key, model = _key(), jev_client.get_model()
@@ -113,12 +153,13 @@ async def _classify(names: list[str]) -> tuple[list[jev_client.JevAnswer], dict]
     async with httpx.AsyncClient() as client:
         try:
             first = await one(client, chunks[0])
-            implied = first.input_tokens / len(chunks[0]) * len(names)
-            implied_usd = implied * JEV_USD_PER_MILLION_INPUT_TOKENS / 1e6
+            implied_usd = _usd(round(first.input_tokens / len(chunks[0]) * len(names)))
             print(
                 f"first batch: {first.input_tokens} tokens; implies ${implied_usd:.4f} for the set"
+                f" (${prior:.4f} spent before)"
             )
-            if implied_usd > SPEND_CAP_USD:
+            if prior + implied_usd > SPEND_CAP_USD:
+                _record_spend(cmd, 1, first.input_tokens)
                 raise SystemExit(f"over the ${SPEND_CAP_USD:.2f} cap; nothing written")
             rest = await asyncio.gather(
                 *(one(client, ch) for ch in chunks[1:]), return_exceptions=True
@@ -126,12 +167,16 @@ async def _classify(names: list[str]) -> tuple[list[jev_client.JevAnswer], dict]
         except jev_client.JevError as e:
             raise SystemExit(f"Jev failed (status {e.status}); nothing written: {e}") from None
     batches = [first, *rest]
+    billed = [b for b in batches if isinstance(b, jev_client.JevBatch)]
+    _record_spend(cmd, len(billed), sum(b.input_tokens for b in billed))
     failed = [r for r in batches if isinstance(r, BaseException)]
     if failed:
         # The batches that did answer were billed: report them before giving up.
-        spent = sum(b.input_tokens for b in batches if isinstance(b, jev_client.JevBatch))
-        usd = spent * JEV_USD_PER_MILLION_INPUT_TOKENS / 1e6
-        print(f"{len(failed)}/{len(batches)} batches failed; {spent} tokens (${usd:.5f}) spent")
+        spent = sum(b.input_tokens for b in billed)
+        print(
+            f"{len(failed)}/{len(batches)} batches failed;"
+            f" {spent} tokens (${_usd(spent):.5f}) spent"
+        )
         e = failed[0]
         status = getattr(e, "status", None)
         raise SystemExit(f"Jev failed (status {status}); nothing written: {e}")
@@ -148,9 +193,10 @@ async def _classify(names: list[str]) -> tuple[list[jev_client.JevAnswer], dict]
 
 
 def _print_stats(stats: dict) -> None:
-    usd = stats["tokens"] * JEV_USD_PER_MILLION_INPUT_TOKENS / 1e6
+    usd = _usd(stats["tokens"])
     per_name = stats["tokens"] / stats["names"]
     per_full = stats["full_tokens"] / stats["full_names"] if stats["full_names"] else 0
+    print(f"recorded spend so far: ${_spent_usd():.5f} (cap ${SPEND_CAP_USD:.2f})")
     print(
         f"model={','.join(stats['model'])} requests={stats['requests']} names={stats['names']} "
         f"tokens={stats['tokens']} spend=${usd:.5f} tok/name={per_name:.1f} "
@@ -173,7 +219,7 @@ async def run() -> None:
     gold = sorted(
         (g for g in _rows(ev.GOLD) if g["label"] != "A"), key=lambda g: int(g["entity_id"])
     )
-    answers, stats = await _classify([g["name"] for g in gold])
+    answers, stats = await _classify("run", [g["name"] for g in gold])
     preds = {r["entity_id"]: r for r in _rows(ev.PREDS)}
     for r in preds.values():
         r.update(dict.fromkeys(PROD_COLS, ""))
@@ -190,7 +236,7 @@ async def supplement() -> None:
     rows = [r for r in _rows(SUPP) if r["label"] != "A"]
     if any(not r["label"] for r in rows):
         raise SystemExit(f"{SUPP.name} has unlabeled rows")
-    answers, stats = await _classify([r["name"] for r in rows])
+    answers, stats = await _classify("supplement", [r["name"] for r in rows])
     out = [
         {"entity_id": r["entity_id"], **_prod_cols(a)} for r, a in zip(rows, answers, strict=True)
     ]
