@@ -138,6 +138,8 @@ async def _classify(cmd: str, names: list[str]) -> tuple[list[jev_client.JevAnsw
     Refuses when the recorded spend plus what the first batch implies would pass
     ``SPEND_CAP_USD``; every billed batch is recorded in ``SPEND``.
     """
+    if not names:
+        raise SystemExit(f"{cmd}: no names to send")
     prior = _spent_usd()
     if prior >= SPEND_CAP_USD:
         raise SystemExit(f"${prior:.4f} already spent; the cap is ${SPEND_CAP_USD:.2f}")
