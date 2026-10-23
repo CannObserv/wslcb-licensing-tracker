@@ -464,7 +464,5 @@ $0.042/M), inside the plan's ≤ $2.
 
 ### Follow-ups (not done here)
 
-- A `cooperative` subtype (operator question): needs a migration, an
-  `ORG_CRITERIA` change and a re-score; 1 co-op in the 289 gold orgs.
 - Re-check tribe / government if the entity population grows enough to give
   20 answers.
