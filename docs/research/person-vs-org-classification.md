@@ -6,8 +6,9 @@
 | Revision 1 | 2026-10-22 (live-data spot checks; withdrew `probablepeople`) |
 | Revision 2 | 2026-10-22 (self-review; hand-labeled gold set; added TypeSafe Jev) — **this document** |
 | Update | 2026-10-22 — Step 1 + Step 3 shipped in #203 (§9) |
+| Update | 2026-10-23 — org-subtype validation and go-live trust set, #210 (§10) |
 | Code under study | `entities._classify_entity_type()` — one regex, default `person` |
-| Artifacts | [`person-vs-org/`](person-vs-org/): `gold.csv`, `predictions.csv`, `evaluate.py` |
+| Artifacts | [`person-vs-org/`](person-vs-org/): `gold.csv`, `predictions.csv`, `evaluate.py`; §10 adds `subtype_eval.py`, `subtype_supplement*.csv`, `subtype_label_review.csv`, `subtype_wordings.csv`, `subtype_spend.csv` |
 
 ## TL;DR
 
@@ -321,3 +322,147 @@ noise entities (62 links across 61 records) were removed. Backup:
   suffix would rename and merge entities, which needs its own cleanup.
 - Short fragments (`IL`, `TY`, `CCFW`, `SMC`, `1744FOE`) are kept because they
   may be initials or abbreviations.
+
+## 10. Org subtype validation (#210, 2026-10-23)
+
+**Question.** Production asks Jev two questions per name: the 5-way *kind*
+question (§5.1) and an *org* question over `business` / `nonprofit` / `tribe` /
+`government` (`jev_client.ORG_CRITERIA`). The go-live bar: a subtype is
+trusted only at **≥ 90 % precision at the 0.7 threshold, on ≥ 20 answers**.
+A subtype below the bar, or with too little evidence, is never assigned by Jev
+(the resolver falls back to the regex's subtype, else `unknown`).
+
+**What counts.** A Jev subtype reaches `entities.entity_subtype` only when the
+kind answer is `organization` at ≥ 0.7 (the resolver's gate) **and** the org
+answer is at ≥ 0.7 (`map_answer`). Precision for subtype S = correct ÷ all
+rows passing both gates with answer S, including rows whose gold label is not
+`O` (a person Jev calls a business is a business error).
+
+### Method
+
+- **Labels.** The 289 `O` gold rows got a `subtype` column, drafted from the
+  criteria definitions **before any live call** (commit `629246d`). The
+  operator reviewed the 11 unsure rows plus a seeded random 30 against public
+  sources (`subtype_label_review.csv`). Three flipped nonprofit → business on
+  evidence: THE ROSE THEATRE, ELLENSBURG GOLF CLUB, SKALITUDE POLLINATOR
+  SANCTUARY. Labels follow what the entity *is*, not the criteria's keyword
+  hints. Final: business 243, nonprofit 24, tribe 13, government 9.
+- **Harness.** `subtype_eval.py` sends names through the shipped
+  `jev_client.classify_batch` (25 per request, `entity_id` order as production
+  batches them) and scores through `map_answer`. It refuses to send while a
+  label file has uncommitted changes, caps total spend at $0.10 through a
+  ledger, and pins each wording to a `--tag` (`subtype_wordings.csv`).
+- **Supplement (held-out).** A read-only `md5(name)` sample from production,
+  outside the gold set: regex tribe / government plus keyword pools the regex
+  may miss, and a nonprofit keyword pool. Only **20 names** exist: production
+  holds 1,392 org entities (of 67,221), 16 regex tribes and 7 regex
+  governments, and gold stratum B was already a census of the org-ish names.
+  Labeled and committed before Jev saw them (tribe 4, business 10,
+  nonprofit 4, person 2; no government).
+- **Two wordings.** `prod` is the wording #207 shipped. `prod2` is the
+  operator-approved rewording (business adds cinemas/theaters, golf courses,
+  investment funds; nonprofit becomes lodges, posts, churches, museums,
+  foundations, civic associations and members' clubs, with "a theater, golf
+  club or venue is a business unless the name says it is a nonprofit";
+  government adds community colleges). The `prod` examples included five
+  gold names (FAMILY DOLLAR, LIBERTY BAR, LOWER ELWHA KLALLAM TRIBE,
+  CITY OF LONGVIEW, and CONFEDERATED TRIBES OF THE COLVILLE RESERVATION by
+  30-char prefix), which slightly flatters `prod`'s gold score; `prod2` uses
+  none (`test_org_criteria_examples_are_not_scored_names`).
+
+### Runs and spend
+
+| Run | Names | Requests | Input tokens | Tok / name | Spend |
+|---|---|---|---|---|---|
+| gold, `prod` | 834 | 34 | 414,512 | 497.0 (496.8 full batches) | $0.0174 |
+| supplement, `prod` | 20 | 1 | 10,012 | 500.6 | $0.0004 |
+| gold, `prod2` | 834 | 34 | 454,544 | **545.0** (544.8 full batches) | $0.0191 |
+| supplement, `prod2` | 20 | 1 | 10,972 | 548.6 | $0.0005 |
+| **total** | | | 890,040 | | **$0.0374** |
+
+Both questions cost ~2.3× the kind-only 238 tokens/name; `jev_classifier.EST_INPUT_TOKENS_PER_NAME` is now **545**.
+
+### Kind regression gate
+
+| | Persons wrongly flagged (A) | 5-way correct |
+|---|---|---|
+| `jev5` (unbatched, §5.1) | 0/300 | 813/834 |
+| K=25 kind-only (§5.1 batching) | 0/300 | 821–822 |
+| `prod` | 0/300 | 824/834 |
+| `prod2` | 0/300 | 822/834 |
+
+Gate: A = 0/300 and 5-way ≥ 813. Both pass: the org question does not hurt the
+kind answer. `prod2`'s two kind changes vs `prod` (CAKEBREAD CELLARS SD FBO
+DENNI T→O, TAYLOR, ALEXANDER CHURCH P→O) are both below 0.5 confidence, so the
+resolver never uses them.
+
+### Org subtypes at 0.7 (gold + supplement)
+
+| Subtype | Wording | Answered ≥ 0.7 | Correct | Precision | 95 % Wilson low | Held-out | Verdict |
+|---|---|---|---|---|---|---|---|
+| business | `prod` | 243 | 242 | 99.6 % | 97.7 % | 8/8 | pass |
+| nonprofit | `prod` | 31 | 26 | 83.9 % | 67.4 % | 4/4 | **fail** |
+| tribe | `prod` | 16 | 16 | 100 % | 80.6 % | 3/3 | insufficient |
+| government | `prod` | 7 | 7 | 100 % | 64.6 % | 0/0 | insufficient |
+| business | **`prod2`** | 248 | 245 | 98.8 % | 96.5 % | 9/9 | **pass** |
+| nonprofit | **`prod2`** | 26 | 25 | 96.2 % | 81.1 % | 4/4 | **pass** |
+| tribe | **`prod2`** | 16 | 16 | 100 % | 80.6 % | 3/3 | insufficient |
+| government | **`prod2`** | 7 | 7 | 100 % | 64.6 % | 0/0 | insufficient |
+
+Verdict rule (operator, #210): gold + supplement decide; < 20 answers is
+"insufficient evidence" and fails closed; ≥ 10 held-out answers below 90 %
+would veto (never triggered: held-out had no errors). At 0.8 / 0.9, `prod2`
+business is 98.8 % / 99.6 % and nonprofit 100 % / 100 %.
+
+**Errors, `prod`:** THE ROSE THEATRE and ELLENSBURG GOLF CLUB → nonprofit (the
+criteria's "theater"/"club" hints), SOUTH PUGET SOUND COMMUNITY CO → nonprofit,
+BCP SPECIAL OPPORTUNITIES FUND → nonprofit, SOCIETY (not a name) → nonprofit,
+ALEXA SO INN (person) → business.
+
+**Errors, `prod2`:** CHEWELAH GOLF & COUNTRY CLUB and SEATTLE GOLF CLUB
+(real nonprofits) → business, the cost of the golf-club default, accepted when
+the wording was approved; SOCIETY → nonprofit and ALEXA SO INN → business,
+both kind-question errors the org wording cannot reach. SOUTH PUGET SOUND
+COMMUNITY CO (0.61) and BCP (0.48) drop below 0.7, so they store `unknown`
+and fall back to the regex subtype.
+
+**What trust changes.** A trusted subtype also *overrides* the regex's. Under
+`prod2` at 0.7, Jev nonprofit replaces a regex `business` on 23 names (19 gold,
+4 supplement), all correct but SOCIETY.
+
+### Decision (pinned in #210 task 5.2)
+
+- **`JEV_TRUSTED_ORG_SUBTYPES = {"business", "nonprofit"}`**, with
+  `ORG_CRITERIA` = the `prod2` wording (`test_org_criteria_is_the_wording_section_10_scored`).
+- **Tribe and government: insufficient evidence, not trusted.** Production
+  cannot supply 20 answers today (≤ 17 tribe, ≤ 9 government names exist).
+  The cost is small: every gold tribe and 7 of 9 gold governments are already
+  regex-labeled, and an untrusted Jev answer falls back to that.
+- The trust set is valid at `…_JEV_CONFIDENCE_THRESHOLD` ≥ 0.7; lowering it
+  voids this result. Any `ORG_CRITERIA` change means re-scoring under a new tag.
+
+### Limits
+
+- **Nonprofit is marginal and partly tuned.** The rewording was drafted
+  against `prod`'s gold errors, so `prod2`'s gold score is a development
+  number; the held-out check is only 4 nonprofit answers. 25/26 leaves one
+  error of headroom before 23/26 = 88.5 % would fail; Jev drifts ~0.8 % per
+  run (§5.1).
+- **The supplement only measures inside keyword pools**, and its batches were
+  homogeneous (one 20-name request). §5.1 found no composition effect.
+- **One run per wording.**
+- **Golf clubs and theaters are name-ambiguous**: the `prod2` default sends
+  member-owned clubs to business.
+
+### For the backfill (#210 task 5.3)
+
+At the 67,221 entities awaiting classification, the dry run should show
+≈ 2,689 requests, ≈ 36.6 M input tokens, **≈ $1.54** (545 tokens/name at
+$0.042/M), inside the plan's ≤ $2.
+
+### Follow-ups (not done here)
+
+- A `cooperative` subtype (operator question): needs a migration, an
+  `ORG_CRITERIA` change and a re-score; 1 co-op in the 289 gold orgs.
+- Re-check tribe / government if the entity population grows enough to give
+  20 answers.
