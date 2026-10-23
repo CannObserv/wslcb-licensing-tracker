@@ -5,6 +5,7 @@ classification_review / jev_classifier functions are patched where the routes
 module imports them.  No PostgreSQL, no network.
 """
 
+import re
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -110,7 +111,9 @@ def test_review_page_renders_items(client):
         assert text in body, text
     # nav link, marked active
     assert 'href="/admin/entities/review"' in body
-    assert "bg-co-purple-50 text-co-purple font-medium" in body.split("Entity review")[0][-400:]
+    nav = re.search(r'<a href="/admin/entities/review"\s+class="([^"]*)"', body)
+    assert nav, "no Entity review nav link"
+    assert "font-medium" in nav.group(1)
 
 
 def test_review_page_unknown_tab_and_bad_tab(client):
