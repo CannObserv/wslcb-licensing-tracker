@@ -120,9 +120,21 @@ async def _classify(names: list[str]) -> tuple[list[jev_client.JevAnswer], dict]
             )
             if implied_usd > SPEND_CAP_USD:
                 raise SystemExit(f"over the ${SPEND_CAP_USD:.2f} cap; nothing written")
-            batches = [first, *await asyncio.gather(*(one(client, ch) for ch in chunks[1:]))]
+            rest = await asyncio.gather(
+                *(one(client, ch) for ch in chunks[1:]), return_exceptions=True
+            )
         except jev_client.JevError as e:
             raise SystemExit(f"Jev failed (status {e.status}); nothing written: {e}") from None
+    batches = [first, *rest]
+    failed = [r for r in batches if isinstance(r, BaseException)]
+    if failed:
+        # The batches that did answer were billed: report them before giving up.
+        spent = sum(b.input_tokens for b in batches if isinstance(b, jev_client.JevBatch))
+        usd = spent * JEV_USD_PER_MILLION_INPUT_TOKENS / 1e6
+        print(f"{len(failed)}/{len(batches)} batches failed; {spent} tokens (${usd:.5f}) spent")
+        e = failed[0]
+        status = getattr(e, "status", None)
+        raise SystemExit(f"Jev failed (status {status}); nothing written: {e}")
     full = [(b, ch) for b, ch in zip(batches, chunks, strict=True) if len(ch) == size]
     stats = {
         "model": sorted({b.model for b in batches}),
