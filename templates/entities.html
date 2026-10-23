@@ -64,7 +64,7 @@
 
     {# Organization subtype filter (#209) #}
     {% if entity_type == 'organization' or subtype %}
-    <div class="flex gap-1 items-center flex-wrap mt-3" aria-label="Organization kind">
+    <div class="flex gap-1 items-center flex-wrap mt-3" role="group" aria-label="Organization kind">
         <span class="text-xs text-gray-400 mr-1">Kind:</span>
         {% for val, label in [("", "All kinds")] + subtype_labels.items() | list %}
         {% set active = (subtype == val) %}
