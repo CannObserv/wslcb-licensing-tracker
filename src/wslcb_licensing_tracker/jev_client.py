@@ -61,17 +61,22 @@ KIND_CRITERIA = {
     "not_a_name": "Administrative text, regulation citations, counts, or numbers "
     "rather than a name",
 }
-# Unvalidated until #210 (task 5.1) scores it on the gold set.
+# Reworded and scored in #210 (docs/research/person-vs-org-classification.md §10).
+# Examples must not be gold-set names (tests/test_jev_client.py); any change
+# means re-scoring with subtype_eval.py under a new --tag.
 ORG_CRITERIA = {
     "business": "A for-profit company or business of any size, including stores, bars, "
-    "restaurants, wineries, breweries and holding companies "
-    "(e.g. FAMILY DOLLAR, LIBERTY BAR, ACME HOLDINGS LLC)",
-    "nonprofit": "A nonprofit, charity, club, fraternal lodge, veterans post, church, museum, "
-    "theater or civic association (e.g. ELKS LODGE 1234, AMERICAN LEGION POST 12)",
+    "restaurants, wineries, breweries, cinemas and theaters, golf courses, investment funds "
+    "and holding companies (e.g. CORNER MARKET, HARBOR TAVERN, ACME HOLDINGS LLC)",
+    "nonprofit": "A nonprofit or charity: a fraternal lodge or aerie, veterans post, church, "
+    "museum, foundation, civic association, or members' club such as a yacht club "
+    "(e.g. ELKS LODGE 1234, AMERICAN LEGION POST 12). A theater, golf club or venue is a "
+    "business unless the name says it is a nonprofit",
     "tribe": "A Native American tribe, band or nation, or a tribal government "
-    "(e.g. LOWER ELWHA KLALLAM TRIBE, CONFEDERATED TRIBES OF THE COLVILLE RESERVATION)",
-    "government": "A city, town, county, state, port, public school or university, public utility, "
-    "or other government agency (e.g. CITY OF LONGVIEW, PORT OF SEATTLE)",
+    "(e.g. MAKAH TRIBE, CONFEDERATED TRIBES OF THE UMATILLA INDIAN RESERVATION)",
+    "government": "A city, town, county, state, port, public school, community college or "
+    "university, public utility, or other government agency "
+    "(e.g. CITY OF SPOKANE VALLEY, PORT OF SEATTLE, CLARK COLLEGE)",
 }
 _KIND_INSTRUCTIONS = "What kind of entity does `names.n{i}` refer to?"
 _ORG_INSTRUCTIONS = "If `names.n{i}` is an organization, which kind of organization is it?"
