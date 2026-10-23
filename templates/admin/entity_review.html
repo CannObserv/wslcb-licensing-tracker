@@ -1,0 +1,99 @@
+{% extends "admin/base.html" %}
+{% import "partials/entity_classification_forms.html" as f %}
+{% block title %}Entity Review — WSLCB Licensing Tracker{% endblock %}
+
+{% block admin_content %}
+<div class="space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Entity review</h1>
+        <p class="text-sm text-gray-500 mt-1">
+            {% if tab == 'unknown' %}
+            Organizations whose subtype resolved to <em>unknown</em>, with no manual decision. Work these when convenient.
+            {% else %}
+            Open flags, AI answers below {{ '%.0f' | format(threshold * 100) }}% confidence, and AI "not a name" answers.
+            Each action writes a manual decision (audited) and removes the item.
+            {% endif %}
+        </p>
+    </div>
+
+    {# ── Tabs ─────────────────────────────────────────────────────────── #}
+    <nav aria-label="Review tabs" class="flex gap-1 border-b border-gray-200">
+        {% for key, label in [('main', 'Review queue'), ('unknown', 'Subtype unknown')] %}
+        <a href="/admin/entities/review?tab={{ key }}"
+           {% if tab == key %}aria-current="page"{% endif %}
+           class="px-4 py-2 text-sm -mb-px border-b-2 {% if tab == key %}border-co-purple text-co-purple font-medium{% else %}border-transparent text-gray-600 hover:text-co-purple{% endif %}">
+            {{ label }}
+            <span class="ml-1 inline-flex items-center px-1.5 rounded text-xs {% if tab == key %}bg-co-purple-50 text-co-purple{% else %}bg-gray-100 text-gray-600{% endif %}">{{ counts[key] }}</span>
+        </a>
+        {% endfor %}
+    </nav>
+
+    {% if items %}
+    {% if counts[tab] > items | length %}
+    <p class="text-xs text-gray-500">Showing the first {{ items | length }} of {{ counts[tab] }}.</p>
+    {% endif %}
+    <ul class="space-y-3 list-none">
+        {% for item in items %}
+        <li class="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <a href="/entity/{{ item.entity_id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ item.name }}</a>
+                    <div class="text-xs text-gray-500 mt-0.5">
+                        Now: {{ f.answer_label(item.entity_type, item.entity_subtype) }}
+                        <span class="text-gray-400">({{ item.classification_source }})</span>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-1">
+                    {% for reason in item.reasons %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                        {% if reason == 'flag' %}bg-red-50 text-red-700{% elif reason == 'not_a_name' %}bg-amber-100 text-amber-800{% else %}bg-gray-100 text-gray-700{% endif %}">
+                        {{ {'flag': 'Flagged', 'low_confidence': 'Low confidence', 'not_a_name': 'Not a name?', 'unknown_subtype': 'Subtype unknown'}[reason] }}
+                    </span>
+                    {% endfor %}
+                </div>
+            </div>
+
+            {% if item.flags %}
+            <ul class="text-xs text-gray-700 space-y-0.5 list-none">
+                {% for flag in item.flags %}
+                <li><span class="font-medium">Flag:</span> {{ flag.reason }} <span class="text-gray-400">— {{ flag.flagged_by }}, {{ flag.created_at.strftime('%Y-%m-%d') if flag.created_at else '' }}</span></li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div class="bg-gray-50 rounded px-3 py-2">
+                    <dt class="text-gray-500">AI (Jev)</dt>
+                    <dd class="text-gray-900">
+                        {% if item.jev %}
+                        {{ f.answer_label(item.jev.entity_type, item.jev.entity_subtype) }}
+                        {% if item.jev.confidence is not none %}· {{ '%.0f' | format(item.jev.confidence * 100) }}%{% endif %}
+                        <span class="font-mono text-gray-400">{{ item.jev.model }}</span>
+                        {% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div class="bg-gray-50 rounded px-3 py-2">
+                    <dt class="text-gray-500">Rules</dt>
+                    <dd class="text-gray-900">{% if item.regex %}{{ f.answer_label(item.regex.entity_type, item.regex.entity_subtype) }}{% else %}—{% endif %}</dd>
+                </div>
+            </dl>
+
+            <div class="flex flex-wrap items-center gap-2">
+                {% if item.jev and item.jev.entity_type != 'not_a_name' %}{{ f.accept_form(item.entity_id, next_url, 'jev', 'Accept AI') }}{% endif %}
+                {% if item.regex %}{{ f.accept_form(item.entity_id, next_url, 'regex', 'Accept rules') }}{% endif %}
+            </div>
+            <details class="text-xs">
+                <summary class="cursor-pointer text-co-purple hover:text-co-purple-700">Set other…</summary>
+                <div class="mt-2">{{ f.classify_form(item.entity_id, next_url, entity_types, entity_subtypes, item.entity_type, item.entity_subtype) }}</div>
+            </details>
+            {{ f.not_a_name_form(item.entity_id, next_url) }}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="bg-white border border-gray-200 rounded-lg px-4 py-8 text-center text-sm text-gray-500">
+        Nothing to review.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

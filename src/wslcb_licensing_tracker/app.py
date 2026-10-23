@@ -1,8 +1,9 @@
 """FastAPI web application for WSLCB licensing tracker.
 
 Public routes live here.  Admin routes (/admin/*) are split across
-admin_routes.py (dashboard, users, audit log) and
-admin_endorsement_routes.py (endorsement curation), each an APIRouter
+admin_routes.py (dashboard, users, audit log),
+admin_endorsement_routes.py (endorsement curation) and
+admin_entity_routes.py (entity classification review), each an APIRouter
 included at startup.
 """
 
@@ -24,7 +25,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from . import address_client, admin_endorsement_routes, admin_routes, api_routes
+from . import (
+    address_client,
+    admin_endorsement_routes,
+    admin_entity_routes,
+    admin_routes,
+    api_routes,
+)
 from .admin_auth import AdminRedirectException, get_current_user
 from .config import get_build_id
 from .data_migration import run_pending_migrations
@@ -96,6 +103,7 @@ app.add_middleware(_CacheMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(admin_routes.router)
 app.include_router(admin_endorsement_routes.router)
+app.include_router(admin_entity_routes.router)
 app.include_router(api_routes.router)
 templates = Jinja2Templates(directory="templates")
 
@@ -181,15 +189,19 @@ async def http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ) -> HTMLResponse:
-    """Render HTML 404 (and other HTTP errors) instead of raw JSON."""
+    """Render HTML 404 (and other HTTP errors) instead of raw JSON.
+
+    ``detail`` is escaped: some carry form input or a vendor's response (#208).
+    """
     if exc.status_code == _HTTP_404:
         return await _tpl(request, "404.html", {"request": request}, status_code=_HTTP_404)
     # For other HTTP errors, return a simple styled page
     return HTMLResponse(
         f"<html><body style='font-family:sans-serif;padding:2rem'>"
-        f"<h1>Error {exc.status_code}</h1><p>{exc.detail}</p>"
+        f"<h1>Error {exc.status_code}</h1><p>{html.escape(str(exc.detail))}</p>"
         f"<a href='/'>Back to Dashboard</a></body></html>",
         status_code=exc.status_code,
+        headers=exc.headers,
     )
 
 

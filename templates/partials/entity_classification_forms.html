@@ -1,0 +1,78 @@
+{# Admin classification action forms (#208), shared by the review queue and the
+   entity-page admin panel.  Each posts to /admin/entities/<id>/<action> with a
+   ``next`` path to return to. #}
+
+{% set _btn = "text-xs font-medium px-2.5 py-1 rounded border transition-colors" %}
+{% set _btn_primary = _btn ~ " bg-co-purple text-white border-co-purple hover:bg-co-purple-700" %}
+{% set _btn_plain = _btn ~ " bg-white text-gray-700 border-gray-300 hover:border-co-purple hover:text-co-purple" %}
+{% set _btn_danger = _btn ~ " bg-white text-red-700 border-red-300 hover:bg-red-50" %}
+{% set _input = "border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:border-co-purple focus:ring-1 focus:ring-co-purple" %}
+
+{% macro answer_label(entity_type, entity_subtype) -%}
+{%- if entity_type == 'not_a_name' -%}not a name
+{%- elif entity_type -%}{{ entity_type }}{% if entity_subtype %} · {{ entity_subtype }}{% endif %}
+{%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+{% macro accept_form(entity_id, next, source, label) -%}
+<form method="POST" action="/admin/entities/{{ entity_id }}/accept" class="inline">
+    <input type="hidden" name="source" value="{{ source }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit" class="{{ _btn_primary }}">{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{% macro classify_form(entity_id, next, entity_types, entity_subtypes, current_type=None, current_subtype=None, label="Set") -%}
+<form method="POST" action="/admin/entities/{{ entity_id }}/classify" class="flex flex-wrap items-center gap-1.5">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="sr-only" for="type-{{ entity_id }}">Type</label>
+    <select name="entity_type" id="type-{{ entity_id }}" class="{{ _input }}">
+        {% for t in entity_types %}
+        <option value="{{ t }}" {% if t == current_type %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+    </select>
+    <label class="sr-only" for="subtype-{{ entity_id }}">Subtype</label>
+    <select name="entity_subtype" id="subtype-{{ entity_id }}" class="{{ _input }}">
+        <option value="" {% if not current_subtype %}selected{% endif %}>(no subtype)</option>
+        {% for s in entity_subtypes %}
+        <option value="{{ s }}" {% if s == current_subtype %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+    </select>
+    <label class="sr-only" for="note-{{ entity_id }}">Note</label>
+    <input type="text" name="note" id="note-{{ entity_id }}" placeholder="Note (optional)" maxlength="500" class="{{ _input }} w-40">
+    <button type="submit" class="{{ _btn_primary }}">{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{% macro not_a_name_form(entity_id, next) -%}
+<form method="POST" action="/admin/entities/{{ entity_id }}/not-a-name" class="flex flex-wrap items-center gap-1.5">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit" class="{{ _btn_danger }}"
+            onclick="return confirm('Mark as not a name? The next reclassify deletes this entity and all its classification rows and flags.')">Not a name</button>
+    <span class="text-xs text-gray-500">The next <code>reclassify-entities</code> deletes the entity, its manual row and its flags. Only the audit log keeps a record.</span>
+</form>
+{%- endmacro %}
+
+{% macro flag_form(entity_id, next) -%}
+<form method="POST" action="/admin/entities/{{ entity_id }}/flag" class="flex flex-wrap items-center gap-1.5">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="sr-only" for="reason-{{ entity_id }}">Reason</label>
+    <input type="text" name="reason" id="reason-{{ entity_id }}" required placeholder="Reason" maxlength="500" class="{{ _input }} w-56">
+    <button type="submit" class="{{ _btn_plain }}">Flag for review</button>
+</form>
+{%- endmacro %}
+
+{% macro clear_form(entity_id, next) -%}
+<form method="POST" action="/admin/entities/{{ entity_id }}/clear-manual" class="inline">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit" class="{{ _btn_plain }}">Clear manual override</button>
+</form>
+{%- endmacro %}
+
+{% macro jev_form(entity_id, next) -%}
+<form method="POST" action="/admin/entities/{{ entity_id }}/jev" class="inline">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit" class="{{ _btn_plain }}"
+            onclick="return confirm('Send this name to Jev? This is a paid call.')">Re-classify with Jev</button>
+</form>
+{%- endmacro %}

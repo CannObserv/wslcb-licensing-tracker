@@ -596,6 +596,38 @@ async def test_no_candidates_still_records_a_run(isolated, jev_on):
     assert run.finished_at is not None
 
 
+async def test_admin_single_entity_with_its_own_client(isolated, jev_on, monkeypatch):
+    """``client=None`` (the admin route's call) builds its own client with ``TIMEOUT`` (#208)."""
+    (eid,) = await _seed(isolated, "OWN CLIENT LLC")
+    await _run(isolated, FakeJev(), mode="ids", ids=[eid])
+    async with isolated.connect() as conn:
+        await record_manual(
+            conn, eid, entity_type="person", entity_subtype=None, created_by="a@example.com"
+        )
+        await conn.commit()
+    fake = FakeJev()
+    built: list[dict] = []
+    real_client = httpx.AsyncClient
+
+    def _client(**kw):
+        built.append(kw)
+        return real_client(transport=httpx.MockTransport(fake), **kw)
+
+    monkeypatch.setattr(jc.httpx, "AsyncClient", _client)
+    async with isolated.connect() as conn:
+        s = await jc.classify_entities(
+            conn, origin="admin", mode="ids", ids=[eid], include_manual=True, limit=1
+        )
+
+    assert built == [{"timeout": jc.TIMEOUT}]
+    assert _ours(fake.names) == [PREFIX + "OWN CLIENT LLC"]
+    assert (s.names_sent, s.batches_ok, s.error) == (1, 1, None)
+    assert len(await _jev_rows(isolated, eid)) == 2
+    # The second opinion is stored; the manual row still wins.
+    assert await _resolved(isolated, eid) == ("person", None, "manual")
+    assert (await _runs(isolated))[-1].origin == "admin"
+
+
 async def test_runs_never_overlap_in_one_process(isolated, jev_on):
     """Two runs started together: one sends, the other skips; nothing is sent twice."""
     await _seed(isolated, *(f"RACE {i:02d}" for i in range(30)))
