@@ -24,7 +24,8 @@ operator to ignore both.
 
 **The key is a credential, never an environment variable.** The base URL and
 monitor id are environment variables (the backup's in
-``/etc/wslcb-licensing-tracker/backup.env``, the scrape's in the app ``.env``);
+``/etc/wslcb-licensing-tracker/backup.env``, the scrape's and the classify
+run's in the app ``.env``);
 the key is the unit's ``checkin-key`` credential, which systemd reads from a
 root-only file and hands the run as a private copy under
 ``$CREDENTIALS_DIRECTORY``. So it is in no process environment, and no
