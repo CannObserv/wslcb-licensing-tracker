@@ -135,7 +135,12 @@ def score() -> None:
     """Print the per-stratum comparison table."""
     gold = list(csv.DictReader(GOLD.open()))
     preds = {r["entity_id"]: r for r in csv.DictReader(PREDS.open())}
-    cols = [c for c in next(iter(preds.values())) if c not in ("entity_id", "jev5_conf")]
+    # Code columns only: confidences and subtype_eval.py's prod_org are not P/O/T/E/N codes.
+    cols = [
+        c
+        for c in next(iter(preds.values()))
+        if c not in ("entity_id", "prod_org") and not c.endswith("_conf")
+    ]
 
     def is_person(code: str) -> bool:
         return code in ("P", "H")
