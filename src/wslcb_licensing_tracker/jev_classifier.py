@@ -371,7 +371,13 @@ async def _run_batches(  # noqa: PLR0913 — the run's settings, passed through
     client: httpx.AsyncClient,
     concurrency: int,
 ) -> None:
-    """Post every batch, ``concurrency`` in flight; handle results serially on *conn*."""
+    """Post every batch, ``concurrency`` in flight; handle results serially on *conn*.
+
+    On a stop, the up to ``concurrency - 1`` requests still in flight are
+    cancelled.  Any Jev had already answered are billed but neither stored nor
+    counted, so a stopped run's tokens can undercount by that much.  Both stop
+    conditions mean those requests are most likely failing too.
+    """
     threshold = jev_confidence_threshold()
     slots = asyncio.Semaphore(concurrency)
     tasks = [
