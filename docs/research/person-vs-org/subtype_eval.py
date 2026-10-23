@@ -22,7 +22,8 @@ subtype_spend.csv (every live send is appended there), passes
 
 ``supplement-sql`` prints a read-only SQL script (``COPY … TO STDOUT``) that samples regex
 ``tribe`` / ``government`` entities and a nonprofit keyword pool from
-production by ``md5(name)``, gold ids excluded, into subtype_supplement.csv.
+production by ``md5(name)``, gold ids excluded (each pool: the regex's subtype,
+or a keyword the regex may miss), into subtype_supplement.csv.
 The operator runs it.  The rows are hand-labeled (``label``, ``subtype``,
 ``subtype_sure``) and committed; only then does ``supplement`` send them, and
 it writes the answers to a separate subtype_supplement_preds.csv.
@@ -73,6 +74,14 @@ NONPROFIT_PATTERN = (
     r"MUSEUM|THEATRE|THEATER|FOUNDATION|ASSOCIATION|ASSN|SOCIETY|CLUB|GRANGE|ORDER OF|"
     r"FRATERNAL|VETERANS|CHARIT[A-Z]*|SYMPHONY|OPERA|BALLET|ROTARY|KIWANIS|YMCA|YWCA|"
     r"FESTIVAL|GUILD|CHAMBER OF COMMERCE|FRIENDS OF)\M"
+)
+# Tribe / government names the regex may miss (legal suffixes win over its
+# tribe and government checks).  Lookalikes (COUNTY LINE TAVERN) are welcome.
+TRIBE_PATTERN = r"\m(TRIBES?|TRIBAL|NATION|BAND OF|INDIANS?|RESERVATION|RANCHERIA|PUEBLO)\M"
+GOVERNMENT_PATTERN = (
+    r"\m(CITY OF|TOWN OF|COUNTY|PORT OF|PORT DISTRICT|SCHOOL DISTRICT|PUBLIC SCHOOLS?|"
+    r"COLLEGE|UNIVERSITY|PUD|PUBLIC UTILITY|PUBLIC DEVELOPMENT AUTHORITY|DEPARTMENT OF|"
+    r"STATE OF|PARKS? (AND|&) RECREATION|AIRPORT|DISTRICT)\M"
 )
 
 
@@ -252,8 +261,8 @@ def supplement_sql(n: int) -> str:
     """Return the read-only psql script that writes subtype_supplement.csv."""
     ids = ",".join(g["entity_id"] for g in _rows(ev.GOLD))
     pools = {
-        "tribe": "classification_source = 'regex' AND entity_subtype = 'tribe'",
-        "government": "classification_source = 'regex' AND entity_subtype = 'government'",
+        "tribe": f"(entity_subtype = 'tribe' OR name ~ '{TRIBE_PATTERN}')",
+        "government": f"(entity_subtype = 'government' OR name ~ '{GOVERNMENT_PATTERN}')",
         "nonprofit": f"name ~ '{NONPROFIT_PATTERN}'",
     }
     parts = [
