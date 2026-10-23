@@ -222,6 +222,17 @@ async def test_non_json_body_is_malformed():
         await _classify(handler)
 
 
+async def test_undecodable_body_is_a_failed_batch():
+    """A corrupt content encoding raises httpx.DecodingError, not a TransportError."""
+
+    def handler(request):
+        return httpx.Response(200, content=b"not gzip", headers={"content-encoding": "gzip"})
+
+    with pytest.raises(jev_client.JevError) as exc:
+        await _classify(handler)
+    assert "DecodingError" in str(exc.value)
+
+
 async def test_transport_error_raises():
     def handler(request):
         raise httpx.ConnectError("boom", request=request)

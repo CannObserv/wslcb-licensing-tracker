@@ -242,7 +242,8 @@ async def classify_batch(
     Retries 429/529 up to ``MAX_ATTEMPTS`` attempts, sleeping ``2**attempt``
     seconds between them.  Raises ``ValueError`` for an empty or oversized
     batch (before any request), and ``JevError`` for any other status,
-    exhausted retries, a transport error or a malformed response.
+    exhausted retries, a request error (transport, decoding) or a malformed
+    response.
     """
     if not 0 < len(names) <= BATCH_SIZE:
         msg = f"a Jev batch holds 1 to {BATCH_SIZE} names (got {len(names)})"
@@ -252,8 +253,9 @@ async def classify_batch(
     for attempt in range(MAX_ATTEMPTS):
         try:
             response = await client.post(URL, json=body, headers=headers, timeout=TIMEOUT)
-        except httpx.TransportError as e:
-            # By type only: a transport message may echo request details.
+        except httpx.RequestError as e:
+            # Transport, decoding or redirect failures: one failed batch, never a
+            # crashed run. By type only: the message may echo request details.
             msg = f"Jev request failed: {type(e).__name__}"
             raise JevError(msg) from None
         status = response.status_code
