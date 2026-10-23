@@ -38,6 +38,7 @@ the org answer is too (``map_answer``).  ``score`` counts exactly those.
 import argparse
 import asyncio
 import csv
+import math
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -291,6 +292,16 @@ def _require_subtypes(rows: list[dict], source: str) -> None:
         raise SystemExit(f"{source}: {len(blank)} O rows without an org subtype, e.g. {blank[0]!r}")
 
 
+def _wilson_low(ok: int, n: int, z: float = 1.96) -> float:
+    """95% Wilson lower bound on a proportion: how far drift could pull a pass down."""
+    if not n:
+        return 0.0
+    p = ok / n
+    centre = p + z * z / (2 * n)
+    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (centre - margin) / (1 + z * z / n)
+
+
 def _verdict(n: int, precision: float) -> str:
     if n < MIN_EVIDENCE:
         return "insufficient"
@@ -321,7 +332,8 @@ def score() -> None:
         print(f"\nthreshold {t}  (bar {BAR:.0%}, min {MIN_EVIDENCE} answers)")
         print(
             f"{'subtype':12s}{'labeled':>8s}{'answered':>10s}{'correct':>9s}"
-            f"{'precision':>11s}{'recall':>8s}{'  verdict':12s}{'  of which supp':>16s}"
+            f"{'precision':>11s}{'95% low':>9s}{'recall':>8s}"
+            f"{'  verdict':12s}{'  of which supp':>16s}"
         )
         for sub in JEV_ORG_SUBTYPES:
             hits = [(g, src) for g, p, src in pool if _assigned(p, t) == sub]
@@ -331,6 +343,7 @@ def score() -> None:
             supp = sum(src == "supp" for _, src in hits)
             print(
                 f"{sub:12s}{n_gold:8d}{len(hits):10d}{ok:9d}{prec:11.1%}"
+                f"{_wilson_low(ok, len(hits)):9.1%}"
                 f"{ok / n_gold if n_gold else 0:8.1%}  {_verdict(len(hits), prec):12s}{supp:14d}"
             )
 
