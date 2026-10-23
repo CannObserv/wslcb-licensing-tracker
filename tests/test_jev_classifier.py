@@ -223,7 +223,9 @@ def test_est_tokens_per_name_is_the_measured_two_question_figure():
 async def test_estimated_cost():
     dry = jc.RunSummary("cli", enabled=False, key_present=False, model="m", candidates=1000)
     dry.dry_run = True
-    assert dry.estimated_cost_usd == pytest.approx(1000 * 238 * 0.042 / 1e6)
+    assert dry.estimated_cost_usd == pytest.approx(
+        1000 * jc.EST_INPUT_TOKENS_PER_NAME * 0.042 / 1e6
+    )
     real = jc.RunSummary("cli", enabled=True, key_present=True, model="m", input_tokens=2_000_000)
     assert real.estimated_cost_usd == pytest.approx(0.084)
 
@@ -240,7 +242,7 @@ async def test_dry_run_counts_without_calls_even_when_disabled(isolated, monkeyp
     assert s.dry_run
     assert s.candidates == 3
     assert not s.enabled
-    assert s.estimated_cost_usd == pytest.approx(3 * 238 * 0.042 / 1e6)
+    assert s.estimated_cost_usd == pytest.approx(3 * jc.EST_INPUT_TOKENS_PER_NAME * 0.042 / 1e6)
     assert await _runs(isolated) == []
 
 

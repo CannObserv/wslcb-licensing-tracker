@@ -359,8 +359,8 @@ class TestClassifyEntities:
         result = CliRunner().invoke(main, ["db", "classify-entities", "--dry-run"])
         assert result.exit_code == 0, result.output
         assert run.await_args.kwargs["dry_run"] is True
-        # 2601 names -> 105 requests; 2601 * 238 tokens at $0.042/M
-        assert "[dry-run] Would send 2,601 name(s) in 105 request(s); est. $0.0260" in result.output
+        # 2601 names -> 105 requests; 2601 * 545 tokens at $0.042/M
+        assert "[dry-run] Would send 2,601 name(s) in 105 request(s); est. $0.0595" in result.output
 
     def test_disabled_exit_0(self, eng, gdb, run, *_):
         run.return_value = _summary(enabled=False)

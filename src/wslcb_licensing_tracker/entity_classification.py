@@ -31,8 +31,10 @@ ENTITY_SUBTYPES = ("business", "nonprofit", "trust", "estate", "tribe", "governm
 # Subtypes Jev's org question can answer (trust/estate come from its kind question).
 JEV_ORG_SUBTYPES = ("business", "nonprofit", "tribe", "government")
 NOT_A_NAME = "not_a_name"
-# Org subtypes whose Jev answer met the go-live bar; set in #210 (Task 5.2).
-JEV_TRUSTED_ORG_SUBTYPES: frozenset[str] = frozenset()
+# Org subtypes whose Jev answer met the go-live bar (>= 90% precision at 0.7) in
+# docs/research/person-vs-org-classification.md §10 (#210).  Tribe and government
+# had < 20 answers and fail closed; any ORG_CRITERIA change means re-scoring.
+JEV_TRUSTED_ORG_SUBTYPES: frozenset[str] = frozenset({"business", "nonprofit"})
 
 _CHUNK = 1000
 

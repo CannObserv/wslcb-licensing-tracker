@@ -58,9 +58,9 @@ logger = logging.getLogger(__name__)
 Mode = Literal["unclassified", "refresh_all", "refresh_model", "ids"]
 Origin = Literal["post_scrape", "post_import", "cli", "admin"]
 
-# Measured for the kind question alone (research §5.1); #210 (task 5.2)
-# re-measures with the org question added.
-EST_INPUT_TOKENS_PER_NAME = 238
+# Measured with both questions and the #210 ORG_CRITERIA: 454,544 tokens for the
+# 834 gold names, 25 per request (docs/research/person-vs-org-classification.md §10).
+EST_INPUT_TOKENS_PER_NAME = 545
 MAX_CONSECUTIVE_FAILURES = 3
 ADVISORY_LOCK_KEY = 0x6A6576  # "jev"
 # Entities awaiting a first answer, past which the weekly check-in alerts.

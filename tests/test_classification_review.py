@@ -351,11 +351,12 @@ async def test_queue_membership_matrix(pg_conn):
     await _jev(pg_conn, manual_only, "person", None, 0.3)
     await _manual(pg_conn, manual_only)
     unknown = await _entity(pg_conn, "M UNKNOWN")
-    await _jev(pg_conn, unknown, "organization", "business", 0.9)
+    # Jev's own "unknown" (org answer below threshold): independent of the trusted set.
+    await _jev(pg_conn, unknown, "organization", "unknown", 0.9)
     unknown_manual = await _entity(pg_conn, "M UNKNOWN MANUAL")
     await _manual(pg_conn, unknown_manual, "organization", "unknown")
     unknown_flag = await _entity(pg_conn, "M UNKNOWN FLAG")
-    await _jev(pg_conn, unknown_flag, "organization", "business", 0.9)
+    await _jev(pg_conn, unknown_flag, "organization", "unknown", 0.9)
     await _flag(pg_conn, unknown_flag)
     ids = [
         flag,
@@ -436,7 +437,7 @@ async def test_queue_limit(pg_conn):
 async def test_review_counts_match_queue(pg_conn):
     await _flag(pg_conn, await _entity(pg_conn, "C FLAG"))
     u = await _entity(pg_conn, "C UNKNOWN")
-    await _jev(pg_conn, u, "organization", "business", 0.9)
+    await _jev(pg_conn, u, "organization", "unknown", 0.9)
     await resolve_entities(pg_conn, [u])
 
     counts = await cr.review_counts(pg_conn)

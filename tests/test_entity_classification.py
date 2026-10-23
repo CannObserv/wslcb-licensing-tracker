@@ -189,7 +189,8 @@ async def test_resolve_entities_applies_jev_and_reports_changes(pg_conn, monkeyp
     monkeypatch.delenv(THRESHOLD_ENV, raising=False)
     eid = await get_or_create_entity(pg_conn, "T206 FAMILY DOLLAR")
     assert await _resolved(pg_conn, eid) == ("person", None, "regex")
-    await _jev(pg_conn, eid, "organization", "business", 0.92)
+    # Jev's own "unknown" (org answer below threshold): independent of the trusted set.
+    await _jev(pg_conn, eid, "organization", "unknown", 0.92)
 
     result = await resolve_entities(pg_conn, [eid])
     assert result.examined == 1
@@ -409,6 +410,7 @@ async def test_resolve_reads_trusted_subtypes_at_call_time(pg_conn, monkeypatch)
     monkeypatch.delenv(THRESHOLD_ENV, raising=False)
     eid = await get_or_create_entity(pg_conn, "T206 TRUSTED NONPROFIT LLC")
     await _jev(pg_conn, eid, "organization", "nonprofit", 0.95)
+    monkeypatch.setattr(entity_classification, "JEV_TRUSTED_ORG_SUBTYPES", frozenset())
     await resolve_entities(pg_conn, [eid])
     assert await _resolved(pg_conn, eid) == ("organization", "business", "jev")
     monkeypatch.setattr(entity_classification, "JEV_TRUSTED_ORG_SUBTYPES", frozenset({"nonprofit"}))
