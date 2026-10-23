@@ -11,6 +11,7 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure. Liveness only; a stale scrape stays 200 (#197) |
 | `wslcb-address-validation.timer` | Weekly address backfill + TTL renewal, Sunday 2:00 AM Pacific, ±5 min jitter |
+| `wslcb-entity-classification.timer` | Weekly Jev classification, Sunday 4:00 AM Pacific ±5 min; the classify monitor's dead-man (#207). Installed from [`MONITORING.md`](MONITORING.md), not the copy block |
 | `wslcb-disk-hygiene.timer` | Weekly cache/worktree/data-straggler cleanup, Sunday 3:00 AM Pacific, ±5 min jitter (#138) |
 | `wslcb-backup.service` + `.timer` | Nightly DB dump + `data/` archive to GCS, 08:17 AM Pacific ±10 min; dynamic user, keys as credentials, co-status dead-man check-in (#185). Install, restore and drills: [`RECOVERY.md`](RECOVERY.md) — not part of the copy block below, as it needs its key files first |
 
@@ -25,6 +26,7 @@ wslcb-task@backfill-snapshots
 wslcb-task@backfill-provenance
 wslcb-task@rebuild-links
 wslcb-task@disk-hygiene
+wslcb-task@classify-entities
 ```
 
 `wslcb-task@disk-hygiene.service` additionally gets a
@@ -33,10 +35,10 @@ wslcb-task@disk-hygiene
 work, scoped to just this instance so scrape/backfill-addresses keep
 default scheduling priority.
 
-`wslcb-task@scrape.service` gets `wslcb-task@scrape.service.d/checkin.conf`
-(the co-status check-in key, tailnet ordering, a 2 h timeout). It is **not** in
-the copy block below, because it needs its key file first; install it from
-[`MONITORING.md`](MONITORING.md).
+`wslcb-task@scrape.service` and `wslcb-task@classify-entities.service` each get
+a `checkin.conf` drop-in (the co-status check-in key, tailnet ordering, a 2 h or
+1 h timeout). They are **not** in the copy block below, because each needs its
+key file first; install them from [`MONITORING.md`](MONITORING.md).
 
 `wslcb-task@import-relayed` (relay, never checks in):
 [`RELAY.md`](RELAY.md).
@@ -372,6 +374,44 @@ journalctl -u 'wslcb-task@refresh-addresses.service' -f
 # or manually:
 uv run wslcb ingest refresh-addresses
 ```
+
+## Entity classification (Jev)
+
+Optional TypeSafe Jev pass (#205): `jev_client.py` is the transport,
+`jev_classifier.py` the orchestration; the regex stays the fallback.
+- **Vars:** `CO_WSLCB_LICENSING_TRACKER_*` in the prod `.env`. `.env.example`
+  is canonical.
+- **The flag:** `…_ENABLE_JEV_CLASSIFICATION`, off by default, gates *calls*
+  only. Stored answers keep resolving.
+
+**When it runs.** After each scrape, and after each relayed import that
+ingested a capture. Either way, before the address backfill, and it never
+fails the ingest. Also from the weekly timer, and by hand. A run:
+- sends only entities with no Jev answer yet (classify once), capped per run;
+- skips operator-classified entities and noise names the purge would delete;
+- skips if another run holds the advisory lock;
+- writes a `classification_runs` row.
+
+```bash
+uv run wslcb db classify-entities --dry-run      # count + est. cost; no calls, flag ignored
+uv run wslcb db classify-entities                # the timer's run; exit 1 on any failure
+uv run wslcb db classify-entities --refresh-model M | --refresh-all | --ids-file PATH  # paid
+uv run wslcb db ignore-jev [--model M] [--undo]  # reversible rollback; never bulk-delete jev rows
+```
+
+**One-off backfill** (#210, ≈ 2,700 requests): `--limit` above the entity
+count lifts the cap. Run it as a transient unit, so it outlives ssh:
+
+```bash
+sudo systemd-run --unit=wslcb-jev-backfill --uid=exedev \
+  --working-directory=/home/exedev/wslcb-licensing-tracker \
+  -p EnvironmentFile=/etc/wslcb-licensing-tracker/.env \
+  /home/exedev/wslcb-licensing-tracker/.venv/bin/python -m wslcb_licensing_tracker.cli \
+  db classify-entities --limit 100000
+```
+
+It has no `checkin-key`, so its check-in logs as not configured (or
+half-configured). That is expected: the weekly timer is the dead-man.
 
 ## Testing
 

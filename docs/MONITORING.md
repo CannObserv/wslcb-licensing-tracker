@@ -2,12 +2,13 @@
 
 Dead-man check-ins to co-status (CannObserv/status), over the tailnet
 (`tag:wslcb → tag:status:9000`; [`RECOVERY.md`](RECOVERY.md) § Tailnet). One
-module, `checkin.py`, one `Monitor` per job; both on tenant `co-wslcb`.
+module, `checkin.py`, one `Monitor` per job; all on tenant `co-wslcb`.
 
 | Job | Monitor | Runbook |
 |---|---|---|
 | `wslcb-backup.service` | `co-wslcb-backup` | [`RECOVERY.md`](RECOVERY.md) § The co-status monitor |
 | `wslcb-task@scrape.service` | `co-wslcb-scrape` | below |
+| `wslcb-entity-classification.timer` | `co-wslcb-classify` | [below](#entity-classification-check-in-207) |
 
 ## Scrape check-in (#196)
 
@@ -58,10 +59,9 @@ sudo systemctl daemon-reload
 ```
 
 Then, once the monitor id is posted. The key below is the `co-wslcb` tenant's,
-the one the backup already holds, copied root to root and never shown. That
-holds **if status#46 confirms keys are tenant-scoped**. If they are per
-monitor, write the new key in at a prompt instead, as RECOVERY.md § Install
-and first run does for the backup's; a wrong key reads as `rejected with HTTP 403`.
+the one the backup already holds, copied root to root and never shown: keys
+are tenant-scoped (status#46, from `_load_owned`). A wrong key reads as
+`rejected with HTTP 403`.
 
 ```bash
 sudo install -m 0400 -o root -g root /etc/wslcb-licensing-tracker/backup-checkin.key \
@@ -91,6 +91,99 @@ with a 503 when stale, for an external uptime check; never point
 `wslcb-healthcheck` at it. If `scrape_log` can't be read, `data.scrape` is
 null (`/health` still 200, "scrape freshness unknown") and `/health/ingest`
 503s "Scrape freshness unavailable" with `db: ok`.
+
+## Entity classification check-in (#207)
+
+Jev classification ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Entity classification)
+must not stop unnoticed: a missing key, a vendor outage or a dead timer all
+look like nothing happening. One monitor, `co-wslcb-classify`.
+
+- **The weekly timer is the only `ok` sender.**
+  `wslcb-entity-classification.timer` runs `wslcb classify-entities` in its
+  default mode, then checks in.
+  - **`ok`** on a clean run. With the flag off it still runs and sends `ok`
+    with `enabled=false`, so the dead-man stays armed.
+  - **`alert`**, with `metadata.fault`, when any of these happens:
+    - `missing_api_key`: the flag is on and the key is unset;
+    - `auth_failed`: a 401/403 stopped the run at once;
+    - `consecutive_failures`: three failed batches in a row;
+    - `batches_failed`: any other failed batch;
+    - `backlog`: more than 1,000 entities still await a first answer;
+    - `locked`: another run held the lock, so this week's run did nothing. A
+      lock that never clears would otherwise be silent. Exit status stays 0.
+  - **A run that raises** alerts with the exception type, and still exits 1.
+  - `--dry-run` and the refresh options never check in. `--limit` alone is
+    still the default mode (the one-off backfill), and checks in when the
+    run has the credential.
+- **Post-scrape passes send `alert` only, never `ok`.** Twice-daily `ok`s would
+  mask a dead timer. A post-scrape run that loses the lock is silent: a manual
+  backfill holding it is no fault. The post-scrape alert goes with the scrape
+  unit's own `checkin-key`. That works because check-in keys are
+  tenant-scoped (CannObserv/status#46, from `_load_owned`).
+- **The relay import never checks in.** `wslcb-task@import-relayed` has no
+  credential, and must not get one ([§ Relayed scrape](#relayed-scrape-201)).
+  Its failures show in the journal and in `classification_runs`. The weekly
+  run catches its backlog.
+- **While WSLCB blocks the host (#198)** the scrape raises before its hook, so
+  every post-ingest pass is the relay's: a failure after ingest surfaces
+  only at the weekly run.
+- Config: `CO_WSLCB_LICENSING_TRACKER_CLASSIFY_CHECKIN_BASE_URL` and
+  `CO_WSLCB_LICENSING_TRACKER_CLASSIFY_MONITOR_ID` in
+  `/etc/wslcb-licensing-tracker/.env`. The key is the drop-in's `checkin-key`
+  credential. Both the classify and scrape units read these variables (the
+  scrape's for its alerts).
+
+**The monitor** is `co-wslcb-classify`, on tenant `co-wslcb`:
+
+| Field | Value | Why |
+|---|---|---|
+| `interval_seconds` | `604800` | one run a week |
+| `grace_seconds` | `10800` | 5 min jitter, plus 1 h for the fall-back (the timer is Pacific time), plus the run: up to its 1 h `TimeoutStartSec` |
+| `renotify_seconds` | `86400` | one reminder a day while a fault lasts |
+| `title_template` | `wslcb classify {{ outcome }} on {{ source_host }}` | rendered for an `alert` only |
+| `body_template` | `{{ error }} — enabled={{ enabled }}, {{ batches_failed }} failed batch(es), backlog {{ backlog }}` | |
+
+`tests/test_infra_classify_unit.py` holds the interval and grace above to the
+timer and the drop-in.
+
+**Variables.** Every check-in carries all of these:
+- `outcome`: `ok` or `failed`;
+- `source_host`;
+- `enabled`: `true` or `false`;
+- `model`;
+- `names_sent`, `batches_ok`, `batches_failed`;
+- `backlog`: entities awaiting a first answer, counted after the run. It is
+  `0` on post-scrape alerts, which don't count it;
+- `error`: the fault, or `""`.
+
+An alert for a raised run has `error` = `Type: first line`, and empty counts.
+
+**Install, in this order.** The key file first: a missing `LoadCredential=`
+source fails every run (243/CREDENTIALS).
+
+```bash
+sudo install -m 0400 -o root -g root /dev/null /etc/wslcb-licensing-tracker/classify-checkin.key
+sudo cp -r 'infra/wslcb-task@classify-entities.service.d' /etc/systemd/system/
+sudo cp infra/wslcb-entity-classification.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now wslcb-entity-classification.timer
+```
+
+Then, once the monitor id is posted, copy the tenant key the backup already
+holds, root to root and never shown. Both units read the same two variables:
+
+```bash
+sudo install -m 0400 -o root -g root /etc/wslcb-licensing-tracker/backup-checkin.key \
+     /etc/wslcb-licensing-tracker/classify-checkin.key
+# The leading \n: a file whose last line has no newline would fuse with the first.
+printf '\nCO_WSLCB_LICENSING_TRACKER_CLASSIFY_CHECKIN_BASE_URL=http://status:9000\nCO_WSLCB_LICENSING_TRACKER_CLASSIFY_MONITOR_ID=<id>\n' \
+  | sudo tee -a /etc/wslcb-licensing-tracker/.env >/dev/null
+sudo systemctl start 'wslcb-task@classify-entities.service'   # optional: check in now
+```
+
+**Set both variables before turning the flag on.** Until then, a post-scrape
+alert finds the scrape's key but no base URL or monitor id, and logs
+`classify check-in half-configured` (an ERROR) instead of alerting.
 
 ## Relayed scrape (#201)
 

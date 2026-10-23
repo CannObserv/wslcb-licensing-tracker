@@ -146,7 +146,7 @@ scripts/build-css.sh        # manual CSS rebuild if changing templates or tailwi
 
 | File | Content |
 |---|---|
-| `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION`, scrape check-in id/URL (#196; [`MONITORING.md`](docs/MONITORING.md)) |
+| `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION`, scrape/classify check-in id/URL, Jev vars (#196, #207; [`MONITORING.md`](docs/MONITORING.md)) |
 | `/etc/wslcb-licensing-tracker/backup.env` + two `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
 | `.env` (repo root, gitignored) | Dev/agent: `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL`, plus GitHub PATs for the `gh` CLI |
 | `.env.example` (committed) | Canonical list of every env var the project consumes, with comments |
@@ -160,6 +160,7 @@ uv run wslcb ingest scrape                  # manual scrape (add --rate-limit 0.
 uv run wslcb db check [--fix]               # integrity check
 uv run wslcb db reprocess-endorsements      # [--code N] [--record-id N] [--dry-run]
 uv run wslcb db rebuild-links               # rebuilds record_links + backfills previous_location_id
+uv run wslcb db classify-entities --dry-run # Jev pass cost; no flag = send (#207)
 uv run wslcb ops disk-hygiene [--dry-run]   # weekly cache/worktree/data-straggler cleanup (#138)
 ```
 
@@ -190,7 +191,7 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases
 ## Reference
 
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
-- [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape); scrape monitor install + fields
+- [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape, classify): installs + fields
 - [`docs/RELAY.md`](docs/RELAY.md) — relayed scrape while WSLCB blocks the host (#198/#201): Mac LaunchAgent install, monitoring, retirement
 - [`docs/RECOVERY.md`](docs/RECOVERY.md) — nightly GCS backup (DB + `data/` archive), restore, drills; log in [`docs/RECOVERY-REHEARSALS.md`](docs/RECOVERY-REHEARSALS.md)
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference and migration history

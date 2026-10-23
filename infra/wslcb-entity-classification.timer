@@ -1,0 +1,15 @@
+[Unit]
+Description=Weekly Jev entity classification (Sunday 4:00 AM Pacific)
+
+[Timer]
+# Runs `wslcb classify-entities` in its default mode: classify-once catch-up,
+# capped per run, and the CLASSIFY monitor's only `ok` sender (#207). With
+# the Jev flag off it still runs and checks in `ok` (enabled=false), so the
+# dead-man stays armed. docs/MONITORING.md § Entity classification check-in.
+Unit=wslcb-task@classify-entities.service
+OnCalendar=Sun *-*-* 04:00:00 America/Los_Angeles
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

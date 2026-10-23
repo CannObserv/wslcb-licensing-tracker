@@ -120,7 +120,7 @@ so every existing query, filter and template keeps working.
 | `entity_type`, `entity_subtype` | The source's answer. Jev's `not_a_name` is stored as an answer, not mapped (see Resolution). |
 | `confidence` | Jev's confidence for its type answer. NULL for regex/manual. |
 | `probabilities` | Jev's full per-option probabilities (JSONB), for later re-thresholding without re-querying. |
-| `model` | `jev-1.14.0`, the regex version (`_ENTITY_REPROCESS_VERSION`), or NULL for manual |
+| `model` | `jev-1.14.0`, the regex version (`regex-1`, `entities.REGEX_MODEL`), or NULL for manual |
 | `input_tokens` | Jev only: this entity's share of the batch's tokens (batch total ÷ names), for spend reporting |
 | `created_at`, `created_by` | `created_by` is the admin's email for manual rows |
 | `note` | Optional operator note on manual rows |
