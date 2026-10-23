@@ -438,7 +438,11 @@ async def classify_entities(  # noqa: PLR0913 — one keyword per CLI/admin opti
     row records ``missing_api_key``.  If another run holds the advisory lock,
     ``skipped_locked``.  Otherwise a run row, then batches; an auth failure or
     ``MAX_CONSECUTIVE_FAILURES`` in a row stops the run.  ``limit=None`` means
-    ``max_names_per_run()``.  Commits as it goes.
+    ``max_names_per_run()``.
+
+    Commits as it goes, and may roll back on the way out: pass a connection
+    with no pending work of the caller's, or it is committed (or discarded)
+    with the run's.
     """
     api_key = get_api_key()
     summary = RunSummary(
