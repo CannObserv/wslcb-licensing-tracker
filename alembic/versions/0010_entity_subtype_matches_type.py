@@ -29,7 +29,15 @@ _PAIR_CHECK = (
 )
 
 
+def _fail_fast_on_lock() -> None:
+    # ADD/DROP CONSTRAINT takes ACCESS EXCLUSIVE; waiting behind an ingest or
+    # Jev transaction would queue every web read of entities behind it.  Fail
+    # and roll back instead; the operator retries.
+    op.execute("SET LOCAL lock_timeout = '5s'")
+
+
 def upgrade() -> None:
+    _fail_fast_on_lock()
     op.create_check_constraint("ck_entities_subtype_matches_type", "entities", _PAIR_CHECK)
     op.create_check_constraint(
         "ck_ec_subtype_matches_type", "entity_classifications", _PAIR_CHECK
@@ -37,5 +45,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    _fail_fast_on_lock()
     op.drop_constraint("ck_ec_subtype_matches_type", "entity_classifications", type_="check")
     op.drop_constraint("ck_entities_subtype_matches_type", "entities", type_="check")
