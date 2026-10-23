@@ -196,6 +196,12 @@ record_endorsements = Table(
     Index("idx_re_endorsement", "endorsement_id"),
 )
 
+# An organization carries a subtype; nothing else does (#212, migration 0010).
+_SUBTYPE_MATCHES_TYPE = (
+    "(entity_type = 'organization' AND entity_subtype IS NOT NULL) "
+    "OR (entity_type <> 'organization' AND entity_subtype IS NULL)"
+)
+
 entities = Table(
     "entities",
     metadata,
@@ -223,6 +229,7 @@ entities = Table(
         "classification_source IN ('regex', 'jev', 'manual')",
         name="ck_entities_classification_source",
     ),
+    CheckConstraint(_SUBTYPE_MATCHES_TYPE, name="ck_entities_subtype_matches_type"),
 )
 
 record_entities = Table(
@@ -275,6 +282,7 @@ entity_classifications = Table(
         "('business', 'nonprofit', 'trust', 'estate', 'tribe', 'government', 'unknown')",
         name="ck_ec_subtype",
     ),
+    CheckConstraint(_SUBTYPE_MATCHES_TYPE, name="ck_ec_subtype_matches_type"),
     Index("idx_ec_entity_source", "entity_id", "source", "id"),
     Index("idx_ec_source_model", "source", "model"),
 )

@@ -13,7 +13,11 @@ from sqlalchemy import delete, func, insert, select, update
 from wslcb_licensing_tracker import classification_review as cr
 from wslcb_licensing_tracker.config import ENV_PREFIX
 from wslcb_licensing_tracker.entities import get_or_create_entity, reclassify_entities
-from wslcb_licensing_tracker.entity_classification import record_manual, resolve_entities
+from wslcb_licensing_tracker.entity_classification import (
+    SourceAnswer,
+    record_manual,
+    resolve_entities,
+)
 from wslcb_licensing_tracker.jev_classifier import awaiting_count
 from wslcb_licensing_tracker.models import (
     admin_audit_log,
@@ -209,9 +213,14 @@ async def test_accept_regex_copies_answer(pg_conn):
     assert action == "entity.classify_accept_regex"
 
 
-async def test_accept_jev_org_without_subtype_stores_unknown(pg_conn):
+async def test_accept_jev_org_without_subtype_stores_unknown(pg_conn, monkeypatch):
+    """Defensive: ``ck_ec_subtype_matches_type`` (#212) keeps such a row out of the DB."""
     eid = await _entity(pg_conn, "NULL SUBTYPE")
-    await _jev(pg_conn, eid, "organization", None, 0.5)
+
+    async def answers(_conn, ids):
+        return {eid: {"jev": SourceAnswer("organization", None, 0.5, "jev-1.14.0")}}
+
+    monkeypatch.setattr(cr, "current_answers", answers)
     await cr.accept_answer(pg_conn, eid, source="jev", admin_email=ADMIN)
     assert await _resolved(pg_conn, eid) == ("organization", "unknown", "manual")
 

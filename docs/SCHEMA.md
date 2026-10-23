@@ -96,7 +96,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 ### `entities` (applicant normalization table)
 - One row per unique applicant name (person or organization)
 - `name` (UNIQUE) — the normalized/cleaned name (uppercased, stray trailing punctuation stripped)
-- `entity_type` (`person` / `organization`; `''` legacy), `entity_subtype` (NULL for persons, else one of seven; CHECK `ck_entities_subtype`), `classification_source` (`regex` / `jev` / `manual`; default `regex`) — **resolved** columns, written only by `entity_classification.resolve_entities()`: current manual row > non-ignored Jev row ≥ `…_JEV_CONFIDENCE_THRESHOLD` (0.7) with a real type > regex row (#206)
+- `entity_type` (`person` / `organization`; `''` legacy), `entity_subtype` (set iff `organization`, one of seven; CHECKs `ck_entities_subtype`, `ck_entities_subtype_matches_type` #212), `classification_source` (`regex` / `jev` / `manual`; default `regex`) — **resolved** columns, seeded on insert, then written only by `entity_classification.resolve_entities()`: current manual row > non-ignored Jev row ≥ `…_JEV_CONFIDENCE_THRESHOLD` (0.7) with a real type > regex row (#206)
 - Regex answer: `regex_classification()` = `entity_category()` (trust / legal suffix / truncated suffix / tribe / government / org keyword / estate; #203) via `REGEX_SUBTYPE` (suffixes, org keywords → `business`; never `nonprofit`), stored with `model = REGEX_MODEL` (own version). `get_or_create_entity()` writes it on insert only; after a classifier change run `wslcb db reclassify-entities [--dry-run]` (appends changed regex rows, re-resolves, never overrides manual)
 - Non-name applicant parts (`is_noise_name()`: WAC citations, bare numbers, ownership-count annotations like `17 SHAREHOLDERS W/10% OR LESS`, bare legal suffixes, `NO PEOPLE REQUIRED`, a few observed fragments) are skipped like `ADDITIONAL_NAMES_MARKERS`; `reclassify-entities` deletes existing ones unless protected by a manual decision or open flag, plus operator-confirmed `not_a_name` entities. Real names with an appended citation (`7-ELEVEN, INC. PER WAC 314-07-035`) are kept verbatim
 - The first element of the semicolon-delimited `applicants` field (which equals `business_name`) is **excluded** — only the individual people/orgs behind the license are stored
@@ -112,7 +112,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - Append-only: one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
 - `entity_id` — FK to `entities(id)`, `ON DELETE CASCADE`
 - `entity_type` — `person`, `organization` or `not_a_name` (CHECK `ck_ec_entity_type`); `not_a_name` is stored as an answer and never resolved onto `entities`
-- `entity_subtype` — NULL or one of the seven subtypes (CHECK `ck_ec_subtype`)
+- `entity_subtype` — set iff `organization`, one of the seven (CHECKs `ck_ec_subtype`, `ck_ec_subtype_matches_type` #212)
 - `confidence`, `probabilities` (JSONB), `input_tokens` — Jev only; `input_tokens` is this entity's share of its batch
 - `model` — `jev-…` for Jev, `regex-<n>` (`entities.REGEX_MODEL`) for regex, NULL for manual
 - `created_at`, `created_by` (admin email on manual rows), `note`

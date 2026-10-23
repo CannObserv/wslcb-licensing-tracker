@@ -24,6 +24,7 @@ Schema is managed by **Alembic** against PostgreSQL. Revisions live in
 | `0007_replay_extract_role` | Allows the `replay_extract` `record_sources` role (#154) |
 | `0008_relayed_scrape` | Seeds the `relayed_scrape` source type; `scrape_log.origin` + `scrape_log.captured_at` (#201) |
 | `0009_entity_classification` | `entities.entity_subtype` + `entities.classification_source`; `entity_classifications`, `entity_review_flags`, `classification_runs` (#206) |
+| `0010_entity_subtype_matches_type` | CHECKs tying `entity_subtype` to `entity_type` on `entities` and `entity_classifications`: set iff `organization` (#212) |
 
 Each revision's `down_revision` points at the previous number, so the chain is
 strictly linear — no branches or merge points.
