@@ -788,7 +788,7 @@ class TestEntitySubtypeAndBadges:
         assert 'href="/entities?sort=name&amp;type=organization&amp;subtype=tribe"' in body
         assert 'href="/entities?sort=name&amp;type=person"' in body
         assert 'href="/entities?sort=name"' in body
-        assert 'href="/entities?sort=name&amp;type=organization"' in body  # "All subtypes"
+        assert 'href="/entities?sort=name&amp;type=organization"' in body  # "All kinds"
 
     def test_htmx_partial_keeps_the_subtype(self):
         resp, spy = self._list("/entities?type=organization&subtype=tribe", total=120, htmx=True)
