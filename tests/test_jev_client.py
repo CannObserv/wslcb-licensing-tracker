@@ -6,8 +6,10 @@ wording must stay the research's verbatim, or the gold-set score no longer
 applies.
 """
 
+import csv
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -105,6 +107,20 @@ def test_org_criteria_are_the_resolvers_jev_subtypes():
     from wslcb_licensing_tracker.entity_classification import JEV_ORG_SUBTYPES
 
     assert tuple(jev_client.ORG_CRITERIA) == JEV_ORG_SUBTYPES
+
+
+def test_org_criteria_examples_are_not_scored_names():
+    # An example the gold set or supplement also scores hands Jev its own answer
+    # (#210 §10).  Names there are cut at 30 characters, so a prefix leaks too.
+    scored = set()
+    for name in ("gold.csv", "subtype_supplement.csv"):
+        with (RESEARCH / name).open() as f:
+            scored |= {row["name"] for row in csv.DictReader(f)}
+    groups = re.findall(r"\(e\.g\. ([^)]*)\)", " ".join(jev_client.ORG_CRITERIA.values()))
+    examples = [e.strip() for group in groups for e in group.split(",")]
+    assert len(groups) == len(jev_client.ORG_CRITERIA)
+    leaked = {e for e in examples for n in scored if e == n or (len(n) >= 30 and e.startswith(n))}
+    assert not leaked
 
 
 async def test_classify_batch_parses_in_order():
