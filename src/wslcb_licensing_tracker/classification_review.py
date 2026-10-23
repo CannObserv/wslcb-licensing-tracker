@@ -40,8 +40,16 @@ from .models import classification_runs, entities, entity_classifications, entit
 logger = logging.getLogger(__name__)
 
 ACCEPTABLE_SOURCES = ("jev", "regex")
+# Longest note or flag reason accepted; the forms' maxlength matches.
+MAX_TEXT_CHARS = 500
 Tab = Literal["main", "unknown"]
 TABS: tuple[Tab, ...] = ("main", "unknown")
+
+
+def _check_length(field: str, value: str | None) -> None:
+    if value is not None and len(value) > MAX_TEXT_CHARS:
+        msg = f"{field} is {len(value)} characters; the limit is {MAX_TEXT_CHARS}"
+        raise ValueError(msg)
 
 
 async def _triple(conn: AsyncConnection, entity_id: int) -> Triple:
@@ -106,6 +114,7 @@ async def _record_and_resolve(  # noqa: PLR0913
     details: dict | None = None,
 ) -> int:
     """Write a manual row, close open flags, audit; return the manual row id."""
+    _check_length("note", note)
     old = await _triple(conn, entity_id)
     row_id = await record_manual(
         conn,
@@ -262,6 +271,7 @@ async def flag_entity(
     if not reason:
         msg = "a flag needs a reason"
         raise ValueError(msg)
+    _check_length("reason", reason)
     old = await _triple(conn, entity_id)
     flag_id = (
         await conn.execute(

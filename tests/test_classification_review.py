@@ -591,3 +591,22 @@ async def test_set_classification_refuses_not_a_name(pg_conn):
         )
     assert await _manual_rows(pg_conn, eid) == []
     assert await _audit(pg_conn, eid) == []
+
+
+async def test_note_and_reason_are_bounded(pg_conn):
+    """The form's maxlength is advisory; the actions enforce it (CR 2)."""
+    eid = await _entity(pg_conn, "LONG TEXT")
+    long = "x" * (cr.MAX_TEXT_CHARS + 1)
+    with pytest.raises(ValueError, match="note"):
+        await cr.set_classification(
+            pg_conn, eid, entity_type="person", entity_subtype=None, note=long, admin_email=ADMIN
+        )
+    with pytest.raises(ValueError, match="note"):
+        await cr.mark_not_a_name(pg_conn, eid, admin_email=ADMIN, note=long)
+    with pytest.raises(ValueError, match="reason"):
+        await cr.flag_entity(pg_conn, eid, reason=long, admin_email=ADMIN)
+    assert await _manual_rows(pg_conn, eid) == []
+    assert await _flags(pg_conn, eid) == []
+    assert await _audit(pg_conn, eid) == []
+    ok = "y" * cr.MAX_TEXT_CHARS
+    await cr.flag_entity(pg_conn, eid, reason=ok, admin_email=ADMIN)
