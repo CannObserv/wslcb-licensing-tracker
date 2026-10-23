@@ -575,3 +575,19 @@ async def test_health_missing_key_problem(pg_conn, monkeypatch):
     h = await cr.classification_health(pg_conn, now=datetime.now(UTC))
     assert h["key_present"] is True
     assert h["problems"] == []
+
+
+async def test_set_classification_refuses_not_a_name(pg_conn):
+    """Not-a-name has its own audited action; set must not write one (CR 1)."""
+    eid = await _entity(pg_conn, "SET NOT A NAME")
+    with pytest.raises(ValueError, match="not-a-name"):
+        await cr.set_classification(
+            pg_conn,
+            eid,
+            entity_type="not_a_name",
+            entity_subtype=None,
+            note=None,
+            admin_email=ADMIN,
+        )
+    assert await _manual_rows(pg_conn, eid) == []
+    assert await _audit(pg_conn, eid) == []

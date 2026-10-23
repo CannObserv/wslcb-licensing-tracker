@@ -26,6 +26,7 @@ from sqlalchemy.sql.selectable import Subquery
 from .admin_audit import log_action
 from .config import JEV_USD_PER_MILLION_INPUT_TOKENS, jev_confidence_threshold
 from .entity_classification import (
+    ENTITY_TYPES,
     NOT_A_NAME,
     Triple,
     clear_manual,
@@ -142,7 +143,17 @@ async def set_classification(  # noqa: PLR0913
     note: str | None,
     admin_email: str,
 ) -> int:
-    """Store an operator's classification (``entity.classify_set``); return the manual row id."""
+    """Store an operator's classification (``entity.classify_set``); return the manual row id.
+
+    ``entity_type`` must be a real type: not-a-name is :func:`mark_not_a_name`,
+    so the decision that leads to a purge keeps its own audit action.
+    """
+    if entity_type not in ENTITY_TYPES:
+        msg = (
+            f"entity_type must be one of {ENTITY_TYPES} (got {entity_type!r}); "
+            "use the not-a-name action"
+        )
+        raise ValueError(msg)
     return await _record_and_resolve(
         conn,
         entity_id,
