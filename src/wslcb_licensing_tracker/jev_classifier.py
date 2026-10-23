@@ -63,6 +63,8 @@ Origin = Literal["post_scrape", "post_import", "cli", "admin"]
 EST_INPUT_TOKENS_PER_NAME = 238
 MAX_CONSECUTIVE_FAILURES = 3
 ADVISORY_LOCK_KEY = 0x6A6576  # "jev"
+# Entities awaiting a first answer, past which the weekly check-in alerts.
+BACKLOG_ALERT_THRESHOLD = 1000
 
 _CHUNK = 1000
 
@@ -520,3 +522,99 @@ async def classify_entities(  # noqa: PLR0913 — one keyword per CLI/admin opti
         f", error {summary.error}" if summary.error else "",
     )
     return summary
+
+
+CheckinStatus = Literal["ok", "alert"]
+
+
+def _variables(  # noqa: PLR0913 — the monitor's template variables, one each
+    *,
+    outcome: str,
+    host: str,
+    enabled: bool,
+    model: str,
+    names_sent: int | str,
+    batches_ok: int | str,
+    batches_failed: int | str,
+    backlog: int | str,
+    error: str,
+) -> dict:
+    return {
+        "outcome": outcome,
+        "source_host": host,
+        "enabled": "true" if enabled else "false",
+        "model": model,
+        "names_sent": names_sent,
+        "batches_ok": batches_ok,
+        "batches_failed": batches_failed,
+        "backlog": backlog,
+        "error": error,
+    }
+
+
+def _fault(summary: RunSummary, backlog: int) -> str | None:
+    """The run's fault for ``metadata.fault``, or None when it is healthy."""
+    if summary.error:
+        return summary.error
+    if summary.batches_failed:
+        return "batches_failed"
+    if summary.skipped_locked and summary.origin == "cli":
+        # Only the weekly run (default-mode CLI) checks in ok; skipping it is a
+        # missed beat, and the one place a lock that never clears can show.
+        return "locked"
+    if backlog > BACKLOG_ALERT_THRESHOLD:
+        return "backlog"
+    return None
+
+
+def checkin_payload(
+    summary: RunSummary, *, backlog: int, host: str
+) -> tuple[CheckinStatus, dict, dict | None]:
+    """Return ``(status, variables, metadata)`` for the CLASSIFY check-in.
+
+    First match wins: flag off → ``ok`` (the dead-man stays armed and says
+    ``enabled=false``); an error, failed batches, a weekly run that lost the
+    lock, or a backlog past ``BACKLOG_ALERT_THRESHOLD`` → ``alert`` with that
+    ``metadata.fault``; else ``ok``.  Every variable is always present.
+    """
+    fault = _fault(summary, backlog) if summary.enabled else None
+    variables = _variables(
+        outcome="failed" if fault else "ok",
+        host=host,
+        enabled=summary.enabled,
+        model=summary.model,
+        names_sent=summary.names_sent,
+        batches_ok=summary.batches_ok,
+        batches_failed=summary.batches_failed,
+        backlog=backlog,
+        error=fault or "",
+    )
+    if fault is None:
+        return "ok", variables, None
+    return "alert", variables, {"fault": fault}
+
+
+def exception_payload(exc: BaseException, *, host: str) -> tuple[CheckinStatus, dict, dict]:
+    """The ``alert`` for a run that raised; every variable present.  Never raises.
+
+    ``error`` is the exception's type and first line; ``metadata.fault`` its
+    type alone, so the next failure of the same kind folds into one fault.
+    """
+    try:
+        text = str(exc)
+    except Exception:  # noqa: BLE001 — an alert without its message beats none
+        text = ""
+    message = text.splitlines()[0] if text else ""
+    name = type(exc).__name__
+    variables = _variables(
+        outcome="failed",
+        host=host,
+        enabled=is_classification_enabled(),
+        model=get_model(),
+        names_sent="",
+        batches_ok="",
+        batches_failed="",
+        backlog="",
+        error=f"{name}: {message}" if message else name,
+    )
+    return "alert", variables, {"fault": name}

@@ -5,7 +5,7 @@ All operational commands are exposed as click subcommands grouped by domain:
 - ``ingest``: scrape, import-relayed, backfill-snapshots, backfill-diffs, generate-replay-extracts,
   backfill-addresses, refresh-addresses, compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities,
-  reclassify-entities, ignore-jev
+  reclassify-entities, ignore-jev, classify-entities
 - ``admin``: add-user, list-users, remove-user
 - ``ops``: disk-hygiene, backup, restore, restore-archive
 
@@ -29,6 +29,7 @@ Usage::
     wslcb db check                     # run integrity checks
     wslcb db check --fix               # run checks and auto-fix safe issues
     wslcb db ignore-jev [--undo]       # roll back (or restore) Jev classifications (#206)
+    wslcb db classify-entities [--dry-run]  # send unclassified entities to Jev (#207)
     wslcb admin add-user EMAIL         # add admin user
     wslcb admin list-users             # list admin users
     wslcb admin remove-user EMAIL      # remove admin user
@@ -62,7 +63,7 @@ from .address_validator import refresh_specific_addresses as run_refresh_specifi
 from .admin_audit import log_action
 from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
-from .checkin import SCRAPE, post_checkin
+from .checkin import CLASSIFY, SCRAPE, post_checkin
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
@@ -72,6 +73,15 @@ from .entities import reprocess_entities as run_reprocess_entities
 from .entity_classification import set_jev_ignored as run_set_jev_ignored
 from .integrity import print_report
 from .integrity import run_all_checks as run_integrity_checks
+from .jev_classifier import (
+    Origin,
+    RunSummary,
+    awaiting_count,
+    checkin_payload,
+    exception_payload,
+)
+from .jev_classifier import classify_entities as run_classify_entities
+from .jev_client import BATCH_SIZE
 from .link_records import build_all_links as run_build_all_links
 from .log_config import setup_logging
 from .models import admin_users
@@ -159,6 +169,7 @@ def scrape(rate_limit: float) -> None:
         await asyncio.to_thread(
             post_checkin, "ok", ok_variables(outcome, host), monitor=SCRAPE, environ=os.environ
         )
+        await _post_ingest_classification(engine, origin="post_scrape", alert=True)
         # Post-scrape: standardize any new locations via the address API.
         # Failure here is non-fatal — the weekly timer catches stragglers.
         try:
@@ -168,6 +179,34 @@ def scrape(rate_limit: float) -> None:
             logger.warning("Post-scrape address backfill failed", exc_info=True)
 
     _run_with_engine(_run)
+
+
+async def _post_ingest_classification(engine: AsyncEngine, *, origin: Origin, alert: bool) -> None:
+    """Classify new entities with Jev after an ingest (#207). Never raises.
+
+    A no-op with the flag off. Ingestion never fails because of Jev: a failure
+    is logged and, when *alert*, reported to the CLASSIFY monitor. Only ever
+    ``alert`` from here — the weekly run is the one ``ok`` sender, and
+    twice-daily oks would mask a dead timer. The relay import passes
+    ``alert=False``: its unit has no check-in key (docs/MONITORING.md).
+    """
+    host = socket.gethostname()
+    try:
+        async with get_db(engine) as conn:
+            summary = await run_classify_entities(conn, origin=origin)
+        status, variables, metadata = checkin_payload(summary, backlog=0, host=host)
+    except Exception as exc:  # noqa: BLE001 — Jev is never on the ingestion critical path
+        logger.warning("Post-ingest Jev classification failed (%s)", origin, exc_info=True)
+        status, variables, metadata = exception_payload(exc, host=host)
+    if alert and status == "alert":
+        await _classify_checkin(status, variables, metadata)
+
+
+async def _classify_checkin(status: str, variables: dict, metadata: dict | None) -> None:
+    """Post to the CLASSIFY monitor off the event loop (post_checkin is sync httpx)."""
+    await asyncio.to_thread(
+        post_checkin, status, variables, monitor=CLASSIFY, environ=os.environ, metadata=metadata
+    )
 
 
 async def _scrape_history(engine: AsyncEngine) -> ScrapeHealth | None:
@@ -202,7 +241,8 @@ def import_relayed(rate_limit: float) -> None:
     async def _run(engine: AsyncEngine) -> list[RelayResult]:
         results = await run_import_inbox(engine, inbox_dir(os.environ))
         if any(r.status == "success" for r in results):
-            # Same non-fatal post-ingest step as the scrape.
+            # Same non-fatal post-ingest steps as the scrape, minus any check-in.
+            await _post_ingest_classification(engine, origin="post_import", alert=False)
             try:
                 async with get_db(engine) as conn:
                     await run_backfill_addresses(conn, rate_limit=rate_limit)
@@ -599,6 +639,125 @@ def ignore_jev(model: str | None, undo: bool, dry_run: bool) -> None:
     )
 
 
+def _read_ids_file(path: Path) -> list[int]:
+    ids = []
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            ids.append(int(line))
+        except ValueError:
+            msg = f"--ids-file: {line!r} is not an entity id"
+            raise click.UsageError(msg) from None
+    return ids
+
+
+@db.command("classify-entities")
+@click.option("--refresh-all", is_flag=True, help="Re-query every entity (paid).")
+@click.option(
+    "--refresh-model", metavar="MODEL", default=None, help="Re-query entities this model answered."
+)
+@click.option(
+    "--ids-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Re-query these entity ids (one per line).",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Send at most N names (default: the per-run cap). Above the entity count for a backfill.",
+)
+@click.option("--dry-run", is_flag=True, help="Count and estimate cost; send nothing.")
+def classify_entities(
+    refresh_all: bool,
+    refresh_model: str | None,
+    ids_file: Path | None,
+    limit: int | None,
+    dry_run: bool,
+) -> None:
+    """Send entities to Jev for classification (#207).
+
+    Default: entities with no Jev answer yet (classify once). The refresh
+    options re-query; all of them skip entities with a manual classification.
+    Does nothing unless CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION
+    is set; --dry-run works either way. A default-mode run (the weekly timer)
+    checks in to the CLASSIFY co-status monitor.
+    """
+    mode, ids = _classify_mode(refresh_all, refresh_model, ids_file)
+    checks_in = mode == "unclassified" and not dry_run
+    host = socket.gethostname()
+
+    async def _run(engine: AsyncEngine) -> RunSummary:
+        try:
+            async with get_db(engine) as conn:
+                summary = await run_classify_entities(
+                    conn,
+                    origin="cli",
+                    mode=mode,
+                    model_filter=refresh_model,
+                    ids=ids,
+                    limit=limit,
+                    dry_run=dry_run,
+                )
+                backlog = await awaiting_count(conn) if checks_in else 0
+        except Exception as exc:
+            if checks_in:
+                await _classify_checkin(*exception_payload(exc, host=host))
+            raise  # the unit still fails: the check-in reports, never replaces
+        if checks_in:
+            await _classify_checkin(*checkin_payload(summary, backlog=backlog, host=host))
+        return summary
+
+    _report_classification(_run_with_engine(_run))
+
+
+def _classify_mode(
+    refresh_all: bool, refresh_model: str | None, ids_file: Path | None
+) -> tuple[str, list[int] | None]:
+    """The ``classify_entities`` mode and ids for the CLI's refresh options."""
+    if sum((refresh_all, refresh_model is not None, ids_file is not None)) > 1:
+        msg = "--refresh-all, --refresh-model and --ids-file are mutually exclusive"
+        raise click.UsageError(msg)
+    if refresh_all:
+        return "refresh_all", None
+    if refresh_model is not None:
+        return "refresh_model", None
+    if ids_file is not None:
+        return "ids", _read_ids_file(ids_file)
+    return "unclassified", None
+
+
+def _report_classification(s: RunSummary) -> None:
+    """Print a classify-entities run's summary; exit 1 on an error or a failed batch."""
+    if s.dry_run:
+        requests = -(-s.candidates // BATCH_SIZE)
+        click.echo(
+            f"[dry-run] Would send {s.candidates:,} name(s) in {requests:,} request(s); "
+            f"est. ${s.estimated_cost_usd:.4f}"
+        )
+        return
+    if not s.enabled:
+        click.echo(
+            "Jev classification disabled (CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION); "
+            "nothing sent."
+        )
+        return
+    if s.skipped_locked:
+        click.echo("Skipped: another classification run holds the lock.")
+        return
+    click.echo(
+        f"Sent {s.names_sent:,} name(s): {s.batches_ok:,} ok, {s.batches_failed:,} failed "
+        f"batch(es); {s.input_tokens:,} tokens (~${s.estimated_cost_usd:.4f}); model {s.model}."
+    )
+    if s.error:
+        click.echo(f"Error: {s.error}", err=True)
+    if s.error or s.batches_failed:
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # admin group
 # ---------------------------------------------------------------------------
@@ -879,6 +1038,7 @@ _ALIASES = [
     (cleanup_redundant, "cleanup-redundant"),
     (reprocess_endorsements, "reprocess-endorsements"),
     (reprocess_entities, "reprocess-entities"),
+    (classify_entities, "classify-entities"),
     (disk_hygiene, "disk-hygiene"),
 ]
 for _cmd, _name in _ALIASES:

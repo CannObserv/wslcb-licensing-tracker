@@ -4,6 +4,7 @@ import gzip
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from cli_helpers import mock_async_engine, mock_get_db
 from click.testing import CliRunner
 
@@ -285,6 +286,217 @@ class TestIgnoreJev:
         assert result.exit_code == 0, result.output
         assert mock_ig.await_args.kwargs == {"ignored": False, "model": None}
         assert "[dry-run] Restored 12 jev row(s)" in result.output
+
+
+def _summary(**kw):
+    from wslcb_licensing_tracker.jev_classifier import RunSummary
+
+    base = {"origin": "cli", "enabled": True, "key_present": True, "model": "jev-1.14.0"}
+    return RunSummary(**{**base, **kw})
+
+
+_CLI = "wslcb_licensing_tracker.cli"
+
+
+@patch(f"{_CLI}.post_checkin")
+@patch(f"{_CLI}.awaiting_count", new_callable=AsyncMock, return_value=0)
+@patch(f"{_CLI}.run_classify_entities", new_callable=AsyncMock)
+@patch(f"{_CLI}.get_db", side_effect=mock_get_db)
+@patch(f"{_CLI}.create_engine_from_env", side_effect=lambda: mock_async_engine())
+class TestClassifyEntities:
+    """wslcb db classify-entities (#207)."""
+
+    def test_classify_entities_default(self, eng, gdb, run, *_):
+        run.return_value = _summary(names_sent=30, batches_ok=2, input_tokens=7140)
+        result = CliRunner().invoke(main, ["db", "classify-entities"])
+        assert result.exit_code == 0, result.output
+        kw = run.await_args.kwargs
+        assert kw["mode"] == "unclassified"
+        assert kw["origin"] == "cli"
+        assert kw["limit"] is None
+        assert kw["dry_run"] is False
+        assert (
+            "Sent 30 name(s): 2 ok, 0 failed batch(es); 7,140 tokens (~$0.0003); "
+            "model jev-1.14.0." in result.output
+        )
+
+    def test_refresh_modes(self, eng, gdb, run, *_):
+        run.return_value = _summary()
+        CliRunner().invoke(main, ["db", "classify-entities", "--refresh-all"])
+        assert run.await_args.kwargs["mode"] == "refresh_all"
+        CliRunner().invoke(main, ["db", "classify-entities", "--refresh-model", "jev-1.13.0"])
+        assert run.await_args.kwargs["mode"] == "refresh_model"
+        assert run.await_args.kwargs["model_filter"] == "jev-1.13.0"
+
+    def test_ids_file(self, eng, gdb, run, *_):
+        run.return_value = _summary()
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("ids.txt", "w") as f:
+                f.write("3\n\n 5 \n")
+            result = runner.invoke(main, ["db", "classify-entities", "--ids-file", "ids.txt"])
+        assert result.exit_code == 0, result.output
+        assert run.await_args.kwargs["mode"] == "ids"
+        assert run.await_args.kwargs["ids"] == [3, 5]
+
+    def test_ids_file_rejects_a_non_integer(self, eng, gdb, run, *_):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with open("ids.txt", "w") as f:
+                f.write("3\nfive\n")
+            result = runner.invoke(main, ["db", "classify-entities", "--ids-file", "ids.txt"])
+        assert result.exit_code == 2
+        assert "five" in result.output
+        run.assert_not_awaited()
+
+    def test_limit_passes_through(self, eng, gdb, run, *_):
+        run.return_value = _summary()
+        CliRunner().invoke(main, ["db", "classify-entities", "--limit", "100000"])
+        assert run.await_args.kwargs["limit"] == 100000
+
+    def test_dry_run_output(self, eng, gdb, run, *_):
+        run.return_value = _summary(enabled=False, candidates=2601, dry_run=True)
+        result = CliRunner().invoke(main, ["db", "classify-entities", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert run.await_args.kwargs["dry_run"] is True
+        # 2601 names -> 105 requests; 2601 * 238 tokens at $0.042/M
+        assert "[dry-run] Would send 2,601 name(s) in 105 request(s); est. $0.0260" in result.output
+
+    def test_disabled_exit_0(self, eng, gdb, run, *_):
+        run.return_value = _summary(enabled=False)
+        result = CliRunner().invoke(main, ["db", "classify-entities"])
+        assert result.exit_code == 0, result.output
+        assert (
+            "Jev classification disabled (CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION); "
+            "nothing sent." in result.output
+        )
+
+    def test_locked_exit_0(self, eng, gdb, run, *_):
+        run.return_value = _summary(skipped_locked=True)
+        result = CliRunner().invoke(main, ["db", "classify-entities", "--refresh-all"])
+        assert result.exit_code == 0, result.output
+        assert "Skipped: another classification run holds the lock." in result.output
+
+    def test_failed_batches_exit_1(self, eng, gdb, run, *_):
+        run.return_value = _summary(names_sent=50, batches_ok=1, batches_failed=1)
+        result = CliRunner().invoke(main, ["db", "classify-entities", "--refresh-all"])
+        assert result.exit_code == 1
+        assert "1 ok, 1 failed batch(es)" in result.output
+
+    def test_error_exit_1(self, eng, gdb, run, *_):
+        run.return_value = _summary(key_present=False, error="missing_api_key")
+        result = CliRunner().invoke(main, ["db", "classify-entities", "--refresh-all"])
+        assert result.exit_code == 1
+        assert "missing_api_key" in result.output
+
+    def test_alias_registered(self, *_):
+        assert "classify-entities" in main.commands
+        assert main.commands["classify-entities"].hidden
+
+
+@patch(f"{_CLI}.post_checkin")
+@patch(f"{_CLI}.awaiting_count", new_callable=AsyncMock, return_value=0)
+@patch(f"{_CLI}.run_classify_entities", new_callable=AsyncMock)
+@patch(f"{_CLI}.get_db", side_effect=mock_get_db)
+@patch(f"{_CLI}.create_engine_from_env", side_effect=lambda: mock_async_engine())
+class TestClassifyCheckin:
+    """Only the default-mode run (the weekly timer's) checks in, ok or alert (#207)."""
+
+    def test_default_run_checks_in_ok_once(self, eng, gdb, run, backlog, checkin):
+        from wslcb_licensing_tracker.checkin import CLASSIFY
+
+        run.return_value = _summary(names_sent=3, batches_ok=1)
+        backlog.return_value = 12
+        result = CliRunner().invoke(main, ["db", "classify-entities"])
+        assert result.exit_code == 0, result.output
+        checkin.assert_called_once()
+        (status, variables), kw = checkin.call_args
+        assert status == "ok"
+        assert kw["monitor"] is CLASSIFY
+        assert kw["metadata"] is None
+        assert variables["backlog"] == 12
+        assert variables["names_sent"] == 3
+
+    def test_disabled_default_run_still_checks_in_ok(self, eng, gdb, run, backlog, checkin):
+        run.return_value = _summary(enabled=False)
+        backlog.return_value = 67_000
+        result = CliRunner().invoke(main, ["db", "classify-entities"])
+        assert result.exit_code == 0, result.output
+        (status, variables), _ = checkin.call_args
+        assert status == "ok"
+        assert variables["enabled"] == "false"
+
+    def test_default_run_failure_alerts_and_exits_1(self, eng, gdb, run, backlog, checkin):
+        run.return_value = _summary(key_present=False, error="missing_api_key")
+        result = CliRunner().invoke(main, ["db", "classify-entities"])
+        assert result.exit_code == 1
+        (status, _), kw = checkin.call_args
+        assert status == "alert"
+        assert kw["metadata"] == {"fault": "missing_api_key"}
+
+    def test_a_limited_default_run_is_still_the_default_mode(self, eng, gdb, run, backlog, checkin):
+        """The one-off backfill (--limit N) is a default-mode run; it checks in when it can."""
+        run.return_value = _summary()
+        CliRunner().invoke(main, ["db", "classify-entities", "--limit", "100000"])
+        checkin.assert_called_once()
+
+    def test_default_run_exception_alerts_and_fails(self, eng, gdb, run, backlog, checkin):
+        run.side_effect = RuntimeError("db went away")
+        result = CliRunner().invoke(main, ["db", "classify-entities"])
+        assert result.exit_code == 1
+        assert isinstance(result.exception, RuntimeError)
+        checkin.assert_called_once()
+        (status, variables), kw = checkin.call_args
+        assert status == "alert"
+        assert kw["metadata"] == {"fault": "RuntimeError"}
+        assert variables["error"] == "RuntimeError: db went away"
+
+    def test_backlog_failure_alerts_too(self, eng, gdb, run, backlog, checkin):
+        run.return_value = _summary()
+        backlog.side_effect = OSError("connection reset")
+        result = CliRunner().invoke(main, ["db", "classify-entities"])
+        assert result.exit_code == 1
+        (status, _), kw = checkin.call_args
+        assert status == "alert"
+        assert kw["metadata"] == {"fault": "OSError"}
+
+
+@pytest.mark.parametrize("args", [["--dry-run"], ["--refresh-all"], ["--refresh-model", "m"]])
+def test_classify_dry_run_and_refresh_never_check_in(args):
+    with (
+        patch(f"{_CLI}.run_classify_entities", new_callable=AsyncMock) as run,
+        patch(f"{_CLI}.awaiting_count", new_callable=AsyncMock, return_value=0),
+        patch(f"{_CLI}.post_checkin") as checkin,
+        patch(f"{_CLI}.get_db", side_effect=mock_get_db),
+        patch(f"{_CLI}.create_engine_from_env", side_effect=lambda: mock_async_engine()),
+    ):
+        run.return_value = _summary(dry_run="--dry-run" in args)
+        result = CliRunner().invoke(main, ["db", "classify-entities", *args])
+    assert result.exit_code == 0, result.output
+    checkin.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--refresh-all", "--refresh-model", "jev-1"],
+        ["--refresh-all", "--ids-file", "ids.txt"],
+        ["--refresh-model", "jev-1", "--ids-file", "ids.txt"],
+    ],
+)
+def test_classify_refresh_options_exclusive(args):
+    runner = CliRunner()
+    with (
+        patch(f"{_CLI}.run_classify_entities", new_callable=AsyncMock) as run,
+        patch(f"{_CLI}.create_engine_from_env", side_effect=lambda: mock_async_engine()),
+        runner.isolated_filesystem(),
+    ):
+        with open("ids.txt", "w") as f:
+            f.write("1\n")
+        result = runner.invoke(main, ["db", "classify-entities", *args])
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+    run.assert_not_awaited()
 
 
 class TestAdminGroup:

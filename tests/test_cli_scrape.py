@@ -154,3 +154,109 @@ class TestCmdScrapeCheckin:
         assert status == "alert"
         assert variables["consecutive_errors"] == ""
         assert variables["last_success_at"] == ""
+
+
+def _summary(**kw):
+    from wslcb_licensing_tracker.jev_classifier import RunSummary
+
+    base = {"origin": "post_scrape", "enabled": True, "key_present": True, "model": "jev-1.14.0"}
+    return RunSummary(**{**base, **kw})
+
+
+@patch(f"{_SCRAPE}.get_db", side_effect=mock_get_db)
+@patch(f"{_SCRAPE}.create_engine_from_env", side_effect=lambda: mock_async_engine())
+@patch(f"{_SCRAPE}.post_checkin")
+@patch(f"{_SCRAPE}.run_backfill_addresses", new_callable=AsyncMock)
+@patch(f"{_SCRAPE}.run_classify_entities", new_callable=AsyncMock)
+@patch(f"{_SCRAPE}.run_scrape", new_callable=AsyncMock)
+class TestCmdScrapeClassification:
+    """The post-scrape Jev pass (#207): never fails the scrape; alerts only."""
+
+    def _scrape_ok(self, scrape):
+        from wslcb_licensing_tracker.scraper import ScrapeOutcome
+
+        scrape.return_value = ScrapeOutcome(7, "success")
+
+    def _classify_calls(self, checkin):
+        from wslcb_licensing_tracker.checkin import CLASSIFY
+
+        return [c for c in checkin.call_args_list if c.kwargs["monitor"] is CLASSIFY]
+
+    def test_runs_before_the_address_backfill(self, scrape, classify, backfill, checkin, *_):
+        self._scrape_ok(scrape)
+        order = []
+        classify.side_effect = lambda *_a, **_kw: order.append("classify") or _summary()
+        backfill.side_effect = lambda *_a, **_kw: order.append("backfill")
+        result = CliRunner().invoke(main, ["ingest", "scrape"])
+        assert result.exit_code == 0, result.output
+        assert order == ["classify", "backfill"]
+        assert classify.await_args.kwargs["origin"] == "post_scrape"
+
+    def test_scrape_runs_classification_and_survives_its_failure(
+        self, scrape, classify, backfill, checkin, *_
+    ):
+        self._scrape_ok(scrape)
+        classify.side_effect = RuntimeError("jev blew up")
+        result = CliRunner().invoke(main, ["ingest", "scrape"])
+        assert result.exit_code == 0, result.output
+        backfill.assert_called_once()
+        (call,) = self._classify_calls(checkin)
+        assert call.args[0] == "alert"
+        assert call.kwargs["metadata"] == {"fault": "RuntimeError"}
+
+    def test_a_failed_run_alerts(self, scrape, classify, backfill, checkin, *_):
+        self._scrape_ok(scrape)
+        classify.return_value = _summary(error="auth_failed", batches_failed=1)
+        result = CliRunner().invoke(main, ["ingest", "scrape"])
+        assert result.exit_code == 0, result.output
+        (call,) = self._classify_calls(checkin)
+        assert call.args[0] == "alert"
+        assert call.kwargs["metadata"] == {"fault": "auth_failed"}
+
+    def _no_classify_checkin(self, scrape, classify, checkin, **summary):
+        self._scrape_ok(scrape)
+        classify.return_value = _summary(**summary)
+        result = CliRunner().invoke(main, ["ingest", "scrape"])
+        assert result.exit_code == 0, result.output
+        assert self._classify_calls(checkin) == []
+
+    def test_scrape_classification_success_sends_no_classify_checkin(
+        self, scrape, classify, backfill, checkin, *_
+    ):
+        """Twice-daily oks would mask a dead weekly timer."""
+        self._no_classify_checkin(scrape, classify, checkin, names_sent=3, batches_ok=1)
+
+    def test_disabled_sends_no_classify_checkin(self, scrape, classify, backfill, checkin, *_):
+        self._no_classify_checkin(scrape, classify, checkin, enabled=False)
+
+    def test_losing_the_lock_sends_no_classify_checkin(
+        self, scrape, classify, backfill, checkin, *_
+    ):
+        """A manual backfill holding the lock is no fault; the weekly run judges locks."""
+        self._no_classify_checkin(scrape, classify, checkin, skipped_locked=True)
+
+    def test_failed_scrape_never_classifies(self, scrape, classify, backfill, checkin, *_):
+        """During the WSLCB block (#198) the hook never runs; the weekly timer catches up."""
+        scrape.side_effect = OSError("403")
+        with patch(f"{_SCRAPE}.scrape_health", new_callable=AsyncMock, return_value=None):
+            result = CliRunner().invoke(main, ["ingest", "scrape"])
+        assert result.exit_code == 1
+        classify.assert_not_awaited()
+
+
+def test_the_real_hook_is_a_no_op_with_the_flag_off():
+    """Hooks go live at merge with the flag off: no calls, no run row, no check-in."""
+    from wslcb_licensing_tracker.scraper import ScrapeOutcome
+
+    with (
+        patch(f"{_SCRAPE}.get_db", side_effect=mock_get_db),
+        patch(f"{_SCRAPE}.create_engine_from_env", side_effect=lambda: mock_async_engine()),
+        patch(f"{_SCRAPE}.post_checkin") as checkin,
+        patch(f"{_SCRAPE}.run_backfill_addresses", new_callable=AsyncMock),
+        patch(f"{_SCRAPE}.run_scrape", new_callable=AsyncMock) as scrape,
+        patch("httpx.AsyncClient.send", side_effect=AssertionError("no HTTP")),
+    ):
+        scrape.return_value = ScrapeOutcome(7, "success")
+        result = CliRunner().invoke(main, ["ingest", "scrape"])
+    assert result.exit_code == 0, result.output
+    assert checkin.call_count == 1  # the scrape's own ok, nothing for CLASSIFY

@@ -79,6 +79,60 @@ class TestCmdImportRelayed:
         assert str(imp.call_args.args[1]) == "/srv/inbox"
 
 
+@patch(f"{_CLI}.get_db", side_effect=mock_get_db)
+@patch(f"{_CLI}.create_engine_from_env", side_effect=lambda: mock_async_engine())
+@patch(f"{_CLI}.post_checkin")
+@patch(f"{_CLI}.run_backfill_addresses", new_callable=AsyncMock)
+@patch(f"{_CLI}.run_classify_entities", new_callable=AsyncMock)
+@patch(f"{_CLI}.run_import_inbox", new_callable=AsyncMock)
+class TestImportRelayedClassification:
+    """The post-import Jev pass (#207): never fails the import, never checks in."""
+
+    OK = [RelayResult("20261020T134000Z.html.gz", "success", 9)]
+
+    def test_classifies_before_the_backfill(self, imp, classify, backfill, checkin, *_):
+        from wslcb_licensing_tracker.jev_classifier import RunSummary
+
+        imp.return_value = self.OK
+        order = []
+        classify.side_effect = lambda *_a, **_kw: (
+            order.append("classify")
+            or RunSummary("post_import", enabled=True, key_present=True, model="m")
+        )
+        backfill.side_effect = lambda *_a, **_kw: order.append("backfill")
+        result = CliRunner().invoke(main, ["ingest", "import-relayed"])
+        assert result.exit_code == 0, result.output
+        assert order == ["classify", "backfill"]
+        assert classify.await_args.kwargs["origin"] == "post_import"
+
+    def test_import_relayed_classifies_without_any_checkin(
+        self, imp, classify, backfill, checkin, *_
+    ):
+        """Failure swallowed; the relay unit has no checkin-key, and must not get one."""
+        imp.return_value = self.OK
+        classify.side_effect = RuntimeError("jev blew up")
+        result = CliRunner().invoke(main, ["ingest", "import-relayed"])
+        assert result.exit_code == 0, result.output
+        backfill.assert_called_once()
+        checkin.assert_not_called()
+
+    def test_a_failed_run_does_not_check_in_either(self, imp, classify, backfill, checkin, *_):
+        from wslcb_licensing_tracker.jev_classifier import RunSummary
+
+        imp.return_value = self.OK
+        classify.return_value = RunSummary(
+            "post_import", enabled=True, key_present=False, model="m", error="missing_api_key"
+        )
+        result = CliRunner().invoke(main, ["ingest", "import-relayed"])
+        assert result.exit_code == 0, result.output
+        checkin.assert_not_called()
+
+    def test_nothing_imported_nothing_classified(self, imp, classify, backfill, checkin, *_):
+        imp.return_value = [RelayResult("20261020T134000Z.html.gz", "unchanged", 9)]
+        CliRunner().invoke(main, ["ingest", "import-relayed"])
+        classify.assert_not_awaited()
+
+
 @pytest.mark.parametrize("name", ["import-relayed"])
 def test_top_level_alias_for_the_task_template(name):
     """wslcb-task@import-relayed runs ``cli import-relayed``."""

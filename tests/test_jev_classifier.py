@@ -604,3 +604,73 @@ async def test_runs_never_overlap_in_one_process(isolated, jev_on):
     assert sorted([a.skipped_locked, b.skipped_locked]) in ([False, True], [False, False])
     ours = _ours(fake.names)
     assert len(ours) == len(set(ours)) == 30
+
+
+# ── check-in payload ─────────────────────────────────────────────────
+
+_VARIABLES = {
+    "outcome",
+    "source_host",
+    "enabled",
+    "model",
+    "names_sent",
+    "batches_ok",
+    "batches_failed",
+    "backlog",
+    "error",
+}
+
+
+def _s(**kw) -> jc.RunSummary:
+    base = {"origin": "cli", "enabled": True, "key_present": True, "model": "jev-1.14.0"}
+    return jc.RunSummary(**{**base, **kw})
+
+
+@pytest.mark.parametrize(
+    ("case", "summary", "backlog", "status", "fault"),
+    [
+        ("disabled_ok", _s(enabled=False, error="ignored"), 70_000, "ok", None),
+        (
+            "missing_key",
+            _s(key_present=False, error="missing_api_key"),
+            0,
+            "alert",
+            "missing_api_key",
+        ),
+        ("auth_failed", _s(error="auth_failed", batches_failed=1), 0, "alert", "auth_failed"),
+        ("batches_failed", _s(batches_ok=3, batches_failed=1), 0, "alert", "batches_failed"),
+        ("backlog", _s(batches_ok=200), jc.BACKLOG_ALERT_THRESHOLD + 1, "alert", "backlog"),
+        ("backlog_at_threshold", _s(), jc.BACKLOG_ALERT_THRESHOLD, "ok", None),
+        ("clean_ok", _s(names_sent=30, batches_ok=2), 0, "ok", None),
+        ("weekly_locked_alerts", _s(skipped_locked=True), 0, "alert", "locked"),
+        ("post_scrape_locked_ok", _s(origin="post_scrape", skipped_locked=True), 0, "ok", None),
+    ],
+)
+async def test_checkin_payload(case, summary, backlog, status, fault):
+    got_status, variables, metadata = jc.checkin_payload(summary, backlog=backlog, host="h1")
+    assert got_status == status, case
+    assert set(variables) == _VARIABLES
+    assert variables["source_host"] == "h1"
+    assert variables["backlog"] == backlog
+    assert variables["enabled"] == ("true" if summary.enabled else "false")
+    if fault is None:
+        assert metadata is None
+        assert variables["outcome"] == "ok"
+        assert variables["error"] == ""
+    else:
+        assert metadata == {"fault": fault}
+        assert variables["outcome"] == "failed"
+        assert variables["error"] == fault
+
+
+async def test_exception_payload(monkeypatch):
+    monkeypatch.setenv(f"{ENV_PREFIX}ENABLE_JEV_CLASSIFICATION", "1")
+    status, variables, metadata = jc.exception_payload(
+        RuntimeError("db went away\nsecond line"), host="h1"
+    )
+    assert status == "alert"
+    assert metadata == {"fault": "RuntimeError"}
+    assert set(variables) == _VARIABLES
+    assert variables["error"] == "RuntimeError: db went away"
+    assert variables["enabled"] == "true"
+    assert variables["outcome"] == "failed"

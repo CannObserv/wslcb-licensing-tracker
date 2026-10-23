@@ -74,12 +74,31 @@ def _no_configured_checkin(monkeypatch):
     would POST to co-status for real. Tests that exercise a configured
     check-in build their own environ and pass it in.
     """
-    from wslcb_licensing_tracker.checkin import BACKUP, CREDENTIALS_DIRECTORY_ENV, SCRAPE
+    from wslcb_licensing_tracker.checkin import (
+        BACKUP,
+        CLASSIFY,
+        CREDENTIALS_DIRECTORY_ENV,
+        SCRAPE,
+    )
 
     monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
-    for monitor in (BACKUP, SCRAPE):
+    for monitor in (BACKUP, SCRAPE, CLASSIFY):
         monkeypatch.delenv(monitor.base_url_env, raising=False)
         monkeypatch.delenv(monitor.monitor_id_env, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_jev(monkeypatch):
+    """No test finds Jev enabled or a TypeSafe key in its environment (#207).
+
+    The post-scrape and post-import hooks call Jev when the flag is on; a
+    developer shell with it set would make real, paid calls. Tests that need
+    it on set it themselves.
+    """
+    from wslcb_licensing_tracker.config import ENV_PREFIX
+
+    for name in ("ENABLE_JEV_CLASSIFICATION", "TYPESAFE_API_KEY"):
+        monkeypatch.delenv(f"{ENV_PREFIX}{name}", raising=False)
 
 
 @pytest.fixture

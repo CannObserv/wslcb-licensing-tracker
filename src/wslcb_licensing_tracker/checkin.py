@@ -1,4 +1,4 @@
-"""Report a timer job's run to its co-status dead-man monitor (#185, #196).
+"""Report a timer job's run to its co-status dead-man monitor (#185, #196, #207).
 
 Ported from CannObserv/watcher's ``src/ops/checkin.py`` (watcher#296 D9, after
 broker#3). A job that fails loudly still says nothing when it stops running:
@@ -6,9 +6,10 @@ a disabled timer, a dead VM and a wedged interpreter all produce zero failures
 and zero traffic. So the job checks in on **every** run, success or not, and
 co-status alarms when a check-in fails to arrive.
 
-Two jobs check in, each to its own monitor: the nightly backup (``BACKUP``)
-and the twice-daily scrape (``SCRAPE``). One implementation; a ``Monitor``
-names which environment variables configure it.
+Three jobs check in, each to its own monitor: the nightly backup (``BACKUP``),
+the twice-daily scrape (``SCRAPE``) and the weekly entity classification
+(``CLASSIFY``; the post-scrape pass also alerts to it, never ``ok``). One
+implementation; a ``Monitor`` names which environment variables configure it.
 
 ``POST {base}/api/v1/monitors/{id}/checkin`` with ``{"status": "ok"|"alert",
 "variables": {...}}`` (plus ``"metadata"`` when given) and an ``X-API-Key``
@@ -55,6 +56,12 @@ class Monitor:
 
 BACKUP = Monitor("backup", "WSLCB_BACKUP_CHECKIN_BASE_URL", "WSLCB_BACKUP_MONITOR_ID")
 SCRAPE = Monitor("scrape", "WSLCB_SCRAPE_CHECKIN_BASE_URL", "WSLCB_SCRAPE_MONITOR_ID")
+# Prefixed, as every variable added from #204 on; the two above keep their names.
+CLASSIFY = Monitor(
+    "classify",
+    "CO_WSLCB_LICENSING_TRACKER_CLASSIFY_CHECKIN_BASE_URL",
+    "CO_WSLCB_LICENSING_TRACKER_CLASSIFY_MONITOR_ID",
+)
 
 #: Set by systemd for a unit with credentials; the key is the file named below.
 CREDENTIALS_DIRECTORY_ENV = "CREDENTIALS_DIRECTORY"

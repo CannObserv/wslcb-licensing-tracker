@@ -179,3 +179,15 @@ def test_no_test_finds_a_configured_checkin():
     ]
     for name in names:
         assert name not in os.environ, name
+
+
+def test_classify_monitor_uses_prefixed_names():
+    """New variables take the #204 prefix; BACKUP and SCRAPE keep theirs until #204."""
+    from wslcb_licensing_tracker.checkin import CLASSIFY
+    from wslcb_licensing_tracker.config import ENV_PREFIX
+
+    assert CLASSIFY.label == "classify"
+    assert CLASSIFY.base_url_env == f"{ENV_PREFIX}CLASSIFY_CHECKIN_BASE_URL"
+    assert CLASSIFY.monitor_id_env == f"{ENV_PREFIX}CLASSIFY_MONITOR_ID"
+    assert not BACKUP.base_url_env.startswith(ENV_PREFIX)
+    assert not SCRAPE.base_url_env.startswith(ENV_PREFIX)
