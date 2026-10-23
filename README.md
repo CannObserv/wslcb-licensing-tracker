@@ -78,6 +78,7 @@ wslcb-licensing-tracker/
 ├── api_routes.py           # Versioned API router (/api/v1/*)
 ├── admin_routes.py         # Admin router (/admin/*: dashboard, users, audit log)
 ├── admin_endorsement_routes.py # Admin endorsement-curation router (/admin/endorsements*)
+├── admin_entity_routes.py  # Admin classification review router (/admin/entities/*, #208)
 ├── admin_auth.py           # Admin authentication (exe.dev proxy headers)
 ├── cli.py                  # Unified CLI entry point (click groups: ingest, db, admin)
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
@@ -102,6 +103,7 @@ wslcb-licensing-tracker/
 ├── entity_classification.py # Classification resolver (manual > Jev > regex), manual rows, Jev rollback (#206)
 ├── jev_client.py           # HTTP transport for TypeSafe Jev classification (#207)
 ├── jev_classifier.py       # Jev orchestration: candidates, batches, run rows, check-in payload (#207)
+├── classification_review.py # Audited operator actions, review queue, health/spend queries (#208)
 ├── address_client.py       # HTTP transport for the address-validator service
 ├── address_validator.py    # Async address validation DB layer
 ├── link_records.py         # Async application→outcome record linking
@@ -134,12 +136,15 @@ wslcb-licensing-tracker/
 │   │   ├── base.html       # Admin base layout
 │   │   ├── dashboard.html  # System dashboard
 │   │   ├── endorsements.html # Endorsement management (list, suggestions, codes)
+│   │   ├── entity_review.html # Entity classification review queue (#208)
 │   │   ├── users.html      # Admin user management
 │   │   └── audit_log.html  # Audit log
 │   └── partials/
 │       ├── results.html           # Search results partial (HTMX)
 │       ├── record_table.html      # Shared record table (results + entity pages)
 │       ├── entities_results.html  # Entities results partial (HTMX)
+│       ├── entity_admin_panel.html # Entity-page classification panel, admins only (#208)
+│       ├── entity_classification_forms.html # Classification action form macros (#208)
 │       └── source_viewer.html     # Source viewer partial (HTMX iframe)
 ├── static/                 # Static assets
 │   ├── css/
@@ -214,6 +219,7 @@ wslcb-licensing-tracker/
 │   ├── test_source_viewer.py    # Source viewer route tests
 │   ├── test_admin_auth.py       # Admin authentication tests
 │   ├── test_admin_routes.py     # Admin route tests
+│   ├── test_admin_entity_routes.py # Admin classification review route tests
 │   ├── test_admin_users.py      # Admin user management route tests
 │   ├── test_admin_auth_pg.py    # Admin user CLI DB logic (require TEST_DATABASE_URL)
 │   ├── test_admin_users_pg.py   # Admin user route DB logic (require TEST_DATABASE_URL)
@@ -230,6 +236,7 @@ wslcb-licensing-tracker/
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
 │   ├── test_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
 │   ├── test_entity_classification.py # Classification resolver + Jev rollback (require TEST_DATABASE_URL)
+│   ├── test_classification_review.py # Operator actions, review queue, health (require TEST_DATABASE_URL)
 │   ├── test_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
 │   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196), freshness (#197)
 │   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
@@ -402,8 +409,10 @@ All `/api/v1/` responses use a consistent JSON envelope: `{"ok": bool, "message"
 
 | Endpoint | Description |
 |---|---|
-| `GET /admin/` | System dashboard — record counts, recent scrapes, data quality checklist |
+| `GET /admin/` | System dashboard — record counts, recent scrapes, data quality checklist, entity classification health/spend |
 | `GET /admin/endorsements` | Endorsement management — list, duplicate suggestions, code mappings |
+| `GET /admin/entities/review` | Entity classification review queue (`?tab=unknown` for *Subtype unknown*) |
+| `POST /admin/entities/{id}/{classify,accept,not-a-name,clear-manual,flag,jev}` | Audited classification actions; each 303-redirects to its `next` path. `jev` is a paid call (409 while disabled) |
 | `GET /admin/users` | Admin user management — add/remove admins |
 | `GET /admin/audit-log` | Audit log — paginated history of all admin mutations |
 
@@ -591,6 +600,7 @@ Test structure:
 | `tests/test_source_viewer.py` | Source viewer route — snapshot dispatch, iframe rendering, not-found cases |
 | `tests/test_admin_auth.py` | Admin authentication — header extraction, env-var fallback, redirect/403 |
 | `tests/test_admin_routes.py` | Admin route rendering and redirects |
+| `tests/test_admin_entity_routes.py` | Classification review routes — queue page, actions, safe `next`, error codes, Jev re-classify |
 | `tests/test_admin_users.py` | Admin user management routes — add, remove, list, self-removal guard |
 | `tests/test_admin_endorsements.py` | Admin endorsement/substance routes — add, remove, set-endorsements |
 | `tests/test_data_migration.py` | Run-once migration framework — idempotency, ordering |
@@ -605,6 +615,7 @@ Test structure:
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
 | `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require `TEST_DATABASE_URL`) |
 | `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require `TEST_DATABASE_URL`) |
+| `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require `TEST_DATABASE_URL`) |
 | `tests/test_jev_client.py` | Jev transport — request shape, 429/529 retry, auth errors, malformed responses fail the batch |
 | `tests/test_jev_classifier.py` | Jev runs — classify once, modes, advisory lock, failure stops, run rows, check-in payload (require `TEST_DATABASE_URL`) |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions (require `TEST_DATABASE_URL`) |
