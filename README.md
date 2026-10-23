@@ -81,7 +81,7 @@ wslcb-licensing-tracker/
 ├── admin_entity_routes.py  # Admin classification review router (/admin/entities/*, #208)
 ├── admin_auth.py           # Admin authentication (exe.dev proxy headers)
 ├── cli.py                  # Unified CLI entry point (click groups: ingest, db, admin)
-├── display.py              # Presentation formatting (format_outcome, summarize_provenance)
+├── display.py              # Presentation formatting (format_outcome, summarize_provenance, classification_badge)
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
 ├── diff_replay.py          # Chain replay of CO diff archives (#151; no DB, no side effects)
 ├── text_utils.py           # Pure-string text normalization (clean_entity_name, strip_duplicate_marker, …)
@@ -143,6 +143,7 @@ wslcb-licensing-tracker/
 │       ├── results.html           # Search results partial (HTMX)
 │       ├── record_table.html      # Shared record table (results + entity pages)
 │       ├── entities_results.html  # Entities results partial (HTMX)
+│       ├── classification_badge.html # Entity type chip + public provenance badge macros (#209)
 │       ├── entity_admin_panel.html # Entity-page classification panel, admins only (#208)
 │       ├── entity_classification_forms.html # Classification action form macros (#208)
 │       └── source_viewer.html     # Source viewer partial (HTMX iframe)
@@ -391,8 +392,8 @@ Archived HTML snapshots and other persistent data are stored in `./data/` relati
 | `GET /` | Dashboard with summary statistics |
 | `GET /search` | Search interface (HTML) or HTMX partial results |
 | `GET /record/{id}` | Record detail page |
-| `GET /entities` | Searchable, paginated entity list |
-| `GET /entity/{id}` | Entity detail page — all license records for a person or organization |
+| `GET /entities` | Searchable, paginated entity list (`?q=`, `?type=`, `?subtype=`, `?sort=`); each row shows its subtype and provenance badge |
+| `GET /entity/{id}` | Entity detail page — type, subtype, provenance badge and all license records for a person or organization |
 | `GET /source/{source_id}/record/{record_id}` | HTMX partial — renders archived source HTML for a specific record |
 
 ### Versioned API (`/api/v1/`)
@@ -519,7 +520,7 @@ Names are normalized at ingestion time:
 
 The first element of the `applicants` string (the business name) is excluded from entity extraction — only the individual people and organizations are stored.
 
-Each entity is classified `person` or `organization`, with an `entity_subtype` for organizations (business, nonprofit, trust, estate, tribe, government, unknown) and a `classification_source` (regex, Jev or manual). Every source's answer is kept in `entity_classifications`; the shown values are resolved from them (#206, see [`docs/SCHEMA.md`](docs/SCHEMA.md)).
+Each entity is classified `person` or `organization`, with an `entity_subtype` for organizations (business, nonprofit, trust, estate, tribe, government, unknown) and a `classification_source` (regex, Jev or manual). Every source's answer is kept in `entity_classifications`; the shown values are resolved from them (#206, see [`docs/SCHEMA.md`](docs/SCHEMA.md)). Public pages show the subtype and a vendor-neutral badge: **Rules**, **AI · NN%** or **Reviewed** (#209).
 
 The same cleaning is applied to the `applicants` and `previous_applicants` string columns on `license_records`, so FTS search results and CSV exports are consistent with entity names.
 
