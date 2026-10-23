@@ -10,6 +10,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .entity_classification import ENTITY_SUBTYPES, with_jev_answer
 from .queries_hydrate import _hydrate_records
 from .queries_search import RECORD_COLUMNS, RECORD_JOINS
 
@@ -36,6 +37,7 @@ async def get_entities(  # noqa: PLR0913
     *,
     q: str | None = None,
     entity_type: str | None = None,
+    entity_subtype: str | None = None,
     sort: str = "count",
     page: int = 1,
     per_page: int = 50,
@@ -48,6 +50,9 @@ async def get_entities(  # noqa: PLR0913
         Optional name substring (case-insensitive ILIKE search).
     entity_type:
         Optional filter: 'person', 'organization', or None for all.
+    entity_subtype:
+        Optional filter on the resolved subtype; a value not in
+        ``ENTITY_SUBTYPES`` is ignored.  Only organizations have one.
     sort:
         'count' (default) — most active first (record_count DESC, name ASC);
         'name' — alphabetical (name ASC).
@@ -57,6 +62,8 @@ async def get_entities(  # noqa: PLR0913
         Rows per page (default 50).
 
     Returns a dict with keys ``entities`` (list of row dicts) and ``total`` (int).
+    Rows carry ``id``, ``name``, ``entity_type``, ``entity_subtype``,
+    ``classification_source``, ``record_count``, ``jev_confidence``, ``jev_subtype``.
     """
     where_parts = []
     params: dict = {}
@@ -66,6 +73,9 @@ async def get_entities(  # noqa: PLR0913
     if entity_type is not None:
         where_parts.append("e.entity_type = :entity_type")
         params["entity_type"] = entity_type
+    if entity_subtype in ENTITY_SUBTYPES:
+        where_parts.append("e.entity_subtype = :entity_subtype")
+        params["entity_subtype"] = entity_subtype
 
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
     order_clause = (
@@ -73,7 +83,8 @@ async def get_entities(  # noqa: PLR0913
     )
 
     base_sql = f"""
-        SELECT e.id, e.name, e.entity_type, COUNT(re.record_id) AS record_count
+        SELECT e.id, e.name, e.entity_type, e.entity_subtype, e.classification_source,
+               COUNT(re.record_id) AS record_count
         FROM entities e
         LEFT JOIN record_entities re ON re.entity_id = e.id
         {where_clause}
@@ -92,4 +103,5 @@ async def get_entities(  # noqa: PLR0913
         text(f"{base_sql} {order_clause} LIMIT :limit OFFSET :offset"),
         {**params, "limit": per_page, "offset": offset},
     )
-    return {"entities": [dict(r) for r in rows_result.mappings().all()], "total": total}
+    rows = [dict(r) for r in rows_result.mappings().all()]
+    return {"entities": await with_jev_answer(conn, rows), "total": total}

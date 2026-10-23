@@ -136,6 +136,20 @@ async def current_answers(
     return out
 
 
+async def with_jev_answer(conn: AsyncConnection, rows: list[dict]) -> list[dict]:
+    """Add each entity row's current Jev ``jev_confidence`` / ``jev_subtype`` (None if none).
+
+    Rows need an ``id`` key; they are updated in place and returned.  The
+    confidence is the person/organization (kind) one, not the subtype's.
+    """
+    answers = await current_answers(conn, [r["id"] for r in rows]) if rows else {}
+    for r in rows:
+        jev = answers.get(r["id"], {}).get("jev")
+        r["jev_confidence"] = jev.confidence if jev else None
+        r["jev_subtype"] = jev.entity_subtype if jev else None
+    return rows
+
+
 async def resolve_entities(
     conn: AsyncConnection, entity_ids: Sequence[int] | None = None
 ) -> ResolveResult:

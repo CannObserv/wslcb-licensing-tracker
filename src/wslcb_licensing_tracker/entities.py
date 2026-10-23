@@ -22,6 +22,7 @@ from .entity_classification import (
     current_answers,
     protected_ids,
     resolve_entities,
+    with_jev_answer,
 )
 from .models import (
     entities,
@@ -601,7 +602,8 @@ async def get_record_entities(
     """Batch-fetch entities for a list of record ids.
 
     Returns ``{record_id: {"applicant": [...], "previous_applicant": [...]}}``.
-    Each entity dict has keys ``id``, ``name``, ``entity_type``.
+    Each entity dict has keys ``id``, ``name``, ``entity_type``,
+    ``entity_subtype``, ``classification_source``.
     """
     if not record_ids:
         return {}
@@ -621,6 +623,8 @@ async def get_record_entities(
                 entities.c.id.label("entity_id"),
                 entities.c.name,
                 entities.c.entity_type,
+                entities.c.entity_subtype,
+                entities.c.classification_source,
             )
             .select_from(record_entities)
             .join(entities, entities.c.id == record_entities.c.entity_id)
@@ -644,6 +648,8 @@ async def get_record_entities(
                     "id": r["entity_id"],
                     "name": r["name"],
                     "entity_type": r["entity_type"],
+                    "entity_subtype": r["entity_subtype"],
+                    "classification_source": r["classification_source"],
                 }
             )
 
@@ -1043,7 +1049,11 @@ async def get_entity_by_id(
     conn: AsyncConnection,
     entity_id: int,
 ) -> dict | None:
-    """Fetch a single entity by id."""
+    """Fetch a single entity by id, with its resolved classification and current Jev answer.
+
+    Keys: ``id``, ``name``, ``entity_type``, ``entity_subtype``,
+    ``classification_source``, ``created_at``, ``jev_confidence``, ``jev_subtype``.
+    """
     row = (
         (
             await conn.execute(
@@ -1051,6 +1061,8 @@ async def get_entity_by_id(
                     entities.c.id,
                     entities.c.name,
                     entities.c.entity_type,
+                    entities.c.entity_subtype,
+                    entities.c.classification_source,
                     entities.c.created_at,
                 ).where(entities.c.id == entity_id)
             )
@@ -1058,7 +1070,9 @@ async def get_entity_by_id(
         .mappings()
         .one_or_none()
     )
-    return dict(row) if row else None
+    if row is None:
+        return None
+    return (await with_jev_answer(conn, [dict(row)]))[0]
 
 
 async def backfill_entities(conn: AsyncConnection) -> int:

@@ -5,6 +5,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from wslcb_licensing_tracker.entities import (
+    get_entity_by_id,
     get_or_create_entity,
     get_record_entities,
     merge_duplicate_entities,
@@ -453,3 +454,47 @@ class TestMergeMovesOperatorInput:
             )
         ).scalar_one()
         assert flags == 1
+
+
+class TestProvenanceFields:
+    """Resolved subtype/source on the entity read paths (#209)."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_get_entity_by_id_fields(self, pg_conn):
+        trust = await get_or_create_entity(pg_conn, "T209 SMITH FAMILY TRUST")
+        person = await get_or_create_entity(pg_conn, "T209 JOHN DOE")
+        await pg_conn.execute(
+            pg_insert(entity_classifications).values(
+                entity_id=person,
+                source="jev",
+                entity_type="person",
+                confidence=0.97,
+                model="jev-1.14.0",
+            )
+        )
+        got = await get_entity_by_id(pg_conn, trust)
+        assert got["entity_subtype"] == "trust"
+        assert got["classification_source"] == "regex"
+        assert got["jev_confidence"] is None
+        assert got["jev_subtype"] is None
+        got = await get_entity_by_id(pg_conn, person)
+        assert got["entity_subtype"] is None
+        assert got["jev_confidence"] == pytest.approx(0.97)
+        assert "model" not in got
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_get_record_entities_fields(self, pg_conn, standard_new_application):
+        standard_new_application["license_number"] = "entity_209"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        await parse_and_link_entities(
+            pg_conn,
+            record_id,
+            "ACME CANNABIS CO; T209 SMITH FAMILY TRUST; T209 JOHN DOE",
+            role="applicant",
+        )
+        linked = (await get_record_entities(pg_conn, [record_id]))[record_id]["applicant"]
+        by_name = {e["name"]: e for e in linked}
+        assert by_name["T209 SMITH FAMILY TRUST"]["entity_subtype"] == "trust"
+        assert by_name["T209 SMITH FAMILY TRUST"]["classification_source"] == "regex"
+        assert by_name["T209 JOHN DOE"]["entity_subtype"] is None
+        assert by_name["T209 JOHN DOE"]["classification_source"] == "regex"

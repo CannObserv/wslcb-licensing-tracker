@@ -5,15 +5,18 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import insert
 
 from wslcb_licensing_tracker.db import (
     SOURCE_TYPE_LIVE_SCRAPE,
     get_or_create_source,
     link_record_source,
 )
-from wslcb_licensing_tracker.models import scrape_log
+from wslcb_licensing_tracker.entities import get_or_create_entity
+from wslcb_licensing_tracker.entity_classification import resolve_entities
+from wslcb_licensing_tracker.models import entity_classifications, scrape_log
 from wslcb_licensing_tracker.pipeline import insert_record
-from wslcb_licensing_tracker.queries_entity import get_entity_records
+from wslcb_licensing_tracker.queries_entity import get_entities, get_entity_records
 from wslcb_licensing_tracker.queries_export import export_records, export_records_cursor
 from wslcb_licensing_tracker.queries_hydrate import enrich_record
 from wslcb_licensing_tracker.queries_search import (
@@ -221,3 +224,77 @@ class TestGetRecordSourceLink:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_false_when_not_linked(self, pg_conn):
         assert await get_record_source_link(pg_conn, 999999999, 999999999) is False
+
+
+async def _seed_jev(
+    conn, eid: int, entity_type: str, subtype: str | None, conf: float, **kw
+) -> None:
+    await conn.execute(
+        insert(entity_classifications).values(
+            entity_id=eid,
+            source="jev",
+            entity_type=entity_type,
+            entity_subtype=subtype,
+            confidence=conf,
+            model="jev-1.14.0",
+            **kw,
+        )
+    )
+
+
+class TestGetEntities:
+    """Subtype filter and provenance fields (#209). Scoped by a ``T209`` name prefix."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_get_entities_subtype_filter(self, pg_conn):
+        trust = await get_or_create_entity(pg_conn, "T209 SMITH FAMILY TRUST")
+        await get_or_create_entity(pg_conn, "T209 ACME LLC")
+        await get_or_create_entity(pg_conn, "T209 JOHN DOE")
+        result = await get_entities(pg_conn, q="T209", entity_subtype="trust")
+        assert result["total"] == 1
+        assert [e["id"] for e in result["entities"]] == [trust]
+        assert result["entities"][0]["entity_subtype"] == "trust"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_get_entities_bogus_subtype_ignored(self, pg_conn):
+        for name in ("T209 SMITH FAMILY TRUST", "T209 ACME LLC", "T209 JOHN DOE"):
+            await get_or_create_entity(pg_conn, name)
+        unfiltered = await get_entities(pg_conn, q="T209")
+        bogus = await get_entities(pg_conn, q="T209", entity_subtype="bogus")
+        assert unfiltered["total"] == 3
+        assert bogus["total"] == unfiltered["total"]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_person_with_business_subtype_is_empty(self, pg_conn):
+        await get_or_create_entity(pg_conn, "T209 ACME LLC")
+        await get_or_create_entity(pg_conn, "T209 JOHN DOE")
+        result = await get_entities(
+            pg_conn, q="T209", entity_type="person", entity_subtype="business"
+        )
+        assert result == {"entities": [], "total": 0}
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_rows_carry_source_and_jev_confidence(self, pg_conn):
+        person = await get_or_create_entity(pg_conn, "T209 JOHN DOE")
+        tribe = await get_or_create_entity(pg_conn, "T209 LOWER ELWHA TRIBE")
+        acme = await get_or_create_entity(pg_conn, "T209 ACME LLC")
+        # Older and ignored rows never surface; the latest non-ignored one does.
+        await _seed_jev(pg_conn, tribe, "organization", "business", 0.5)
+        await _seed_jev(pg_conn, tribe, "organization", "government", 0.92)
+        await _seed_jev(pg_conn, tribe, "person", None, 0.99, ignored_at=datetime.now(UTC))
+        await _seed_jev(pg_conn, acme, "organization", "business", 0.4)  # below threshold
+        await resolve_entities(pg_conn, [person, tribe, acme])
+
+        rows = {e["id"]: e for e in (await get_entities(pg_conn, q="T209"))["entities"]}
+        assert rows[person]["entity_subtype"] is None
+        assert rows[person]["classification_source"] == "regex"
+        assert rows[person]["jev_confidence"] is None
+        assert rows[person]["jev_subtype"] is None
+        # Jev wins the type; its untrusted subtype falls back to the regex's.
+        assert rows[tribe]["classification_source"] == "jev"
+        assert rows[tribe]["entity_subtype"] == "tribe"
+        assert rows[tribe]["jev_confidence"] == pytest.approx(0.92)
+        assert rows[tribe]["jev_subtype"] == "government"
+        # A losing Jev answer still reports its confidence.
+        assert rows[acme]["classification_source"] == "regex"
+        assert rows[acme]["jev_confidence"] == pytest.approx(0.4)
