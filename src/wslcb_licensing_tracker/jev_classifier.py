@@ -65,6 +65,10 @@ MAX_CONSECUTIVE_FAILURES = 3
 ADVISORY_LOCK_KEY = 0x6A6576  # "jev"
 # Entities awaiting a first answer, past which the weekly check-in alerts.
 BACKLOG_ALERT_THRESHOLD = 1000
+# A check-in count the sender did not take (a run that raised; a post-ingest
+# pass's backlog).  Every template variable stays present (co-status 422s on a
+# missing one); this reads as unknown, where "" or 0 read as blank or measured.
+NOT_COUNTED = "n/a"
 
 _CHUNK = 1000
 
@@ -562,7 +566,7 @@ def _variables(  # noqa: PLR0913 — the monitor's template variables, one each
     }
 
 
-def _fault(summary: RunSummary, backlog: int) -> str | None:
+def _fault(summary: RunSummary, backlog: int | None) -> str | None:
     """The run's fault for ``metadata.fault``, or None when it is healthy."""
     if summary.error:
         return summary.error
@@ -572,13 +576,13 @@ def _fault(summary: RunSummary, backlog: int) -> str | None:
         # Only the weekly run (default-mode CLI) checks in ok; skipping it is a
         # missed beat, and the one place a lock that never clears can show.
         return "locked"
-    if backlog > BACKLOG_ALERT_THRESHOLD:
+    if backlog is not None and backlog > BACKLOG_ALERT_THRESHOLD:
         return "backlog"
     return None
 
 
 def checkin_payload(
-    summary: RunSummary, *, backlog: int, host: str
+    summary: RunSummary, *, backlog: int | None, host: str
 ) -> tuple[CheckinStatus, dict, dict | None]:
     """Return ``(status, variables, metadata)`` for the CLASSIFY check-in.
 
@@ -586,6 +590,7 @@ def checkin_payload(
     ``enabled=false``); an error, failed batches, a weekly run that lost the
     lock, or a backlog past ``BACKLOG_ALERT_THRESHOLD`` → ``alert`` with that
     ``metadata.fault``; else ``ok``.  Every variable is always present.
+    *backlog* None means not counted: it reads ``NOT_COUNTED`` and never alerts.
     """
     fault = _fault(summary, backlog) if summary.enabled else None
     variables = _variables(
@@ -596,7 +601,7 @@ def checkin_payload(
         names_sent=summary.names_sent,
         batches_ok=summary.batches_ok,
         batches_failed=summary.batches_failed,
-        backlog=backlog,
+        backlog=NOT_COUNTED if backlog is None else backlog,
         error=fault or "",
     )
     if fault is None:
@@ -621,10 +626,10 @@ def exception_payload(exc: BaseException, *, host: str) -> tuple[CheckinStatus, 
         host=host,
         enabled=is_classification_enabled(),
         model=get_model(),
-        names_sent="",
-        batches_ok="",
-        batches_failed="",
-        backlog="",
+        names_sent=NOT_COUNTED,
+        batches_ok=NOT_COUNTED,
+        batches_failed=NOT_COUNTED,
+        backlog=NOT_COUNTED,
         error=f"{name}: {message}" if message else name,
     )
     return "alert", variables, {"fault": name}

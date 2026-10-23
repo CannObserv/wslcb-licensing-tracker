@@ -153,10 +153,12 @@ timer and the drop-in.
 - `model`;
 - `names_sent`, `batches_ok`, `batches_failed`;
 - `backlog`: entities awaiting a first answer, counted after the run. It is
-  `0` on post-scrape alerts, which don't count it;
+  `n/a` on post-scrape alerts, which don't count it;
 - `error`: the fault, or `""`.
 
-An alert for a raised run has `error` = `Type: first line`, and empty counts.
+An alert for a raised run has `error` = `Type: first line`, and its four counts
+read `n/a`. Every variable is always sent: a missing one is a 422 and the
+check-in is lost.
 
 **Install, in this order.** The key file first: a missing `LoadCredential=`
 source fails every run (243/CREDENTIALS).

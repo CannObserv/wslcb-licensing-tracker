@@ -194,7 +194,8 @@ async def _post_ingest_classification(engine: AsyncEngine, *, origin: Origin, al
     try:
         async with get_db(engine) as conn:
             summary = await run_classify_entities(conn, origin=origin)
-        status, variables, metadata = checkin_payload(summary, backlog=0, host=host)
+        # The backlog isn't counted here (the weekly run does): it reads n/a.
+        status, variables, metadata = checkin_payload(summary, backlog=None, host=host)
     except Exception as exc:  # noqa: BLE001 — Jev is never on the ingestion critical path
         logger.warning("Post-ingest Jev classification failed (%s)", origin, exc_info=True)
         status, variables, metadata = exception_payload(exc, host=host)
