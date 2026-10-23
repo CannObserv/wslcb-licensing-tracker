@@ -38,6 +38,9 @@ MAX_ATTEMPTS = 6
 RETRY_STATUSES = frozenset({429, 529})
 _AUTH_STATUSES = frozenset({401, 403})
 _DEFAULT_MAX_NAMES_PER_RUN = 5000
+# The vendor's error body, quoted in a status error: enough to read a schema
+# rejection, one line, never the request (the key is only ever in its header).
+ERROR_EXCERPT_CHARS = 200
 
 _ENABLED_ENV = f"{ENV_PREFIX}ENABLE_JEV_CLASSIFICATION"
 _API_KEY_ENV = f"{ENV_PREFIX}TYPESAFE_API_KEY"
@@ -173,6 +176,17 @@ def build_request(names: Sequence[str], model: str) -> dict:
     }
 
 
+def _excerpt(response: httpx.Response) -> str:
+    """``": <body>"``, whitespace collapsed and cut to ``ERROR_EXCERPT_CHARS``; "" if none."""
+    try:
+        text = " ".join(response.text.split())
+    except Exception:  # noqa: BLE001 — an error without its detail beats none
+        return ""
+    if len(text) > ERROR_EXCERPT_CHARS:
+        text = text[:ERROR_EXCERPT_CHARS] + "…"
+    return f": {text}" if text else ""
+
+
 def _malformed(detail: str) -> JevError:
     return JevError(f"malformed Jev response: {detail}", status=httpx.codes.OK)
 
@@ -274,7 +288,9 @@ async def classify_batch(
             msg = f"Jev: HTTP {status} after {MAX_ATTEMPTS} attempts"
             raise JevError(msg, status=status)
         if status != httpx.codes.OK:
-            msg = f"Jev: HTTP {status}"
+            # Never quote an auth rejection: some vendors echo a key prefix in it.
+            detail = "" if status in _AUTH_STATUSES else _excerpt(response)
+            msg = f"Jev: HTTP {status}{detail}"
             raise JevError(msg, status=status)
         try:
             data = response.json()

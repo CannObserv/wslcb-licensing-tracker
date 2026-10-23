@@ -161,6 +161,37 @@ async def test_other_status_not_retried():
     assert len(rec.requests) == 1
 
 
+async def test_status_error_carries_a_bounded_body_excerpt():
+    """The first live call debugs a schema rejection from the vendor's own words."""
+    detail = "questions.kind_0.criteria:\n  must be a mapping " + "x" * 500
+
+    def handler(request):
+        return httpx.Response(422, json={"error": detail})
+
+    with pytest.raises(jev_client.JevError) as exc:
+        await _classify(handler)
+    message = str(exc.value)
+    assert message.startswith("Jev: HTTP 422: ")
+    assert "must be a mapping" in message
+    assert "\n" not in message
+    assert len(message) <= len("Jev: HTTP 422: ") + jev_client.ERROR_EXCERPT_CHARS + 1
+
+
+async def test_auth_rejection_is_never_quoted():
+    def handler(request):
+        return httpx.Response(401, json={"error": "invalid key k-live-1234"})
+
+    with pytest.raises(jev_client.JevError) as exc:
+        await _classify(handler)
+    assert str(exc.value) == "Jev: HTTP 401"
+
+
+async def test_retries_exhausted_message_has_no_excerpt_noise():
+    with pytest.raises(jev_client.JevError) as exc:
+        await _classify(_Recorder((429, None)))
+    assert str(exc.value) == "Jev: HTTP 429 after 6 attempts"
+
+
 @pytest.mark.parametrize("status", [401, 403])
 async def test_401_403_are_auth_errors(status):
     with pytest.raises(jev_client.JevError) as exc:
