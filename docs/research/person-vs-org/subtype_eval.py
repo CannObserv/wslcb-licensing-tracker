@@ -236,6 +236,7 @@ async def supplement() -> None:
     rows = [r for r in _rows(SUPP) if r["label"] != "A"]
     if any(not r["label"] for r in rows):
         raise SystemExit(f"{SUPP.name} has unlabeled rows")
+    _require_subtypes(rows, SUPP.name)
     answers, stats = await _classify("supplement", [r["name"] for r in rows])
     out = [
         {"entity_id": r["entity_id"], **_prod_cols(a)} for r, a in zip(rows, answers, strict=True)
@@ -281,6 +282,13 @@ def _gold_subtype(g: dict) -> str | None:
     return g["subtype"] if g["label"] == "O" else None
 
 
+def _require_subtypes(rows: list[dict], source: str) -> None:
+    """Exit unless every ``O`` row carries an org subtype: a blank one would score as an error."""
+    blank = [r["name"] for r in rows if r["label"] == "O" and r["subtype"] not in JEV_ORG_SUBTYPES]
+    if blank:
+        raise SystemExit(f"{source}: {len(blank)} O rows without an org subtype, e.g. {blank[0]!r}")
+
+
 def _verdict(n: int, precision: float) -> str:
     if n < MIN_EVIDENCE:
         return "insufficient"
@@ -290,6 +298,7 @@ def _verdict(n: int, precision: float) -> str:
 def score() -> None:
     """Print the kind regression gate and the per-subtype precision table."""
     gold = [g for g in _rows(ev.GOLD) if g["label"] != "A"]
+    _require_subtypes(gold, ev.GOLD.name)
     preds = {r["entity_id"]: r for r in _rows(ev.PREDS)}
     if not preds[gold[0]["entity_id"]].get("prod_kind"):
         raise SystemExit("predictions.csv has no prod_* answers; run `run` first")
@@ -303,7 +312,9 @@ def score() -> None:
     pool = [(g, preds[g["entity_id"]], "gold") for g in gold]
     if SUPP.exists() and SUPP_PREDS.exists():
         sp = {r["entity_id"]: r for r in _rows(SUPP_PREDS)}
-        pool += [(r, sp[r["entity_id"]], "supp") for r in _rows(SUPP) if r["entity_id"] in sp]
+        supp = [r for r in _rows(SUPP) if r["entity_id"] in sp]
+        _require_subtypes(supp, SUPP.name)
+        pool += [(r, sp[r["entity_id"]], "supp") for r in supp]
     for t in (THRESHOLD, 0.8, 0.9):
         print(f"\nthreshold {t}  (bar {BAR:.0%}, min {MIN_EVIDENCE} answers)")
         print(
