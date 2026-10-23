@@ -369,3 +369,23 @@ def test_requires_admin(conn, monkeypatch, method, path):
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("/__exe.dev/login")
     conn.commit.assert_not_awaited()
+
+
+def test_jev_call_has_a_deadline_and_is_audited(client, conn, monkeypatch):
+    """A hung Jev call gives up, is audited as TimeoutError and answers 502 (CR 7)."""
+    import asyncio
+
+    monkeypatch.setenv(ENABLED_ENV, "true")
+    monkeypatch.setattr(routes, "ADMIN_JEV_TIMEOUT_SECONDS", 0.05)
+
+    async def _hang(*_a, **_kw):
+        await asyncio.sleep(30)
+
+    with (
+        patch(f"{MOD}.classify_entities", new=_hang),
+        patch(f"{MOD}.log_action", new_callable=AsyncMock) as audit,
+    ):
+        resp = client.post("/admin/entities/7/jev", follow_redirects=False)
+    assert resp.status_code == 502
+    assert "TimeoutError" in resp.text
+    assert audit.await_args.args[5] == {"error": "TimeoutError"}

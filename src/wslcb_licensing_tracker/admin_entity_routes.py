@@ -9,6 +9,7 @@ committed.
 No CSRF token: the posture of the other admin routes (exe.dev proxy login).
 """
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
@@ -46,6 +47,10 @@ Admin = Annotated[dict[str, Any], Depends(require_admin)]
 Next = Annotated[str | None, Form(alias="next")]
 
 BUSY_RETRY_AFTER_SECONDS = 60
+# Deadline for the admin's single Jev call.  classify_batch's retries can run
+# ~6.5 min; a request that long outlives the browser, and a cancelled handler
+# would skip the audit row.  On expiry classify_entities closes its run row.
+ADMIN_JEV_TIMEOUT_SECONDS = 90
 # Items per review page: each carries its action forms (~5 KB of HTML).
 REVIEW_PAGE_SIZE = 100
 
@@ -236,8 +241,9 @@ async def admin_entity_jev(
     """Re-classify one entity with Jev, manual override or not.  A paid call.
 
     ``classify_entities`` owns its connection's transactions, so the audit row
-    is written afterwards on a connection of its own.  An exception is still
-    audited (money may have been spent), then answered with a 502.
+    is written afterwards on a connection of its own.  An exception, or the
+    ``ADMIN_JEV_TIMEOUT_SECONDS`` deadline, is still audited (money may have
+    been spent), then answered with a 502.
     """
     if not is_classification_enabled():
         raise HTTPException(status_code=409, detail="Jev classification is disabled")
@@ -251,7 +257,7 @@ async def admin_entity_jev(
 
     summary: RunSummary | None = None
     try:
-        async with get_db(engine) as conn:
+        async with get_db(engine) as conn, asyncio.timeout(ADMIN_JEV_TIMEOUT_SECONDS):
             summary = await classify_entities(
                 conn, origin="admin", mode="ids", ids=[entity_id], include_manual=True, limit=1
             )

@@ -706,3 +706,29 @@ async def test_exception_payload(monkeypatch):
     assert variables["error"] == "RuntimeError: db went away"
     assert variables["enabled"] == "true"
     assert variables["outcome"] == "failed"
+
+
+async def test_a_deadline_closes_the_run_and_frees_the_lock(isolated, jev_on):
+    """The admin route's asyncio.timeout cancels mid-request; the run still closes (#208 CR 7)."""
+    (eid,) = await _seed(isolated, "DEADLINE")
+
+    async def _hang(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(30)
+        return httpx.Response(500)
+
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(_hang)) as client,
+        isolated.connect() as conn,
+    ):
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.2):
+                await jc.classify_entities(
+                    conn, origin="admin", mode="ids", ids=[eid], include_manual=True, client=client
+                )
+
+    (run,) = await _runs(isolated)
+    assert run.origin == "admin"
+    assert run.finished_at is not None
+    assert run.error == "CancelledError"
+    assert await _lock_is_free(isolated)
+    assert await _jev_rows(isolated, eid) == []

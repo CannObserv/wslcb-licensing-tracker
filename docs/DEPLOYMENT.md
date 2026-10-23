@@ -252,7 +252,7 @@ entity page, and a dashboard section (health, spend, queue counts). Every
 action is audited. **Not a name** means the next `reclassify-entities`
 deletes the entity with all its rows; only the audit log remains.
 **Re-classify with Jev** is one paid call: 409 while the flag is off, 503
-while another run holds the lock.
+while another run holds the lock, 502 (audited) past a 90 s deadline.
 
 ## Testing
 
