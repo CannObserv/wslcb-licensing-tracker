@@ -32,11 +32,13 @@
         {# Type filter buttons #}
         <div class="flex gap-1 items-center flex-wrap" id="filter-form">
             <input type="hidden" name="type" value="{{ entity_type }}" />
+            <input type="hidden" name="subtype" value="{{ subtype }}" />
             <input type="hidden" name="sort" value="{{ sort }}" />
             {% set type_options = [("All", ""), ("People", "person"), ("Organizations", "organization")] %}
             {% for label, val in type_options %}
             {% set active = (entity_type == val) %}
-            <a href="/entities?{{ {"q": q, "sort": sort, "type": val} | build_qs }}"
+            {# Subtypes are organization-only, so only "Organizations" keeps the subtype. #}
+            <a href="/entities?{{ {"q": q, "sort": sort, "type": val, "subtype": subtype if val == "organization" else ""} | build_qs }}"
                class="px-3 py-1.5 rounded text-sm border transition
                       {% if active %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
                 {{ label }}
@@ -47,18 +49,36 @@
         {# Sort toggle #}
         <div class="flex gap-1 items-center">
             <span class="text-xs text-gray-400 mr-1">Sort:</span>
-            <a href="/entities?{{ {"q": q, "type": entity_type, "sort": "count"} | build_qs }}"
+            <a href="/entities?{{ {"q": q, "type": entity_type, "subtype": subtype, "sort": "count"} | build_qs }}"
                class="px-3 py-1.5 rounded text-sm border transition
                       {% if sort != 'name' %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
                 Most Active
             </a>
-            <a href="/entities?{{ {"q": q, "type": entity_type, "sort": "name"} | build_qs }}"
+            <a href="/entities?{{ {"q": q, "type": entity_type, "subtype": subtype, "sort": "name"} | build_qs }}"
                class="px-3 py-1.5 rounded text-sm border transition
                       {% if sort == 'name' %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
                 A–Z
             </a>
         </div>
     </div>
+
+    {# Organization subtype filter (#209) #}
+    {% if entity_type == 'organization' or subtype %}
+    <div class="flex gap-1 items-center flex-wrap mt-3" aria-label="Organization kind">
+        <span class="text-xs text-gray-400 mr-1">Kind:</span>
+        {% set subtype_options = [("All kinds", "")] %}
+        {% for val in subtypes %}{% set subtype_options = subtype_options.append((val | subtype_label, val)) %}{% endfor %}
+        {% for label, val in subtype_options %}
+        {% set active = (subtype == val) %}
+        <a href="/entities?{{ {"q": q, "sort": sort, "type": "organization", "subtype": val} | build_qs }}"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  {% if active %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}"
+           {% if active %}aria-current="true"{% endif %}>
+            {{ label }}
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
 </div>
 
 {# Results — HTMX target #}

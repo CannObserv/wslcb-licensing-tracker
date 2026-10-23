@@ -724,6 +724,121 @@ class TestEntitiesRoute:
             _stop(patches)
 
 
+class TestEntitySubtypeAndBadges:
+    """Public subtype filter and provenance badges (#209)."""
+
+    _TRUST = {
+        "id": 4,
+        "name": "SMITH FAMILY TRUST",
+        "entity_type": "organization",
+        "entity_subtype": "trust",
+        "classification_source": "manual",
+        "record_count": 2,
+        "jev_confidence": 0.88,
+        "jev_subtype": "business",
+    }
+    _TRIBE = {
+        "id": 5,
+        "name": "LOWER ELWHA TRIBE",
+        "entity_type": "organization",
+        "entity_subtype": "tribe",
+        "classification_source": "jev",
+        "record_count": 1,
+        "jev_confidence": 0.92,
+        "jev_subtype": "government",
+    }
+
+    def _list(self, url: str, *, total: int = 2, htmx: bool = False):
+        client, patches = _make_client()
+        spy = AsyncMock(return_value={"entities": [self._TRUST, self._TRIBE], "total": total})
+        extra = patch("wslcb_licensing_tracker.app.get_entities", new=spy)
+        extra.start()
+        try:
+            headers = {"HX-Request": "true"} if htmx else {}
+            return client.get(url, headers=headers), spy
+        finally:
+            extra.stop()
+            _stop(patches)
+
+    def test_entities_route_passes_subtype(self):
+        resp, spy = self._list("/entities?type=organization&subtype=trust")
+        assert resp.status_code == 200
+        assert spy.await_args.kwargs["entity_subtype"] == "trust"
+
+        resp, spy = self._list("/entities?subtype=bogus")
+        assert resp.status_code == 200
+        assert spy.await_args.kwargs["entity_subtype"] is None
+        assert "bogus" not in resp.text
+
+    def test_list_shows_subtype_label_and_badge(self):
+        resp, _ = self._list("/entities")
+        body = resp.text
+        for text in ("Trust", "Tribe", "Reviewed", "AI · 92%"):
+            assert text in body, text
+        assert "subtype from name-pattern rules" in body
+
+    def test_links_keep_the_subtype(self):
+        resp, _ = self._list("/entities?type=organization&subtype=tribe&sort=name", total=120)
+        body = resp.text
+        assert '<input type="hidden" name="subtype" value="tribe"' in body
+        # Sort links and pagination carry the filter.
+        assert "type=organization&amp;subtype=tribe&amp;sort=count" in body
+        assert "type=organization&amp;subtype=tribe&amp;sort=name&page=2" in body
+        # Organizations keeps it; People and All clear it (subtype is org-only).
+        assert 'href="/entities?sort=name&amp;type=organization&amp;subtype=tribe"' in body
+        assert 'href="/entities?sort=name&amp;type=person"' in body
+        assert 'href="/entities?sort=name"' in body
+        assert 'href="/entities?sort=name&amp;type=organization"' in body  # "All subtypes"
+
+    def test_htmx_partial_keeps_the_subtype(self):
+        resp, spy = self._list("/entities?type=organization&subtype=tribe", total=120, htmx=True)
+        assert "<html" not in resp.text
+        assert spy.await_args.kwargs["entity_subtype"] == "tribe"
+        assert "type=organization&amp;subtype=tribe&amp;sort=count&page=2" in resp.text
+
+    def _detail(self, entity: dict):
+        client, patches = _make_client()
+        extra = [
+            patch(
+                "wslcb_licensing_tracker.app.get_entity_by_id",
+                new_callable=AsyncMock,
+                return_value=dict(entity, created_at=None),
+            ),
+            patch(
+                "wslcb_licensing_tracker.app.get_entity_records",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ]
+        for p in extra:
+            p.start()
+        try:
+            return client.get(f"/entity/{entity['id']}")
+        finally:
+            for p in extra:
+                p.stop()
+            _stop(patches)
+
+    def test_entity_page_shows_subtype_and_badge(self):
+        body = self._detail(self._TRUST).text
+        assert "Trust" in body
+        assert "Reviewed" in body
+        assert "Reviewed by an operator" in body
+
+    def test_public_pages_are_vendor_neutral(self, monkeypatch):
+        monkeypatch.delenv("ADMIN_DEV_EMAIL", raising=False)
+        pages = [
+            self._list("/entities")[0].text,
+            self._list("/entities", htmx=True)[0].text,
+            self._detail(self._TRIBE).text,
+            self._detail(self._TRUST).text,
+        ]
+        assert "AI · 92%" in pages[2]
+        for body in pages:
+            for banned in ("Jev", "jev", "TypeSafe", "typesafe"):
+                assert banned not in body, banned
+
+
 class TestDashboardEntitiesLink:
     """Dashboard Unique Entities card links to /entities after #50 is built."""
 

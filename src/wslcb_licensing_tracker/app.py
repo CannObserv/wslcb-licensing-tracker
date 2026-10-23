@@ -37,7 +37,7 @@ from .classification_review import classification_detail
 from .config import get_build_id
 from .data_migration import run_pending_migrations
 from .db import DATA_DIR, get_record_sources
-from .display import format_outcome, summarize_provenance
+from .display import SUBTYPE_LABELS, classification_badge, format_outcome, summarize_provenance
 from .engine import create_engine_from_env, get_db
 from .entities import get_entity_by_id
 from .entity_classification import ENTITY_SUBTYPES, ENTITY_TYPES
@@ -134,8 +134,25 @@ def phone_format(value: str) -> str:
     return f"({value[:3]}) {value[3:6]}-{value[6:]}"
 
 
+def _filter_classification_badge(entity: dict) -> dict:
+    """Jinja2 filter: the public provenance badge for an entity row (#209)."""
+    return classification_badge(
+        entity.get("classification_source"),
+        entity.get("jev_confidence"),
+        entity_subtype=entity.get("entity_subtype"),
+        jev_subtype=entity.get("jev_subtype"),
+    )
+
+
+def subtype_label(value: str | None) -> str:
+    """Return the public label for an organization subtype ('' for none)."""
+    return SUBTYPE_LABELS.get(value, value) if value else ""
+
+
 templates.env.filters["section_label"] = section_label
 templates.env.filters["phone_format"] = phone_format
+templates.env.filters["classification_badge"] = _filter_classification_badge
+templates.env.filters["subtype_label"] = subtype_label
 
 
 def _filter_build_qs(params: dict) -> str:
@@ -442,19 +459,23 @@ async def source_viewer(
 
 
 @app.get("/entities", response_class=HTMLResponse)
-async def entities_list(
+async def entities_list(  # noqa: PLR0913
     request: Request,
     q: str = "",
     entity_type: Annotated[str, Query(alias="type")] = "",
+    subtype: str = "",
     sort: str = "count",
     page: int = 1,
 ) -> HTMLResponse:
     """Searchable, paginated list of all applicant entities."""
+    # An unknown subtype is dropped here too, so links never carry it on.
+    subtype = subtype.strip() if subtype.strip() in ENTITY_SUBTYPES else ""
     async with get_db(request.app.state.engine) as conn:
         result = await get_entities(
             conn,
             q=q.strip() or None,
             entity_type=entity_type.strip() or None,
+            entity_subtype=subtype or None,
             sort=sort,
             page=page,
             per_page=50,
@@ -467,6 +488,8 @@ async def entities_list(
         "total": result["total"],
         "q": q,
         "entity_type": entity_type,
+        "subtype": subtype,
+        "subtypes": ENTITY_SUBTYPES,
         "sort": sort,
         "page": page,
         "total_pages": total_pages,

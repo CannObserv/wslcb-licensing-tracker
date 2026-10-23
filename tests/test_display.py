@@ -396,3 +396,66 @@ class TestSummarizeProvenance:
 
         assert result["first_date"] == "2025-06-10"
         assert result["last_date"] == "2025-06-25"
+
+
+# ── classification badge (#209) ───────────────────────────────────
+
+
+class TestClassificationBadge:
+    def test_badge_labels(self):
+        from wslcb_licensing_tracker.display import classification_badge
+
+        assert classification_badge("jev", 0.92)["label"] == "AI · 92%"
+        assert classification_badge("jev", 1.0)["label"] == "AI · 100%"
+        assert classification_badge("jev", None)["label"] == "AI"
+        assert classification_badge("regex", None)["label"] == "Rules"
+        assert classification_badge("manual", None)["label"] == "Reviewed"
+
+    def test_badge_titles(self):
+        from wslcb_licensing_tracker.display import classification_badge
+
+        assert classification_badge("regex", None)["title"] == "Classified by name-pattern rules"
+        assert classification_badge("manual", None)["title"] == "Reviewed by an operator"
+        # The confidence shown is the person/organization (type) one.
+        assert (
+            classification_badge("jev", 0.92)["title"]
+            == "Type classified automatically (92% confidence)"
+        )
+
+    def test_jev_title_flags_a_subtype_it_did_not_choose(self):
+        from wslcb_licensing_tracker.display import classification_badge
+
+        def title(sub, jev_sub):
+            return classification_badge("jev", 0.92, entity_subtype=sub, jev_subtype=jev_sub)[
+                "title"
+            ]
+
+        assert title("business", "business") == ("Type classified automatically (92% confidence)")
+        assert title("tribe", "government") == (
+            "Type classified automatically (92% confidence); subtype from name-pattern rules"
+        )
+        assert title("unknown", "tribe") == (
+            "Type classified automatically (92% confidence); subtype undetermined"
+        )
+        assert title(None, None) == "Type classified automatically (92% confidence)"
+
+    def test_badge_styles_reuse_source_chip_palette(self):
+        from wslcb_licensing_tracker.display import _SOURCE_TYPE_DISPLAY, classification_badge
+
+        for source, chip in (("regex", "manual"), ("jev", "co_archive"), ("manual", "live_scrape")):
+            badge = classification_badge(source, 0.8)
+            for key in ("css_bg", "css_text", "css_border"):
+                assert badge[key] == _SOURCE_TYPE_DISPLAY[chip][key]
+
+    def test_unknown_source_has_no_label(self):
+        from wslcb_licensing_tracker.display import classification_badge
+
+        assert classification_badge(None, None)["label"] == ""
+
+    def test_subtype_labels_cover_every_subtype(self):
+        from wslcb_licensing_tracker.display import SUBTYPE_LABELS
+        from wslcb_licensing_tracker.entity_classification import ENTITY_SUBTYPES
+
+        assert set(SUBTYPE_LABELS) == set(ENTITY_SUBTYPES)
+        assert SUBTYPE_LABELS["unknown"] == "Unspecified"
+        assert SUBTYPE_LABELS["trust"] == "Trust"

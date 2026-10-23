@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "partials/classification_badge.html" as cb %}
 {% block title %}{{ entity.name }} — WSLCB Licensing Tracker{% endblock %}
 {% block content %}
 <div class="mb-6">
@@ -9,12 +10,9 @@
     <div class="px-6 py-5 border-b border-gray-200 flex justify-between items-start">
         <div>
             <h1 class="text-xl font-bold text-gray-900">{{ entity.name }}</h1>
-            <p class="text-sm text-gray-500 mt-1">
-                {% if entity.entity_type == 'organization' %}
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Organization</span>
-                {% elif entity.entity_type == 'person' %}
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Person</span>
-                {% endif %}
+            <p class="text-sm text-gray-500 mt-1 flex items-center gap-1">
+                {% if entity.entity_type in ('organization', 'person') %}{{ cb.type_chip(entity) }}{% endif %}
+                {{ cb.badge(entity) }}
             </p>
         </div>
         <div class="text-right text-sm text-gray-500">

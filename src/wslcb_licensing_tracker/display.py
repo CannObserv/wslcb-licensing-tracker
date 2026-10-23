@@ -132,6 +132,69 @@ _DEFAULT_SOURCE_DISPLAY: dict[str, str] = {
 }
 
 
+# -- Entity classification display (#209) -----------------------------------
+
+SUBTYPE_LABELS: dict[str, str] = {
+    "business": "Business",
+    "nonprofit": "Nonprofit",
+    "trust": "Trust",
+    "estate": "Estate",
+    "tribe": "Tribe",
+    "government": "Government",
+    "unknown": "Unspecified",
+}
+
+# Public, vendor-neutral provenance badge per ``entities.classification_source``.
+# Colours come from the source-chip palette (#201): rules are the neutral
+# baseline every entity starts with, AI is purple, an operator review is green.
+_CLASSIFICATION_BADGE: dict[str, tuple[str, str]] = {
+    "regex": ("Rules", "manual"),
+    "jev": ("AI", "co_archive"),
+    "manual": ("Reviewed", "live_scrape"),
+}
+
+
+def classification_badge(
+    source: str | None,
+    confidence: float | None,
+    *,
+    entity_subtype: str | None = None,
+    jev_subtype: str | None = None,
+) -> dict:
+    """Return the public provenance badge for an entity's resolved classification.
+
+    Keys: ``label``, ``title``, ``css_bg``, ``css_text``, ``css_border``.
+    *confidence* is the Jev person/organization confidence, used for ``jev``
+    only.  When Jev won the type but the resolved subtype is not its answer
+    (untrusted or unknown, so it fell back to the rules), the title says so.
+    """
+    label, chip = _CLASSIFICATION_BADGE.get(source or "", ("", ""))
+    style = _SOURCE_TYPE_DISPLAY.get(chip, _DEFAULT_SOURCE_DISPLAY)
+    if source == "jev":
+        pct = f"{round(confidence * 100)}%" if confidence is not None else None
+        label = f"AI · {pct}" if pct else "AI"
+        title = "Type classified automatically" + (f" ({pct} confidence)" if pct else "")
+        if entity_subtype is not None and entity_subtype != jev_subtype:
+            title += (
+                "; subtype undetermined"
+                if entity_subtype == "unknown"
+                else "; subtype from name-pattern rules"
+            )
+    elif source == "manual":
+        title = "Reviewed by an operator"
+    elif source == "regex":
+        title = "Classified by name-pattern rules"
+    else:
+        title = ""
+    return {
+        "label": label,
+        "title": title,
+        "css_bg": style["css_bg"],
+        "css_text": style["css_text"],
+        "css_border": style["css_border"],
+    }
+
+
 def _normalize_captured(raw: object) -> tuple[str, str]:
     """Return (iso_string, date_string) for a captured_at value."""
     if raw is None:

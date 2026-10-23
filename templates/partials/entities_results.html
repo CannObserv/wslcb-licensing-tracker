@@ -1,4 +1,5 @@
 {# HTMX partial — swapped into #entities-results by GET /entities with HX-Request. #}
+{% import "partials/classification_badge.html" as cb %}
 <div class="text-sm text-gray-500 mb-3">
     {% if total == 0 %}
         No entities found.
@@ -7,7 +8,7 @@
     {% else %}
         {{ "{:,}".format(total) }} entities
     {% endif %}
-    {% if q or entity_type %}
+    {% if q or entity_type or subtype %}
         <a href="/entities" class="ml-2 text-co-purple hover:text-co-purple-700">Clear filters</a>
     {% endif %}
 </div>
@@ -32,13 +33,7 @@
                     </a>
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap">
-                    {% if entity.entity_type == 'organization' %}
-                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Organization</span>
-                    {% elif entity.entity_type == 'person' %}
-                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Person</span>
-                    {% else %}
-                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">Unknown</span>
-                    {% endif %}
+                    <span class="inline-flex items-center gap-1">{{ cb.type_chip(entity) }} {{ cb.badge(entity) }}</span>
                 </td>
                 <td class="px-4 py-3 text-right text-gray-700 font-medium">{{ "{:,}".format(entity.record_count) }}</td>
             </tr>
@@ -50,7 +45,7 @@
 
 {# Pagination #}
 {% if total_pages > 1 %}
-{% set base_qs = {"q": q, "type": entity_type, "sort": sort} | build_qs %}
+{% set base_qs = {"q": q, "type": entity_type, "subtype": subtype, "sort": sort} | build_qs %}
 <div class="flex items-center justify-between mt-4 text-sm">
     <div class="text-gray-500">
         Page {{ page }} of {{ total_pages }}
