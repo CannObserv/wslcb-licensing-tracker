@@ -489,7 +489,7 @@ async def entities_list(  # noqa: PLR0913
         "q": q,
         "entity_type": entity_type,
         "subtype": subtype,
-        "subtypes": ENTITY_SUBTYPES,
+        "subtype_labels": SUBTYPE_LABELS,
         "sort": sort,
         "page": page,
         "total_pages": total_pages,
