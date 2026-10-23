@@ -215,6 +215,11 @@ async def test_map_answer_table(answer, expected):
     assert jc.map_answer(answer, threshold=0.7) == expected
 
 
+def test_est_tokens_per_name_is_the_measured_two_question_figure():
+    # §10: 454,544 tokens / 834 names = 545.0 (544.8 over full 25-name batches).
+    assert jc.EST_INPUT_TOKENS_PER_NAME == 545
+
+
 async def test_estimated_cost():
     dry = jc.RunSummary("cli", enabled=False, key_present=False, model="m", candidates=1000)
     dry.dry_run = True

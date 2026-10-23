@@ -12,6 +12,7 @@ from wslcb_licensing_tracker.entities import get_or_create_entity
 from wslcb_licensing_tracker.entity_classification import (
     ENTITY_SUBTYPES,
     JEV_ORG_SUBTYPES,
+    JEV_TRUSTED_ORG_SUBTYPES,
     SourceAnswer,
     choose_classification,
     clear_manual,
@@ -134,6 +135,13 @@ def test_choose_classification(manual, jev, regex, trusted, expected):
 def test_constants():
     assert set(JEV_ORG_SUBTYPES) < set(ENTITY_SUBTYPES)
     assert len(ENTITY_SUBTYPES) == 7
+
+
+def test_trusted_org_subtypes_pin_the_go_live_result():
+    # docs/research/person-vs-org-classification.md §10: business and nonprofit
+    # met the 90% bar at 0.7; tribe and government had < 20 answers (fail closed).
+    assert frozenset({"business", "nonprofit"}) == JEV_TRUSTED_ORG_SUBTYPES
+    assert set(JEV_TRUSTED_ORG_SUBTYPES) <= set(JEV_ORG_SUBTYPES)
 
 
 # ── PostgreSQL ───────────────────────────────────────────────────────

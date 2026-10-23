@@ -109,6 +109,13 @@ def test_org_criteria_are_the_resolvers_jev_subtypes():
     assert tuple(jev_client.ORG_CRITERIA) == JEV_ORG_SUBTYPES
 
 
+def test_org_criteria_is_the_wording_section_10_scored():
+    # subtype_eval.py pins each scored wording by tag; §10 validated "prod2".
+    with (RESEARCH / "subtype_wordings.csv").open() as f:
+        scored = {row["tag"]: json.loads(row["org_criteria"]) for row in csv.DictReader(f)}
+    assert scored["prod2"] == jev_client.ORG_CRITERIA
+
+
 def test_org_criteria_examples_are_not_scored_names():
     # An example the gold set or supplement also scores hands Jev its own answer
     # (#210 §10).  Names there are cut at 30 characters, so a prefix leaks too.
