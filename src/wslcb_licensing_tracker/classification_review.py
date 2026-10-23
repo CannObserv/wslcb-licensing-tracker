@@ -539,7 +539,9 @@ async def classification_health(conn: AsyncConnection, *, now: datetime) -> dict
     ``failures_7d`` counts failed batches plus errored runs started in the
     last 7 days, so a run stopped by failed batches counts both.  The month
     is *now*'s UTC calendar month.  ``unfinished_runs`` are runs with no
-    ``finished_at``: still going, or died.  ``problems`` lists
+    ``finished_at``: still going, or died.  ``last_success_at`` reads finished
+    runs only, so a killed run's stored batches show there as unfinished, not
+    as a success (their tokens still count).  ``problems`` lists
     ``missing_api_key`` (enabled without a key) and ``recent_failures``.
     """
     cr = classification_runs
