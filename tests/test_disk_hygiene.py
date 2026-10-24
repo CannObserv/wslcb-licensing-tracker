@@ -9,16 +9,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wslcb_licensing_tracker.disk_hygiene import (
+    NPX_GRACE_MINUTES,
     _parse_worktree_list,
+    _prune_dev_caches,
     _remove_path,
     _run_subprocess_step,
     check_usage_threshold,
     compress_data_stragglers,
     find_orphaned_worktrees,
+    in_use,
+    launch_specs,
+    live_paths,
+    npx_dir_name,
+    pinned_specs,
     run_disk_hygiene,
     select_aged_paths,
     select_extensions_to_prune,
+    select_npx_to_prune,
     select_vscode_servers_to_prune,
+    withhold_reason,
 )
 
 
@@ -467,3 +476,301 @@ class TestRunDiskHygiene:
         assert "compress" in result
         assert result["compress"]["snapshots"] is None
         assert result["compress"]["diffs"] is None
+
+
+# --- _npx pin / liveness / grace (#217) -------------------------------------------
+# Ported from CannObserv/power-map tests/scripts/test_prune_disk.py @ 2addf1d.
+# Unlike power-map, the 30-day age gate stays: an _npx entry goes only when it
+# is old AND unpinned AND not in use AND settled past the grace window.
+
+PINNED_SPEC = "socraticode@1.14.0"
+PINNED_HASH = "2d2576fc184c3d4d"  # measured on this host, 2026-10-24
+
+
+def _fake_proc(root: Path, pid: str, *, links=None, fds=(), maps="") -> None:
+    """A fake ``/proc/<pid>``; *links* maps ``exe``/``cwd`` to their targets."""
+    p = root / pid
+    (p / "fd").mkdir(parents=True)
+    for name, target in (links or {}).items():
+        (p / name).symlink_to(target)
+    for i, target in enumerate(fds):
+        (p / "fd" / str(i)).symlink_to(target)
+    (p / "maps").write_text(maps)
+
+
+def _tree(root: Path) -> Path:
+    (root / "a" / "b" / "c").mkdir(parents=True)
+    (root / "a" / "b" / "c" / "node").write_bytes(b"x")
+    return root
+
+
+def _settled() -> float:
+    """A cutoff after everything made so far: the whole tree reads as settled."""
+    return time.time() + 60
+
+
+def _age(path: Path, days: int) -> None:
+    ts = (datetime.now(UTC) - timedelta(days=days)).timestamp()
+    os.utime(path, (ts, ts))
+
+
+def _after_grace() -> datetime:
+    """A ``now`` far enough ahead that every ctime made so far is past the grace window."""
+    return datetime.now(UTC) + timedelta(hours=2)
+
+
+class TestLivePaths:
+    """`live_paths` / `in_use` read /proc exe, cwd, fds and maps — never argv."""
+
+    def test_reads_exe_cwd_fds_and_maps(self, tmp_path):
+        proc = tmp_path / "proc"
+        _fake_proc(
+            proc,
+            "101",
+            links={"exe": "/srv/a/node", "cwd": "/srv/b"},
+            fds=["/srv/c/log", "socket:[123]"],
+            maps=(
+                "7f00-7f01 r-xp 00000000 08:01 42   /srv/d/lib.so\n"
+                "7f01-7f02 rw-p 00000000 00:00 0 \n"
+                "7f02-7f03 r--p 00000000 08:01 43   /srv/e/file with space (deleted)\n"
+                "7ffd-7ffe rw-p 00000000 00:00 0    [stack]\n"
+            ),
+        )
+        (proc / "self").mkdir()  # non-numeric entries are skipped
+        live = live_paths(proc)
+        assert {"/srv/a/node", "/srv/b", "/srv/c/log", "/srv/d/lib.so"} <= live
+        assert "/srv/e/file with space" in live
+        assert not any(p.startswith(("socket:", "[")) for p in live)
+
+    def test_skips_a_process_it_cannot_read(self, tmp_path):
+        proc = tmp_path / "proc"
+        (proc / "202").mkdir(parents=True)  # no exe, cwd, fd or maps: a root process
+        _fake_proc(proc, "303", links={"exe": "/srv/ok"})
+        assert live_paths(proc) == {"/srv/ok"}
+
+    def test_in_use_matches_the_path_and_anything_under_it(self):
+        live = {f"/home/x/.npm/_npx/{PINNED_HASH}/node_modules/x/addon.node"}
+        assert in_use(Path(f"/home/x/.npm/_npx/{PINNED_HASH}"), live)
+        assert not in_use(Path(f"/home/x/.npm/_npx/{PINNED_HASH[:8]}"), live)
+        assert in_use(Path("/srv/a"), {"/srv/a"})
+
+
+class TestNpxSpecs:
+    """`npx_dir_name`, `pinned_specs`, `launch_specs`."""
+
+    def test_npx_dir_name_is_npms_hash_of_the_spec(self):
+        assert npx_dir_name(PINNED_SPEC) == PINNED_HASH
+
+    def test_pinned_specs_reads_the_repo_settings(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"env": {"SOCRATICODE_SPEC": PINNED_SPEC}}))
+        assert pinned_specs(settings) == {PINNED_SPEC}
+
+    def test_pinned_specs_tolerates_a_missing_or_bad_file(self, tmp_path):
+        assert pinned_specs(tmp_path / "missing.json") == set()
+        bad = tmp_path / "bad.json"
+        bad.write_text("[")
+        assert pinned_specs(bad) == set()
+
+    def test_launch_specs_reads_the_vscode_machine_setting(self, tmp_path):
+        env = [{"name": "OTHER", "value": "x"}, {"name": "SOCRATICODE_SPEC", "value": "s@9"}]
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({"claudeCode.environmentVariables": env}))
+        assert launch_specs(path) == {"s@9"}
+
+    def test_launch_specs_tolerates_malformed_or_missing(self, tmp_path):
+        path = tmp_path / "settings.json"
+        for body in [
+            "{",
+            "[]",
+            "{}",
+            '{"claudeCode.environmentVariables": {"SOCRATICODE_SPEC": "x"}}',
+        ]:
+            path.write_text(body)
+            assert launch_specs(path) == set(), body
+        assert launch_specs(tmp_path / "missing.json") == set()
+
+    def test_the_repo_pins_a_socraticode_spec(self):
+        """The pin only protects the live server while the repo states its spec."""
+        repo_settings = Path(__file__).resolve().parents[1] / ".claude" / "settings.json"
+        assert {s for s in pinned_specs(repo_settings) if s.startswith("socraticode@")}
+
+
+class TestWithholdReason:
+    """`withhold_reason` — the grace window over the deep max(mtime, ctime)."""
+
+    def test_the_default_grace_is_disk_gcs_hour(self):
+        assert NPX_GRACE_MINUTES == 60
+
+    def test_a_settled_tree_is_not_withheld(self, tmp_path):
+        assert withhold_reason(_tree(tmp_path / "t"), _settled()) is None
+
+    def test_an_extracted_tree_with_archive_mtimes_is_recently_touched(self, tmp_path):
+        root = _tree(tmp_path / "t")
+        for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+            for name in filenames + dirnames:
+                os.utime(os.path.join(dirpath, name), (1, 1))
+            os.utime(dirpath, (1, 1))
+        assert withhold_reason(root, time.time() - 3600) == "recently touched"
+
+    def test_a_change_deep_in_a_settled_tree_withholds_it(self, tmp_path):
+        root = _tree(tmp_path / "t")
+        cutoff = _settled()
+        os.utime(root / "a" / "b" / "c", (cutoff + 3600, cutoff + 3600))
+        assert withhold_reason(root, cutoff) == "recently touched"
+
+    def test_an_unreadable_path_is_withheld(self, tmp_path):
+        assert withhold_reason(tmp_path / "missing", _settled()).startswith("unreadable")
+
+    def test_a_tree_past_the_walk_bound_is_withheld(self, tmp_path):
+        reason = withhold_reason(_tree(tmp_path / "t"), _settled(), bound=2)
+        assert reason is not None
+        assert "bound" in reason
+
+
+class TestSelectNpxToPrune:
+    """`select_npx_to_prune` — age gate, then pin, liveness and grace."""
+
+    def _npx(self, tmp_path, names):
+        npx = tmp_path / "_npx"
+        for name in names:
+            (npx / name / "node_modules").mkdir(parents=True)
+        return npx
+
+    def test_missing_dir_returns_nothing(self, tmp_path):
+        assert select_npx_to_prune(tmp_path / "nope", 30, set(), set()) == ([], [])
+
+    def test_pinned_hash_survives_at_any_age(self, tmp_path):
+        npx = self._npx(tmp_path, [PINNED_HASH])
+        _age(npx / PINNED_HASH, 3650)
+        remove, kept = select_npx_to_prune(npx, 30, {PINNED_SPEC}, set(), now=_after_grace())
+        assert remove == []
+        assert kept == [(npx / PINNED_HASH, f"pinned ({PINNED_SPEC})")]
+
+    def test_unpinned_old_entry_is_pruned(self, tmp_path):
+        npx = self._npx(tmp_path, [PINNED_HASH, "dead000000000000"])
+        _age(npx / "dead000000000000", 40)
+        remove, _ = select_npx_to_prune(npx, 30, {PINNED_SPEC}, set(), now=_after_grace())
+        assert remove == [npx / "dead000000000000"]
+
+    def test_unpinned_young_entry_is_kept(self, tmp_path):
+        npx = self._npx(tmp_path, ["young00000000000"])
+        _age(npx / "young00000000000", 5)
+        remove, kept = select_npx_to_prune(npx, 30, set(), set(), now=_after_grace())
+        assert remove == []
+        assert kept == [(npx / "young00000000000", "younger than 30d")]
+
+    def test_old_entry_in_use_is_kept(self, tmp_path):
+        npx = self._npx(tmp_path, ["live000000000000"])
+        _age(npx / "live000000000000", 40)
+        live = {str(npx / "live000000000000" / "node_modules" / "x.node")}
+        remove, kept = select_npx_to_prune(npx, 30, set(), live, now=_after_grace())
+        assert remove == []
+        assert kept == [(npx / "live000000000000", "in use")]
+
+    def test_old_entry_touched_within_grace_is_kept(self, tmp_path):
+        """Top-level mtime 40 days old, but its subdirs' ctimes are minutes old."""
+        npx = self._npx(tmp_path, ["fresh00000000000"])
+        _age(npx / "fresh00000000000", 40)
+        remove, kept = select_npx_to_prune(npx, 30, set(), set())
+        assert remove == []
+        assert kept == [(npx / "fresh00000000000", "recently touched")]
+
+    def test_grace_zero_disables_the_window(self, tmp_path):
+        npx = self._npx(tmp_path, ["fresh00000000000"])
+        _age(npx / "fresh00000000000", 40)
+        remove, _ = select_npx_to_prune(npx, 30, set(), set(), grace_minutes=0)
+        assert remove == [npx / "fresh00000000000"]
+
+    def test_symlinks_and_files_are_left_alone(self, tmp_path):
+        npx = self._npx(tmp_path, ["real000000000000"])
+        (npx / "link").symlink_to(npx / "real000000000000")
+        (npx / "stray").write_text("x")
+        for p in (npx / "real000000000000", npx / "stray"):
+            _age(p, 40)
+        remove, kept = select_npx_to_prune(npx, 30, set(), set(), now=_after_grace())
+        assert remove == [npx / "real000000000000"]
+        assert kept == []
+
+
+class TestPruneDevCaches:
+    """`_prune_dev_caches` — wiring of the _npx rules and the cache shell-outs."""
+
+    def _env(self, tmp_path, *, repo_spec=None, machine_spec=None):
+        home = tmp_path / "home"
+        repo_root = tmp_path / "repo"
+        (home / ".npm" / "_npx").mkdir(parents=True)
+        (repo_root / ".claude").mkdir(parents=True)
+        if repo_spec:
+            (repo_root / ".claude" / "settings.json").write_text(
+                json.dumps({"env": {"SOCRATICODE_SPEC": repo_spec}})
+            )
+        if machine_spec:
+            machine = home / ".vscode-server" / "data" / "Machine" / "settings.json"
+            machine.parent.mkdir(parents=True)
+            env = [{"name": "SOCRATICODE_SPEC", "value": machine_spec}]
+            machine.write_text(json.dumps({"claudeCode.environmentVariables": env}))
+        return home, repo_root
+
+    def _npx_entry(self, home, name, days):
+        path = home / ".npm" / "_npx" / name
+        (path / "node_modules").mkdir(parents=True)
+        _age(path, days)
+        return path
+
+    def test_uv_cache_prune_is_forced(self, tmp_path):
+        home, repo_root = self._env(tmp_path)
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step") as step,
+            patch("shutil.which", return_value="/usr/bin/x"),
+        ):
+            _prune_dev_caches(home, repo_root, dry_run=False)
+        cmds = [c.args[0] for c in step.call_args_list]
+        assert ["uv", "cache", "prune", "--force"] in cmds
+
+    def test_both_pins_are_kept_and_logged_on_dry_run(self, tmp_path, caplog):
+        home, repo_root = self._env(tmp_path, repo_spec=PINNED_SPEC, machine_spec="s@2")
+        declared = self._npx_entry(home, PINNED_HASH, 365)
+        launched = self._npx_entry(home, npx_dir_name("s@2"), 365)
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
+            caplog.at_level("INFO"),
+        ):
+            freed, warnings = _prune_dev_caches(home, repo_root, dry_run=True)
+        assert (freed, warnings) == (0, [])
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(str(declared) in m and f"pinned ({PINNED_SPEC})" in m for m in msgs)
+        assert any(str(launched) in m and "pinned (s@2)" in m for m in msgs)
+
+    def test_removes_unpinned_old_entry_and_keeps_pinned(self, tmp_path):
+        home, repo_root = self._env(tmp_path, repo_spec=PINNED_SPEC)
+        pinned = self._npx_entry(home, PINNED_HASH, 365)
+        dead = self._npx_entry(home, "dead000000000000", 365)
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
+            patch("wslcb_licensing_tracker.disk_hygiene.NPX_GRACE_MINUTES", 0),
+        ):
+            _prune_dev_caches(home, repo_root, dry_run=False)
+        assert pinned.exists()
+        assert not dead.exists()
+
+    def test_unchecked_entry_becomes_a_warning(self, tmp_path, caplog):
+        home, repo_root = self._env(tmp_path)
+        locked = self._npx_entry(home, "lock000000000000", 365)
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
+            patch(
+                "wslcb_licensing_tracker.disk_hygiene.withhold_reason",
+                return_value="unreadable (Permission denied)",
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            _, warnings = _prune_dev_caches(home, repo_root, dry_run=False)
+        assert locked.exists()
+        assert any(str(locked) in w and "unreadable" in w for w in warnings)
+        assert any(
+            r.levelname == "WARNING" and str(locked) in r.getMessage() for r in caplog.records
+        )
