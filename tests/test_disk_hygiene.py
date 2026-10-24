@@ -548,6 +548,12 @@ class TestLivePaths:
         _fake_proc(proc, "303", links={"exe": "/srv/ok"})
         assert live_paths(proc) == {"/srv/ok"}
 
+    def test_the_real_proc_shows_this_process(self):
+        """Against the host's /proc: this interpreter's own exe and cwd are live."""
+        live = live_paths()
+        assert str(Path("/proc/self/exe").readlink()) in live
+        assert str(Path.cwd()) in live
+
     def test_in_use_matches_the_path_and_anything_under_it(self):
         live = {f"/home/x/.npm/_npx/{PINNED_HASH}/node_modules/x/addon.node"}
         assert in_use(Path(f"/home/x/.npm/_npx/{PINNED_HASH}"), live)
@@ -722,6 +728,7 @@ class TestPruneDevCaches:
         home, repo_root = self._env(tmp_path)
         with (
             patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step") as step,
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
             patch("shutil.which", return_value="/usr/bin/x"),
         ):
             _prune_dev_caches(home, repo_root, dry_run=False)
@@ -829,3 +836,38 @@ class TestPruneDevCaches:
         ):
             _, warnings = _prune_dev_caches(home, repo_root, dry_run=True)
         assert any(str(odd) in w and "some future reason" in w for w in warnings)
+
+    def test_a_live_entry_is_kept_through_the_wiring(self, tmp_path, caplog):
+        """CR 7: live_paths() reaches the selector — an aged, unpinned, mapped tree stays."""
+        home, repo_root = self._env(tmp_path, repo_spec=PINNED_SPEC)
+        live = self._npx_entry(home, "live000000000000", 365)
+        addon = str(live / "node_modules" / "x" / "addon.node")
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value={addon}),
+            patch("wslcb_licensing_tracker.disk_hygiene.NPX_GRACE_MINUTES", 0),
+            caplog.at_level("INFO"),
+        ):
+            _prune_dev_caches(home, repo_root, dry_run=False)
+        assert live.exists()
+        assert any(
+            str(live) in r.getMessage() and "in use" in r.getMessage() for r in caplog.records
+        )
+
+    def test_unchecked_entry_warning_reaches_the_run_summary(self, tmp_path):
+        """CR 7: a kept-unchecked warning surfaces in run_disk_hygiene's warnings (CLI prints)."""
+        home, repo_root = self._env(tmp_path, repo_spec=PINNED_SPEC)
+        locked = self._npx_entry(home, "lock000000000000", 365)
+        (repo_root / ".worktrees").mkdir()
+        (repo_root / "data").mkdir()
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
+            patch(
+                "wslcb_licensing_tracker.disk_hygiene.withhold_reason",
+                return_value="unreadable (Permission denied)",
+            ),
+            patch("wslcb_licensing_tracker.disk_hygiene.DATA_DIR", repo_root / "data"),
+        ):
+            result = run_disk_hygiene(dry_run=True, home=home, repo_root=repo_root)
+        assert any(str(locked) in w for w in result["warnings"])
