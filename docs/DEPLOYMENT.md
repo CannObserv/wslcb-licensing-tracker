@@ -87,9 +87,11 @@ The exeuntu image masks the apt timers, so patching is a scheduled monthly run
 under the vendored `patching-hosts` skill (#192; first run by hand in #184,
 gregoryfoster/skills#313). Its host knob, `.skills/patching-hosts`, declares the
 window, a UTC `quiet` range per ingest timer, the in-flight gate, the restarter
-and the Postgres databases; see [`SKILLS.md`](SKILLS.md#patching-hosts). With no
-backup regime (#185), each run's recovery point is a `pg_dump` the owner copies
-off the node before any apply. apt's needrestart hook (`/etc/apt/apt.conf.d/99needrestart`)
+and the Postgres databases; see [`SKILLS.md`](SKILLS.md#patching-hosts). Its
+`backup` line makes a fresh `wslcb-backup.service` run (#185) the recovery
+point, in place of a second `pg_dump`. Its one third-party origin is Tailscale
+(`origin pkgs.tailscale.com follow`, its own held step; pins in
+`infra/preferences.d-tailscale`, [`RECOVERY.md`](RECOVERY.md#tailnet), #220). apt's needrestart hook (`/etc/apt/apt.conf.d/99needrestart`)
 runs `/usr/lib/needrestart/apt-pinvoke -m u … || true`, which calls needrestart;
 Ubuntu turns that into *automatic* restarts unless `$nrconf{restart}` is set.
 Postgres, `wslcb-web` and dockerd all map libc6/libssl3t64, and a Postgres

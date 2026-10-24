@@ -1,0 +1,11 @@
+# Scope the pkgs.tailscale.com apt origin to the packages it was added for
+# (#220; the patching-hosts skill's policy.md "Two lanes"). The knob declares
+# it `origin pkgs.tailscale.com follow`; without these pins the probe reports
+# it unscoped. Install: docs/RECOVERY.md § Tailnet.
+Package: *
+Pin: origin pkgs.tailscale.com
+Pin-Priority: 100
+
+Package: tailscale tailscale-archive-keyring
+Pin: origin pkgs.tailscale.com
+Pin-Priority: 600

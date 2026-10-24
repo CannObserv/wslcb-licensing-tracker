@@ -21,9 +21,22 @@ service wslcb-web.service
 restarter wslcb-healthcheck.timer
 health curl -sf http://localhost:8000/api/v1/health
 
-# wslcb_test is the pytest database (TEST_DATABASE_URL). No backup line: there
-# is no backup regime yet (#185). No origin lines: no third-party apt origin.
+# wslcb_test is the pytest database (TEST_DATABASE_URL).
 datastore postgres postgresql@16-main wslcb wslcb_test
+
+# The nightly GCS backup (#185, docs/RECOVERY.md) stands in for the recovery
+# point's own dump of this cluster. It dumps wslcb only, so wslcb_test (pytest
+# scratch, rebuilt by alembic upgrade head) gets no dump (#220).
+backup wslcb-backup.service postgresql@16-main
+
+# Third-party apt origins, maintenance lane (#220). Tailscale was installed
+# 2026-10-09; its own auto-update is off (AutoUpdate.Apply false), so apt is
+# its only path. Scoped by pins in /etc/apt/preferences.d/tailscale (policy.md
+# "Two lanes"). Its own held step: the tailscaled restart drops MagicDNS for a
+# few seconds, and the co-status check-ins reach http://status:9000 over the
+# tailnet, so that drop is approved on its own.
+origin pkgs.tailscale.com follow
+hold tailscale tailscale
 
 # fwupd (the image ships it, masks its units and deletes its motd conffile, so
 # unattended-upgrade skipped it and exited 1) was purged with its 53 orphaned

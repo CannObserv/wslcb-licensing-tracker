@@ -116,11 +116,19 @@ grants with it), and on the node:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
+sudo install -m 644 infra/preferences.d-tailscale /etc/apt/preferences.d/tailscale
+apt-cache policy tailscale | head -3          # Installed and Candidate both from pkgs.tailscale.com
 read -rsp 'tailnet auth key: ' KEY; echo
 sudo tailscale up --auth-key="$KEY" --hostname=wslcb --advertise-tags=tag:wslcb; unset KEY
 tailscale status | head -3                    # shows tag:wslcb
 curl -s http://status:9000/health             # answers, "environment": "production"
 ```
+
+The pins scope the third-party apt origin to `tailscale` and its keyring; the
+patching knob follows it as `origin pkgs.tailscale.com follow`, in its own
+held step, because a `tailscaled` restart drops MagicDNS (and so
+`status:9000`) for a few seconds (#220). Tailscale's own auto-update stays
+off: apt in a window is its only path.
 
 The unit orders `After=tailscaled.service` without `Wants=`: a tailscale
 restart must not take a backup down, and a check-in that fails is itself what

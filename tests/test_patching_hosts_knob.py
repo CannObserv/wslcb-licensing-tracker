@@ -97,3 +97,53 @@ def test_inflight_counts_running_oneshot_tasks(knob: dict) -> None:
 def test_restarter_and_service(knob: dict) -> None:
     assert [r["unit"] for r in knob["restarter"]] == ["wslcb-healthcheck.timer"]
     assert [s["unit"] for s in knob["service"]] == ["wslcb-web.service"]
+
+
+def test_backup_regime_covers_the_cluster(knob: dict) -> None:
+    """#185's nightly backup stands in for a second dump of the cluster (#220)."""
+    (backup,) = knob["backup"]
+    assert backup["unit"] == "wslcb-backup.service"
+    assert backup["datastores"] == ["postgresql@16-main"]
+
+
+def test_tailscale_origin_is_followed_in_its_own_step(knob: dict) -> None:
+    """Tailscale (installed 2026-10-09) is a third-party origin (#220).
+
+    An undeclared origin is a probe finding. Its own held step means the
+    tailnet drop (check-ins reach ``status`` over MagicDNS) is approved alone.
+    """
+    origins = {o["origin"]: o["policy"] for o in knob["origin"]}
+    assert origins == {"pkgs.tailscale.com": "follow"}
+    holds = {h["step"]: h["globs"] for h in knob["hold"]}
+    assert holds.get("tailscale") == ["tailscale"]
+
+
+TAILSCALE_PINS = REPO_ROOT / "infra" / "preferences.d-tailscale"
+
+
+def _pin_stanzas(text: str) -> list[dict[str, str]]:
+    """apt_preferences(5) stanzas: blank-line separated, `#` lines are comments."""
+    stanzas = []
+    for block in text.split("\n\n"):
+        fields = dict(
+            line.split(": ", 1)
+            for line in block.splitlines()
+            if line.strip() and not line.startswith("#")
+        )
+        if fields:
+            stanzas.append(fields)
+    return stanzas
+
+
+def test_tailscale_pins_scope_the_followed_origin() -> None:
+    """A followed origin is scoped by pins (policy.md "Two lanes", #220).
+
+    The catch-all goes below 500 so Ubuntu's version wins for anything else the
+    site serves; each package Tailscale was installed for goes above 500.
+    """
+    stanzas = _pin_stanzas(TAILSCALE_PINS.read_text())
+    assert all(s["Pin"] == "origin pkgs.tailscale.com" for s in stanzas)
+    by_package = {s["Package"]: int(s["Pin-Priority"]) for s in stanzas}
+    assert by_package["*"] < 500
+    assert by_package["tailscale tailscale-archive-keyring"] > 500
+    assert len(by_package) == 2
