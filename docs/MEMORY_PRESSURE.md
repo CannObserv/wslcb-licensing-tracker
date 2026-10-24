@@ -146,6 +146,12 @@ node skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driv
 # then fully reconnect the VS Code remote, so claude restarts with the new value
 ```
 
+The weekly `wslcb ops disk-hygiene` never prunes the `~/.npm/_npx` tree of
+either pin (`sha512(spec)[:16]`), however old (#217). It logs the tree as
+`Keeping … pinned (<spec>)`. After a re-pin, the old version's tree is pruned
+once it is past 30 days, nothing maps or holds a file under it, and nothing in
+it has changed in the last 60 minutes.
+
 `choom -n 500` makes each install killable: without it the scope inherits the
 session's -1000 and the cap stalls it instead (see above). `resolve` prints
 which path won without starting a server; it should report

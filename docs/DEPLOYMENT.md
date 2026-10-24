@@ -339,6 +339,8 @@ wslcb admin list-users
 wslcb admin remove-user you@example.com
 
 # Disk hygiene (weekly cache/worktree/data-straggler cleanup, #138)
+# ~/.npm/_npx: logs "Keeping <path>: <reason>" for each install it spares —
+# pinned SOCRATICODE_SPEC, in use (/proc), younger than 30d, touched <60 min (#217)
 uv run wslcb ops disk-hygiene --dry-run
 uv run wslcb ops disk-hygiene
 ```
