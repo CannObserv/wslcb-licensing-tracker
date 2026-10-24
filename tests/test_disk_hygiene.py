@@ -792,3 +792,25 @@ class TestPruneDevCaches:
         assert dead.exists()
         assert any("_npx" in w and "boom" in w for w in result["warnings"])
         assert step.called  # cache shell-outs still ran
+
+    def test_no_pinned_spec_with_npx_entries_warns(self, tmp_path, caplog):
+        """CR 2: with no SOCRATICODE_SPEC found, the pin is off — say so loudly."""
+        home, repo_root = self._env(tmp_path)
+        self._npx_entry(home, PINNED_HASH, 1)
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
+            caplog.at_level("WARNING"),
+        ):
+            _, warnings = _prune_dev_caches(home, repo_root, dry_run=True)
+        assert any("SOCRATICODE_SPEC" in w for w in warnings)
+        assert any(r.levelname == "WARNING" for r in caplog.records)
+
+    def test_no_pinned_spec_with_empty_npx_is_quiet(self, tmp_path):
+        home, repo_root = self._env(tmp_path)
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
+        ):
+            _, warnings = _prune_dev_caches(home, repo_root, dry_run=True)
+        assert warnings == []
