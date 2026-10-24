@@ -91,7 +91,8 @@ and the Postgres databases; see [`SKILLS.md`](SKILLS.md#patching-hosts). Its
 `backup` line makes a fresh `wslcb-backup.service` run (#185) the recovery
 point, in place of a second `pg_dump`. Its one third-party origin is Tailscale
 (`origin pkgs.tailscale.com follow`, its own held step; pins in
-`infra/preferences.d-tailscale`, [`RECOVERY.md`](RECOVERY.md#tailnet), #220). apt's needrestart hook (`/etc/apt/apt.conf.d/99needrestart`)
+`infra/preferences.d-tailscale`, [`RECOVERY.md`](RECOVERY.md#tailnet), #220).
+apt's needrestart hook (`/etc/apt/apt.conf.d/99needrestart`)
 runs `/usr/lib/needrestart/apt-pinvoke -m u … || true`, which calls needrestart;
 Ubuntu turns that into *automatic* restarts unless `$nrconf{restart}` is set.
 Postgres, `wslcb-web` and dockerd all map libc6/libssl3t64, and a Postgres
