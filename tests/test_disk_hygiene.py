@@ -814,3 +814,18 @@ class TestPruneDevCaches:
         ):
             _, warnings = _prune_dev_caches(home, repo_root, dry_run=True)
         assert warnings == []
+
+    def test_an_unknown_withhold_reason_is_a_warning(self, tmp_path):
+        """CR 3: as power-map, anything but a known rule firing is loud, not quiet."""
+        home, repo_root = self._env(tmp_path, repo_spec=PINNED_SPEC)
+        odd = self._npx_entry(home, "odd0000000000000", 365)
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step"),
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", return_value=set()),
+            patch(
+                "wslcb_licensing_tracker.disk_hygiene.withhold_reason",
+                return_value="some future reason",
+            ),
+        ):
+            _, warnings = _prune_dev_caches(home, repo_root, dry_run=True)
+        assert any(str(odd) in w and "some future reason" in w for w in warnings)
