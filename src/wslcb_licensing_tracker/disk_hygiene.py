@@ -44,8 +44,11 @@ NPX_MAX_AGE_DAYS = 30
 NPX_GRACE_MINUTES = 60
 # ~100x the largest tree measured (an npx install: 1033 dirs, a 14 ms walk).
 WALK_DIR_BOUND = 100_000
-# Withhold reasons that are a rule working, not a path that couldn't be checked.
 _RECENTLY_TOUCHED = "recently touched"
+# Kept reasons that are a rule working. Anything else (an unreadable tree, a
+# walk past the bound, a reason added later) is a path that couldn't be
+# checked: logged at WARNING and added to the run's warnings, as power-map.
+_RULE_REASON_PREFIXES = ("pinned (", "in use", "younger than ", _RECENTLY_TOUCHED)
 
 
 def _pgrep_match(pattern: str) -> bool:
@@ -572,11 +575,11 @@ def _prune_npx(home: Path, repo_root: Path, *, dry_run: bool) -> tuple[int, list
         return 0, [*warnings, f"skipped {npx_dir}: {exc}"]
 
     for path, reason in kept:
-        if reason.startswith(("unreadable", "walk bound")):
+        if reason.startswith(_RULE_REASON_PREFIXES):
+            logger.info("Keeping %s: %s", path, reason)
+        else:
             logger.warning("Keeping %s: %s", path, reason)
             warnings.append(f"kept unchecked {path}: {reason}")
-        else:
-            logger.info("Keeping %s: %s", path, reason)
 
     freed = 0
     for path in remove:
