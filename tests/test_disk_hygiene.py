@@ -774,3 +774,21 @@ class TestPruneDevCaches:
         assert any(
             r.levelname == "WARNING" and str(locked) in r.getMessage() for r in caplog.records
         )
+
+    def test_npx_section_failure_does_not_abort_the_run(self, tmp_path, caplog):
+        """CR 1: an OSError in the _npx step is a warning; the rest of the run continues."""
+        home, repo_root = self._env(tmp_path)
+        dead = self._npx_entry(home, "dead000000000000", 365)
+        (repo_root / ".worktrees").mkdir()
+        (repo_root / "data").mkdir()
+        with (
+            patch("wslcb_licensing_tracker.disk_hygiene._run_subprocess_step") as step,
+            patch("wslcb_licensing_tracker.disk_hygiene.live_paths", side_effect=OSError("boom")),
+            patch("wslcb_licensing_tracker.disk_hygiene.DATA_DIR", repo_root / "data"),
+            patch("shutil.which", return_value="/usr/bin/x"),
+            caplog.at_level("WARNING"),
+        ):
+            result = run_disk_hygiene(dry_run=False, home=home, repo_root=repo_root)
+        assert dead.exists()
+        assert any("_npx" in w and "boom" in w for w in result["warnings"])
+        assert step.called  # cache shell-outs still ran
