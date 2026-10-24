@@ -669,7 +669,7 @@ class TestSelectNpxToPrune:
         assert kept == [(npx / "live000000000000", "in use")]
 
     def test_old_entry_touched_within_grace_is_kept(self, tmp_path):
-        """Top-level mtime 40 days old, but its subdirs' ctimes are minutes old."""
+        """mtime 40 days old, but ctime (which can't be backdated) is minutes old."""
         npx = self._npx(tmp_path, ["fresh00000000000"])
         _age(npx / "fresh00000000000", 40)
         remove, kept = select_npx_to_prune(npx, 30, set(), set())
