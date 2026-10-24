@@ -547,7 +547,17 @@ def _prune_npx(home: Path, repo_root: Path, *, dry_run: bool) -> tuple[int, list
         home / ".vscode-server" / "data" / "Machine" / "settings.json"
     )
     logger.info("npx pinned specs: %s", ", ".join(sorted(keep_specs)) or "(none)")
+    warnings: list[str] = []
     try:
+        if not keep_specs and any(npx_dir.iterdir()):
+            # The #217 hazard: with no pin, only liveness at run time protects
+            # the SocratiCode install from the age gate.
+            msg = (
+                "no SOCRATICODE_SPEC in .claude/settings.json or VS Code's "
+                f"claudeCode.environmentVariables — {npx_dir} entries are unpinned"
+            )
+            logger.warning("%s", msg)
+            warnings.append(msg)
         remove, kept = select_npx_to_prune(
             npx_dir,
             NPX_MAX_AGE_DAYS,
@@ -559,9 +569,8 @@ def _prune_npx(home: Path, repo_root: Path, *, dry_run: bool) -> tuple[int, list
         # Fail-open: an unreadable /proc or _npx (or an entry vanishing
         # mid-scan) skips this section, never the rest of the run.
         logger.warning("Skipping %s, removing nothing: %s", npx_dir, exc)
-        return 0, [f"skipped {npx_dir}: {exc}"]
+        return 0, [*warnings, f"skipped {npx_dir}: {exc}"]
 
-    warnings: list[str] = []
     for path, reason in kept:
         if reason.startswith(("unreadable", "walk bound")):
             logger.warning("Keeping %s: %s", path, reason)
