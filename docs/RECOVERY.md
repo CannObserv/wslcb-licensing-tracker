@@ -117,7 +117,7 @@ grants with it), and on the node:
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo install -m 644 infra/preferences.d-tailscale /etc/apt/preferences.d/tailscale
-apt-cache policy tailscale                    # pkgs.tailscale.com rows at 600, not 500
+apt-cache policy tailscale | sed -n 4,6p     # each version at 600 (package pin), its pkgs.tailscale.com row at 100
 read -rsp 'tailnet auth key: ' KEY; echo
 sudo tailscale up --auth-key="$KEY" --hostname=wslcb --advertise-tags=tag:wslcb; unset KEY
 tailscale status | head -3                    # shows tag:wslcb
