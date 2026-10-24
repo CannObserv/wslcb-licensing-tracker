@@ -547,13 +547,19 @@ def _prune_npx(home: Path, repo_root: Path, *, dry_run: bool) -> tuple[int, list
         home / ".vscode-server" / "data" / "Machine" / "settings.json"
     )
     logger.info("npx pinned specs: %s", ", ".join(sorted(keep_specs)) or "(none)")
-    remove, kept = select_npx_to_prune(
-        npx_dir,
-        NPX_MAX_AGE_DAYS,
-        keep_specs,
-        live_paths(),
-        grace_minutes=NPX_GRACE_MINUTES,
-    )
+    try:
+        remove, kept = select_npx_to_prune(
+            npx_dir,
+            NPX_MAX_AGE_DAYS,
+            keep_specs,
+            live_paths(),
+            grace_minutes=NPX_GRACE_MINUTES,
+        )
+    except OSError as exc:
+        # Fail-open: an unreadable /proc or _npx (or an entry vanishing
+        # mid-scan) skips this section, never the rest of the run.
+        logger.warning("Skipping %s, removing nothing: %s", npx_dir, exc)
+        return 0, [f"skipped {npx_dir}: {exc}"]
 
     warnings: list[str] = []
     for path, reason in kept:
