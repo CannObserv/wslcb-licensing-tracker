@@ -169,3 +169,21 @@ class TestNoExternalRuntimeAssets:
         htmx = Path(__file__).resolve().parent.parent / "static" / "js" / "htmx.min.js"
         assert htmx.is_file()
         assert htmx.stat().st_size > 10_000
+
+
+def test_every_template_is_autoescaped():
+    """Starlette 1.x builds Jinja2Templates with ``select_autoescape()`` (#221).
+
+    Only .html/.htm/.xml get escaping now. Before 1.x it was ``autoescape=True``
+    for everything. A template with any other extension would render user data raw.
+    """
+    from pathlib import Path
+
+    from wslcb_licensing_tracker.app import templates
+
+    template_dir = Path(__file__).resolve().parent.parent / "templates"
+    names = [str(p.relative_to(template_dir)) for p in template_dir.rglob("*") if p.is_file()]
+    assert names
+    autoescape = templates.env.autoescape
+    unescaped = [n for n in names if not (autoescape(n) if callable(autoescape) else autoescape)]
+    assert unescaped == []
