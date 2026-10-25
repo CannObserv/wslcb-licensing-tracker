@@ -212,7 +212,7 @@ wslcb-licensing-tracker/
 │   ├── test_text_utils.py       # Pure-string normalization tests
 │   ├── test_display.py          # Presentation formatting tests
 │   ├── test_models.py           # SQLAlchemy Table definition tests
-│   ├── test_app.py              # App lifespan and startup tests
+│   ├── test_app.py              # App lifespan and startup tests; every template autoescaped under Starlette 1.x (#221)
 │   ├── test_config.py           # Runtime config helper tests (get_build_id, Jev threshold)
 │   ├── test_log_config.py       # Structured-logging regression tests (#162)
 │   ├── test_routes.py           # Public route tests
@@ -273,6 +273,7 @@ wslcb-licensing-tracker/
 │   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
 │   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup + Tailscale origin/pins (#192, #193, #220)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
+│   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako ≥ advisory fix in lock + venv (#221)
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
