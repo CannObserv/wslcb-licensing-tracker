@@ -13,8 +13,13 @@ a worker's ``roleId`` is ``InvalidOid``, which no role has the privileges of —
 ``42501 permission denied to terminate process``. A plain ``DROP`` SIGTERMs
 the worker itself and waits up to ~5 s. FORCE still goes first because it is
 what ends this role's own stray connections, which a plain ``DROP`` cannot.
-Granting ``pg_signal_backend`` would not help: it covers role-owned backends,
-not roleless ones.
+
+FORCE's refusal has two DETAILs, both ``42501``. A superuser's session gets
+"Only roles with the SUPERUSER attribute …". A roleless worker fails the
+role-privilege check instead, whose DETAIL names ``pg_signal_backend`` as the
+way past it — that is the one the 2026-10-20 failure logged. So a grant would
+likely clear the worker case (untested: it is a host change); the fallback
+needs none, and branches on the SQLSTATE, not the text.
 
 **Why the name carries the pid namespace.** ``os.kill(pid, 0)`` answers only
 for this namespace, so the sweep drops a dead run's database only when the
