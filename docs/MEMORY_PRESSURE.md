@@ -226,6 +226,13 @@ for c in $(curl -s localhost:16333/collections | jq -r '.result.collections[].na
 done
 ```
 
+`ollama/ollama:latest` resolves to whatever image is tagged locally. If that
+tag is gone, `docker run` pulls today's `latest`, a different embedder than the
+one that wrote the stored vectors (0.32.5 as of #222). Before the recreate,
+note `curl -s localhost:11435/api/version` (or
+`docker image inspect -f '{{.Id}}' ollama/ollama:latest`). If it differs after,
+re-index with `codebase_index` rather than trust the old vectors.
+
 Then `ss -ltn` must list 16333, 16334 and 11435 on `127.0.0.1` only, and
 `docker logs socraticode-qdrant 2>&1 | grep -i telemetry` must end with
 `Telemetry reporting disabled`. Run a `codebase_search`, then
