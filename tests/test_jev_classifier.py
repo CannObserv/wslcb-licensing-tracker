@@ -32,6 +32,8 @@ from wslcb_licensing_tracker.models import (
 )
 
 # The engine lives on the session loop; so must every test and fixture using it.
+# The mark covers every test, so even await-free ones are `async def`: a plain
+# def draws a PytestWarning, which the pytest config makes an error (#216).
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 PREFIX = "JEVTEST "
@@ -215,7 +217,7 @@ async def test_map_answer_table(answer, expected):
     assert jc.map_answer(answer, threshold=0.7) == expected
 
 
-def test_est_tokens_per_name_is_the_measured_two_question_figure():
+async def test_est_tokens_per_name_is_the_measured_two_question_figure():
     # §10: 454,544 tokens / 834 names = 545.0 (544.8 over full 25-name batches).
     assert jc.EST_INPUT_TOKENS_PER_NAME == 545
 
