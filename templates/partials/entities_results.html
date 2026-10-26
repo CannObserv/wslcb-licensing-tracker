@@ -1,5 +1,12 @@
 {# HTMX partial — swapped into #entities-results by GET /entities with HX-Request. #}
 {% import "partials/classification_badge.html" as cb %}
+{% if filters_oob %}
+{# The filter card sits outside #entities-results; refresh its links with the typed q (#215). #}
+{% import "partials/entities_filters.html" as ef with context %}
+{{ ef.type_filter(oob=true) }}
+{{ ef.sort_toggle(oob=true) }}
+{{ ef.kind_row(oob=true) }}
+{% endif %}
 <div class="text-sm text-gray-500 mb-3">
     {% if total == 0 %}
         No entities found.

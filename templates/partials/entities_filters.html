@@ -1,0 +1,60 @@
+{# /entities filter controls, shared by the full page and the HTMX partial (#215).
+   Import "with context" (needs q, entity_type, subtype, sort, subtype_labels).
+   With oob=true each region swaps out of band, so a live search re-renders
+   its links with the typed q. The search input is never in here: swapping it
+   mid-typing would drop focus and the caret. #}
+
+{% macro type_filter(oob=false) %}
+<div class="flex gap-1 items-center flex-wrap" id="filter-form"{% if oob %} hx-swap-oob="true"{% endif %}>
+    <input type="hidden" name="type" value="{{ entity_type }}" />
+    <input type="hidden" name="subtype" value="{{ subtype }}" />
+    <input type="hidden" name="sort" value="{{ sort }}" />
+    {% set type_options = [("All", ""), ("People", "person"), ("Organizations", "organization")] %}
+    {% for label, val in type_options %}
+    {% set active = (entity_type == val) %}
+    {# Subtypes are organization-only, so only "Organizations" keeps the subtype. #}
+    <a href="/entities?{{ {"q": q, "sort": sort, "type": val, "subtype": subtype if val == "organization" else ""} | build_qs }}"
+       class="px-3 py-1.5 rounded text-sm border transition
+              {% if active %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
+        {{ label }}
+    </a>
+    {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro sort_toggle(oob=false) %}
+<div class="flex gap-1 items-center" id="entities-sort"{% if oob %} hx-swap-oob="true"{% endif %}>
+    <span class="text-xs text-gray-400 mr-1">Sort:</span>
+    <a href="/entities?{{ {"q": q, "type": entity_type, "subtype": subtype, "sort": "count"} | build_qs }}"
+       class="px-3 py-1.5 rounded text-sm border transition
+              {% if sort != 'name' %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
+        Most Active
+    </a>
+    <a href="/entities?{{ {"q": q, "type": entity_type, "subtype": subtype, "sort": "name"} | build_qs }}"
+       class="px-3 py-1.5 rounded text-sm border transition
+              {% if sort == 'name' %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
+        A–Z
+    </a>
+</div>
+{% endmacro %}
+
+{# Organization subtype filter (#209). The wrapper is always rendered, even
+   empty, so an out-of-band swap always has a target. #}
+{% macro kind_row(oob=false) %}
+<div id="entities-kinds"{% if oob %} hx-swap-oob="true"{% endif %}>
+    {% if entity_type == 'organization' or subtype %}
+    <div class="flex gap-1 items-center flex-wrap mt-3" role="group" aria-label="Organization kind">
+        <span class="text-xs text-gray-400 mr-1">Kind:</span>
+        {% for val, label in [("", "All kinds")] + subtype_labels.items() | list %}
+        {% set active = (subtype == val) %}
+        <a href="/entities?{{ {"q": q, "sort": sort, "type": "organization", "subtype": val} | build_qs }}"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  {% if active %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}"
+           {% if active %}aria-current="true"{% endif %}>
+            {{ label }}
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endmacro %}

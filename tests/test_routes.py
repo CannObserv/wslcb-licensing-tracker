@@ -8,11 +8,14 @@ Uses FastAPI TestClient with async queries_* functions mocked; no disk DB.
 import copy
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from html.parser import HTMLParser
 from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
+from wslcb_licensing_tracker.display import SUBTYPE_LABELS
 
 # Autouse fixture: stamps app.state.engine for every test — routes read it
 # without a lifespan (#155). Imported for its pytest side effect.
@@ -849,6 +852,121 @@ class TestEntitySubtypeAndBadges:
         for body in pages:
             for banned in ("Jev", "jev", "TypeSafe", "typesafe"):
                 assert banned not in body, banned
+
+
+class _FilterScan(HTMLParser):
+    """Collect /entities links and hidden inputs, keyed by their filter region.
+
+    A region is an element whose id is in ``_REGIONS``; ``oob`` records each
+    region's ``hx-swap-oob`` attribute (None when absent).
+    """
+
+    _REGIONS = ("filter-form", "entities-sort", "entities-kinds")
+    _VOID = ("input", "br", "img", "hr", "meta", "link")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.oob: dict[str, str | None] = {}
+        self.links: dict[str, list[dict[str, str]]] = {}
+        self.hidden: dict[str, dict[str, str]] = {}
+        self.ids: list[str] = []
+        self.q_inputs = 0
+        self._region: str | None = None
+        self._depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if "id" in a:
+            self.ids.append(a["id"])
+        if tag == "input" and a.get("name") == "q":
+            self.q_inputs += 1
+        if self._region is None and a.get("id") in self._REGIONS:
+            self._region, self._depth = a["id"], 0
+            self.oob[self._region] = a.get("hx-swap-oob")
+            self.links.setdefault(self._region, [])
+            self.hidden.setdefault(self._region, {})
+        if self._region is None:
+            return
+        if tag == "a" and a.get("href", "").startswith("/entities?"):
+            qs = parse_qs(urlsplit(a["href"]).query)
+            self.links[self._region].append({k: v[0] for k, v in qs.items()})
+        if tag == "input" and a.get("type") == "hidden":
+            self.hidden[self._region][a["name"]] = a.get("value", "")
+        if tag not in self._VOID:
+            self._depth += 1
+
+    def handle_endtag(self, tag):
+        if self._region is None or tag in self._VOID:
+            return
+        self._depth -= 1
+        if self._depth == 0:
+            self._region = None
+
+
+class TestEntitiesLiveSearchFilters:
+    """A live search re-renders the filter links with the typed q (#215)."""
+
+    _URL = "/entities?q=lodge&type=organization&subtype=tribe&sort=name"
+
+    def _scan(self, url: str, *, htmx: bool) -> _FilterScan:
+        client, patches = _make_client(entity_result={"entities": [], "total": 0})
+        try:
+            headers = {"HX-Request": "true"} if htmx else {}
+            resp = client.get(url, headers=headers)
+        finally:
+            _stop(patches)
+        assert resp.status_code == 200
+        scan = _FilterScan()
+        scan.feed(resp.text)
+        return scan
+
+    def _expected(self) -> dict[str, list[dict[str, str]]]:
+        base = {"q": "lodge", "sort": "name"}
+        org = {**base, "type": "organization"}
+        return {
+            "filter-form": [base, {**base, "type": "person"}, {**org, "subtype": "tribe"}],
+            "entities-sort": [
+                {"q": "lodge", "type": "organization", "subtype": "tribe", "sort": s}
+                for s in ("count", "name")
+            ],
+            "entities-kinds": [org] + [{**org, "subtype": v} for v in SUBTYPE_LABELS],
+        }
+
+    def test_htmx_partial_swaps_every_filter_link_out_of_band(self):
+        scan = self._scan(self._URL, htmx=True)
+        assert scan.oob == dict.fromkeys(_FilterScan._REGIONS, "true")
+        assert scan.links == self._expected()
+        assert scan.hidden["filter-form"] == {
+            "type": "organization",
+            "subtype": "tribe",
+            "sort": "name",
+        }
+
+    def test_htmx_partial_never_swaps_the_search_input(self):
+        """Replacing the input mid-typing would drop focus and the caret."""
+        assert self._scan(self._URL, htmx=True).q_inputs == 0
+
+    def test_htmx_partial_keeps_an_empty_kind_target(self):
+        """The kind row is hidden off organizations; its OOB target is not."""
+        scan = self._scan("/entities?q=lodge&type=person", htmx=True)
+        assert scan.oob["entities-kinds"] == "true"
+        assert scan.links["entities-kinds"] == []
+        assert all(link["q"] == "lodge" for link in scan.links["filter-form"])
+        assert scan.hidden["filter-form"] == {"type": "person", "subtype": "", "sort": "count"}
+
+    def test_full_page_renders_the_same_links_without_oob(self):
+        """No-JS path: plain hrefs on a full load, each region once."""
+        scan = self._scan(self._URL, htmx=False)
+        assert scan.oob == dict.fromkeys(_FilterScan._REGIONS)
+        assert scan.links == self._expected()
+        assert scan.q_inputs == 1
+        for region in _FilterScan._REGIONS:
+            assert scan.ids.count(region) == 1, region
+
+    def test_full_page_keeps_the_kind_wrapper_when_hidden(self):
+        scan = self._scan("/entities?q=lodge", htmx=False)
+        assert scan.ids.count("entities-kinds") == 1
+        assert scan.links["entities-kinds"] == []
 
 
 class TestDashboardEntitiesLink:
