@@ -244,7 +244,8 @@ class TestSubstanceAdd:
         @asynccontextmanager
         async def _ctx(engine):
             conn = AsyncMock()
-            conn.execute.return_value.scalar_one.return_value = 1
+            # A Result is sync: an AsyncMock scalar_one() would return an unawaited coroutine.
+            conn.execute.return_value.scalar_one = MagicMock(return_value=1)
             yield conn
 
         with (
@@ -282,7 +283,8 @@ class TestSubstanceAdd:
         @asynccontextmanager
         async def _ctx(engine):
             conn = AsyncMock()
-            conn.execute.return_value.scalar_one.return_value = 1
+            # A Result is sync: an AsyncMock scalar_one() would return an unawaited coroutine.
+            conn.execute.return_value.scalar_one = MagicMock(return_value=1)
             yield conn
 
         with (
