@@ -62,3 +62,8 @@ def test_lock_pins_fixed_version(package: str, floor: str) -> None:
 def test_installed_version_is_fixed(package: str, floor: str) -> None:
     got = installed_version(package)
     assert Version(got) >= Version(floor), f"{package} {got} < {floor}"
+
+
+def test_floor_tables_are_disjoint() -> None:
+    # FLOORS merges the two tables, so a shared key would drop one floor silently.
+    assert not FIXED.keys() & DEV_FIXED.keys()
