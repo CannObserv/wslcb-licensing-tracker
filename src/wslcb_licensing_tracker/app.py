@@ -495,7 +495,8 @@ async def entities_list(  # noqa: PLR0913
         "total_pages": total_pages,
     }
     if request.headers.get("HX-Request"):
-        return await _tpl(request, "partials/entities_results.html", ctx)
+        # The filter links live outside the swap target; re-render them out of band (#215).
+        return await _tpl(request, "partials/entities_results.html", {**ctx, "filters_oob": True})
     return await _tpl(request, "entities.html", ctx)
 
 

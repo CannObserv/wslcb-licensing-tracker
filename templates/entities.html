@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Entities — WSLCB Licensing Tracker{% endblock %}
 {% block content %}
+{% import "partials/entities_filters.html" as ef with context %}
 <div class="mb-6 flex items-center justify-between">
     <div>
         <h1 class="text-2xl font-bold text-gray-900">Applicant Entities</h1>
@@ -30,53 +31,13 @@
         </div>
 
         {# Type filter buttons #}
-        <div class="flex gap-1 items-center flex-wrap" id="filter-form">
-            <input type="hidden" name="type" value="{{ entity_type }}" />
-            <input type="hidden" name="subtype" value="{{ subtype }}" />
-            <input type="hidden" name="sort" value="{{ sort }}" />
-            {% set type_options = [("All", ""), ("People", "person"), ("Organizations", "organization")] %}
-            {% for label, val in type_options %}
-            {% set active = (entity_type == val) %}
-            {# Subtypes are organization-only, so only "Organizations" keeps the subtype. #}
-            <a href="/entities?{{ {"q": q, "sort": sort, "type": val, "subtype": subtype if val == "organization" else ""} | build_qs }}"
-               class="px-3 py-1.5 rounded text-sm border transition
-                      {% if active %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
-                {{ label }}
-            </a>
-            {% endfor %}
-        </div>
+        {{ ef.type_filter() }}
 
         {# Sort toggle #}
-        <div class="flex gap-1 items-center">
-            <span class="text-xs text-gray-400 mr-1">Sort:</span>
-            <a href="/entities?{{ {"q": q, "type": entity_type, "subtype": subtype, "sort": "count"} | build_qs }}"
-               class="px-3 py-1.5 rounded text-sm border transition
-                      {% if sort != 'name' %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
-                Most Active
-            </a>
-            <a href="/entities?{{ {"q": q, "type": entity_type, "subtype": subtype, "sort": "name"} | build_qs }}"
-               class="px-3 py-1.5 rounded text-sm border transition
-                      {% if sort == 'name' %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}">
-                A–Z
-            </a>
-        </div>
+        {{ ef.sort_toggle() }}
     </div>
 
-    {# Organization subtype filter (#209) #}
-    {% if entity_type == 'organization' or subtype %}
-    <div class="flex gap-1 items-center flex-wrap mt-3" role="group" aria-label="Organization kind">
-        <span class="text-xs text-gray-400 mr-1">Kind:</span>
-        {% for val, label in [("", "All kinds")] + subtype_labels.items() | list %}
-        {% set active = (subtype == val) %}
-        <a href="/entities?{{ {"q": q, "sort": sort, "type": "organization", "subtype": val} | build_qs }}"
-           class="px-2.5 py-1 rounded text-xs border transition
-                  {% if active %}bg-co-purple text-white border-co-purple{% else %}bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple{% endif %}"
-           {% if active %}aria-current="true"{% endif %}>
-            {{ label }}
-        </a>
-        {% endfor %}
-    </div>
-    {% endif %}
+    {{ ef.kind_row() }}
 </div>
 
 {# Results — HTMX target #}

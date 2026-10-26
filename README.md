@@ -143,6 +143,7 @@ wslcb-licensing-tracker/
 │       ├── results.html           # Search results partial (HTMX)
 │       ├── record_table.html      # Shared record table (results + entity pages)
 │       ├── entities_results.html  # Entities results partial (HTMX)
+│       ├── entities_filters.html  # Entities filter-card macros; swapped out of band on live search (#215)
 │       ├── classification_badge.html # Entity type chip + public provenance badge macros (#209)
 │       ├── entity_admin_panel.html # Entity-page classification panel, admins only (#208)
 │       ├── entity_classification_forms.html # Classification action form macros (#208)
@@ -603,7 +604,7 @@ Test structure:
 | `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
 | `tests/test_models.py` | SQLAlchemy Table definition smoke tests |
 | `tests/test_app.py` | App lifespan and startup |
-| `tests/test_routes.py` | Public route tests — dashboard layout, search, stat cards |
+| `tests/test_routes.py` | Public route tests — dashboard layout, search, stat cards, entities list + live-search filter links (#215) |
 | `tests/test_api_routes.py` | Versioned API routes — cities, stats, export, health checks + scrape freshness |
 | `tests/test_source_viewer.py` | Source viewer route — snapshot dispatch, iframe rendering, not-found cases |
 | `tests/test_admin_auth.py` | Admin authentication — header extraction, env-var fallback, redirect/403 |
