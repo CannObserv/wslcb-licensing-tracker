@@ -66,6 +66,18 @@ async def _fake_get_db_ctx(engine):
     yield AsyncMock()
 
 
+@asynccontextmanager
+async def _substance_add_db_ctx(engine):
+    """Yield an AsyncMock conn whose execute() result gives display_order 1.
+
+    A Result is sync: an AsyncMock scalar_one() would hand the route an
+    unawaited coroutine instead of an int (#216).
+    """
+    conn = AsyncMock()
+    conn.execute.return_value.scalar_one = MagicMock(return_value=1)
+    yield conn
+
+
 # ---------------------------------------------------------------------------
 # GET /admin/endorsements — default tab and section routing
 # ---------------------------------------------------------------------------
@@ -241,15 +253,11 @@ class TestSubstanceAdd:
     def test_inserts_substance_and_redirects(self):
         """POST /add calls add_substance and redirects with substance_added flash."""
 
-        @asynccontextmanager
-        async def _ctx(engine):
-            conn = AsyncMock()
-            # A Result is sync: an AsyncMock scalar_one() would return an unawaited coroutine.
-            conn.execute.return_value.scalar_one = MagicMock(return_value=1)
-            yield conn
-
         with (
-            patch("wslcb_licensing_tracker.admin_endorsement_routes.get_db", side_effect=_ctx),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_substance_add_db_ctx,
+            ),
             patch(
                 "wslcb_licensing_tracker.admin_endorsement_routes.add_substance",
                 new_callable=AsyncMock,
@@ -280,15 +288,11 @@ class TestSubstanceAdd:
         """POST /add calls log_action after adding substance."""
         mock_log_action = AsyncMock()
 
-        @asynccontextmanager
-        async def _ctx(engine):
-            conn = AsyncMock()
-            # A Result is sync: an AsyncMock scalar_one() would return an unawaited coroutine.
-            conn.execute.return_value.scalar_one = MagicMock(return_value=1)
-            yield conn
-
         with (
-            patch("wslcb_licensing_tracker.admin_endorsement_routes.get_db", side_effect=_ctx),
+            patch(
+                "wslcb_licensing_tracker.admin_endorsement_routes.get_db",
+                side_effect=_substance_add_db_ctx,
+            ),
             patch(
                 "wslcb_licensing_tracker.admin_endorsement_routes.add_substance",
                 new_callable=AsyncMock,
