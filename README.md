@@ -268,7 +268,7 @@ wslcb-licensing-tracker/
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
 │   ├── test_no_channel_urls.py  # No live Mayfly channel URL in any tracked file (#181)
 │   ├── test_docs_layout.py      # Dated docs stay in docs/specs/ + docs/plans/, not docs/superpowers/ (#176)
-│   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs + SocratiCode pin agreement (#175, #180)
+│   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs, SocratiCode pin agreement + loopback recreate (#175, #180, #222)
 │   ├── test_infra_web_unit.py    # wslcb-web starts after Postgres, never bound to its lifetime (#184)
 │   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
 │   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup + Tailscale origin/pins (#192, #193, #220)

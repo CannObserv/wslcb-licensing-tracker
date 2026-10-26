@@ -187,7 +187,7 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases
 ## Reference
 
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
-- [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md) — no swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175, #180)
+- [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md) — no swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins + loopback containers (#175, #180, #222)
 - [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape, classify): installs + fields
 - [`docs/RELAY.md`](docs/RELAY.md) — relayed scrape while WSLCB blocks the host (#198/#201): Mac LaunchAgent install, monitoring, retirement
 - [`docs/RECOVERY.md`](docs/RECOVERY.md) — nightly GCS backup (DB + `data/` archive), restore, drills; log in [`docs/RECOVERY-REHEARSALS.md`](docs/RECOVERY-REHEARSALS.md)

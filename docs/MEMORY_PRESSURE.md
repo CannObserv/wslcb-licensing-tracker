@@ -29,8 +29,9 @@ Three independent pieces, none of which substitutes for another:
 
 One command checks the whole stack against what `infra/` declares — effective
 cgroup protection, `oom_score_adj`, `vm.min_free_kbytes`, earlyoom's *parsed*
-args and its live top-3 victims (it fails if the top one is `--avoid`ed), and
-that both SocratiCode launches name one pinned version:
+args and its live top-3 victims (it fails if the top one is `--avoid`ed),
+that both SocratiCode launches name one pinned version, and that SocratiCode's
+containers publish on loopback only with Qdrant telemetry off (#222):
 
 ```bash
 scripts/verify-memory-pressure.sh          # exit 0 ok · 1 drift · 2 couldn't check
@@ -181,3 +182,56 @@ the running session's server against both. It fails on any disagreement.
 `.claude/hooks/socraticode-health.sh` measures drift only
 against a *floating* session spec, so once `SOCRATICODE_SPEC` is a literal it
 stays silent, even for a literal that differs from the driver's.
+
+## SocratiCode's containers: loopback only, telemetry off (#222)
+
+Docker publishes a container's ports ahead of the host firewall, and this host
+is on the tailnet, so a port published on every interface reaches every peer.
+Qdrant's API has no authentication. SocratiCode starts an existing
+`socraticode-qdrant` or `socraticode-ollama` by name and keeps whatever
+bindings it was created with. Only when no container of that name exists does
+it create one, and then it publishes on every interface (`-p 16333:6333`, with
+no host IP and no setting to add one), with Qdrant's anonymous telemetry on.
+Both containers were therefore recreated by hand on 2026-10-26: published on
+`127.0.0.1` only, Qdrant with `QDRANT__TELEMETRY_DISABLED=true`. That survives
+SocratiCode restarts and upgrades, `docker restart` and reboots
+(`unless-stopped`). It is lost only if a container is removed.
+
+To replace a wide container, or to recreate a lost one before the next session
+does, run the commands below. The index lives in the named volumes, so it
+survives. Rename rather than remove: SocratiCode's existence check is a
+substring match on `docker ps -a --filter name=…`, so while `…-old` exists no
+session can create a wide container in the gap, and `…-old` is the rollback.
+For a lost container, skip the `stop`/`rename` line. Use the image tag the
+pinned SocratiCode names in `dist/constants.js` (`QDRANT_IMAGE`,
+`OLLAMA_IMAGE`). An upgrade that changes it pulls the new image but keeps
+starting the old container.
+
+```bash
+docker stop socraticode-qdrant && docker rename socraticode-qdrant socraticode-qdrant-old
+docker run -d --name socraticode-qdrant -p 127.0.0.1:16333:6333 -p 127.0.0.1:16334:6334 \
+  -v socraticode_qdrant_data:/qdrant/storage --restart unless-stopped \
+  -e QDRANT__TELEMETRY_DISABLED=true qdrant/qdrant:v1.17.0
+docker stop socraticode-ollama && docker rename socraticode-ollama socraticode-ollama-old
+docker run -d --name socraticode-ollama -p 127.0.0.1:11435:11434 \
+  -v socraticode_ollama_data:/root/.ollama --restart unless-stopped ollama/ollama:latest
+```
+
+Capture the point counts before and compare them after. They must match:
+
+```bash
+for c in $(curl -s localhost:16333/collections | jq -r '.result.collections[].name' | sort); do
+  echo "$c $(curl -s -X POST localhost:16333/collections/$c/points/count \
+    -H 'content-type: application/json' -d '{"exact":true}' | jq .result.count)"
+done
+```
+
+Then `ss -ltn` must list 16333, 16334 and 11435 on `127.0.0.1` only, and
+`docker logs socraticode-qdrant 2>&1 | grep -i telemetry` must end with
+`Telemetry reporting disabled`. Run a `codebase_search`, then
+`docker rm socraticode-qdrant-old socraticode-ollama-old`. To roll back, run
+`docker rm -f <name> && docker rename <name>-old <name> && docker start <name>`.
+
+`scripts/verify-memory-pressure.sh` (section 6) fails if a container is
+missing, if any published host IP or live listener is not loopback, or if
+Qdrant's telemetry is not off. Run it after anything that removes containers.

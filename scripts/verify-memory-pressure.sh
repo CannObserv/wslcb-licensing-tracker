@@ -9,6 +9,10 @@
 # host matches them. Both are needed: the whole point of #175 is that a
 # reservation can read as configured while delivering nothing.
 #
+# Section 6 is not memory: it holds SocratiCode's containers to loopback-only
+# publishes with Qdrant telemetry off (#222). Its expectations are invariants,
+# and the recreate commands they guard live in docs/MEMORY_PRESSURE.md.
+#
 # Usage: scripts/verify-memory-pressure.sh [--quiet]
 # Exit:  0 all good · 1 a check failed · 2 could not run a check
 set -uo pipefail
@@ -257,6 +261,52 @@ while read -r pid ppid _ _ launched _; do
   fi
 done < <(ps -eo pid=,ppid=,args= | awk '$3 == "npm" && $4 == "exec" && $5 ~ /^socraticode(@|$)/')
 [ "$observed" -eq 1 ] || note "no Claude session server is running — the launch was not observed"
+
+# --- 6. SocratiCode's containers: loopback only, telemetry off (#222) --------
+# Docker publishes ahead of the host firewall and this host is on the tailnet,
+# so a wildcard publish hands every peer Qdrant's unauthenticated API and
+# ollama. SocratiCode starts an existing container by name and creates one —
+# every interface, telemetry on — only when none exists, so the hand-made
+# loopback containers hold until one is removed. The bindings are read even
+# from a stopped container (a session starts it as created); ss confirms what
+# a running one actually listens on.
+if ! docker info >/dev/null 2>&1; then
+  blocked "docker unreachable — SocratiCode's container bindings are unchecked"
+else
+  for c in socraticode-qdrant socraticode-ollama; do
+    if ! state=$(docker inspect -f '{{.State.Running}} {{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostIp}}|{{.HostPort}} {{end}}{{end}}' "$c" 2>/dev/null); then
+      fail "$c is missing — the next SocratiCode launch creates it on every interface; recreate it first (docs/MEMORY_PRESSURE.md)"
+      continue
+    fi
+    read -r running binds <<<"$state"
+    ok=1 ports=()
+    for b in $binds; do
+      ip=${b%|*} port=${b#*|}
+      ports+=("$port")
+      case $ip in
+        127.0.0.1|::1) ;;
+        *) fail "$c publishes $port on ${ip:-every interface} — every tailnet peer reaches it; recreate it (docs/MEMORY_PRESSURE.md)"; ok=0 ;;
+      esac
+    done
+    [ "${#ports[@]}" -gt 0 ] || { fail "$c publishes no port — SocratiCode cannot reach it"; ok=0; }
+    if [ "$running" = true ]; then
+      for port in "${ports[@]}"; do
+        wide=$(ss -Hltn "sport = :$port" | awk '{print $4}' | grep -vE '^(127\.0\.0\.1|\[::1\]):' | tr '\n' ' ')
+        [ -z "$wide" ] || { fail "$c: port $port listens on ${wide% } — not loopback"; ok=0; }
+      done
+    fi
+    extra=""
+    if [ "$c" = socraticode-qdrant ]; then
+      if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$c" | grep -qx 'QDRANT__TELEMETRY_DISABLED=true'; then
+        extra=", telemetry off"
+      else
+        fail "$c runs with Qdrant's telemetry on — recreate it with QDRANT__TELEMETRY_DISABLED=true (docs/MEMORY_PRESSURE.md)"; ok=0
+      fi
+    fi
+    [ "$running" = true ] || extra="$extra (stopped: bindings read from its config)"
+    [ "$ok" -eq 1 ] && pass "$c publishes ${ports[*]} on loopback only$extra"
+  done
+fi
 
 [ "$QUIET" -eq 1 ] || { echo; case $RC in
   0) echo "All checks passed — the stack is in force." ;;

@@ -32,6 +32,12 @@ value, and on a VS Code Remote host `claudeCode.environmentVariables` in the
 machine settings is what delivers it (gregoryfoster/skills#332).
 `scripts/verify-memory-pressure.sh` checks the launch itself.
 
+SocratiCode also creates its Docker containers when none exists, publishing on
+every interface with Qdrant telemetry on — past the host firewall, to every
+tailnet peer (#222). The hand-made loopback recreate lives in
+`docs/MEMORY_PRESSURE.md`, the one place an operator copies it from when a
+container is lost; a slip there re-exposes the store, so it is asserted too.
+
 Nothing here talks to systemd or the kernel; these parse the committed files —
 except one test, which reads VS Code's machine settings and skips where there
 are none.
@@ -39,6 +45,7 @@ are none.
 
 import json
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -242,3 +249,54 @@ def test_vscode_starts_claude_with_the_declared_session_spec():
         f"but .claude/settings.json declares {_session_spec()!r} — re-pin every place "
         "docs/MEMORY_PRESSURE.md lists"
     )
+
+
+# SocratiCode 1.14.0 dist/constants.js + services/docker.js: the names it looks
+# up, the volumes it mounts, and the container side of each port it publishes.
+SOCRATICODE_CONTAINERS = {
+    "socraticode-qdrant": {
+        "volume": "socraticode_qdrant_data:/qdrant/storage",
+        "ports": {"6333", "6334"},
+        "env": {"QDRANT__TELEMETRY_DISABLED=true"},
+    },
+    "socraticode-ollama": {
+        "volume": "socraticode_ollama_data:/root/.ollama",
+        "ports": {"11434"},
+        "env": set(),
+    },
+}
+
+
+def _doc_docker_runs() -> dict[str, list[str]]:
+    """Every `docker run` in the doc's code fences, keyed by --name."""
+    text = MEMORY_DOC.read_text(encoding="utf-8").replace("\\\n", " ")
+    runs = {}
+    for block in re.findall(r"^```[^\n]*\n(.*?)^```", text, re.MULTILINE | re.DOTALL):
+        for line in block.splitlines():
+            if line.strip().startswith("docker run "):
+                argv = shlex.split(line)
+                runs[argv[argv.index("--name") + 1]] = argv
+    return runs
+
+
+def _opts(argv: list[str], flag: str) -> list[str]:
+    return [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == flag]
+
+
+@pytest.mark.parametrize("name", sorted(SOCRATICODE_CONTAINERS))
+def test_socraticode_recreate_binds_loopback_and_keeps_the_volume(name):
+    """#222: a wildcard publish bypasses the firewall and reaches every tailnet peer."""
+    runs = _doc_docker_runs()
+    assert name in runs, f"docs/MEMORY_PRESSURE.md carries no `docker run --name {name}`"
+    argv, want = runs[name], SOCRATICODE_CONTAINERS[name]
+    publishes = _opts(argv, "-p")
+    assert {p.rsplit(":", 1)[-1] for p in publishes} == want["ports"], publishes
+    for p in publishes:
+        assert p.startswith("127.0.0.1:"), (
+            f"{name} publishes {p!r} — on every interface, so to every tailnet peer"
+        )
+    assert want["volume"] in _opts(argv, "-v"), (
+        f"{name} does not mount {want['volume']!r}, SocratiCode's volume — the index is lost"
+    )
+    assert _opts(argv, "--restart") == ["unless-stopped"]
+    assert want["env"] <= set(_opts(argv, "-e")), f"{name} lacks {want['env']}"
