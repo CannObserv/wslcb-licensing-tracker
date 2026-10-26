@@ -17,6 +17,11 @@ Dated record of backup drills and what each proved. The procedure is
 - **Failed restore leaves the target untouched** — a mid-restore collision rolls
   back the whole `--single-transaction` load.
 
+The scratch target is `tests/scratch_db.py`'s (#202). An autovacuum worker on
+it makes the test role's `DROP … WITH (FORCE)` fail `42501`, so teardown falls
+back to a plain `DROP`. A drop that still loses warns `ScratchDatabaseLeaked`
+with the holders' `pg_stat_activity` rows, and the next run's setup sweeps it.
+
 ## Log
 
 | Date | By | Object | What it proved | Notes |
