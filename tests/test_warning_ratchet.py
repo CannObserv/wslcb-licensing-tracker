@@ -10,6 +10,7 @@ The orphan-coroutine probe is the case that motivated #216: an ``AsyncMock``
 called without ``await``, whose warning fires at garbage collection.
 """
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -128,3 +129,13 @@ def outcomes(tmp_path_factory) -> dict[str, str]:
 @pytest.mark.parametrize(("probe", "expected"), EXPECTED.items())
 def test_probe_outcome(outcomes, probe, expected):
     assert outcomes[probe] in expected
+
+
+def test_starlette_httpx_ignore_is_still_live():
+    # starlette's TestClient prefers httpx2 when it is importable, and then the
+    # ignored warning never fires. httpx2 arriving (even transitively) switches
+    # every route test's HTTP client: review that, then drop the ignore.
+    assert importlib.util.find_spec("httpx2") is None, (
+        "httpx2 is installed: TestClient now uses it and the starlette ignore in "
+        "pyproject.toml is dead. Review the client switch, then remove the ignore (#216)."
+    )
