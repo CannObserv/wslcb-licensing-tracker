@@ -6,7 +6,7 @@ correct helper invocation) without a real database.
 """
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -253,7 +253,7 @@ class TestSubstanceAdd:
                 "wslcb_licensing_tracker.admin_endorsement_routes.add_substance",
                 new_callable=AsyncMock,
                 return_value=42,
-            ),
+            ) as mock_add,
             patch(
                 "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
                 new_callable=AsyncMock,
@@ -272,6 +272,8 @@ class TestSubstanceAdd:
         assert resp.status_code == 303
         assert "section=substances" in resp.headers["location"]
         assert "substance_added" in resp.headers["location"]
+        # display_order is the int scalar_one() returns, not an unawaited coroutine (#216).
+        mock_add.assert_awaited_once_with(ANY, "Hemp", 1)
 
     def test_audit_log_written(self):
         """POST /add calls log_action after adding substance."""
