@@ -854,6 +854,11 @@ class TestEntitySubtypeAndBadges:
                 assert banned not in body, banned
 
 
+# ---------------------------------------------------------------------------
+# /entities live-search filter links (#215)
+# ---------------------------------------------------------------------------
+
+
 class _FilterScan(HTMLParser):
     """Collect /entities links and hidden inputs, keyed by their filter region.
 
