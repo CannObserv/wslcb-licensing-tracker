@@ -71,6 +71,20 @@ def test_other_starlette_deprecation_still_warns():
 """
 
 
+# probe -> acceptable junit outcomes under the project's filters.
+EXPECTED = {
+    "test_runtime_warning": {"failure"},
+    "test_pytest_warning": {"failure"},
+    # The warning fires in the coroutine's finalizer, so pytest reports it as an
+    # unraisable exception: a failure or an error, depending on the phase it lands in.
+    "test_orphan_asyncmock_coroutine": {"failure", "error"},
+    "test_own_deprecation": {"failure"},
+    "test_third_party_deprecation": {"passed"},
+    "test_starlette_httpx_deprecation_is_ignored": {"passed"},
+    "test_other_starlette_deprecation_still_warns": {"passed"},
+}
+
+
 def _filters() -> list[str]:
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     return pyproject["tool"]["pytest"]["ini_options"].get("filterwarnings", [])
@@ -91,37 +105,26 @@ def outcomes(tmp_path_factory) -> dict[str, str]:
         for k, v in os.environ.items()
         if k != "PYTEST_ADDOPTS" and not k.startswith(("COV_CORE_", "COVERAGE_"))
     }
-    subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
+    proc = subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", f"--junitxml={report}"],
         cwd=root,
         env=env,
         capture_output=True,
+        text=True,
         timeout=120,
         check=False,
     )
+    tail = (proc.stdout + proc.stderr)[-3000:]
+    assert report.exists(), f"probe run wrote no report (exit {proc.returncode}):\n{tail}"
     result = {}
     for case in ET.parse(report).iter("testcase"):  # noqa: S314 — our own subprocess's report
         kinds = {child.tag for child in case} & {"failure", "error", "skipped"}
         result[case.get("name")] = kinds.pop() if kinds else "passed"
+    missing = EXPECTED.keys() - result.keys()
+    assert not missing, f"probes did not run: {sorted(missing)}\n{tail}"
     return result
 
 
-@pytest.mark.parametrize(
-    ("probe", "expected"),
-    [
-        ("test_runtime_warning", "failure"),
-        ("test_pytest_warning", "failure"),
-        ("test_own_deprecation", "failure"),
-        ("test_third_party_deprecation", "passed"),
-        ("test_starlette_httpx_deprecation_is_ignored", "passed"),
-        ("test_other_starlette_deprecation_still_warns", "passed"),
-    ],
-)
+@pytest.mark.parametrize(("probe", "expected"), EXPECTED.items())
 def test_probe_outcome(outcomes, probe, expected):
-    assert outcomes.get(probe) == expected
-
-
-def test_orphan_asyncmock_coroutine_fails_the_run(outcomes):
-    # The warning fires in the coroutine's finalizer, so pytest reports it as an
-    # unraisable exception: a failure or an error, depending on the phase it lands in.
-    assert outcomes.get("test_orphan_asyncmock_coroutine") in {"failure", "error"}
+    assert outcomes[probe] in expected
