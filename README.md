@@ -604,7 +604,7 @@ Test structure:
 | `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
 | `tests/test_models.py` | SQLAlchemy Table definition smoke tests |
 | `tests/test_app.py` | App lifespan and startup |
-| `tests/test_routes.py` | Public route tests — dashboard layout, search, stat cards |
+| `tests/test_routes.py` | Public route tests — dashboard layout, search, stat cards, entities list + live-search filter links (#215) |
 | `tests/test_api_routes.py` | Versioned API routes — cities, stats, export, health checks + scrape freshness |
 | `tests/test_source_viewer.py` | Source viewer route — snapshot dispatch, iframe rendering, not-found cases |
 | `tests/test_admin_auth.py` | Admin authentication — header extraction, env-var fallback, redirect/403 |
