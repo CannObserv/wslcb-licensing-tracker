@@ -274,6 +274,7 @@ wslcb-licensing-tracker/
 │   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup + Tailscale origin/pins (#192, #193, #220)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
 │   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224) ≥ advisory fix in lock + venv
+│   ├── test_warning_ratchet.py  # pyproject filterwarnings fail a run on a new RuntimeWarning / PytestWarning / own DeprecationWarning; one narrow starlette ignore (#216)
 │   ├── js/
 │   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
