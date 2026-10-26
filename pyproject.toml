@@ -36,6 +36,19 @@ pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 addopts = "--cov --cov-report=term-missing"
+# Warning ratchet (#216): these kinds fail the run instead of piling up.
+# tests/test_warning_ratchet.py guards every entry. Later entries win.
+filterwarnings = [
+    "error::RuntimeWarning",  # incl. an AsyncMock called without await
+    "error::pytest.PytestWarning",
+    # Deprecations our own code triggers. Third-party ones stay warnings, so a
+    # dependency bump can't break the gate.
+    "error::DeprecationWarning:wslcb_licensing_tracker",
+    # starlette 1.7.0 (#221) deprecates TestClient on httpx in favour of httpx2;
+    # adopting httpx2 is its own change. Re-check when a starlette release drops
+    # httpx from TestClient: the import then fails outright.
+    'ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
+]
 
 [tool.coverage.run]
 source = ["src/wslcb_licensing_tracker"]

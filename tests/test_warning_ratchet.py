@@ -84,7 +84,13 @@ def outcomes(tmp_path_factory) -> dict[str, str]:
     (root / "pytest.ini").write_text(ini)
     (root / "test_probes.py").write_text(PROBES)
     report = root / "report.xml"
-    env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+    # Without COV_CORE_*, pytest-cov's subprocess hook would measure the child
+    # without branch data, and the parent's combine then fails.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k != "PYTEST_ADDOPTS" and not k.startswith(("COV_CORE_", "COVERAGE_"))
+    }
     subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", f"--junitxml={report}"],
         cwd=root,
