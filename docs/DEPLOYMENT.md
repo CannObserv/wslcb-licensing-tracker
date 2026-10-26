@@ -292,6 +292,7 @@ Worker count has no effect on data freshness — safe to scale workers freely.
 ## Environment
 
 - Virtualenv at `.venv/` (managed by `uv sync`). If project directory moves, recreate.
+- `.venv/` keeps the dev group on purpose (#224): the test gate and pre-commit run from it, and `--no-dev` wouldn't stick anyway, because `uv run` reinstalls default groups. Audit it with `uv audit --frozen` (dev included), not `--no-dev`.
 - All persistent data in `./data/` (gitignored).
 
 ### BUILD_ID

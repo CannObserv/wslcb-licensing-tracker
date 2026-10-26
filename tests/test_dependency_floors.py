@@ -1,4 +1,4 @@
-"""Guard: locked and installed runtime deps stay at or above their advisory fixes (#221).
+"""Guard: locked and installed deps stay at or above their advisory fixes (#221, #224).
 
 ``uv audit --frozen --no-dev`` at bff24d3 reported 44 advisories across seven
 packages. These tests fail if ``uv.lock`` or an installed tree goes back below
@@ -7,6 +7,11 @@ this file only stops a known-bad version from coming back without anyone noticin
 
 starlette and python-multipart sit on the internet-facing request path, so
 they matter most. mako is reached only through alembic at migration time.
+
+``uv audit --frozen`` with the dev group at 6fe28db added 30 more, in dev
+tooling (#224). The prod ``.venv`` installs the dev group, so the installed-tree
+check covers the host too. virtualenv and filelock run when pre-commit builds a
+hook env; pytest and pygments run in the gate.
 """
 
 import tomllib
@@ -29,19 +34,31 @@ FIXED = {
     "mako": "1.4.2",
 }
 
+# Same, for the dev group (#224). filelock's fixes exist only in 4.x.
+# virtualenv 21.14.10 leaves GHSA-cx6f-vjhg-g3cc open (a 21.14.9 regression,
+# fixed in 21.14.13): accepted on #224, since pre-commit passes no --prompt.
+DEV_FIXED = {
+    "virtualenv": "21.14.10",
+    "filelock": "4.2.1",
+    "pytest": "9.0.3",
+    "pygments": "2.20.0",
+}
+
+FLOORS = sorted({**FIXED, **DEV_FIXED}.items())
+
 
 def _locked() -> dict[str, str]:
     lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
     return {p["name"]: p["version"] for p in lock["package"]}
 
 
-@pytest.mark.parametrize(("package", "floor"), sorted(FIXED.items()))
+@pytest.mark.parametrize(("package", "floor"), FLOORS)
 def test_lock_pins_fixed_version(package: str, floor: str) -> None:
     locked = _locked()[package]
     assert Version(locked) >= Version(floor), f"{package} {locked} < {floor}"
 
 
-@pytest.mark.parametrize(("package", "floor"), sorted(FIXED.items()))
+@pytest.mark.parametrize(("package", "floor"), FLOORS)
 def test_installed_version_is_fixed(package: str, floor: str) -> None:
     got = installed_version(package)
     assert Version(got) >= Version(floor), f"{package} {got} < {floor}"
