@@ -274,7 +274,7 @@ if ! docker info >/dev/null 2>&1; then
   blocked "docker unreachable — SocratiCode's container bindings are unchecked"
 else
   for c in socraticode-qdrant socraticode-ollama; do
-    if ! state=$(docker inspect -f '{{.State.Running}} {{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostIp}}|{{.HostPort}} {{end}}{{end}}' "$c" 2>/dev/null); then
+    if ! state=$(docker inspect --type container -f '{{.State.Running}} {{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostIp}}|{{.HostPort}} {{end}}{{end}}' "$c" 2>/dev/null); then
       fail "$c is missing — the next SocratiCode launch creates it on every interface; recreate it first (docs/MEMORY_PRESSURE.md)"
       continue
     fi
@@ -297,7 +297,7 @@ else
     fi
     extra=""
     if [ "$c" = socraticode-qdrant ]; then
-      if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$c" | grep -qx 'QDRANT__TELEMETRY_DISABLED=true'; then
+      if docker inspect --type container -f '{{range .Config.Env}}{{println .}}{{end}}' "$c" | grep -qx 'QDRANT__TELEMETRY_DISABLED=true'; then
         extra=", telemetry off"
       else
         fail "$c runs with Qdrant's telemetry on — recreate it with QDRANT__TELEMETRY_DISABLED=true (docs/MEMORY_PRESSURE.md)"; ok=0
