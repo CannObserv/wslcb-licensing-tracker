@@ -6,6 +6,7 @@ Uses FastAPI TestClient with async queries_* functions mocked; no disk DB.
 """
 
 import copy
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from html.parser import HTMLParser
@@ -969,6 +970,23 @@ class TestEntitiesLiveSearchFilters:
         assert scan.q_inputs == 1
         for region in _FilterScan._REGIONS:
             assert scan.ids.count(region) == 1, region
+
+    def test_search_input_targets_exist(self):
+        """The input's hx-include carries type/subtype/sort; a renamed id would drop them."""
+        client, patches = _make_client()
+        try:
+            body = client.get(self._URL).text
+        finally:
+            _stop(patches)
+        tag = re.search(r'<input[^>]*name="q"[^>]*>', body, re.DOTALL).group(0)
+        refs = dict(re.findall(r'(hx-target|hx-include|hx-indicator)="#([\w-]+)"', tag))
+        assert set(refs) == {"hx-target", "hx-include", "hx-indicator"}
+        scan = _FilterScan()
+        scan.feed(body)
+        for attr, ref in refs.items():
+            assert scan.ids.count(ref) == 1, (attr, ref)
+        assert refs["hx-include"] == "filter-form"
+        assert set(scan.hidden["filter-form"]) == {"type", "subtype", "sort"}
 
     def test_full_page_keeps_the_kind_wrapper_when_hidden(self):
         scan = self._scan("/entities?q=lodge", htmx=False)

@@ -4,6 +4,8 @@
    its links with the typed q. The search input is never in here: swapping it
    mid-typing would drop focus and the caret. #}
 
+{# The search input in entities.html sends these hidden inputs via
+   hx-include="#filter-form": keep the id in step with it. #}
 {% macro type_filter(oob=false) %}
 <div class="flex gap-1 items-center flex-wrap" id="filter-form"{% if oob %} hx-swap-oob="true"{% endif %}>
     <input type="hidden" name="type" value="{{ entity_type }}" />
