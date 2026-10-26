@@ -252,16 +252,17 @@ def test_vscode_starts_claude_with_the_declared_session_spec():
 
 
 # SocratiCode 1.14.0 dist/constants.js + services/docker.js: the names it looks
-# up, the volumes it mounts, and the container side of each port it publishes.
+# up, the volumes it mounts, and the ports it reaches them on (QDRANT_PORT,
+# QDRANT_GRPC_PORT, OLLAMA_PORT defaults) — here bound to loopback.
 SOCRATICODE_CONTAINERS = {
     "socraticode-qdrant": {
         "volume": "socraticode_qdrant_data:/qdrant/storage",
-        "ports": {"6333", "6334"},
+        "publish": {"127.0.0.1:16333:6333", "127.0.0.1:16334:6334"},
         "env": {"QDRANT__TELEMETRY_DISABLED=true"},
     },
     "socraticode-ollama": {
         "volume": "socraticode_ollama_data:/root/.ollama",
-        "ports": {"11434"},
+        "publish": {"127.0.0.1:11435:11434"},
         "env": set(),
     },
 }
@@ -289,12 +290,11 @@ def test_socraticode_recreate_binds_loopback_and_keeps_the_volume(name):
     runs = _doc_docker_runs()
     assert name in runs, f"docs/MEMORY_PRESSURE.md carries no `docker run --name {name}`"
     argv, want = runs[name], SOCRATICODE_CONTAINERS[name]
-    publishes = _opts(argv, "-p")
-    assert {p.rsplit(":", 1)[-1] for p in publishes} == want["ports"], publishes
-    for p in publishes:
-        assert p.startswith("127.0.0.1:"), (
-            f"{name} publishes {p!r} — on every interface, so to every tailnet peer"
-        )
+    publishes = set(_opts(argv, "-p"))
+    assert publishes == want["publish"], (
+        f"{name} publishes {sorted(publishes)}, want {sorted(want['publish'])}: no host IP "
+        "reaches every tailnet peer, and another host port is one SocratiCode never dials"
+    )
     assert want["volume"] in _opts(argv, "-v"), (
         f"{name} does not mount {want['volume']!r}, SocratiCode's volume — the index is lost"
     )
