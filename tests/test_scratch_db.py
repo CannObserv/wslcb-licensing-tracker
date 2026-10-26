@@ -310,7 +310,7 @@ class TestSweep:
 @pytest.fixture
 def dsn(pg_engine, pg_url):
     """The migrated test database, as libpq sees it (skips without PG)."""
-    return pg_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return scratch_db.libpq(pg_url)
 
 
 class Recording:

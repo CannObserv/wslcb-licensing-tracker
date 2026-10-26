@@ -24,11 +24,6 @@ from scratch_db import psql
 HOST = "rehearsal-host"
 
 
-def _libpq(url: str) -> str:
-    """SQLAlchemy's ``postgresql+asyncpg://`` as a libpq DSN."""
-    return url.replace("postgresql+asyncpg://", "postgresql://", 1)
-
-
 def _counts(dsn: str, tables: list[str]) -> dict[str, str]:
     return {t: psql(dsn, f"SELECT count(*) FROM {t}") for t in tables}
 
@@ -36,7 +31,7 @@ def _counts(dsn: str, tables: list[str]) -> dict[str, str]:
 @pytest.fixture
 def source_dsn(pg_engine, pg_url):
     """The migrated test database, as libpq sees it."""
-    return _libpq(pg_url)
+    return scratch_db.libpq(pg_url)
 
 
 @pytest.fixture

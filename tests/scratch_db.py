@@ -92,6 +92,11 @@ def psql(dsn: str, sql: str) -> str:
     return result.stdout.strip()
 
 
+def libpq(url: str) -> str:
+    """SQLAlchemy's ``postgresql+asyncpg://`` as a libpq DSN."""
+    return url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+
 def with_database(dsn: str, name: str) -> str:
     """``dsn`` pointed at database ``name``, query string kept."""
     return re.sub(r"/[^/?]+(\?|$)", f"/{name}\\1", dsn, count=1)
