@@ -143,6 +143,7 @@ wslcb-licensing-tracker/
 │       ├── results.html           # Search results partial (HTMX)
 │       ├── record_table.html      # Shared record table (results + entity pages)
 │       ├── entities_results.html  # Entities results partial (HTMX)
+│       ├── entities_filters.html  # Entities filter-card macros; swapped out of band on live search (#215)
 │       ├── classification_badge.html # Entity type chip + public provenance badge macros (#209)
 │       ├── entity_admin_panel.html # Entity-page classification panel, admins only (#208)
 │       ├── entity_classification_forms.html # Classification action form macros (#208)
