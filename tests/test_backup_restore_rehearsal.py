@@ -7,15 +7,19 @@ and schema version — and whether a truncated real archive is refused. Ported
 from watcher's ``tests/ops/test_backup_restore_rehearsal.py``.
 
 Needs ``TEST_DATABASE_URL`` (skips without it, like every PG test here) and a
-role that may CREATE DATABASE, for the scratch restore target.
+role that may CREATE DATABASE, for the scratch restore target. That target's
+lifecycle — named, dropped past autovacuum, swept when leaked — is
+``scratch_db``'s (#202).
 """
 
-import os
 import subprocess
 from datetime import UTC, datetime
+from functools import partial
 
 import pytest
+import scratch_db
 from gcs_fakes import FakeBucket, FakeClient
+from scratch_db import psql
 
 HOST = "rehearsal-host"
 
@@ -25,24 +29,8 @@ def _libpq(url: str) -> str:
     return url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
-def _with_db(dsn: str, name: str) -> str:
-    return dsn.rsplit("/", 1)[0] + f"/{name}"
-
-
-def _psql(dsn: str, sql: str) -> str:
-    # Fixed argv, the SQL the test's own; psql from PATH, as the job's pg_dump is.
-    argv = ["psql", "--no-psqlrc", "-qAt", "-v", "ON_ERROR_STOP=1", f"--dbname={dsn}", "-c", sql]
-    result = subprocess.run(  # noqa: S603
-        argv,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
 def _counts(dsn: str, tables: list[str]) -> dict[str, str]:
-    return {t: _psql(dsn, f"SELECT count(*) FROM {t}") for t in tables}
+    return {t: psql(dsn, f"SELECT count(*) FROM {t}") for t in tables}
 
 
 @pytest.fixture
@@ -53,12 +41,20 @@ def source_dsn(pg_engine, pg_url):
 
 @pytest.fixture
 def scratch_dsn(source_dsn):
-    """An empty database to restore into, dropped afterwards."""
-    name = f"wslcb_test_restore_{os.getpid()}"
-    _psql(source_dsn, f"DROP DATABASE IF EXISTS {name}")
-    _psql(source_dsn, f"CREATE DATABASE {name}")
-    yield _with_db(source_dsn, name)
-    _psql(source_dsn, f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    """An empty database to restore into, always dropped afterwards.
+
+    Named per pid namespace and pid (``scratch_db.name``). Setup first sweeps
+    what dead runs leaked; a teardown drop that loses to a backend it cannot
+    end warns ``ScratchDatabaseLeaked`` rather than erroring a test that
+    passed, and the next run's sweep reclaims it (#202).
+    """
+    run = partial(psql, source_dsn)
+    name = scratch_db.name()
+    scratch_db.sweep(run)
+    scratch_db.drop(run, name)
+    run(f"CREATE DATABASE {name}")
+    yield scratch_db.with_database(source_dsn, name)
+    scratch_db.drop(run, name)
 
 
 @pytest.fixture
@@ -86,7 +82,7 @@ def test_round_trip(client, source_dsn, scratch_dsn, tmp_path):
     """Dump, ship, fetch by --latest, restore: same schema version, same rows."""
     from wslcb_licensing_tracker import restore
 
-    _psql(
+    psql(
         source_dsn,
         "INSERT INTO scrape_log (started_at, status) VALUES (now(), 'rehearsal')",
     )
@@ -99,7 +95,7 @@ def test_round_trip(client, source_dsn, scratch_dsn, tmp_path):
 
     tables = ["alembic_version", "license_records", "sources", "record_sources", "scrape_log"]
     assert _counts(scratch_dsn, tables) == _counts(source_dsn, tables)
-    head = _psql(scratch_dsn, "SELECT version_num FROM alembic_version")
+    head = psql(scratch_dsn, "SELECT version_num FROM alembic_version")
     assert head == summary["database"]["alembic_head"]
 
 
@@ -123,11 +119,31 @@ def test_failed_restore_leaves_target_untouched(client, source_dsn, scratch_dsn,
     _ship(client, source_dsn, tmp_path)
     key = restore.latest_key(client, "dumps", HOST)
     path = restore.fetch(client, "dumps", key, tmp_path / "fetched", runner=subprocess.run)
-    _psql(scratch_dsn, "CREATE TABLE sources (blocker int)")  # collides mid-restore
+    psql(scratch_dsn, "CREATE TABLE sources (blocker int)")  # collides mid-restore
     with pytest.raises(restore.RestoreError):
         restore.restore_into(path, scratch_dsn, run_as=None, runner=subprocess.run)
-    tables = _psql(
+    tables = psql(
         scratch_dsn,
         "SELECT string_agg(tablename, ',') FROM pg_tables WHERE schemaname = 'public'",
     )
     assert tables == "sources"
+
+
+@pytest.fixture
+def leaked(source_dsn):
+    """A dead run's scratch database, already there when ``scratch_dsn`` sets up."""
+    run = partial(psql, source_dsn)
+    name = scratch_db.name(pid=scratch_db.dead_pid())
+    run(f"CREATE DATABASE {name}")
+    yield name
+    scratch_db.drop(run, name)  # already swept, unless the test failed
+
+
+def test_setup_names_this_runs_database_and_sweeps_a_dead_runs(leaked, source_dsn, scratch_dsn):
+    """#202: a teardown that loses to autovacuum leaks; the next setup reclaims.
+
+    ``leaked`` is listed first so pytest creates it before ``scratch_dsn`` sweeps.
+    """
+    assert scratch_dsn == scratch_db.with_database(source_dsn, scratch_db.name())
+    found = psql(source_dsn, f"SELECT count(*) FROM pg_database WHERE datname = '{leaked}'")
+    assert found == "0"

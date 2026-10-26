@@ -258,6 +258,8 @@ wslcb-licensing-tracker/
 │   ├── test_restore.py          # --latest across tiers, suspect names, verified fetch (#185)
 │   ├── test_cli_backup.py       # `wslcb ops backup|restore|restore-archive` (#185)
 │   ├── test_backup_restore_rehearsal.py  # Real pg_dump → fake bucket → pg_restore round trip (#185)
+│   ├── scratch_db.py            # Rehearsal scratch DB: pid-namespaced name, drop past autovacuum, leak sweep (#202)
+│   ├── test_scratch_db.py       # scratch_db drop fallback/retry/leak warning; real stray-session drop + sweep (#202)
 │   ├── test_infra_backup_units.py  # wslcb-backup unit sandbox + timer pins (#185)
 │   ├── test_infra_scrape_unit.py   # scrape check-in drop-in + monitor timing pins (#196)
 │   ├── test_infra_classify_unit.py # classify timer + check-in drop-in + monitor window pins (#207)
