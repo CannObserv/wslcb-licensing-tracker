@@ -956,7 +956,9 @@ class TestEntitiesLiveSearchFilters:
         scan = self._scan("/entities?q=lodge&type=person", htmx=True)
         assert scan.oob["entities-kinds"] == "true"
         assert scan.links["entities-kinds"] == []
-        assert all(link["q"] == "lodge" for link in scan.links["filter-form"])
+        carried = scan.links["filter-form"] + scan.links["entities-sort"]
+        assert len(carried) == 5
+        assert all(link["q"] == "lodge" for link in carried)
         assert scan.hidden["filter-form"] == {"type": "person", "subtype": "", "sort": "count"}
 
     def test_full_page_renders_the_same_links_without_oob(self):
