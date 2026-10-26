@@ -274,8 +274,10 @@ def _doc_docker_runs() -> dict[str, list[str]]:
     runs = {}
     for block in re.findall(r"^```[^\n]*\n(.*?)^```", text, re.MULTILINE | re.DOTALL):
         for line in block.splitlines():
-            if line.strip().startswith("docker run "):
-                argv = shlex.split(line)
+            if not line.strip().startswith("docker run "):
+                continue
+            argv = shlex.split(line)
+            if "--name" in argv:  # an unnamed run is not one SocratiCode looks up
                 runs[argv[argv.index("--name") + 1]] = argv
     return runs
 
