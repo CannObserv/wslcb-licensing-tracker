@@ -33,9 +33,22 @@ TERMINATE_REFUSED = (
 )
 
 
+# FORCE's other 42501, measured with a postgres session held on the database.
+SUPERUSER_REFUSED = (
+    "ERROR:  42501: permission denied to terminate process\n"
+    "DETAIL:  Only roles with the SUPERUSER attribute may terminate processes of roles "
+    "with the SUPERUSER attribute.\n"
+)
+
+
 def refused(sql: str) -> PsqlError:
     """The 16.15 server's answer to FORCE with an autovacuum worker on the database."""
     return PsqlError(sql, 1, TERMINATE_REFUSED)
+
+
+def refused_superuser(sql: str) -> PsqlError:
+    """Its answer with a superuser's session on it: same SQLSTATE, other DETAIL."""
+    return PsqlError(sql, 1, SUPERUSER_REFUSED)
 
 
 def in_use(sql: str) -> PsqlError:
@@ -221,12 +234,21 @@ class TestDrop:
         assert run.sent == [forced(NAME), forced(NAME)]
         assert sleeps == [scratch_db.BACKOFF_SECONDS]
 
-    def test_a_database_that_stays_in_use_warns_naming_it_and_who_holds_it(self) -> None:
+    @pytest.mark.parametrize(
+        ("refusal", "holder"),
+        [
+            # What the test role saw of each: a worker has no usename and no
+            # backend_type; a superuser's session shows its usename only.
+            (refused, "598125|NULL|NULL|<insufficient privilege>"),
+            (refused_superuser, "598125|postgres|NULL|<insufficient privilege>"),
+        ],
+        ids=["autovacuum-worker", "superuser-session"],
+    )
+    def test_a_database_that_stays_in_use_warns_naming_it_and_who_holds_it(
+        self, refusal, holder
+    ) -> None:
         sleeps = Sleeps()
-        # What the test role sees of a backend it may not inspect: no usename,
-        # no backend_type (an autovacuum worker, or another role's session).
-        holder = "598125|NULL|NULL|<insufficient privilege>"
-        run = FakeRun(*[refused, in_use] * scratch_db.ATTEMPTS, holder)
+        run = FakeRun(*[refusal, in_use] * scratch_db.ATTEMPTS, holder)
         with pytest.warns(ScratchDatabaseLeaked, match=NAME) as caught:
             assert scratch_db.drop(run, NAME, sleep=sleeps) is False
 
