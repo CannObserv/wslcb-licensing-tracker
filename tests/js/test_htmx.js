@@ -6,7 +6,7 @@
  * See htmx_harness.js for the server, the jsdom shims and how a reload is observed.
  */
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const H = require('./htmx_harness');
 
@@ -162,6 +162,15 @@ describe('htmx under jsdom (#232)', () => {
   });
 
   describe('Back shows the URL\'s query in every control (#231)', () => {
+    // Every request a Back test makes (reloads, static assets) must hit a fixture.
+    let missesBefore;
+    beforeEach(() => {
+      missesBefore = server.misses.length;
+    });
+    afterEach(() => {
+      assert.deepEqual(server.misses.slice(missesBefore), []);
+    });
+
     it('/entities: the search box matches q on each Back', async () => {
       const page = await H.openPage(server, ENTITIES_START);
       opened.push(page);
@@ -221,6 +230,7 @@ describe('htmx under jsdom (#232)', () => {
       assert.deepEqual(page.restores, []);
       assert.equal(page.reloads.length, 2);
       assert.equal(page.win.localStorage.getItem('htmx-history-cache'), null);
+      assert.deepEqual(page.errors, []);
     });
 
     it('ignores and purges a snapshot cached before the deploy', async () => {
