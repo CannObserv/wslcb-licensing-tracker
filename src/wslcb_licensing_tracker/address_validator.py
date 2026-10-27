@@ -1115,7 +1115,13 @@ async def refresh_addresses(
     rows = (
         (
             await conn.execute(
-                select(locations.c.id, locations.c.raw_address)
+                # The flag paces unplaced rows and skips them after a
+                # retry-later, as in a backfill (#195 CR 7).
+                select(
+                    locations.c.id,
+                    locations.c.raw_address,
+                    _no_determination().label("no_determination"),
+                )
                 .where(locations.c.raw_address.isnot(None))
                 .where(locations.c.raw_address != "")
             )

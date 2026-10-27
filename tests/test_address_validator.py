@@ -39,6 +39,7 @@ from wslcb_licensing_tracker.address_validator import (
     backfill_addresses,
     no_determination_used,
     process_location,
+    refresh_addresses,
     refresh_specific_addresses,
     standardize_location,
     validate_location,
@@ -2208,6 +2209,31 @@ class TestValidationsUsed:
 # ---------------------------------------------------------------------------
 # refresh_specific_addresses — budgeted remediation runs (#189/#190)
 # ---------------------------------------------------------------------------
+
+
+class TestRefreshAllPacing:
+    """A full refresh reaches every unplaced row: it gets the same spacing and
+    retry-later skip as a backfill (#195 CR 7)."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_rows_carry_the_no_determination_flag(self, pg_engine):
+        (nd,) = await _seed(pg_engine, "FULL REFRESH ND", status="undetermined")
+        (plain,) = await _seed(pg_engine, "FULL REFRESH PLAIN", status="invalid")
+        seen = {}
+
+        async def fake_batch(conn, rows, label, **kwargs):
+            seen.update({row["id"]: row["no_determination"] for row in rows})
+            return 0
+
+        mod = "wslcb_licensing_tracker.address_validator"
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.get_api_key", return_value="test-key"),
+                patch(f"{mod}._validate_batch", side_effect=fake_batch),
+            ):
+                await refresh_addresses(conn, rate_limit=0)
+        assert seen[nd] is True
+        assert seen[plain] is False
 
 
 class TestRefreshSpecificBudget:
