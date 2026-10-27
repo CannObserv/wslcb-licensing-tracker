@@ -46,13 +46,18 @@ class TestTimer:
         assert timer["Persistent"] == ["true"]
 
     def test_runs_between_the_scrapes(self):
-        """The run takes its share first; the next scrape hook finds the reserve."""
+        """The run takes its share first; the next scrape hook finds the reserve.
+
+        Bounded by the drop-in's timeout, the longest a run can last, so a run
+        can never still hold the validation lock when the 06:30 scrape's hook
+        starts (CR 12).
+        """
         scrapes = sorted(_hour(c) for c in _directives(SCRAPE_TIMER, "Timer")["OnCalendar"])
         (calendar,) = _directives(TIMER, "Timer")["OnCalendar"]
         jitter = _seconds(_directives(TIMER, "Timer")["RandomizedDelaySec"][0]) / 3600
-        run = RUN_BUDGET_SECONDS / 3600
+        (timeout,) = _directives(DROPIN, "Service")["TimeoutStartSec"]
         assert scrapes[0] < _hour(calendar)
-        assert _hour(calendar) + jitter + run <= scrapes[1]
+        assert _hour(calendar) + jitter + _seconds(timeout) / 3600 <= scrapes[1]
 
 
 class TestDropin:
