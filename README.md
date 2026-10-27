@@ -59,7 +59,7 @@ Each record includes:
 | Database | [PostgreSQL](https://www.postgresql.org/) with [tsvector](https://www.postgresql.org/docs/current/datatype-textsearch.html) + [pg_trgm](https://www.postgresql.org/docs/current/pgtrgm.html) full-text search |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) with [Jinja2](https://jinja.palletsprojects.com/) templates |
 | Frontend | Server-rendered HTML, [HTMX](https://htmx.org/), [Tailwind CSS](https://tailwindcss.com/) (pre-built CLI, custom brand palette) |
-| Scheduling | systemd timers (scraper twice-daily, address validation weekly) |
+| Scheduling | systemd timers (scraper twice-daily, address validation daily) |
 
 ## Logging
 
@@ -196,7 +196,8 @@ wslcb-licensing-tracker/
 │   ├── wslcb-task@classify-entities.service.d/ # Classify check-in drop-in: key credential, 1 h timeout (#207; key file first)
 │   ├── wslcb-healthcheck.service   # Health check service (restarts web on failure)
 │   ├── wslcb-healthcheck.timer     # Health check timer (every 5 minutes)
-│   ├── wslcb-address-validation.timer # Weekly address backfill timer
+│   ├── wslcb-address-validation.timer # Daily address renewal timer, renew-addresses (#195)
+│   ├── wslcb-task@renew-addresses.service.d/ # Daily renewal: 90 min timeout (#195)
 │   ├── wslcb-backup.service        # Nightly DB + data/ backup to GCS (#185; see docs/RECOVERY.md)
 │   ├── wslcb-backup.timer          # Daily at 08:17 Pacific, after the morning scrape
 │   └── sudoers.d-wslcb-healthcheck # sudoers snippet for passwordless restart
@@ -264,6 +265,7 @@ wslcb-licensing-tracker/
 │   ├── test_infra_backup_units.py  # wslcb-backup unit sandbox + timer pins (#185)
 │   ├── test_infra_scrape_unit.py   # scrape check-in drop-in + monitor timing pins (#196)
 │   ├── test_infra_classify_unit.py # classify timer + check-in drop-in + monitor window pins (#207)
+│   ├── test_infra_address_validation_unit.py # daily renew-addresses timer + timeout drop-in pins (#195)
 │   ├── test_jev_client.py       # Jev transport: request shape, retries, malformed answers (#207)
 │   ├── test_jev_classifier.py   # Classify-once runs, lock, failures, check-in payload (require TEST_DATABASE_URL)
 │   ├── gcs_fakes.py             # SDK-faithful google-cloud-storage fakes (#185)
@@ -357,6 +359,7 @@ Then visit [http://localhost:8000](http://localhost:8000).
 sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
      infra/wslcb-address-validation.timer \
      infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
+sudo cp -r infra/wslcb-task@renew-addresses.service.d /etc/systemd/system/
 sudo cp infra/sudoers.d-wslcb-healthcheck /etc/sudoers.d/wslcb-healthcheck
 sudo chmod 440 /etc/sudoers.d/wslcb-healthcheck
 
@@ -459,6 +462,8 @@ Locations are validated at scrape time. When a new record references an already-
 ```bash
 uv run wslcb ingest backfill-addresses
 ```
+
+The daily timer runs `renew-addresses`, which also renews early from due-date peaks within the rolling 24h budget (#195; see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#renewal-ttl--pacing)).
 
 To re-validate all locations (e.g., after the validation service is updated):
 
@@ -629,7 +634,7 @@ Test structure:
 | `tests/test_jev_classifier.py` | Jev runs — classify once, modes, advisory lock, failure stops, run rows, check-in payload (require `TEST_DATABASE_URL`) |
 | `tests/test_integrity.py` | Integrity checks — all check and fix functions (require `TEST_DATABASE_URL`) |
 | `tests/test_scraper.py` | Scraper — content hash deduplication, redundant data cleanup, run history + freshness |
-| `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill |
+| `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill; renewal TTLs, early renewal and a walked rolling 24h budget (#195) |
 | `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
 | `tests/test_substances.py` | Regulated substance CRUD — get, add, remove, set-endorsements |
 | `tests/conftest.py` | Shared fixtures: sample record dicts, pg_conn/pg_engine (skipped without TEST_DATABASE_URL) |

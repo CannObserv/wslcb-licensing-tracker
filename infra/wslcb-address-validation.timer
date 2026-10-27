@@ -1,9 +1,14 @@
 [Unit]
-Description=Weekly address validation backfill (Sunday 2:00 AM Pacific)
+Description=Daily address validation and renewal (2:00 AM Pacific)
 
 [Timer]
-Unit=wslcb-task@backfill-addresses.service
-OnCalendar=Sun *-*-* 02:00:00 America/Los_Angeles
+# Runs `wslcb renew-addresses` (#195): new and due locations, then renewals
+# pulled forward from due days over the fill rate, spending the rolling 24h
+# limit less the hooks' reserve. Daily, because spare budget is lost each day
+# nothing spends it; between the 00:30 and 06:30 scrapes, so the next hook
+# finds the reserve. Was weekly `backfill-addresses` until #195.
+Unit=wslcb-task@renew-addresses.service
+OnCalendar=*-*-* 02:00:00 America/Los_Angeles
 Persistent=true
 RandomizedDelaySec=300
 
