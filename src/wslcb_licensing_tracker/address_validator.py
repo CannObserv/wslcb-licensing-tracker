@@ -20,7 +20,8 @@ periodic commits) because it is a long-running bulk operation.
 import asyncio
 import logging
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
 from time import monotonic
@@ -106,6 +107,11 @@ EARLY_RENEWAL_FLOOR_DAYS = 35
 # keeps its status (#187) and its Google call goes unpredicted.
 NO_DETERMINATION_DAILY_LIMIT = 40
 GOOGLE_SPACING_SECONDS = 13.0
+
+# Every run that spends the budget computes it from the same rolling count, so
+# two at once could each spend all of it. They hold this session-level advisory
+# lock; a run that finds it held skips, and the next run catches up (#195).
+VALIDATION_LOCK_KEY = 0x75737073  # "usps"
 
 # _validate_batch stops after this many consecutive rows get no answer (#183).
 # In normal operation a no-answer is rare (every HTTP 200 is an answer; #187),
@@ -771,6 +777,54 @@ async def _validate_batch(  # noqa: C901 — one loop: savepoint, breakers, paci
     return succeeded
 
 
+@asynccontextmanager
+async def _validation_lock(conn: AsyncConnection, *, take: bool = True) -> AsyncIterator[bool]:
+    """Hold VALIDATION_LOCK_KEY for a run that spends the budget; yield whether held.
+
+    Session-level, on the run's own connection, so it survives the batch's
+    commits. With *take* false (a dry run, or standardize-only) it yields True
+    and takes nothing.
+    """
+    if not take:
+        yield True
+        return
+    held = bool(
+        (await conn.execute(select(func.pg_try_advisory_lock(VALIDATION_LOCK_KEY)))).scalar_one()
+    )
+    await conn.commit()  # the lock is session-level; end the transaction that took it
+    if not held:
+        logger.info(
+            "Another run holds the validation lock; skipping, since it spends the same"
+            " rolling budget (the next run catches up)"
+        )
+    try:
+        yield held
+    finally:
+        if held:
+            await _release_validation_lock(conn)
+
+
+async def _release_validation_lock(conn: AsyncConnection) -> None:
+    """Release on the connection that took it, as jev_classifier does.
+
+    Rolls back first: an aborted transaction rejects the unlock. If the release
+    can't be confirmed, the connection is invalidated (closing the session
+    releases the lock) rather than returned to the pool still holding it.
+    """
+    try:
+        await conn.rollback()
+        released = (
+            await conn.execute(select(func.pg_advisory_unlock(VALIDATION_LOCK_KEY)))
+        ).scalar_one()
+        await conn.commit()
+        if released:
+            return
+        logger.error("Validation lock was not held at release; invalidating the connection")
+    except Exception:
+        logger.exception("Could not release the validation lock; invalidating the connection")
+    await conn.invalidate()
+
+
 def _answered_within(now: datetime) -> tuple[ColumnElement[bool], ...]:
     """Rows answered in the VALIDATION_WINDOW before *now*."""
     attempted = locations.c.address_validation_attempted_at
@@ -946,7 +1000,8 @@ async def backfill_addresses(  # noqa: PLR0913 — a budget, a reserve, a level,
     run's remaining no-determination rows after one retry-later (#195).
 
     *limit* caps the run (a canary); *dry_run* logs the selection and calls
-    nothing.
+    nothing. A validating run holds the validation lock (VALIDATION_LOCK_KEY)
+    and skips if another run holds it; a dry run takes no lock.
 
     Returns:
         Number of locations successfully standardized.
@@ -955,6 +1010,34 @@ async def backfill_addresses(  # noqa: PLR0913 — a budget, a reserve, a level,
         logger.error("No API key configured for address validation")
         return 0
 
+    take = is_validation_enabled() and not dry_run
+    async with _validation_lock(conn, take=take) as held:
+        if not held:
+            return 0
+        return await _backfill(
+            conn,
+            batch_size,
+            rate_limit,
+            daily_limit,
+            reserve=reserve,
+            early_level=early_level,
+            limit=limit,
+            dry_run=dry_run,
+        )
+
+
+async def _backfill(  # noqa: PLR0913 — backfill_addresses' knobs, passed through
+    conn: AsyncConnection,
+    batch_size: int,
+    rate_limit: float,
+    daily_limit: int,
+    *,
+    reserve: int,
+    early_level: int | None,
+    limit: int | None,
+    dry_run: bool,
+) -> int:
+    """:func:`backfill_addresses` once it holds the validation lock (or needs none)."""
     if not is_validation_enabled():
         # Standardize-only: attempted_at is never set here, so key on std_at.
         stmt = select(locations.c.id, locations.c.raw_address).where(
@@ -1063,7 +1146,8 @@ async def refresh_specific_addresses(  # noqa: PLR0913 — budget is two knobs
     Rows run in the order of *location_ids*. With *daily_limit* the run takes
     only what the rolling 24h budget has left after *reserve* calls kept back
     for the scrape hooks, so a remediation run can be scheduled without
-    starving them or overrunning the upstream quota (#189/#190).
+    starving them or overrunning the upstream quota (#189/#190). A budgeted
+    run holds the validation lock and skips if another run holds it (#195).
 
     Args:
         conn: Async SQLAlchemy connection.
@@ -1103,27 +1187,49 @@ async def refresh_specific_addresses(  # noqa: PLR0913 — budget is two knobs
     }
     rows = [found[i] for i in dict.fromkeys(location_ids) if i in found]
 
-    if daily_limit is not None:
-        used = await validations_used(conn, datetime.now(UTC))
-        budget = max(0, daily_limit - used - reserve)
-        if budget == 0:
-            logger.info(
-                "Refresh budget spent (%d used in 24h, limit %d, %d reserved); %d ids wait",
-                used,
-                daily_limit,
-                reserve,
-                len(rows),
-            )
+    if daily_limit is None:
+        return await _validate_batch(
+            conn,
+            rows,
+            "Refreshing specific addresses",
+            batch_size=batch_size,
+            rate_limit=rate_limit,
+        )
+    async with _validation_lock(conn) as held:
+        if not held:
             return 0
+        return await _refresh_budgeted(conn, rows, batch_size, rate_limit, daily_limit, reserve)
+
+
+async def _refresh_budgeted(  # noqa: PLR0913 — refresh_specific_addresses' knobs
+    conn: AsyncConnection,
+    rows: list,
+    batch_size: int,
+    rate_limit: float,
+    daily_limit: int,
+    reserve: int,
+) -> int:
+    """A budgeted :func:`refresh_specific_addresses` run, under the validation lock."""
+    used = await validations_used(conn, datetime.now(UTC))
+    budget = max(0, daily_limit - used - reserve)
+    if budget == 0:
         logger.info(
-            "Budget: %d of %d ids (%d used in 24h, limit %d, %d reserved)",
-            min(budget, len(rows)),
-            len(rows),
+            "Refresh budget spent (%d used in 24h, limit %d, %d reserved); %d ids wait",
             used,
             daily_limit,
             reserve,
+            len(rows),
         )
-        rows = rows[:budget]
+        return 0
+    logger.info(
+        "Budget: %d of %d ids (%d used in 24h, limit %d, %d reserved)",
+        min(budget, len(rows)),
+        len(rows),
+        used,
+        daily_limit,
+        reserve,
+    )
+    rows = rows[:budget]
 
     return await _validate_batch(
         conn,

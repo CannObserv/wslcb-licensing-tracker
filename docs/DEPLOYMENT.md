@@ -215,6 +215,10 @@ behind old rows that keep getting no answer.
 - `DAILY_VALIDATION_LIMIT = 450` caps answered `/validate` calls (rows with
   `attempted_at` in the last 24h) across the hooks, the daily run and any
   refresh run.
+- One validating run at a time: the hooks, the daily run and a budgeted
+  refresh each hold a Postgres advisory lock, so two can't both spend the
+  same budget. A run that finds it held logs `Another run holds the validation
+  lock` and skips; the next run catches up (#195).
 - Rows USPS couldn't place also ask Google (160/day, 5/min). Known ones run at
   most `NO_DETERMINATION_DAILY_LIMIT` (40) per rolling 24h, at least
   `GOOGLE_SPACING_SECONDS` (13) apart. After the first retry-later answer a run
