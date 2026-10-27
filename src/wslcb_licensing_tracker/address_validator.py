@@ -678,7 +678,7 @@ class _UnplacedRows:
             )
 
 
-async def _validate_batch(
+async def _validate_batch(  # noqa: C901 — one loop: savepoint, breakers, pacing, commits
     conn: AsyncConnection,
     rows: list,
     label: str,
@@ -729,7 +729,8 @@ async def _validate_batch(
         try:
             async with conn.begin_nested():
                 outcome = await _process_location(conn, location_id, address)
-            succeeded += outcome is LocationOutcome.WRITTEN
+            if outcome is LocationOutcome.WRITTEN:
+                succeeded += 1
             no_answer_streak, retry_later_streak = _streaks(
                 outcome, no_answer_streak, retry_later_streak
             )
