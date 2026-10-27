@@ -209,6 +209,8 @@ wslcb-licensing-tracker/
 │   ├── conftest.py              # Shared fixtures (sample record dicts)
 │   ├── _support.py              # Directly-imported helpers (engine stamping for bare TestClient)
 │   ├── cli_helpers.py           # Shared helpers for the CLI test modules
+│   ├── htmx_fixtures.py         # Renders the htmx harness's pages from the templates (#232)
+│   ├── test_htmx_fixtures.py    # Checked-in harness fixtures match a fresh render (#232)
 │   ├── test_parser.py           # Parser function tests
 │   ├── test_diff_replay.py      # Chain replay of unified-diff archives (#151)
 │   ├── test_text_utils.py       # Pure-string normalization tests
@@ -281,7 +283,10 @@ wslcb-licensing-tracker/
 │   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224) ≥ advisory fix in lock + venv
 │   ├── test_warning_ratchet.py  # pyproject filterwarnings fail a run on a new RuntimeWarning / PytestWarning / own DeprecationWarning; one narrow starlette ignore, live only while httpx2 is absent (#216)
 │   ├── js/
-│   │   └── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
+│   │   ├── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
+│   │   ├── htmx_harness.js      # Serves rendered fixtures + static/ to jsdom running the vendored htmx (#232)
+│   │   ├── test_htmx.js         # htmx behaviour: /entities OOB live search (#215)
+│   │   └── fixtures/            # Pages rendered by tests/htmx_fixtures.py (regenerate, never hand-edit)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 └── docs/                   # Operations and architecture documentation
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
@@ -596,7 +601,10 @@ The project uses pytest with async PostgreSQL mocks and static HTML fixtures. Te
 ```bash
 uv run pytest tests/ -v              # coverage runs automatically
 uv run pytest tests/ -v --no-cov    # skip coverage for quick iteration
+npm test                             # JS tests (Node + jsdom), incl. the htmx harness
 ```
+
+The htmx harness (`tests/js/test_htmx.js`, #232) runs the vendored htmx under jsdom (there's no browser on the host) against pages rendered from the real templates. Those pages are checked in under `tests/js/fixtures/`. After a template change, regenerate them with `uv run python -m tests.htmx_fixtures`; `tests/test_htmx_fixtures.py` fails until you do.
 
 The project follows **red/green TDD**: every new feature and bug fix starts with a failing test, then the minimum code to make it pass, then refactoring.
 
@@ -637,6 +645,8 @@ Test structure:
 | `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill; renewal TTLs, early renewal and a walked rolling 24h budget (#195) |
 | `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
 | `tests/test_substances.py` | Regulated substance CRUD — get, add, remove, set-endorsements |
+| `tests/test_htmx_fixtures.py` | htmx harness fixtures are byte-identical to a fresh render of the templates (#232) |
+| `tests/js/test_htmx.js` | Vendored htmx under jsdom: `/entities` OOB live search (#215) |
 | `tests/conftest.py` | Shared fixtures: sample record dicts, pg_conn/pg_engine (skipped without TEST_DATABASE_URL) |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |
 

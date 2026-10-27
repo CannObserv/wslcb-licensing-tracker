@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search — WSLCB Licensing Tracker</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='13' cy='13' r='9' fill='none' stroke='%2317de6b' stroke-width='3'/%3E%3Cline x1='20' y1='20' x2='29' y2='29' stroke='%2317de6b' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/css/tailwind.css?v=fixture">
+    <meta name="htmx-config" content='{"refreshOnHistoryMiss":true}'>
+    <script src="/static/js/htmx.min.js?v=fixture"></script>
+</head>
+<body class="h-full bg-gray-50">
+    <nav aria-label="Main navigation" class="bg-white border-b border-gray-200 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center gap-3">
+                    <a href="/" class="flex items-center gap-2">
+                        <img src="/static/images/cannabis_observer-icon-square.svg" alt="Cannabis Observer" class="w-8 h-8">
+                        <span class="text-lg font-bold text-gray-900">WSLCB Licensing Tracker</span>
+                    </a>
+                </div>
+                
+                <div class="hidden md:flex items-center gap-4">
+                    <a href="/" class="text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
+                    <a href="/search" class="text-sm text-gray-600 hover:text-co-purple-700">Records</a>
+                    
+                </div>
+                
+                <button id="nav-toggle" type="button"
+                        class="md:hidden p-2 rounded-md text-gray-500 hover:text-co-purple hover:bg-gray-100"
+                        aria-expanded="false" aria-controls="mobile-nav" aria-label="Open navigation menu">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path id="nav-icon-open" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        <path id="nav-icon-close" class="hidden" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    
+    <div id="mobile-nav" class="hidden md:hidden border-t border-gray-200 bg-white">
+        <div class="px-4 py-3 space-y-1">
+            <a href="/" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
+            <a href="/search" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Records</a>
+            
+        </div>
+    </div>
+    </nav>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+<div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Search Records</h1>
+</div>
+
+<!-- Search & Filters -->
+<form id="search-form" action="/search" method="get"
+      hx-get="/search" hx-target="#results" hx-push-url="true" hx-indicator="#spinner">
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mb-6">
+        <div class="mb-4">
+            <input type="text" name="q" value="bar" placeholder="Search business name, license #, location, applicant..."
+                   aria-label="Search records"
+                   class="w-full rounded-md border-gray-300 shadow-sm focus:border-co-purple focus:ring-1 focus:ring-co-purple px-4 py-2 border">
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3">
+            <div>
+                <label for="section_type" class="block text-xs font-medium text-gray-500 mb-1">Record Type</label>
+                <select name="section_type" id="section_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                    <option value="">All Types</option>
+                    <option value="new_application" >New Application</option>
+                    <option value="approved" selected>Approved</option>
+                    <option value="discontinued" >Discontinued</option>
+                </select>
+            </div>
+            <div>
+                <label for="application_type" class="block text-xs font-medium text-gray-500 mb-1">Application Type</label>
+                <select name="application_type" id="application_type" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                    <option value="">All</option>
+                    
+                    <option value="ASSUMPTION" selected>ASSUMPTION</option>
+                    
+                    <option value="NEW APPLICATION" >NEW APPLICATION</option>
+                    
+                </select>
+            </div>
+            <!-- Regulated Substance shortcut (client-side only, no name attr) -->
+            <div>
+                <label for="regulated_substance" class="block text-xs font-medium text-gray-500 mb-1">Regulated Substance</label>
+                <select id="regulated_substance" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                    <option value="">All</option>
+                    
+                    <option value="1">Cannabis</option>
+                    
+                </select>
+            </div>
+            <!-- License Type — multi-select dropdown -->
+            <div class="relative" id="endorsement-filter">
+                <label class="block text-xs font-medium text-gray-500 mb-1">License Type</label>
+                <button type="button" id="endorsement-toggle"
+                        class="w-full text-left rounded-md border border-gray-300 shadow-sm text-sm px-3 py-1.5 bg-white flex items-center justify-between"
+                        aria-haspopup="listbox" aria-expanded="false">
+                    <span id="endorsement-label" class="truncate">All</span>
+                    <svg class="w-4 h-4 text-gray-400 flex-shrink-0 ml-1" fill="none" viewBox="0 0 20 20"><path stroke="currentColor" stroke-width="1.5" d="M6 8l4 4 4-4"/></svg>
+                </button>
+                <div id="endorsement-panel"
+                     class="hidden absolute left-0 z-20 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg">
+                    <div class="p-2 border-b border-gray-100">
+                        <input type="text" id="endorsement-search" placeholder="Filter…"
+                               class="w-full text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-co-purple">
+                    </div>
+                    <div class="overflow-y-auto max-h-60" role="listbox" aria-multiselectable="true">
+                        
+                        <label class="flex items-center gap-2 px-3 min-h-[44px] hover:bg-gray-50 cursor-pointer endorsement-option">
+                            <input type="checkbox" name="endorsement" value="BEER/WINE GIFT DELIVERY"
+                                   checked
+                                   class="rounded border-gray-300 accent-co-purple">
+                            <span class="text-sm text-gray-700 leading-tight">BEER/WINE GIFT DELIVERY</span>
+                        </label>
+                        
+                        <label class="flex items-center gap-2 px-3 min-h-[44px] hover:bg-gray-50 cursor-pointer endorsement-option">
+                            <input type="checkbox" name="endorsement" value="CANNABIS PRODUCER TIER 1"
+                                   
+                                   class="rounded border-gray-300 accent-co-purple">
+                            <span class="text-sm text-gray-700 leading-tight">CANNABIS PRODUCER TIER 1</span>
+                        </label>
+                        
+                        <label class="flex items-center gap-2 px-3 min-h-[44px] hover:bg-gray-50 cursor-pointer endorsement-option">
+                            <input type="checkbox" name="endorsement" value="CANNABIS RETAILER"
+                                   
+                                   class="rounded border-gray-300 accent-co-purple">
+                            <span class="text-sm text-gray-700 leading-tight">CANNABIS RETAILER</span>
+                        </label>
+                        
+                    </div>
+                    <div class="p-2 border-t border-gray-100">
+                        <button type="button" id="endorsement-clear"
+                                class="text-xs text-co-purple hover:text-co-purple-700">Clear selection</button>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <label for="state" class="block text-xs font-medium text-gray-500 mb-1">State</label>
+                <select name="state" id="state" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                    <option value="">All States</option>
+                    
+                    <option value="OR" selected>OR — Oregon</option>
+                    
+                    <option value="WA" >WA — Washington</option>
+                    
+                </select>
+            </div>
+            <div id="outcome-filter-wrapper" style="display:none">
+                <label for="outcome_status" class="block text-xs font-medium text-gray-500 mb-1">Outcome</label>
+                <select name="outcome_status" id="outcome_status" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                    <option value="">All</option>
+                    <option value="approved" >✅ Approved</option>
+                    <option value="discontinued" >🚫 Discontinued</option>
+                    <option value="pending" >⏳ Pending</option>
+                    <option value="data_gap" >📁 Data Unavailable</option>
+                    <option value="unknown" >❓ Unknown</option>
+                </select>
+            </div>
+            <div id="city-filter-wrapper">
+                <label for="city" class="block text-xs font-medium text-gray-500 mb-1">City</label>
+                <select name="city" id="city" class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+                    <option value="">All Cities</option>
+                    
+                    <option value="PORTLAND" selected>PORTLAND</option>
+                    
+                </select>
+            </div>
+            <div>
+                <label for="from_date" class="block text-xs font-medium text-gray-500 mb-1">From Date</label>
+                <input type="date" name="date_from" id="from_date" value="2026-02-01"
+                       class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+            </div>
+            <div>
+                <label for="to_date" class="block text-xs font-medium text-gray-500 mb-1">To Date</label>
+                <input type="date" name="date_to" id="to_date" value=""
+                       class="w-full rounded-md border-gray-300 shadow-sm text-sm px-3 py-1.5 border">
+            </div>
+        </div>
+        <div class="mt-3 flex items-center justify-between">
+            <a href="/search" class="text-sm text-gray-500 hover:text-gray-700">Clear filters</a>
+            <button type="submit"
+                    class="bg-co-purple text-white px-6 py-2 rounded-md hover:bg-co-purple-700 font-medium">
+                Search
+                <span id="spinner" class="htmx-indicator ml-1">⟳</span>
+            </button>
+        </div>
+    </div>
+    <!-- Substance→endorsement map for client-side pre-selection (injected here so it
+         is parsed after the checkbox DOM is available to the IIFE below) -->
+    <script>
+    const SUBSTANCE_ENDORSEMENTS = [{"display_order": 1, "endorsements": ["CANNABIS PRODUCER TIER 1", "CANNABIS RETAILER"], "id": 1, "name": "Cannabis"}];
+    </script>
+</form>
+
+<div id="results" aria-live="polite" aria-atomic="false">
+    <div class="mb-3 flex justify-between items-center">
+    <p class="text-sm text-gray-600">
+        <span class="font-semibold">1</span> record found
+        
+        — page 1 of 1
+        
+    </p>
+    
+    <a href="/api/v1/export?q=bar&amp;section_type=approved&amp;application_type=ASSUMPTION&amp;state=OR&amp;city=PORTLAND&amp;date_from=2026-02-01&amp;date_to=&amp;outcome_status=&amp;endorsement=BEER%2FWINE+GIFT+DELIVERY" class="text-sm text-co-purple hover:text-co-purple-700 font-medium">⤓ Export CSV</a>
+    
+</div>
+
+
+<div class="text-center py-12">
+    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+    </svg>
+    <h3 class="mt-2 text-sm font-medium text-gray-900">No records found</h3>
+    <p class="mt-1 text-sm text-gray-500">Try adjusting your search or filters.</p>
+</div>
+
+</div>
+
+<script src="/static/js/search.js?v=fixture"></script>
+
+    </main>
+    <footer class="border-t border-gray-200 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-2">
+            <div class="text-xs text-gray-500 flex items-center justify-center gap-1">
+                A project of
+                <a href="https://cannabis.observer/" class="inline-flex items-center gap-1 font-medium text-co-purple hover:text-co-purple-700" target="_blank" rel="noopener noreferrer">
+                    <img src="/static/images/cannabis_observer-icon-square.svg" alt="" class="w-4 h-4">
+                    Cannabis Observer
+                </a>
+                <span aria-hidden="true">🌱🏛️🔍</span>
+            </div>
+            <p class="text-xs text-gray-400 text-center">
+                Data sourced from the
+                <a href="https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp" class="underline" target="_blank" rel="noopener noreferrer">WA State Liquor &amp; Cannabis Board</a>.
+                This is an unofficial tracker. Updated twice daily.
+            </p>
+            <p class="text-[10px] text-gray-300 text-center font-mono">fixture</p>
+        </div>
+    </footer>
+<script>
+(function () {
+    const btn = document.getElementById('nav-toggle');
+    const menu = document.getElementById('mobile-nav');
+    const iconOpen = document.getElementById('nav-icon-open');
+    const iconClose = document.getElementById('nav-icon-close');
+
+    function closeMenu() {
+        menu.classList.add('hidden');
+        btn.setAttribute('aria-expanded', 'false');
+        iconOpen.classList.remove('hidden');
+        iconClose.classList.add('hidden');
+    }
+
+    btn.addEventListener('click', function () {
+        const open = menu.classList.toggle('hidden');
+        btn.setAttribute('aria-expanded', String(!open));
+        iconOpen.classList.toggle('hidden', !open);
+        iconClose.classList.toggle('hidden', open);
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !menu.classList.contains('hidden')) {
+            closeMenu();
+            btn.focus();
+        }
+    });
+}());
+</script>
+</body>
+</html>

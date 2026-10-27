@@ -1,0 +1,194 @@
+
+
+
+
+
+
+<div class="flex gap-1 items-center flex-wrap" id="filter-form" hx-swap-oob="true">
+    <input type="hidden" name="type" value="organization" />
+    <input type="hidden" name="subtype" value="tribe" />
+    <input type="hidden" name="sort" value="name" />
+    
+    
+    
+    
+    <a href="/entities?q=lo&amp;sort=name"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple">
+        All
+    </a>
+    
+    
+    
+    <a href="/entities?q=lo&amp;sort=name&amp;type=person"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple">
+        People
+    </a>
+    
+    
+    
+    <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=tribe"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-co-purple text-white border-co-purple">
+        Organizations
+    </a>
+    
+</div>
+
+
+<div class="flex gap-1 items-center" id="entities-sort" hx-swap-oob="true">
+    <span class="text-xs text-gray-400 mr-1">Sort:</span>
+    <a href="/entities?q=lo&amp;type=organization&amp;subtype=tribe&amp;sort=count"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple">
+        Most Active
+    </a>
+    <a href="/entities?q=lo&amp;type=organization&amp;subtype=tribe&amp;sort=name"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-co-purple text-white border-co-purple">
+        A–Z
+    </a>
+</div>
+
+
+<div id="entities-kinds" hx-swap-oob="true">
+    
+    <div class="flex gap-1 items-center flex-wrap mt-3" role="group" aria-label="Organization kind">
+        <span class="text-xs text-gray-400 mr-1">Kind:</span>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            All kinds
+        </a>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=business"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Business
+        </a>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=nonprofit"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Nonprofit
+        </a>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=trust"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Trust
+        </a>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=estate"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Estate
+        </a>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=tribe"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-co-purple text-white border-co-purple"
+           aria-current="true">
+            Tribe
+        </a>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=government"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Government
+        </a>
+        
+        
+        <a href="/entities?q=lo&amp;sort=name&amp;type=organization&amp;subtype=unknown"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Unspecified
+        </a>
+        
+    </div>
+    
+</div>
+
+
+<div class="text-sm text-gray-500 mb-3">
+    
+        3 entities
+    
+    
+        <a href="/entities" class="ml-2 text-co-purple hover:text-co-purple-700">Clear filters</a>
+    
+</div>
+
+
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div class="overflow-x-auto scroll-shadow-right">
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider w-full">Name</th>
+                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                <th class="px-4 py-3 text-right font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Records</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+            
+            <tr class="hover:bg-gray-50 transition">
+                <td class="px-4 py-3">
+                    <a href="/entity/1" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">
+                        LODGE HALL TRIBE
+                    </a>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="inline-flex items-center gap-1"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Organization</span> </span>
+                </td>
+                <td class="px-4 py-3 text-right text-gray-700 font-medium">3</td>
+            </tr>
+            
+            <tr class="hover:bg-gray-50 transition">
+                <td class="px-4 py-3">
+                    <a href="/entity/2" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">
+                        LOCAL LOGGING CO
+                    </a>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="inline-flex items-center gap-1"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Organization</span> </span>
+                </td>
+                <td class="px-4 py-3 text-right text-gray-700 font-medium">2</td>
+            </tr>
+            
+            <tr class="hover:bg-gray-50 transition">
+                <td class="px-4 py-3">
+                    <a href="/entity/3" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">
+                        LOTUS LLC
+                    </a>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="inline-flex items-center gap-1"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Organization</span> </span>
+                </td>
+                <td class="px-4 py-3 text-right text-gray-700 font-medium">1</td>
+            </tr>
+            
+        </tbody>
+    </table>
+    </div>
+</div>
+
+
+
+

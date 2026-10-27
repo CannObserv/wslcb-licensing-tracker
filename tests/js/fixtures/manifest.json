@@ -1,0 +1,74 @@
+[
+  {
+    "url": "/entities?type=organization&subtype=tribe&sort=name",
+    "hx": false,
+    "file": "entities-start.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/entities?q=lo&type=organization&subtype=tribe&sort=name",
+    "hx": false,
+    "file": "entities-lo.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/entities?q=lodge&type=organization&subtype=tribe&sort=name",
+    "hx": false,
+    "file": "entities-lodge.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/entities?q=lo&type=organization&subtype=tribe&sort=name",
+    "hx": true,
+    "file": "entities-lo.hx.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/entities?q=lodge&type=organization&subtype=tribe&sort=name",
+    "hx": true,
+    "file": "entities-lodge.hx.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/search",
+    "hx": false,
+    "file": "search.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/search?q=cafe&section_type=new_application&application_type=NEW+APPLICATION&endorsement=CANNABIS+RETAILER&state=WA&outcome_status=pending&city=SEATTLE&date_from=2026-01-01&date_to=2026-06-30",
+    "hx": false,
+    "file": "search-1.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/search?q=bar&section_type=approved&application_type=ASSUMPTION&endorsement=BEER%2FWINE+GIFT+DELIVERY&state=OR&outcome_status=&city=PORTLAND&date_from=2026-02-01&date_to=",
+    "hx": false,
+    "file": "search-2.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/search?q=cafe&section_type=new_application&application_type=NEW+APPLICATION&endorsement=CANNABIS+RETAILER&state=WA&outcome_status=pending&city=SEATTLE&date_from=2026-01-01&date_to=2026-06-30",
+    "hx": true,
+    "file": "search-1.hx.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/search?q=bar&section_type=approved&application_type=ASSUMPTION&endorsement=BEER%2FWINE+GIFT+DELIVERY&state=OR&outcome_status=&city=PORTLAND&date_from=2026-02-01&date_to=",
+    "hx": true,
+    "file": "search-2.hx.html",
+    "content_type": "text/html; charset=utf-8"
+  },
+  {
+    "url": "/api/v1/cities?state=WA",
+    "hx": false,
+    "file": "cities-wa.json",
+    "content_type": "application/json"
+  },
+  {
+    "url": "/api/v1/cities?state=OR",
+    "hx": false,
+    "file": "cities-or.json",
+    "content_type": "application/json"
+  }
+]
