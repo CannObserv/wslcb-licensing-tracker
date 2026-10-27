@@ -222,5 +222,25 @@ describe('htmx under jsdom (#232)', () => {
       assert.equal(page.reloads.length, 2);
       assert.equal(page.win.localStorage.getItem('htmx-history-cache'), null);
     });
+
+    it('ignores and purges a snapshot cached before the deploy', async () => {
+      const page = await H.openPage(server, ENTITIES_START);
+      opened.push(page);
+      await liveSearchEntities(page);
+      // What a returning browser may still hold from before historyCacheSize: 0.
+      const stale = [{
+        url: '/entities?q=lo&type=organization&subtype=tribe&sort=name',
+        content: '<p id="stale-snapshot">stale</p>',
+        title: 'stale',
+        scroll: 0,
+      }];
+      page.win.localStorage.setItem('htmx-history-cache', JSON.stringify(stale));
+
+      const result = await H.back(page);
+      assert.equal(result.reloaded, stale[0].url);
+      assert.deepEqual(page.restores, []);
+      assert.equal(page.doc.getElementById('stale-snapshot'), null);
+      assert.equal(page.win.localStorage.getItem('htmx-history-cache'), null);
+    });
   });
 });
