@@ -66,6 +66,12 @@ async function submitSearch(page, want) {
 /**
  * Press Back and return the page the user then sees: the same page if htmx
  * restored a snapshot, or the URL loaded fresh if htmx asked for a reload.
+ *
+ * jsdom can't reload, so Back is always pressed in the original document.
+ * In a browser, the second Back would leave the reloaded document for an
+ * entry of the old one: a cross-document load of the URL, not htmx's
+ * popstate. Both end in a fresh server render of the URL, which is what the
+ * tests check, but the second Back's mechanism is a stand-in.
  */
 async function pageAfterBack(server, page, opened) {
   const result = await H.back(page);
