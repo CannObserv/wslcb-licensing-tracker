@@ -2417,15 +2417,31 @@ class TestNoDeterminationCap:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_selection_takes_only_what_the_cap_leaves(self, pg_engine):
-        nd = await _seed(pg_engine, "CAP ND", 3, days_ago=STALE_DAYS, status="undetermined")
+        """Counted over every row selected: other tests leave unplaced rows due too,
+        so a check on this test's rows alone would pass with a cap of 0 (CR 3)."""
+        await _seed(pg_engine, "CAP ND", 3, days_ago=STALE_DAYS, status="undetermined")
         (plain,) = await _seed(pg_engine, "CAP PLAIN", days_ago=STALE_DAYS, status="invalid")
-        with patch(
-            "wslcb_licensing_tracker.address_validator.no_determination_used",
-            return_value=NO_DETERMINATION_DAILY_LIMIT - 1,
-        ):
-            processed = await _run_backfill(pg_engine)
-        assert plain in processed
-        assert len(set(nd) & set(processed)) <= 1
+        selected = []
+
+        async def fake_batch(conn, rows, label, **kwargs):
+            selected.extend(rows)
+            return 0
+
+        mod = "wslcb_licensing_tracker.address_validator"
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.is_validation_enabled", return_value=True),
+                patch(f"{mod}.get_api_key", return_value="test-key"),
+                patch(f"{mod}.validations_used", return_value=0),
+                patch(
+                    f"{mod}.no_determination_used",
+                    return_value=NO_DETERMINATION_DAILY_LIMIT - 1,
+                ),
+                patch(f"{mod}._validate_batch", side_effect=fake_batch),
+            ):
+                await backfill_addresses(conn, rate_limit=0, daily_limit=100_000)
+        assert plain in [row["id"] for row in selected]
+        assert sum(1 for row in selected if row["no_determination"]) == 1
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_spent_cap_selects_no_unplaced_rows(self, pg_engine):
