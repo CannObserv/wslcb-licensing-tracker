@@ -239,10 +239,21 @@ For a backlog, add `--budget-reserve N`: ids run in file order up to
 # (runs automatically after every scrape; manual invocation for catch-up only)
 uv run wslcb ingest backfill-addresses
 
-# The daily run (#195): what it would select, a small live canary, a full run
-uv run wslcb ingest renew-addresses --dry-run
-uv run wslcb ingest renew-addresses --limit 25
-sudo systemctl start 'wslcb-task@renew-addresses.service'
+# The daily run (#195). One-off runs need the unit's environment (a bare shell
+# has no DATABASE_URL or API key), so run them as transient units: same user,
+# directory and env file as wslcb-task@, and a journal to check.
+renew() {  # renew <unit-name> [renew-addresses flags]
+  local unit=$1; shift
+  sudo systemd-run --unit="$unit" --uid=exedev --wait \
+    -p WorkingDirectory=/home/exedev/wslcb-licensing-tracker \
+    -p EnvironmentFile=/etc/wslcb-licensing-tracker/.env -p Environment=PYTHONUNBUFFERED=1 \
+    /home/exedev/wslcb-licensing-tracker/.venv/bin/python -m wslcb_licensing_tracker.cli \
+    renew-addresses "$@"
+  journalctl -u "$unit" --no-pager -n 50
+}
+renew wslcb-renew-dry-run --dry-run   # what it would select; calls nothing
+renew wslcb-renew-canary --limit 25   # a small live canary
+sudo systemctl start 'wslcb-task@renew-addresses.service'   # a full run
 journalctl -u 'wslcb-task@renew-addresses.service' -n 50
 
 # Re-standardize all locations
