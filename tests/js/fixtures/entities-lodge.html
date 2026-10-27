@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entities — WSLCB Licensing Tracker</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='13' cy='13' r='9' fill='none' stroke='%2317de6b' stroke-width='3'/%3E%3Cline x1='20' y1='20' x2='29' y2='29' stroke='%2317de6b' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/css/tailwind.css?v=fixture">
+    
+    <meta name="htmx-config" content='{"refreshOnHistoryMiss":true,"historyCacheSize":0}'>
+    <script src="/static/js/htmx.min.js?v=fixture"></script>
+</head>
+<body class="h-full bg-gray-50">
+    <nav aria-label="Main navigation" class="bg-white border-b border-gray-200 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center gap-3">
+                    <a href="/" class="flex items-center gap-2">
+                        <img src="/static/images/cannabis_observer-icon-square.svg" alt="Cannabis Observer" class="w-8 h-8">
+                        <span class="text-lg font-bold text-gray-900">WSLCB Licensing Tracker</span>
+                    </a>
+                </div>
+                
+                <div class="hidden md:flex items-center gap-4">
+                    <a href="/" class="text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
+                    <a href="/search" class="text-sm text-gray-600 hover:text-co-purple-700">Records</a>
+                    
+                </div>
+                
+                <button id="nav-toggle" type="button"
+                        class="md:hidden p-2 rounded-md text-gray-500 hover:text-co-purple hover:bg-gray-100"
+                        aria-expanded="false" aria-controls="mobile-nav" aria-label="Open navigation menu">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path id="nav-icon-open" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        <path id="nav-icon-close" class="hidden" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    
+    <div id="mobile-nav" class="hidden md:hidden border-t border-gray-200 bg-white">
+        <div class="px-4 py-3 space-y-1">
+            <a href="/" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Dashboard</a>
+            <a href="/search" class="block py-2 text-sm text-gray-600 hover:text-co-purple-700">Records</a>
+            
+        </div>
+    </div>
+    </nav>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+
+<div class="mb-6 flex items-center justify-between">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Applicant Entities</h1>
+        <p class="text-sm text-gray-500 mt-1">People and organizations named on WSLCB license applications.</p>
+    </div>
+</div>
+
+
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+    <div class="flex flex-col sm:flex-row gap-3">
+        
+        <div class="flex-1 relative">
+            <input
+                type="search"
+                name="q"
+                value="lodge"
+                placeholder="Search by name…"
+                class="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:border-co-purple focus:ring-1 focus:ring-co-purple"
+                hx-get="/entities"
+                hx-trigger="input changed delay:300ms"
+                hx-target="#entities-results"
+                hx-include="#filter-form"
+                hx-push-url="true"
+                hx-indicator="#entities-spinner"
+            />
+            <span id="entities-spinner" class="htmx-indicator absolute right-2 top-2 text-gray-400">⟳</span>
+        </div>
+
+        
+        
+<div class="flex gap-1 items-center flex-wrap" id="filter-form">
+    <input type="hidden" name="type" value="organization" />
+    <input type="hidden" name="subtype" value="tribe" />
+    <input type="hidden" name="sort" value="name" />
+    
+    
+    
+    
+    <a href="/entities?q=lodge&amp;sort=name"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple">
+        All
+    </a>
+    
+    
+    
+    <a href="/entities?q=lodge&amp;sort=name&amp;type=person"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple">
+        People
+    </a>
+    
+    
+    
+    <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=tribe"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-co-purple text-white border-co-purple">
+        Organizations
+    </a>
+    
+</div>
+
+
+        
+        
+<div class="flex gap-1 items-center" id="entities-sort">
+    <span class="text-xs text-gray-400 mr-1">Sort:</span>
+    <a href="/entities?q=lodge&amp;type=organization&amp;subtype=tribe&amp;sort=count"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple">
+        Most Active
+    </a>
+    <a href="/entities?q=lodge&amp;type=organization&amp;subtype=tribe&amp;sort=name"
+       class="px-3 py-1.5 rounded text-sm border transition
+              bg-co-purple text-white border-co-purple">
+        A–Z
+    </a>
+</div>
+
+    </div>
+
+    
+<div id="entities-kinds">
+    
+    <div class="flex gap-1 items-center flex-wrap mt-3" role="group" aria-label="Organization kind">
+        <span class="text-xs text-gray-400 mr-1">Kind:</span>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            All kinds
+        </a>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=business"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Business
+        </a>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=nonprofit"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Nonprofit
+        </a>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=trust"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Trust
+        </a>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=estate"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Estate
+        </a>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=tribe"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-co-purple text-white border-co-purple"
+           aria-current="true">
+            Tribe
+        </a>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=government"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Government
+        </a>
+        
+        
+        <a href="/entities?q=lodge&amp;sort=name&amp;type=organization&amp;subtype=unknown"
+           class="px-2.5 py-1 rounded text-xs border transition
+                  bg-white text-gray-600 border-gray-300 hover:border-co-purple hover:text-co-purple"
+           >
+            Unspecified
+        </a>
+        
+    </div>
+    
+</div>
+
+</div>
+
+
+<div id="entities-results" aria-live="polite" aria-atomic="false">
+    
+
+
+<div class="text-sm text-gray-500 mb-3">
+    
+        1 entity
+    
+    
+        <a href="/entities" class="ml-2 text-co-purple hover:text-co-purple-700">Clear filters</a>
+    
+</div>
+
+
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div class="overflow-x-auto scroll-shadow-right">
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider w-full">Name</th>
+                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                <th class="px-4 py-3 text-right font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Records</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+            
+            <tr class="hover:bg-gray-50 transition">
+                <td class="px-4 py-3">
+                    <a href="/entity/1" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">
+                        LODGE HALL TRIBE
+                    </a>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <span class="inline-flex items-center gap-1"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-co-purple-50 text-co-purple">Organization</span> </span>
+                </td>
+                <td class="px-4 py-3 text-right text-gray-700 font-medium">3</td>
+            </tr>
+            
+        </tbody>
+    </table>
+    </div>
+</div>
+
+
+
+
+
+</div>
+
+    </main>
+    <footer class="border-t border-gray-200 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-2">
+            <div class="text-xs text-gray-500 flex items-center justify-center gap-1">
+                A project of
+                <a href="https://cannabis.observer/" class="inline-flex items-center gap-1 font-medium text-co-purple hover:text-co-purple-700" target="_blank" rel="noopener noreferrer">
+                    <img src="/static/images/cannabis_observer-icon-square.svg" alt="" class="w-4 h-4">
+                    Cannabis Observer
+                </a>
+                <span aria-hidden="true">🌱🏛️🔍</span>
+            </div>
+            <p class="text-xs text-gray-400 text-center">
+                Data sourced from the
+                <a href="https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp" class="underline" target="_blank" rel="noopener noreferrer">WA State Liquor &amp; Cannabis Board</a>.
+                This is an unofficial tracker. Updated twice daily.
+            </p>
+            <p class="text-[10px] text-gray-300 text-center font-mono">fixture</p>
+        </div>
+    </footer>
+<script>
+(function () {
+    const btn = document.getElementById('nav-toggle');
+    const menu = document.getElementById('mobile-nav');
+    const iconOpen = document.getElementById('nav-icon-open');
+    const iconClose = document.getElementById('nav-icon-close');
+
+    function closeMenu() {
+        menu.classList.add('hidden');
+        btn.setAttribute('aria-expanded', 'false');
+        iconOpen.classList.remove('hidden');
+        iconClose.classList.add('hidden');
+    }
+
+    btn.addEventListener('click', function () {
+        const open = menu.classList.toggle('hidden');
+        btn.setAttribute('aria-expanded', String(!open));
+        iconOpen.classList.toggle('hidden', !open);
+        iconClose.classList.toggle('hidden', open);
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !menu.classList.contains('hidden')) {
+            closeMenu();
+            btn.focus();
+        }
+    });
+}());
+</script>
+</body>
+</html>
