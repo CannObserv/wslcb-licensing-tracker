@@ -1088,7 +1088,13 @@ async def refresh_specific_addresses(  # noqa: PLR0913 — budget is two knobs
         row["id"]: row
         for row in (
             await conn.execute(
-                select(locations.c.id, locations.c.raw_address)
+                # The flag paces unplaced rows and skips them after a
+                # retry-later, as in a backfill (#195 CR 2).
+                select(
+                    locations.c.id,
+                    locations.c.raw_address,
+                    _no_determination().label("no_determination"),
+                )
                 .where(locations.c.id.in_(location_ids))
                 .where(locations.c.raw_address.isnot(None))
                 .where(locations.c.raw_address != "")

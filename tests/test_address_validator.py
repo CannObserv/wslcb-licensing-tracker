@@ -2267,6 +2267,33 @@ class TestRefreshSpecificBudget:
         assert processed == ids[:4]  # 12 - 5 used - 3 reserved
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_rows_carry_the_no_determination_flag(self, pg_engine):
+        """A remediation list of unplaced rows is all Google-bound: it gets the same
+        spacing and retry-later skip as a backfill (#195 CR 2)."""
+        nd, plain = await self._seed(pg_engine, 2, "REFRESH FLAG")
+        async with pg_engine.connect() as conn:
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == nd)
+                .values(validation_status="undetermined")
+            )
+            await conn.commit()
+        seen = {}
+
+        async def fake_batch(conn, rows, label, **kwargs):
+            seen.update({row["id"]: row["no_determination"] for row in rows})
+            return 0
+
+        mod = "wslcb_licensing_tracker.address_validator"
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.get_api_key", return_value="test-key"),
+                patch(f"{mod}._validate_batch", side_effect=fake_batch),
+            ):
+                await refresh_specific_addresses(conn, [nd, plain], rate_limit=0)
+        assert seen == {nd: True, plain: False}
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_spent_budget_processes_nothing(self, pg_engine, caplog):
         ids = await self._seed(pg_engine, 2, "SPENT")
         with caplog.at_level("INFO"):
