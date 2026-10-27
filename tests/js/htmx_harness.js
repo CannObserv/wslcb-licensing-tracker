@@ -132,7 +132,8 @@ async function openPage(server, url) {
   let dom;
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', (err) => {
-    if (/^Not implemented: navigation/.test(err.message)) {
+    // `dom` is unset while fromURL is still loading; report anything then as an error.
+    if (dom && /^Not implemented: navigation/.test(err.message)) {
       reloads.push(dom.window.location.pathname + dom.window.location.search);
     } else {
       errors.push(err.message);
