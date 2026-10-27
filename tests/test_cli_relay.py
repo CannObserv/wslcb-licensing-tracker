@@ -26,6 +26,16 @@ class TestCmdImportRelayed:
         backfill.assert_called_once()
         checkin.assert_not_called()  # the monitor reports the server's own fetch
 
+    def test_backfill_neither_renews_early_nor_reserves(self, imp, backfill, checkin, *_):
+        """The reserve is kept *for* this hook; pulling renewals forward is the daily
+        run's job (#195 CR 8)."""
+        imp.return_value = [RelayResult("20261020T134000Z.html.gz", "success", 9)]
+        result = CliRunner().invoke(main, ["ingest", "import-relayed"])
+        assert result.exit_code == 0, result.output
+        kwargs = backfill.call_args.kwargs
+        assert kwargs.get("early_level") is None
+        assert kwargs.get("reserve", 0) == 0
+
     def test_unchanged_only_skips_the_backfill(self, imp, backfill, checkin, *_):
         imp.return_value = [RelayResult("20261020T134000Z.html.gz", "unchanged", 9)]
         result = CliRunner().invoke(main, ["ingest", "import-relayed"])
