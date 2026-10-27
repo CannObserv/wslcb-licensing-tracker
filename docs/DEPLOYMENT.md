@@ -219,11 +219,14 @@ behind old rows that keep getting no answer.
   refresh each hold a Postgres advisory lock, so two can't both spend the
   same budget. A run that finds it held logs `Another run holds the validation
   lock` and skips; the next run catches up (#195).
-- Rows USPS couldn't place also ask Google (160/day, 5/min). Known ones run at
-  most `NO_DETERMINATION_DAILY_LIMIT` (40) per rolling 24h, at least
-  `GOOGLE_SPACING_SECONDS` (13) apart. After the first retry-later answer a run
-  skips its remaining ones: each would spend a USPS call that leaves no stamp,
-  and placeable rows between them reset the retry-later breaker (#195).
+- Rows USPS couldn't place also ask Google (160/day, 5/min). In every run —
+  hooks, daily run and both refreshes — known ones go at least
+  `GOOGLE_SPACING_SECONDS` (13) apart, and after the first retry-later answer
+  the run skips its remaining ones: each would spend a USPS call that leaves
+  no stamp, and placeable rows between them reset the retry-later breaker.
+  The hooks and the daily run also select at most
+  `NO_DETERMINATION_DAILY_LIMIT` (40) per rolling 24h; a refresh runs the ids
+  it is given (#195).
 - Unanswered calls leave no stamp, so the ceiling can't see them. Instead a batch
   stops after `MAX_CONSECUTIVE_NO_ANSWER` (10) unanswered rows in a row, logging
   `Stopping: … (provider outage?)`; the rest wait for the next run (#183).
