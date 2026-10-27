@@ -285,7 +285,7 @@ wslcb-licensing-tracker/
 │   ├── js/
 │   │   ├── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
 │   │   ├── htmx_harness.js      # Serves rendered fixtures + static/ to jsdom running the vendored htmx (#232)
-│   │   ├── test_htmx.js         # htmx behaviour: /entities OOB live search (#215)
+│   │   ├── test_htmx.js         # htmx behaviour: /entities OOB live search (#215), Back shows the URL's state (#231)
 │   │   └── fixtures/            # Pages rendered by tests/htmx_fixtures.py (regenerate, never hand-edit)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 └── docs/                   # Operations and architecture documentation
@@ -646,7 +646,7 @@ Test structure:
 | `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
 | `tests/test_substances.py` | Regulated substance CRUD — get, add, remove, set-endorsements |
 | `tests/test_htmx_fixtures.py` | htmx harness fixtures are byte-identical to a fresh render of the templates (#232) |
-| `tests/js/test_htmx.js` | Vendored htmx under jsdom: `/entities` OOB live search (#215) |
+| `tests/js/test_htmx.js` | Vendored htmx under jsdom: `/entities` OOB live search (#215); Back shows the URL's query in every control, never a cached snapshot (#231) |
 | `tests/conftest.py` | Shared fixtures: sample record dicts, pg_conn/pg_engine (skipped without TEST_DATABASE_URL) |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |
 
