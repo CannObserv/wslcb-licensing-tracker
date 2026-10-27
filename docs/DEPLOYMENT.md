@@ -10,7 +10,7 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-scraper.timer` | Fires twice daily at 12:30 AM and 6:30 AM Pacific, ±5 min jitter; each run checks in to co-status ([`MONITORING.md`](MONITORING.md), #196) |
 | `wslcb-task@.service` | Systemd template for oneshot tasks; instance name = CLI subcommand |
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure. Liveness only; a stale scrape stays 200 (#197) |
-| `wslcb-address-validation.timer` | Weekly address backfill + TTL renewal, Sunday 2:00 AM Pacific, ±5 min jitter |
+| `wslcb-address-validation.timer` | Daily `renew-addresses` (new, due and early renewals; #195), 2:00 AM Pacific, ±5 min jitter. Weekly `backfill-addresses` before #195 |
 | `wslcb-entity-classification.timer` | Weekly Jev classification, Sunday 4:00 AM Pacific ±5 min; the classify monitor's dead-man (#207). Installed from [`MONITORING.md`](MONITORING.md), not the copy block |
 | `wslcb-disk-hygiene.timer` | Weekly cache/worktree/data-straggler cleanup, Sunday 3:00 AM Pacific, ±5 min jitter (#138) |
 | `wslcb-backup.service` + `.timer` | Nightly DB dump + `data/` archive to GCS, 08:17 AM Pacific ±10 min; dynamic user, keys as credentials, co-status dead-man check-in (#185). Install, restore and drills: [`RECOVERY.md`](RECOVERY.md) — not part of the copy block below, as it needs its key files first |
@@ -22,6 +22,7 @@ wslcb-task@scrape
 wslcb-task@import-relayed
 wslcb-task@refresh-addresses
 wslcb-task@backfill-addresses
+wslcb-task@renew-addresses
 wslcb-task@backfill-snapshots
 wslcb-task@backfill-provenance
 wslcb-task@rebuild-links
@@ -34,6 +35,10 @@ wslcb-task@classify-entities
 `IOSchedulingClass=idle`) — this is genuinely idle-priority background
 work, scoped to just this instance so scrape/backfill-addresses keep
 default scheduling priority.
+
+`wslcb-task@renew-addresses.service` gets a `timeout.conf` drop-in
+(`TimeoutStartSec=90min`, #195): the template's timeout is infinite, and a
+hung daily run would block every later firing.
 
 `wslcb-task@scrape.service` and `wslcb-task@classify-entities.service` each get
 a `checkin.conf` drop-in (the co-status check-in key, tailnet ordering, a 2 h or
@@ -58,7 +63,8 @@ Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`
 sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
      infra/wslcb-address-validation.timer infra/wslcb-disk-hygiene.timer \
      infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
-sudo cp -r infra/wslcb-task@disk-hygiene.service.d infra/wslcb-task@import-relayed.service.d /etc/systemd/system/
+sudo cp -r infra/wslcb-task@disk-hygiene.service.d infra/wslcb-task@import-relayed.service.d \
+     infra/wslcb-task@renew-addresses.service.d /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-address-validation.timer
 sudo systemctl enable --now wslcb-disk-hygiene.timer
@@ -135,11 +141,31 @@ External API at `https://address-validator.exe.xyz:8000`.
 
 ### Renewal TTL + pacing
 
-Validated addresses are not frozen forever (#150). `backfill-addresses` runs **after
-every scrape (twice daily)** and on the **weekly timer**; it renews any location
-whose `address_validation_attempted_at` is older than `VALIDATION_TTL_DAYS`
-(180 days, in `address_validator.py`), oldest first, so upstream validator/USPS
-improvements are picked up without manual intervention.
+Validated addresses are not frozen forever (#150). Each location renews on a TTL
+counted from `address_validation_attempted_at`, set per row at selection time
+(#195, constants in `address_validator.py`):
+
+| Row | TTL |
+|---|---|
+| Active: a licence record dated in the last 365 days names it as location or previous location | `VALIDATION_TTL_DAYS` = 180 |
+| Inactive | `INACTIVE_TTL_DAYS` = 365 |
+| USPS couldn't place it (`undetermined`/`unavailable`, or `confirmed*` with no DPV), active or not | `NO_DETERMINATION_TTL_DAYS` = 365 |
+
+Three kinds of run spend the budget:
+
+- **Hooks** (`backfill_addresses`): after every successful scrape (twice daily) and
+  every relay import that succeeds. New locations first, newest first; then due
+  rows, earliest due first. Manual `backfill-addresses` runs the same selection.
+- **Daily run** (`renew-addresses`, the timer, 2:00 AM Pacific; #195): the same
+  rows, then **early renewals** up to `450 − used in 24h − RENEWAL_RESERVE` (90,
+  kept for the hooks). Early rows come from due days holding more than that fill
+  rate (360): the excess rows, earliest due first, never one attempted under
+  `EARLY_RENEWAL_FLOOR_DAYS` (35) ago, which is over address-validator's 30-day
+  cache. Peaks such as the September 2026 bulk's renewals spread into the days
+  before them and don't re-form one TTL later.
+  `--dry-run` logs the selection; `--limit N` is a canary; `--budget-reserve N`
+  overrides the reserve.
+- **Refresh** (`refresh-addresses`): below.
 
 Scheduling keys on `address_validation_attempted_at` (stamped on every *answered*
 `/validate` call, confirmed or not), **not** `address_validated_at` (which stays pure
@@ -187,8 +213,20 @@ behind old rows that keep getting no answer.
 
 - `--rate-limit` defaults to **1.0** (1 req/s).
 - `DAILY_VALIDATION_LIMIT = 450` caps answered `/validate` calls (rows with
-  `attempted_at` in the last 24h) across the scrape hooks, the weekly timer and
-  any refresh run.
+  `attempted_at` in the last 24h) across the hooks, the daily run and any
+  refresh run.
+- One validating run at a time: the hooks, the daily run and a budgeted
+  refresh each hold a Postgres advisory lock, so two can't both spend the
+  same budget. A run that finds it held logs `Another run holds the validation
+  lock` and skips; the next run catches up (#195).
+- Rows USPS couldn't place also ask Google (160/day, 5/min). In every run —
+  hooks, daily run and both refreshes — known ones go at least
+  `GOOGLE_SPACING_SECONDS` (13) apart, and after the first retry-later answer
+  the run skips its remaining ones: each would spend a USPS call that leaves
+  no stamp, and placeable rows between them reset the retry-later breaker.
+  The hooks and the daily run also select at most
+  `NO_DETERMINATION_DAILY_LIMIT` (40) per rolling 24h; a refresh runs the ids
+  it is given (#195).
 - Unanswered calls leave no stamp, so the ceiling can't see them. Instead a batch
   stops after `MAX_CONSECUTIVE_NO_ANSWER` (10) unanswered rows in a row, logging
   `Stopping: … (provider outage?)`; the rest wait for the next run (#183).
@@ -203,6 +241,23 @@ For a backlog, add `--budget-reserve N`: ids run in file order up to
 # Backfill un-processed locations + renew TTL-stale validations
 # (runs automatically after every scrape; manual invocation for catch-up only)
 uv run wslcb ingest backfill-addresses
+
+# The daily run (#195). One-off runs need the unit's environment (a bare shell
+# has no DATABASE_URL or API key), so run them as transient units: same user,
+# directory and env file as wslcb-task@, and a journal to check.
+renew() {  # renew <unit-name> [renew-addresses flags]
+  local unit=$1; shift
+  sudo systemd-run --unit="$unit" --uid=exedev --wait \
+    -p WorkingDirectory=/home/exedev/wslcb-licensing-tracker \
+    -p EnvironmentFile=/etc/wslcb-licensing-tracker/.env -p Environment=PYTHONUNBUFFERED=1 \
+    /home/exedev/wslcb-licensing-tracker/.venv/bin/python -m wslcb_licensing_tracker.cli \
+    renew-addresses "$@"
+  journalctl -u "$unit" --no-pager -n 50
+}
+renew wslcb-renew-dry-run --dry-run   # what it would select; calls nothing
+renew wslcb-renew-canary --limit 25   # a small live canary
+sudo systemctl start 'wslcb-task@renew-addresses.service'   # a full run
+journalctl -u 'wslcb-task@renew-addresses.service' -n 50
 
 # Re-standardize all locations
 sudo systemctl start 'wslcb-task@refresh-addresses.service'

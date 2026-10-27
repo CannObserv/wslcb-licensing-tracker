@@ -3,7 +3,7 @@
 All operational commands are exposed as click subcommands grouped by domain:
 
 - ``ingest``: scrape, import-relayed, backfill-snapshots, backfill-diffs, generate-replay-extracts,
-  backfill-addresses, refresh-addresses, compress-snapshots, compress-diffs
+  backfill-addresses, renew-addresses, refresh-addresses, compress-snapshots, compress-diffs
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities,
   reclassify-entities, ignore-jev, classify-entities
 - ``admin``: add-user, list-users, remove-user
@@ -22,6 +22,7 @@ Usage::
     wslcb ingest backfill-diffs        # replay diff archives
     wslcb ingest generate-replay-extracts  # write per-record provenance extracts (#154)
     wslcb ingest backfill-addresses    # validate un-validated + TTL-stale locations
+    wslcb ingest renew-addresses       # daily: also spread renewal peaks early (#195)
     wslcb ingest refresh-addresses     # re-validate all locations
     wslcb ingest compress-snapshots    # compress .html snapshots to .html.gz in place
     wslcb ingest compress-diffs        # compress diff archive .txt files to .txt.gz in place
@@ -56,7 +57,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from .address_validator import DAILY_VALIDATION_LIMIT
+from .address_validator import DAILY_VALIDATION_LIMIT, RENEWAL_RESERVE
 from .address_validator import backfill_addresses as run_backfill_addresses
 from .address_validator import refresh_addresses as run_refresh_addresses
 from .address_validator import refresh_specific_addresses as run_refresh_specific_addresses
@@ -171,7 +172,7 @@ def scrape(rate_limit: float) -> None:
         )
         await _post_ingest_classification(engine, origin="post_scrape", alert=True)
         # Post-scrape: standardize any new locations via the address API.
-        # Failure here is non-fatal — the weekly timer catches stragglers.
+        # Failure here is non-fatal — the daily timer catches stragglers.
         try:
             async with get_db(engine) as conn:
                 await run_backfill_addresses(conn, rate_limit=rate_limit)
@@ -349,6 +350,53 @@ def backfill_addresses(rate_limit: float) -> None:
     async def _run(engine: AsyncEngine) -> None:
         async with get_db(engine) as conn:
             await run_backfill_addresses(conn, rate_limit=rate_limit)
+
+    _run_with_engine(_run)
+
+
+@ingest.command("renew-addresses")
+@click.option(
+    "--rate-limit",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Seconds between API calls.",
+)
+@click.option(
+    "--budget-reserve",
+    type=click.IntRange(min=0, max=DAILY_VALIDATION_LIMIT),
+    default=RENEWAL_RESERVE,
+    show_default=True,
+    help="Calls of the rolling 24h validation limit kept for the scrape and relay-import hooks.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Validate at most this many locations (a canary).",
+)
+@click.option("--dry-run", is_flag=True, help="Log what would be validated; call nothing.")
+def renew_addresses(
+    rate_limit: float, budget_reserve: int, limit: int | None, dry_run: bool
+) -> None:
+    """Daily: backfill-addresses, then renew early from due days over the fill rate (#195).
+
+    Spends the rolling 24h limit less the reserve. Past the new and due rows it
+    takes, earliest due first, the rows beyond that same number on their due
+    day, so renewal peaks are spread into the days before them.
+    """
+
+    async def _run(engine: AsyncEngine) -> None:
+        async with get_db(engine) as conn:
+            await run_backfill_addresses(
+                conn,
+                rate_limit=rate_limit,
+                daily_limit=DAILY_VALIDATION_LIMIT,
+                reserve=budget_reserve,
+                early_level=DAILY_VALIDATION_LIMIT - budget_reserve,
+                limit=limit,
+                dry_run=dry_run,
+            )
 
     _run_with_engine(_run)
 
@@ -1033,6 +1081,7 @@ _ALIASES = [
     (backfill_snapshots, "backfill-snapshots"),
     (backfill_diffs, "backfill-diffs"),
     (backfill_addresses, "backfill-addresses"),
+    (renew_addresses, "renew-addresses"),
     (refresh_addresses, "refresh-addresses"),
     (check, "check"),
     (rebuild_links, "rebuild-links"),

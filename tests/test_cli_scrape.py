@@ -30,6 +30,22 @@ class TestCmdScrapeBackfill:
     @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.run_scrape", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_hook_neither_renews_early_nor_reserves(
+        self, mock_engine_factory, mock_scrape, mock_backfill, mock_get_db
+    ):
+        """The reserve is kept *for* the hooks: they spend it, and never pull renewals
+        forward, which is the daily run's job (#195)."""
+        mock_engine_factory.return_value = mock_async_engine()
+        result = CliRunner().invoke(main, ["ingest", "scrape"])
+        assert result.exit_code == 0
+        kwargs = mock_backfill.call_args.kwargs
+        assert kwargs.get("early_level") is None
+        assert kwargs.get("reserve", 0) == 0
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.run_scrape", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_backfill_uses_rate_limit(
         self, mock_engine_factory, mock_scrape, mock_backfill, mock_get_db
     ):

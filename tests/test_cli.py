@@ -8,7 +8,7 @@ import pytest
 from cli_helpers import mock_async_engine, mock_get_db
 from click.testing import CliRunner
 
-from wslcb_licensing_tracker.address_validator import DAILY_VALIDATION_LIMIT
+from wslcb_licensing_tracker.address_validator import DAILY_VALIDATION_LIMIT, RENEWAL_RESERVE
 from wslcb_licensing_tracker.cli import main
 
 
@@ -98,6 +98,68 @@ class TestIngestGroup:
         result = CliRunner().invoke(main, ["ingest", "backfill-addresses"])
         assert result.exit_code == 0
         mock_ba.assert_called_once()
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_backfill_addresses_never_renews_early(self, mock_engine, mock_ba, mock_gdb):
+        """Only renew-addresses pulls renewals forward; a manual backfill is the hooks' run."""
+        mock_engine.return_value = mock_async_engine()
+        result = CliRunner().invoke(main, ["ingest", "backfill-addresses"])
+        assert result.exit_code == 0, result.output
+        assert mock_ba.call_args.kwargs.get("early_level") is None
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_renew_addresses_defaults(self, mock_engine, mock_ba, mock_gdb):
+        """The daily run (#195): fills to the limit less the hooks' reserve, which is also
+        the per-due-day level it flattens to."""
+        mock_engine.return_value = mock_async_engine()
+        result = CliRunner().invoke(main, ["ingest", "renew-addresses"])
+        assert result.exit_code == 0, result.output
+        kwargs = mock_ba.call_args.kwargs
+        assert kwargs["daily_limit"] == DAILY_VALIDATION_LIMIT
+        assert kwargs["reserve"] == RENEWAL_RESERVE
+        assert kwargs["early_level"] == DAILY_VALIDATION_LIMIT - RENEWAL_RESERVE
+        assert kwargs["limit"] is None
+        assert kwargs["dry_run"] is False
+        assert kwargs["rate_limit"] == 1.0
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_backfill_addresses", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_renew_addresses_canary_flags(self, mock_engine, mock_ba, mock_gdb):
+        mock_engine.return_value = mock_async_engine()
+        result = CliRunner().invoke(
+            main,
+            [
+                "ingest",
+                "renew-addresses",
+                "--budget-reserve",
+                "100",
+                "--limit",
+                "25",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        kwargs = mock_ba.call_args.kwargs
+        assert kwargs["reserve"] == 100
+        assert kwargs["early_level"] == DAILY_VALIDATION_LIMIT - 100
+        assert kwargs["limit"] == 25
+        assert kwargs["dry_run"] is True
+
+    def test_renew_addresses_reserve_is_bounded(self):
+        result = CliRunner().invoke(
+            main,
+            ["ingest", "renew-addresses", "--budget-reserve", str(DAILY_VALIDATION_LIMIT + 1)],
+        )
+        assert result.exit_code == 2
+
+    def test_renew_addresses_is_a_timer_instance(self):
+        """wslcb-task@renew-addresses runs ``cli renew-addresses``."""
+        assert "renew-addresses" in main.commands
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
     @patch("wslcb_licensing_tracker.cli.run_refresh_addresses", new_callable=AsyncMock)
