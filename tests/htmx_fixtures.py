@@ -10,6 +10,7 @@ Regenerate after a template change::
     uv run python -m tests.htmx_fixtures
 """
 
+import copy
 import json
 import sys
 from contextlib import ExitStack
@@ -101,7 +102,7 @@ async def _search_records(_conn, **_kwargs):
 
 
 async def _get_filter_options(_conn):
-    return FILTERS
+    return copy.deepcopy(FILTERS)
 
 
 async def _get_cities_for_state(_conn, state):
