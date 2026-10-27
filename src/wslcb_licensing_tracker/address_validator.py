@@ -19,11 +19,14 @@ periodic commits) because it is a long-running bulk operation.
 
 import asyncio
 import logging
+from collections import Counter
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
+from time import monotonic
 
 import httpx
-from sqlalchemy import ColumnElement, case, func, select, update
+from sqlalchemy import ColumnElement, Date, Select, case, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .address_client import (
@@ -46,7 +49,7 @@ ISO_ALPHA2_LEN = 2
 
 # Renewal TTL for validated addresses (#150). A location whose
 # address_validation_attempted_at is older than this is re-validated by the
-# backfill (post-scrape, twice daily, and the weekly timer) so upstream
+# backfill (post-scrape and post-import hooks, and the daily timer) so upstream
 # validator/USPS improvements are picked up. Scheduling keys on attempted_at,
 # not validated_at, so a row is re-checked at most once per TTL whether the
 # provider answers or not — and a failed re-check never degrades the prior
@@ -56,10 +59,22 @@ ISO_ALPHA2_LEN = 2
 # (#183). A USPS "no delivery-point determination" ('unavailable' with a
 # provider) *is* an answer and waits a full TTL like any other (#187). An answer
 # carrying the retry hint is not final, so it writes nothing either (#191).
+# Since #195 this is the TTL for *active* locations only; see _ttl_days.
 VALIDATION_TTL_DAYS = 180
 
+# Renewal policy by row (#195; decided 2026-10-24 as B + D). A location with no
+# licence record (as location or previous location) dated in the last
+# ACTIVITY_WINDOW_DAYS renews on INACTIVE_TTL_DAYS (B). A row USPS could not
+# place — 'undetermined'/'unavailable', or a DPV-less (Google-grade)
+# 'confirmed*' — renews on NO_DETERMINATION_TTL_DAYS whatever its activity (D):
+# USPS's answer is deterministic per address, and each such call also spends a
+# Google call. The two long TTLs are equal today but are separate decisions.
+ACTIVITY_WINDOW_DAYS = 365
+INACTIVE_TTL_DAYS = 365
+NO_DETERMINATION_TTL_DAYS = 365
+
 # Upper bound on /validate calls in any rolling 24h across all automatic runs
-# (both twice-daily post-scrape hooks and the weekly timer share it, as does a
+# (the post-scrape and post-import hooks and the daily timer share it, as does a
 # budgeted refresh). Kept under the upstream USPS quota of 500/day, which rolls
 # over 24h, so we never 429 into the Google fallback (160/day). #150, #189/#190.
 # attempted_at is stamped on every *answered* call, so counting rows attempted
@@ -69,6 +84,28 @@ VALIDATION_TTL_DAYS = 180
 # (#191) are invisible too; MAX_CONSECUTIVE_RETRY_LATER bounds those.
 DAILY_VALIDATION_LIMIT = 450
 VALIDATION_WINDOW = timedelta(hours=24)
+
+# The daily renewal run (`renew-addresses`, #195 C) spends what the rolling 24h
+# leaves after RENEWAL_RESERVE, which stays for the post-scrape and
+# post-import hooks: new locations ran p50 28, p95 60, max 125 a day over the
+# 120 days to 2026-10-27, and a day over the reserve waits at most until the
+# next daily run, which takes never-attempted rows first. Past the due rows it
+# renews early only the rows beyond its fill rate on their due day, so a due-day
+# peak is spread into the days before it instead of re-forming one TTL later.
+# The floor keeps it off recent attempts: over address-validator's 30-day
+# cache (a re-ask inside it returns the cached answer and spends our count for
+# nothing), and under the ~43-day age the September 2026 bulk had on 10-27.
+RENEWAL_RESERVE = 90
+EARLY_RENEWAL_FLOOR_DAYS = 35
+
+# Known no-determination rows go on to Google after USPS (#189 canary), which
+# allows 160/day and 5/min. At most NO_DETERMINATION_DAILY_LIMIT run in any
+# rolling 24h (a quarter of Google's day), at least GOOGLE_SPACING_SECONDS
+# apart (#195 D). The 24h count sees only answered rows whose status is still
+# a no-determination one: a USPS-confirmed row that now gets 'undetermined'
+# keeps its status (#187) and its Google call goes unpredicted.
+NO_DETERMINATION_DAILY_LIMIT = 40
+GOOGLE_SPACING_SECONDS = 13.0
 
 # _validate_batch stops after this many consecutive rows get no answer (#183).
 # In normal operation a no-answer is rare (every HTTP 200 is an answer; #187),
@@ -262,11 +299,7 @@ async def _apply_no_determination(
     # (Google-grade) confirmation, which no provider will now repeat (#190);
     # its std_* and address_validated_at stay as the best text we have. Real
     # answers — USPS confirmations, not_confirmed, invalid, not_found — are kept.
-    current = locations.c.validation_status
-    replaces = current.in_(NO_DETERMINATION_STATUSES) | (
-        current.in_(CONFIRMED_STATUSES) & locations.c.dpv_match_code.is_(None)
-    )
-    return await _record_attempt(conn, location_id, now, status, replaces)
+    return await _record_attempt(conn, location_id, now, status, _no_determination())
 
 
 async def _apply_confirmation(
@@ -601,6 +634,50 @@ def _breaker_tripped(no_answer_streak: int, retry_later_streak: int, left: int) 
     return False
 
 
+class _UnplacedRows:
+    """A batch's known no-determination rows: each asks Google after USPS (#195 D).
+
+    Google allows 5 calls a minute, so they run GOOGLE_SPACING_SECONDS apart.
+    After one retry-later answer the rest are skipped: each would spend a USPS
+    call that leaves no stamp, and placeable rows between them reset the
+    retry-later streak, so the breaker would not catch it.
+    """
+
+    def __init__(self) -> None:
+        self.last: float | None = None
+        self.closed = False
+        self.skipped = 0
+
+    async def admit(self, row: Mapping) -> bool:
+        """Wait out the spacing for an unplaced row; False when it is skipped."""
+        if not row.get("no_determination"):
+            return True
+        if self.closed:
+            self.skipped += 1
+            return False
+        if self.last is not None:
+            wait = self.last + GOOGLE_SPACING_SECONDS - monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+        self.last = monotonic()
+        return True
+
+    def report(self) -> None:
+        """Log the rows skipped, if any."""
+        if self.skipped:
+            logger.info("%d no-determination rows skipped; left for the next run", self.skipped)
+
+    def note(self, outcome: LocationOutcome | None, location_id: int) -> None:
+        """Close the run to unplaced rows on its first retry-later answer."""
+        if outcome is LocationOutcome.RETRY_LATER and not self.closed:
+            self.closed = True
+            logger.info(
+                "Retry-later answer for location %d: skipping this run's remaining"
+                " no-determination rows (each would spend a USPS call no count sees)",
+                location_id,
+            )
+
+
 async def _validate_batch(
     conn: AsyncConnection,
     rows: list,
@@ -621,6 +698,12 @@ async def _validate_batch(
     once when the validator reports a daily quota out (QuotaExhaustedError;
     #187); untried rows stay unstamped for the next run.
 
+    A row whose truthy 'no_determination' key marks it one USPS could not
+    place is bound for Google too, so those rows run GOOGLE_SPACING_SECONDS
+    apart, and after the first retry-later answer the batch skips the rest of
+    them: each would spend a USPS call that leaves no stamp, and placeable rows
+    between them reset the retry-later streak (#195).
+
     Returns:
         Number of locations successfully processed.
     """
@@ -634,16 +717,19 @@ async def _validate_batch(
     errors = 0
     no_answer_streak = 0
     retry_later_streak = 0
+    unplaced = _UnplacedRows()
 
     for attempted, row in enumerate(rows, start=1):
         location_id = row["id"]
         address = row["raw_address"]
+        if not await unplaced.admit(row):
+            continue
 
+        outcome = None
         try:
             async with conn.begin_nested():
                 outcome = await _process_location(conn, location_id, address)
-            if outcome is LocationOutcome.WRITTEN:
-                succeeded += 1
+            succeeded += outcome is LocationOutcome.WRITTEN
             no_answer_streak, retry_later_streak = _streaks(
                 outcome, no_answer_streak, retry_later_streak
             )
@@ -666,6 +752,8 @@ async def _validate_batch(
         if _breaker_tripped(no_answer_streak, retry_later_streak, total - attempted):
             break
 
+        unplaced.note(outcome, location_id)
+
         if attempted % batch_size == 0:
             await conn.commit()
             logger.info("Progress: %d/%d (%d ok, %d err)", attempted, total, succeeded, errors)
@@ -675,8 +763,17 @@ async def _validate_batch(
 
     # Final commit for any remaining rows after the last batch_size boundary.
     await conn.commit()
-    logger.info("Done: %d/%d attempted, %d succeeded", attempted, total, succeeded)
+    unplaced.report()
+    logger.info(
+        "Done: %d/%d attempted, %d succeeded", attempted - unplaced.skipped, total, succeeded
+    )
     return succeeded
+
+
+def _answered_within(now: datetime) -> tuple[ColumnElement[bool], ...]:
+    """Rows answered in the VALIDATION_WINDOW before *now*."""
+    attempted = locations.c.address_validation_attempted_at
+    return attempted >= now - VALIDATION_WINDOW, attempted <= now
 
 
 async def validations_used(conn: AsyncConnection, now: datetime) -> int:
@@ -687,31 +784,154 @@ async def validations_used(conn: AsyncConnection, now: datetime) -> int:
     """
     return (
         await conn.execute(
-            select(func.count())
-            .select_from(locations)
-            .where(
-                locations.c.address_validation_attempted_at >= now - VALIDATION_WINDOW,
-                locations.c.address_validation_attempted_at <= now,
-            )
+            select(func.count()).select_from(locations).where(*_answered_within(now))
         )
     ).scalar_one()
 
 
-async def backfill_addresses(
+async def no_determination_used(conn: AsyncConnection, now: datetime) -> int:
+    """Rows USPS could not place answered in the VALIDATION_WINDOW before *now*.
+
+    Each of those answers asked Google too, so this is the tracker's share of
+    Google's 160/day, capped at NO_DETERMINATION_DAILY_LIMIT (#195 D).
+    """
+    return (
+        await conn.execute(
+            select(func.count())
+            .select_from(locations)
+            .where(*_answered_within(now), _no_determination())
+        )
+    ).scalar_one()
+
+
+def _no_determination() -> ColumnElement[bool]:
+    """True for a row USPS could not place, never NULL.
+
+    A no-determination status, or a DPV-less (Google-grade) confirmation (#190).
+    """
+    status = locations.c.validation_status
+    unplaced = status.in_(NO_DETERMINATION_STATUSES) | (
+        status.in_(CONFIRMED_STATUSES) & locations.c.dpv_match_code.is_(None)
+    )
+    return func.coalesce(unplaced, False)
+
+
+def _ttl_days(now: datetime) -> ColumnElement[int]:
+    """Each location's renewal TTL in days (#195 B and D).
+
+    Active means a licence record dated in the last ACTIVITY_WINDOW_DAYS that
+    names the location as its location or previous location. record_date is
+    ISO 'YYYY-MM-DD' text, so it compares as a string.
+    """
+    since = (now - timedelta(days=ACTIVITY_WINDOW_DAYS)).date().isoformat()
+    recent = license_records.c.record_date >= since
+    active = locations.c.id.in_(
+        select(license_records.c.location_id).where(
+            recent, license_records.c.location_id.isnot(None)
+        )
+    ) | locations.c.id.in_(
+        select(license_records.c.previous_location_id).where(
+            recent, license_records.c.previous_location_id.isnot(None)
+        )
+    )
+    return case(
+        (_no_determination(), NO_DETERMINATION_TTL_DAYS),
+        (active, VALIDATION_TTL_DAYS),
+        else_=INACTIVE_TTL_DAYS,
+    )
+
+
+def _renewal_selection(
+    now: datetime, budget: int, *, early_level: int | None, nd_budget: int
+) -> Select:
+    """Rows for one validating run, in order, at most *budget* of them.
+
+    Never-attempted rows first, newest first, so a fresh scrape's locations
+    don't queue behind old rows that keep getting no answer (#187). Then rows
+    due (attempted_at + their TTL), earliest due first. With *early_level*, then
+    rows not yet due — attempted at least EARLY_RENEWAL_FLOOR_DAYS ago, and
+    ranked past *early_level* among the rows due on their UTC day — still
+    earliest due first (#195 C). Known no-determination rows are capped at
+    *nd_budget* (#195 D). Each row carries 'kind' (new, due or early) and
+    'no_determination'.
+    """
+    attempted = locations.c.address_validation_attempted_at
+    timed = (
+        select(
+            locations.c.id,
+            locations.c.raw_address,
+            attempted.label("attempted_at"),
+            _no_determination().label("no_determination"),
+            (attempted + func.make_interval(0, 0, 0, _ttl_days(now))).label("due_at"),
+        )
+        .where(locations.c.raw_address.isnot(None), locations.c.raw_address != "")
+        .subquery("timed")
+    )
+    t = timed.c
+    ranked = select(
+        timed,
+        func.row_number()
+        .over(
+            partition_by=cast(func.timezone("UTC", t.due_at), Date),
+            order_by=(t.due_at, t.id),
+        )
+        .label("day_rank"),
+    ).subquery("ranked")
+    r = ranked.c
+    is_new = r.attempted_at.is_(None)
+    is_due = r.due_at <= now
+    eligible = is_new | is_due
+    if early_level is not None:
+        floor = now - timedelta(days=EARLY_RENEWAL_FLOOR_DAYS)
+        eligible |= (r.attempted_at < floor) & (r.day_rank > early_level)
+    order = (is_new.desc(), r.due_at.asc(), r.id.desc())
+    picked = (
+        select(
+            r.id,
+            r.raw_address,
+            r.no_determination,
+            r.due_at,
+            is_new.label("is_new"),
+            case((is_new, "new"), (is_due, "due"), else_="early").label("kind"),
+            func.row_number()
+            .over(partition_by=r.no_determination, order_by=order)
+            .label("nd_rank"),
+        )
+        .where(eligible)
+        .subquery("picked")
+    )
+    p = picked.c
+    return (
+        select(p.id, p.raw_address, p.no_determination, p.kind)
+        .where(p.no_determination.is_(False) | (p.nd_rank <= nd_budget))
+        .order_by(p.is_new.desc(), p.due_at.asc(), p.id.desc())
+        .limit(budget)
+    )
+
+
+async def backfill_addresses(  # noqa: PLR0913 — a budget, a reserve, a level, a cap
     conn: AsyncConnection,
     batch_size: int = 100,
     rate_limit: float = 1.0,
     daily_limit: int = DAILY_VALIDATION_LIMIT,
+    *,
+    reserve: int = 0,
+    early_level: int | None = None,
+    limit: int | None = None,
+    dry_run: bool = False,
 ) -> int:
     """Standardize (and optionally validate) locations that need processing.
 
     Mode-aware selection (#150):
 
     * Validation enabled — selects rows never attempted
-      (address_validation_attempted_at IS NULL) or whose last attempt has aged
-      past VALIDATION_TTL_DAYS, oldest first, capped at the remaining daily
-      budget. Scheduling keys on attempted_at (not std/validated_at) so a row is
+      (address_validation_attempted_at IS NULL) or past their renewal TTL
+      (:func:`_ttl_days`: by activity and placeability, #195), capped at the
+      remaining daily budget less *reserve*; see :func:`_renewal_selection`.
+      Scheduling keys on attempted_at (not std/validated_at) so a row is
       re-checked at most once per TTL and a not_confirmed re-check does not churn.
+      With *early_level* (the daily ``renew-addresses`` run only, #195 C) it also
+      renews rows early from due days holding more than *early_level* rows.
     * Validation disabled — selects rows never standardized
       (address_standardized_at IS NULL); attempted_at is never written in this
       mode so it cannot be the scheduling key.
@@ -721,7 +941,11 @@ async def backfill_addresses(
     attempted_at is stamped on every answered call, so counting rows attempted
     in the window counts answered calls, shared with any refresh run
     (validations_used). Unanswered and retry-later calls are invisible to it;
-    _validate_batch's breakers bound those (#183, #189/#190).
+    _validate_batch's breakers bound those (#183, #189/#190), and it skips a
+    run's remaining no-determination rows after one retry-later (#195).
+
+    *limit* caps the run (a canary); *dry_run* logs the selection and calls
+    nothing.
 
     Returns:
         Number of locations successfully standardized.
@@ -730,41 +954,54 @@ async def backfill_addresses(
         logger.error("No API key configured for address validation")
         return 0
 
-    base = select(locations.c.id, locations.c.raw_address).where(
-        locations.c.raw_address.isnot(None), locations.c.raw_address != ""
-    )
-
     if not is_validation_enabled():
         # Standardize-only: attempted_at is never set here, so key on std_at.
-        stmt = base.where(locations.c.address_standardized_at.is_(None))
+        stmt = select(locations.c.id, locations.c.raw_address).where(
+            locations.c.raw_address.isnot(None),
+            locations.c.raw_address != "",
+            locations.c.address_standardized_at.is_(None),
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = (await conn.execute(stmt)).mappings().all()
+        if dry_run:
+            logger.info("Dry run: would standardize %d locations", len(rows))
+            return 0
     else:
         now = datetime.now(UTC)
         used = await validations_used(conn, now)
-        budget = max(0, daily_limit - used)
+        budget = max(0, daily_limit - used - reserve)
+        if limit is not None:
+            budget = min(budget, limit)
         if budget == 0:
             logger.info(
-                "Daily validation limit reached (%d used of %d in 24h); skipping backfill",
+                "Daily validation limit reached (%d used of %d in 24h, %d reserved);"
+                " skipping backfill",
                 used,
                 daily_limit,
+                reserve,
             )
             return 0
-
-        ttl_cutoff = now - timedelta(days=VALIDATION_TTL_DAYS)
-        stmt = (
-            base.where(
-                (locations.c.address_validation_attempted_at.is_(None))
-                | (locations.c.address_validation_attempted_at < ttl_cutoff)
-            )
-            # Newest first among never-attempted rows: a fresh scrape's locations
-            # don't queue behind old rows that keep getting no answer (#187).
-            .order_by(
-                locations.c.address_validation_attempted_at.asc().nulls_first(),
-                locations.c.id.desc(),
-            )
-            .limit(budget)
+        nd_budget = max(0, NO_DETERMINATION_DAILY_LIMIT - await no_determination_used(conn, now))
+        stmt = _renewal_selection(now, budget, early_level=early_level, nd_budget=nd_budget)
+        rows = (await conn.execute(stmt)).mappings().all()
+        kinds = Counter(row["kind"] for row in rows)
+        logger.info(
+            "%s %d of a budget of %d: %d new, %d due, %d early; %d no-determination"
+            " (%d used in 24h, limit %d, %d reserved)",
+            "Dry run: would validate" if dry_run else "Selected",
+            len(rows),
+            budget,
+            kinds["new"],
+            kinds["due"],
+            kinds["early"],
+            sum(1 for row in rows if row["no_determination"]),
+            used,
+            daily_limit,
+            reserve,
         )
-
-    rows = (await conn.execute(stmt)).mappings().all()
+        if dry_run:
+            return 0
 
     return await _validate_batch(
         conn,

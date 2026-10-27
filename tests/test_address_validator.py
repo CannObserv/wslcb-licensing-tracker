@@ -1,11 +1,12 @@
 """Tests for the address validation stack: transport client and DB layer."""
 
 import os
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import delete, insert, select, update
 
 from wslcb_licensing_tracker.address_client import (
     DEFAULT_RETRY_AFTER,
@@ -20,14 +21,22 @@ from wslcb_licensing_tracker.address_client import (
     validate,
 )
 from wslcb_licensing_tracker.address_validator import (
+    ACTIVITY_WINDOW_DAYS,
     DAILY_VALIDATION_LIMIT,
+    EARLY_RENEWAL_FLOOR_DAYS,
+    GOOGLE_SPACING_SECONDS,
+    INACTIVE_TTL_DAYS,
     MAX_CONSECUTIVE_NO_ANSWER,
     MAX_CONSECUTIVE_RETRY_LATER,
+    NO_DETERMINATION_DAILY_LIMIT,
+    NO_DETERMINATION_TTL_DAYS,
+    RENEWAL_RESERVE,
     VALIDATION_TTL_DAYS,
     LocationOutcome,
     _process_location,
     _validate_batch,
     backfill_addresses,
+    no_determination_used,
     process_location,
     refresh_specific_addresses,
     standardize_location,
@@ -35,7 +44,24 @@ from wslcb_licensing_tracker.address_validator import (
     validations_used,
 )
 from wslcb_licensing_tracker.db import get_or_create_location
-from wslcb_licensing_tracker.models import locations
+from wslcb_licensing_tracker.models import license_records, locations
+
+# Past every renewal TTL, so a row is due whatever its activity or status (#195).
+STALE_DAYS = max(VALIDATION_TTL_DAYS, INACTIVE_TTL_DAYS, NO_DETERMINATION_TTL_DAYS) + 1
+
+
+async def _activate(conn, location_id, *, days_ago=30, column="location_id"):
+    """Give a location a licence record *days_ago* days back: active under #195's B."""
+    await conn.execute(
+        insert(license_records).values(
+            section_type="new_application",
+            record_date=(datetime.now(UTC) - timedelta(days=days_ago)).date().isoformat(),
+            license_number=f"T195-{location_id}-{column}-{days_ago}",
+            application_type="NEW",
+            scraped_at=datetime.now(UTC),
+            **{column: location_id},
+        )
+    )
 
 
 class TestStandardizeLocation:
@@ -1813,9 +1839,15 @@ class TestBackfillTTL:
 
     @pytest.fixture(autouse=True)
     def _fixed_usage(self):
-        with patch(
-            "wslcb_licensing_tracker.address_validator.validations_used",
-            return_value=self.USED,
+        # No real sleeps: unplaced rows other tests left due are paced (#195).
+        with (
+            patch(
+                "wslcb_licensing_tracker.address_validator.validations_used",
+                return_value=self.USED,
+            ),
+            patch(
+                "wslcb_licensing_tracker.address_validator.asyncio.sleep", new_callable=AsyncMock
+            ),
         ):
             yield
 
@@ -1843,6 +1875,9 @@ class TestBackfillTTL:
             loc_stale = await get_or_create_location(conn, "1 STALE ST, SEATTLE, WA 98101")
             loc_fresh = await get_or_create_location(conn, "2 FRESH ST, SEATTLE, WA 98102")
             loc_null = await get_or_create_location(conn, "3 NEVER ST, SEATTLE, WA 98103")
+            # Active locations: VALIDATION_TTL_DAYS is the active TTL (#195).
+            await _activate(conn, loc_stale)
+            await _activate(conn, loc_fresh)
             # stale: attempted long ago -> must be renewed
             await conn.execute(
                 update(locations)
@@ -1929,7 +1964,7 @@ class TestBackfillTTL:
 
         from wslcb_licensing_tracker.address_validator import UTC, datetime
 
-        stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        stale = datetime.now(UTC) - timedelta(days=STALE_DAYS)
         async with pg_engine.connect() as conn:
             loc_unstd = await get_or_create_location(conn, "4 UNSTD ST, SEATTLE, WA 98104")
             loc_std = await get_or_create_location(conn, "5 STD ST, SEATTLE, WA 98105")
@@ -1968,7 +2003,7 @@ class TestBackfillTTL:
 
         from wslcb_licensing_tracker.address_validator import UTC, datetime
 
-        stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        stale = datetime.now(UTC) - timedelta(days=STALE_DAYS)
 
         async with pg_engine.connect() as conn:
             used_before = self.USED
@@ -2012,7 +2047,7 @@ class TestBackfillTTL:
 
         from wslcb_licensing_tracker.address_validator import UTC, datetime
 
-        stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        stale = datetime.now(UTC) - timedelta(days=STALE_DAYS)
 
         async with pg_engine.connect() as conn:
             lid = await get_or_create_location(conn, "700 ZERO ST, SEATTLE, WA 98107")
@@ -2053,7 +2088,7 @@ class TestBackfillTTL:
 
         from wslcb_licensing_tracker.address_validator import UTC, datetime
 
-        stale = datetime.now(UTC) - timedelta(days=VALIDATION_TTL_DAYS + 1)
+        stale = datetime.now(UTC) - timedelta(days=STALE_DAYS)
 
         async with pg_engine.connect() as conn:
             used_before = self.USED
@@ -2241,3 +2276,506 @@ class TestRefreshSpecificBudget:
         # The ids exist; it is the budget that is spent (CR 6).
         assert not any(m.startswith("No locations") for m in messages)
         assert any("budget spent" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# #195 — renewal policy: TTL by activity (B), no-determination rows (D), and
+# the daily early-renewal queue that flattens due-date peaks (C)
+# ---------------------------------------------------------------------------
+
+
+def _backfill_patches(mock_process, used=0):
+    """Validation on, a key, a fixed 24h usage, a capturing _process_location, and
+    no real sleeps: other tests leave unplaced rows due, which are paced (#195)."""
+    mod = "wslcb_licensing_tracker.address_validator"
+    return (
+        patch(f"{mod}.is_validation_enabled", return_value=True),
+        patch(f"{mod}.get_api_key", return_value="test-key"),
+        patch(f"{mod}.validations_used", return_value=used),
+        patch(f"{mod}._process_location", side_effect=mock_process),
+        patch(f"{mod}.asyncio.sleep", new_callable=AsyncMock),
+    )
+
+
+async def _run_backfill(pg_engine, **kwargs):
+    """Run backfill_addresses with a large budget; return the ids it processed, in order."""
+    processed: list[int] = []
+
+    async def mock_process(conn, location_id, address, client=None):
+        processed.append(location_id)
+        return LocationOutcome.RECORDED
+
+    kwargs.setdefault("daily_limit", 100_000)
+    a, b, c, d, e = _backfill_patches(mock_process)
+    async with pg_engine.connect() as conn:
+        with a, b, c, d, e:
+            await backfill_addresses(conn, rate_limit=0, **kwargs)
+    return processed
+
+
+async def _seed(  # noqa: PLR0913 — a row is its tag, count, stamp and status
+    pg_engine, tag, n=1, *, days_ago=None, at=None, status=None, dpv=None
+):
+    """Create *n* locations attempted *days_ago* days back (or at *at*); return ids."""
+    stamp = at or (datetime.now(UTC) - timedelta(days=days_ago) if days_ago is not None else None)
+    async with pg_engine.connect() as conn:
+        ids = []
+        for i in range(n):
+            lid = await get_or_create_location(conn, f"{i} {tag} WAY, SEATTLE, WA 98101")
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == lid)
+                .values(
+                    address_validation_attempted_at=stamp,
+                    validation_status=status,
+                    dpv_match_code=dpv,
+                )
+            )
+            ids.append(lid)
+        await conn.commit()
+    return ids
+
+
+class TestRenewalTTLByActivity:
+    """B: 180 days for a location with a licence record in the last 12 months
+    (as location or previous location), 365 for the rest."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_active_location_renews_at_the_active_ttl(self, pg_engine):
+        (active,) = await _seed(pg_engine, "B ACTIVE", days_ago=VALIDATION_TTL_DAYS + 1)
+        (inactive,) = await _seed(pg_engine, "B INACTIVE", days_ago=VALIDATION_TTL_DAYS + 1)
+        async with pg_engine.connect() as conn:
+            await _activate(conn, active)
+            await conn.commit()
+        processed = await _run_backfill(pg_engine)
+        assert active in processed
+        assert inactive not in processed  # inactive: waits INACTIVE_TTL_DAYS
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_inactive_location_renews_at_the_inactive_ttl(self, pg_engine):
+        (due,) = await _seed(pg_engine, "B LONG DUE", days_ago=INACTIVE_TTL_DAYS + 1)
+        (fresh,) = await _seed(pg_engine, "B LONG FRESH", days_ago=INACTIVE_TTL_DAYS - 1)
+        processed = await _run_backfill(pg_engine)
+        assert due in processed
+        assert fresh not in processed
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_previous_location_counts_as_active(self, pg_engine):
+        (loc,) = await _seed(pg_engine, "B PREVIOUS", days_ago=VALIDATION_TTL_DAYS + 1)
+        async with pg_engine.connect() as conn:
+            await _activate(conn, loc, column="previous_location_id")
+            await conn.commit()
+        assert loc in await _run_backfill(pg_engine)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_record_older_than_the_window_is_inactive(self, pg_engine):
+        (loc,) = await _seed(pg_engine, "B LAPSED", days_ago=VALIDATION_TTL_DAYS + 1)
+        async with pg_engine.connect() as conn:
+            await _activate(conn, loc, days_ago=ACTIVITY_WINDOW_DAYS + 10)
+            await conn.commit()
+        assert loc not in await _run_backfill(pg_engine)
+
+
+class TestNoDeterminationTTL:
+    """D: rows USPS could not place wait NO_DETERMINATION_TTL_DAYS, active or not."""
+
+    @pytest.mark.parametrize(
+        ("status", "dpv"),
+        [("undetermined", None), ("unavailable", None), ("confirmed", None)],
+    )
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_unplaced_active_rows_wait_the_longer_ttl(self, pg_engine, status, dpv):
+        tag = f"D {status.upper()}"
+        (waits,) = await _seed(
+            pg_engine, f"{tag} WAIT", days_ago=VALIDATION_TTL_DAYS + 1, status=status, dpv=dpv
+        )
+        (due,) = await _seed(
+            pg_engine, f"{tag} DUE", days_ago=NO_DETERMINATION_TTL_DAYS + 1, status=status, dpv=dpv
+        )
+        async with pg_engine.connect() as conn:
+            await _activate(conn, waits)
+            await _activate(conn, due)
+            await conn.commit()
+        processed = await _run_backfill(pg_engine)
+        assert waits not in processed
+        assert due in processed
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_usps_confirmation_keeps_the_active_ttl(self, pg_engine):
+        (loc,) = await _seed(
+            pg_engine, "D USPS", days_ago=VALIDATION_TTL_DAYS + 1, status="confirmed", dpv="Y"
+        )
+        async with pg_engine.connect() as conn:
+            await _activate(conn, loc)
+            await conn.commit()
+        assert loc in await _run_backfill(pg_engine)
+
+
+class TestNoDeterminationCap:
+    """D: known no-determination rows each spend a Google call (160/day); at most
+    NO_DETERMINATION_DAILY_LIMIT of them run in any rolling 24h."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_selection_takes_only_what_the_cap_leaves(self, pg_engine):
+        nd = await _seed(pg_engine, "CAP ND", 3, days_ago=STALE_DAYS, status="undetermined")
+        (plain,) = await _seed(pg_engine, "CAP PLAIN", days_ago=STALE_DAYS, status="invalid")
+        with patch(
+            "wslcb_licensing_tracker.address_validator.no_determination_used",
+            return_value=NO_DETERMINATION_DAILY_LIMIT - 1,
+        ):
+            processed = await _run_backfill(pg_engine)
+        assert plain in processed
+        assert len(set(nd) & set(processed)) <= 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_spent_cap_selects_no_unplaced_rows(self, pg_engine):
+        nd = await _seed(pg_engine, "CAP SPENT", 2, days_ago=STALE_DAYS, status="undetermined")
+        with patch(
+            "wslcb_licensing_tracker.address_validator.no_determination_used",
+            return_value=NO_DETERMINATION_DAILY_LIMIT,
+        ):
+            processed = await _run_backfill(pg_engine)
+        assert not set(nd) & set(processed)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_counts_unplaced_rows_answered_in_the_window(self, pg_conn):
+        now = datetime(2001, 1, 2, 9, 0, tzinfo=UTC)
+        cases = [
+            ("undetermined", None, now - timedelta(hours=1)),  # counts
+            ("confirmed", None, now - timedelta(hours=2)),  # Google-grade: counts
+            ("confirmed", "Y", now - timedelta(hours=1)),  # USPS: no
+            ("undetermined", None, now - timedelta(hours=25)),  # outside
+        ]
+        for i, (status, dpv, at) in enumerate(cases):
+            lid = await get_or_create_location(pg_conn, f"{i} GOOGLE WAY, SEATTLE, WA 98101")
+            await pg_conn.execute(
+                update(locations)
+                .where(locations.c.id == lid)
+                .values(
+                    validation_status=status, dpv_match_code=dpv, address_validation_attempted_at=at
+                )
+            )
+        assert await no_determination_used(pg_conn, now) == 2
+
+
+class TestNoDeterminationPacing:
+    """D: Google allows 5/min, so known no-determination rows run at least
+    GOOGLE_SPACING_SECONDS apart; after one retry-later answer the run skips the
+    rest of them, since each would spend a USPS call nothing counts."""
+
+    @staticmethod
+    def _rows(pattern):
+        """One row per character: N = known no-determination, - = placeable."""
+        return [
+            {
+                "id": 950_000 + i,
+                "raw_address": f"{i} PACE ST, SEATTLE, WA",
+                "no_determination": c == "N",
+            }
+            for i, c in enumerate(pattern)
+        ]
+
+    @staticmethod
+    def _clock():
+        t = [1000.0]
+
+        async def sleep(seconds):
+            t[0] += seconds
+
+        return (lambda: t[0]), sleep
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_unplaced_rows_are_spaced(self, pg_engine):
+        monotonic, sleep = self._clock()
+        mod = "wslcb_licensing_tracker.address_validator"
+        rows = self._rows("N-NN")
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.monotonic", side_effect=monotonic),
+                patch(f"{mod}.asyncio.sleep", side_effect=sleep) as mock_sleep,
+                patch(f"{mod}._process_location", return_value=LocationOutcome.RECORDED),
+            ):
+                await _validate_batch(conn, rows, "Pace", rate_limit=0)
+        assert [c.args[0] for c in mock_sleep.call_args_list] == [
+            GOOGLE_SPACING_SECONDS,
+            GOOGLE_SPACING_SECONDS,
+        ]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_time_already_spent_counts_toward_the_spacing(self, pg_engine):
+        monotonic, sleep = self._clock()
+        mod = "wslcb_licensing_tracker.address_validator"
+        rows = self._rows("N-N")
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.monotonic", side_effect=monotonic),
+                patch(f"{mod}.asyncio.sleep", side_effect=sleep) as mock_sleep,
+                patch(f"{mod}._process_location", return_value=LocationOutcome.RECORDED),
+            ):
+                await _validate_batch(conn, rows, "Pace", rate_limit=5)
+        # Two 5 s rate-limit sleeps pass before the second unplaced row: it waits 3 s.
+        assert [c.args[0] for c in mock_sleep.call_args_list] == [
+            5,
+            5,
+            GOOGLE_SPACING_SECONDS - 10,
+            5,
+        ]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_placeable_rows_are_not_paced(self, pg_engine):
+        mod = "wslcb_licensing_tracker.address_validator"
+        rows = self._rows("---")
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+                patch(f"{mod}._process_location", return_value=LocationOutcome.RECORDED),
+            ):
+                await _validate_batch(conn, rows, "Plain", rate_limit=0)
+        mock_sleep.assert_not_called()
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_a_retry_later_skips_the_runs_remaining_unplaced_rows(self, pg_engine, caplog):
+        mod = "wslcb_licensing_tracker.address_validator"
+        rows = self._rows("N-N-N")
+        r, ok = LocationOutcome.RETRY_LATER, LocationOutcome.RECORDED
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.asyncio.sleep", new_callable=AsyncMock),
+                patch(f"{mod}._process_location", side_effect=[r, ok, ok]) as mock_process,
+                caplog.at_level("INFO"),
+            ):
+                await _validate_batch(conn, rows, "Skip", rate_limit=0)
+        tried = [c.args[1] for c in mock_process.call_args_list]
+        assert tried == [rows[0]["id"], rows[1]["id"], rows[3]["id"]]
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("skipping" in m and "no-determination" in m for m in messages)
+        assert any(m.startswith("Done: 3/5 attempted") for m in messages)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_backfill_rows_carry_the_flag(self, pg_engine):
+        """The selection marks unplaced rows, so pacing applies to every backfill."""
+        (nd,) = await _seed(pg_engine, "FLAG ND", days_ago=STALE_DAYS, status="undetermined")
+        (plain,) = await _seed(pg_engine, "FLAG PLAIN", days_ago=STALE_DAYS, status="invalid")
+        seen = {}
+
+        async def fake_batch(conn, rows, label, **kwargs):
+            seen.update({row["id"]: row["no_determination"] for row in rows})
+            return 0
+
+        mod = "wslcb_licensing_tracker.address_validator"
+        async with pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.is_validation_enabled", return_value=True),
+                patch(f"{mod}.get_api_key", return_value="test-key"),
+                patch(f"{mod}.validations_used", return_value=0),
+                patch(f"{mod}._validate_batch", side_effect=fake_batch),
+            ):
+                await backfill_addresses(conn, rate_limit=0, daily_limit=100_000)
+        assert seen[nd] is True
+        assert seen[plain] is False
+
+
+class TestEarlyRenewal:
+    """C: with *early_level*, a run also renews rows before they are due — only
+    the rows past *early_level* on their due day, earliest due first, and none
+    younger than EARLY_RENEWAL_FLOOR_DAYS. The hooks pass no level."""
+
+    # An inactive row attempted 100 days ago is due in 265 days.
+    AGE = 100
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_without_a_level_nothing_renews_early(self, pg_engine):
+        at = datetime.now(UTC) - timedelta(days=self.AGE, seconds=11)
+        ids = await _seed(pg_engine, "EARLY OFF", 5, at=at)
+        assert not set(ids) & set(await _run_backfill(pg_engine))
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_pulls_only_a_due_days_excess(self, pg_engine):
+        at = datetime.now(UTC) - timedelta(days=self.AGE, seconds=22)
+        ids = await _seed(pg_engine, "EARLY EXCESS", 5, at=at)
+        processed = await _run_backfill(pg_engine, early_level=3)
+        # Same due instant: rank by id, so the two highest ids are the excess.
+        assert sorted(set(ids) & set(processed)) == sorted(ids)[3:]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_the_floor_protects_recent_attempts(self, pg_engine):
+        at = datetime.now(UTC) - timedelta(days=EARLY_RENEWAL_FLOOR_DAYS - 1, seconds=33)
+        ids = await _seed(pg_engine, "EARLY FLOOR", 5, at=at)
+        assert not set(ids) & set(await _run_backfill(pg_engine, early_level=0))
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_due_rows_come_before_early_ones(self, pg_engine):
+        (due,) = await _seed(pg_engine, "EARLY ORDER DUE", days_ago=STALE_DAYS)
+        at = datetime.now(UTC) - timedelta(days=self.AGE, seconds=44)
+        early = await _seed(pg_engine, "EARLY ORDER EARLY", 2, at=at)
+        processed = await _run_backfill(pg_engine, early_level=0)
+        assert processed.index(due) < min(processed.index(e) for e in early)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_earliest_due_goes_first(self, pg_engine):
+        later = await _seed(
+            pg_engine, "EARLY LATER", at=datetime.now(UTC) - timedelta(days=self.AGE)
+        )
+        sooner = await _seed(
+            pg_engine, "EARLY SOONER", at=datetime.now(UTC) - timedelta(days=self.AGE + 10)
+        )
+        processed = await _run_backfill(pg_engine, early_level=0)
+        assert processed.index(sooner[0]) < processed.index(later[0])
+
+
+class TestRunBudget:
+    """reserve, limit and dry_run on backfill_addresses (#195)."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_reserve_is_left_unspent(self, pg_engine):
+        await _seed(pg_engine, "RESERVE", 6, days_ago=STALE_DAYS)
+        processed = await _run_backfill(pg_engine, daily_limit=12, reserve=3)
+        assert len(processed) == 12 - 3  # validations_used is patched to 0
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_limit_caps_the_run(self, pg_engine):
+        await _seed(pg_engine, "LIMIT", 3, days_ago=STALE_DAYS)
+        assert len(await _run_backfill(pg_engine, limit=2)) == 2
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_dry_run_calls_nothing(self, pg_engine, caplog):
+        await _seed(pg_engine, "DRY", 2, days_ago=STALE_DAYS)
+        with caplog.at_level("INFO"):
+            processed = await _run_backfill(pg_engine, dry_run=True, early_level=0)
+        assert processed == []
+        dry = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Dry run:")]
+        assert len(dry) == 1
+        assert "due" in dry[0]
+        assert "early" in dry[0]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_defaults(self):
+        assert RENEWAL_RESERVE == 90
+        assert EARLY_RENEWAL_FLOOR_DAYS == 35
+        assert NO_DETERMINATION_DAILY_LIMIT == 40
+        assert GOOGLE_SPACING_SECONDS == 13
+        assert (VALIDATION_TTL_DAYS, INACTIVE_TTL_DAYS, NO_DETERMINATION_TTL_DAYS) == (
+            180,
+            365,
+            365,
+        )
+        assert ACTIVITY_WINDOW_DAYS == 365
+
+
+class TestRollingDayWalk:
+    """One rolling budget for everything (#195 hazard): walk two synthetic days of
+    the daily renewal run and the scrape/relay hooks on a fake clock, stamping
+    each answered row as _validate_and_write does, and check that no 24h window
+    ever holds more than DAILY_VALIDATION_LIMIT answered calls."""
+
+    START = datetime(2031, 3, 10, tzinfo=UTC)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_no_window_exceeds_the_limit(self, pg_engine):
+        clock = [self.START]
+
+        class FakeDatetime(datetime):
+            @classmethod
+            def now(cls, _tz=None):
+                return clock[0]
+
+        async def stamp(conn, location_id, address, client=None):
+            clock[0] += timedelta(seconds=1)
+            await conn.execute(
+                update(locations)
+                .where(locations.c.id == location_id)
+                .values(address_validation_attempted_at=clock[0])
+            )
+            return LocationOutcome.RECORDED
+
+        async with pg_engine.connect() as conn:
+            before = (
+                await conn.execute(
+                    select(locations.c.id, locations.c.address_validation_attempted_at)
+                )
+            ).all()
+            seeded = (
+                (
+                    await conn.execute(
+                        insert(locations)
+                        .values(
+                            [
+                                {
+                                    "raw_address": f"{i} WALK WAY, SEATTLE, WA 98101",
+                                    # inactive: due a year on, well before the walk
+                                    "address_validation_attempted_at": datetime(
+                                        2030, 1, 1, tzinfo=UTC
+                                    ),
+                                }
+                                for i in range(1500)
+                            ]
+                        )
+                        .returning(locations.c.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            await conn.commit()
+
+        daily = {
+            "reserve": RENEWAL_RESERVE,
+            "early_level": DAILY_VALIDATION_LIMIT - RENEWAL_RESERVE,
+        }
+        # (hours after START, run): the daily run, two scrape hooks, a relay import.
+        schedule = [
+            (10, daily),
+            (14.5, {}),
+            (18, {}),
+            (24 + 8.5, {}),
+            (24 + 10.5, daily),
+            (24 + 14.5, {}),
+        ]
+        mod = "wslcb_licensing_tracker.address_validator"
+        spent = []
+        try:
+            async with pg_engine.connect() as conn:
+                with (
+                    patch(f"{mod}.datetime", FakeDatetime),
+                    patch(f"{mod}.is_validation_enabled", return_value=True),
+                    patch(f"{mod}.get_api_key", return_value="test-key"),
+                    patch(f"{mod}._process_location", side_effect=stamp),
+                    patch(f"{mod}.asyncio.sleep", new_callable=AsyncMock),
+                ):
+                    for hours, kwargs in schedule:
+                        clock[0] = self.START + timedelta(hours=hours)
+                        mark = clock[0]
+                        await backfill_addresses(conn, rate_limit=0, **kwargs)
+                        spent.append(round((clock[0] - mark).total_seconds()))
+                stamps = sorted(
+                    (
+                        await conn.execute(
+                            select(locations.c.address_validation_attempted_at).where(
+                                locations.c.address_validation_attempted_at >= self.START
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+        finally:
+            async with pg_engine.connect() as conn:
+                await conn.execute(delete(locations).where(locations.c.id.in_(seeded)))
+                for lid, at in before:
+                    await conn.execute(
+                        update(locations)
+                        .where(locations.c.id == lid)
+                        .values(address_validation_attempted_at=at)
+                    )
+                await conn.commit()
+
+        window = timedelta(hours=24)
+        worst = max(sum(1 for s in stamps if t - window <= s <= t) for t in stamps)
+        assert worst <= DAILY_VALIDATION_LIMIT
+        # The daily run leaves the reserve; the next hook gets it; then nothing is left.
+        assert spent[:3] == [DAILY_VALIDATION_LIMIT - RENEWAL_RESERVE, RENEWAL_RESERVE, 0]
+        # Day 2 at 08:30: the 24h window still holds day 1's 10:00 run and hooks.
+        assert spent[3] == 0
+        # Day 2's run (10:30): day 1's run has rolled out; the 14:30 hook's 90 has not.
+        assert spent[4] == DAILY_VALIDATION_LIMIT - RENEWAL_RESERVE - RENEWAL_RESERVE
+        assert spent[5] == RENEWAL_RESERVE
