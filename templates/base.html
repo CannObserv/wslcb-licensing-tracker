@@ -8,7 +8,10 @@
     <link rel="stylesheet" href="/static/css/tailwind.css?v={{ build_id }}">
     {# No history cache: every Back reloads, so the server renders the URL's state.
        A cached snapshot stores controls by attribute (their first-rendered state)
-       and re-runs every <script> in <body> on restore (#231). #}
+       and re-runs every <script> in <body> on restore (#231). Syncing attributes
+       on htmx:beforeHistorySave can't fix it: htmx snapshots once the response
+       arrives, after the next query is entered, under the previous URL.
+       tests/js/test_htmx.js goes red if the cache comes back. #}
     <meta name="htmx-config" content='{"refreshOnHistoryMiss":true,"historyCacheSize":0}'>
     <script src="/static/js/htmx.min.js?v={{ build_id }}"></script>
 </head>
