@@ -125,7 +125,7 @@ describe('htmx under jsdom (#232)', () => {
 
     it('gives every filter link the typed q', () => {
       const links = page.doc.querySelectorAll('#filter-form a, #entities-sort a, #entities-kinds a');
-      assert.ok(links.length >= 13, `expected the type, sort and kind links, got ${links.length}`);
+      assert.equal(links.length, 13, 'the 3 type, 2 sort and 8 kind links (#215)');
       for (const a of links) {
         assert.equal(new URL(a.href).searchParams.get('q'), 'lodge', a.getAttribute('href'));
       }
