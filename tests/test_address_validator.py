@@ -1,6 +1,7 @@
 """Tests for the address validation stack: transport client and DB layer."""
 
 import os
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -2738,27 +2739,25 @@ class TestValidationLock:
     lock held skips; the next one catches up."""
 
     @staticmethod
+    @asynccontextmanager
     async def _held(pg_engine):
-        conn = await pg_engine.connect()
-        await conn.execute(select(func.pg_advisory_lock(VALIDATION_LOCK_KEY)))
-        await conn.commit()
-        return conn
-
-    @staticmethod
-    async def _release(conn):
-        await conn.execute(select(func.pg_advisory_unlock(VALIDATION_LOCK_KEY)))
-        await conn.commit()
-        await conn.close()
+        """Another session holding the lock; always unlocked and closed (CR 9)."""
+        async with pg_engine.connect() as other:
+            await other.execute(select(func.pg_advisory_lock(VALIDATION_LOCK_KEY)))
+            await other.commit()
+            try:
+                yield
+            finally:
+                await other.rollback()
+                await other.execute(select(func.pg_advisory_unlock(VALIDATION_LOCK_KEY)))
+                await other.commit()
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_a_run_in_progress_holds_others_off(self, pg_engine, caplog):
         await _seed(pg_engine, "LOCK HELD", days_ago=STALE_DAYS)
-        other = await self._held(pg_engine)
-        try:
+        async with self._held(pg_engine):
             with caplog.at_level("INFO"):
                 processed = await _run_backfill(pg_engine)
-        finally:
-            await self._release(other)
         assert processed == []
         assert any("holds the validation lock" in r.getMessage() for r in caplog.records)
 
@@ -2777,18 +2776,14 @@ class TestValidationLock:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_a_dry_run_does_not_need_it(self, pg_engine, caplog):
         await _seed(pg_engine, "LOCK DRY", days_ago=STALE_DAYS)
-        other = await self._held(pg_engine)
-        try:
+        async with self._held(pg_engine):
             with caplog.at_level("INFO"):
                 await _run_backfill(pg_engine, dry_run=True)
-        finally:
-            await self._release(other)
         assert any(r.getMessage().startswith("Dry run:") for r in caplog.records)
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_a_budgeted_refresh_waits_its_turn(self, pg_engine):
         ids = await _seed(pg_engine, "LOCK REFRESH", 2)
-        other = await self._held(pg_engine)
         processed: list[int] = []
 
         async def mock_process(conn, location_id, address, client=None):
@@ -2796,16 +2791,13 @@ class TestValidationLock:
             return LocationOutcome.RECORDED
 
         mod = "wslcb_licensing_tracker.address_validator"
-        try:
-            async with pg_engine.connect() as conn:
-                with (
-                    patch(f"{mod}.get_api_key", return_value="test-key"),
-                    patch(f"{mod}.validations_used", return_value=0),
-                    patch(f"{mod}._process_location", side_effect=mock_process),
-                ):
-                    await refresh_specific_addresses(conn, ids, rate_limit=0, daily_limit=10)
-        finally:
-            await self._release(other)
+        async with self._held(pg_engine), pg_engine.connect() as conn:
+            with (
+                patch(f"{mod}.get_api_key", return_value="test-key"),
+                patch(f"{mod}.validations_used", return_value=0),
+                patch(f"{mod}._process_location", side_effect=mock_process),
+            ):
+                await refresh_specific_addresses(conn, ids, rate_limit=0, daily_limit=10)
         assert processed == []
 
 
