@@ -972,7 +972,12 @@ def backup(database: str) -> None:
 @click.option("--latest", is_flag=True, help="The newest dump of --prefix's host.")
 @click.option("--object", "key", metavar="KEY", help="A dump by its object key.")
 @click.option("--prefix", metavar="HOST", help="Whose dumps (required with --latest).")
-@click.option("--into", metavar="DATABASE", help="Restore into this existing, empty database.")
+@click.option(
+    "--into",
+    metavar="DATABASE",
+    help="Restore into this existing, empty database: a name or a DSN (its password "
+    "goes by PGPASSWORD, never argv; refused with --run-as, which means peer auth).",
+)
 @click.option(
     "--download-only",
     metavar="DIR",
