@@ -134,7 +134,7 @@ journalctl -u 'wslcb-task@scrape.service' -f
 
 ## Journal (#186)
 
-Persistent, capped at 512M. The Feb-2026 exeuntu image masks
+Persistent since 2026-10-28, capped at 512M. The Feb-2026 exeuntu image masks
 `systemd-journal-flush.service`, so journald stayed in `/run` despite the
 image's `Storage=persistent`, and the #184 and #220 reboots each lost a boot.
 The fix is the **unmask**: systemd ignores drop-ins on a masked unit, and
@@ -154,6 +154,8 @@ sudo systemctl start systemd-journal-flush.service
   first line, `journalctl --disk-usage` < 512M, a `curl` of `/api/v1/health`
   logs a fresh `uvicorn.access` line, and the probe's `journal.verdict` is
   `persistent`. `tests/test_journald_config.py` passes on the host, 0 skipped.
+  `wslcb-web` and `wslcb-task@` run as `exedev`, so their lines land in
+  `user-1000.journal`, not `system.journal`; `journalctl -u` reads both.
   Reboot survival shows only after the next one: `journalctl --list-boots` > 1
   boot, `journalctl -b -1 -n 5` ends in `Journal stopped`.
 - **Retention:** ~1.5 MB/day (16M in 10.4 d, 24M in 17 d), so 512M ≈ a year.
