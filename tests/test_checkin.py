@@ -1,4 +1,5 @@
-"""Tests for checkin.py — the dead-man check-ins of the backup (#185) and scrape (#196).
+"""Tests for checkin.py — the dead-man check-ins of the backup (#185), scrape (#196)
+and classify run (#207); what a rejection logs (#199).
 
 Ported from CannObserv/watcher's ``tests/ops/test_checkin.py``. No network:
 every test replaces the one POST seam.
@@ -239,9 +240,9 @@ def test_no_test_finds_a_configured_checkin():
     not even one that runs a real command under a unit's environment."""
     import os
 
-    from wslcb_licensing_tracker.checkin import CREDENTIALS_DIRECTORY_ENV
+    from wslcb_licensing_tracker.checkin import CLASSIFY, CREDENTIALS_DIRECTORY_ENV
 
-    monitors = (BACKUP, SCRAPE)
+    monitors = (BACKUP, SCRAPE, CLASSIFY)
     names = [CREDENTIALS_DIRECTORY_ENV] + [
         n for m in monitors for n in (m.base_url_env, m.monitor_id_env)
     ]
