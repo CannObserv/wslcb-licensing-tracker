@@ -258,7 +258,8 @@ class TestArchive:
         before = len(archive.preconditions)
         summary = _run(client, tmp_path, data_dir)
         assert len(archive.preconditions) == before
-        assert summary["archive"] == {"uploaded": 0, "unchanged": 3, "unsettled": 0, "failed": 0}
+        counts = {k: v for k, v in summary["archive"].items() if k != "seconds"}
+        assert counts == {"uploaded": 0, "unchanged": 3, "unsettled": 0, "failed": 0}
 
     def test_new_file_is_uploaded_next_run(self, client, buckets, tmp_path, data_dir):
         _run(client, tmp_path, data_dir)
@@ -341,6 +342,69 @@ class TestArchive:
         assert buckets[0].objects  # the dump still shipped
 
 
+class TestFault:
+    """``metadata.fault`` names the failed phases, so a change of phase reports at once (#194)."""
+
+    def _fault(self, client, tmp_path, data_dir, **overrides):
+        from wslcb_licensing_tracker.backup import BackupError
+
+        with pytest.raises(BackupError) as caught:
+            _run(client, tmp_path, data_dir, **overrides)
+        return caught.value.fault
+
+    def test_dump_failure_is_db(self, client, tmp_path, data_dir):
+        assert self._fault(client, tmp_path, data_dir, runner=FakePg(fail="pg_dump")) == "db"
+
+    def test_archive_failure_is_archive(self, buckets, tmp_path, data_dir):
+        client = FakeClient(*buckets, missing=frozenset({ARCHIVE}))
+        assert self._fault(client, tmp_path, data_dir) == "archive"
+
+    def test_a_file_failure_is_archive(self, client, buckets, tmp_path, data_dir):
+        _run(client, tmp_path, data_dir)
+        _file(data_dir, "remediation-backups/151.json", b"changed")
+        assert self._fault(client, tmp_path, data_dir) == "archive"
+
+    def test_both_is_db_then_archive(self, buckets, tmp_path, data_dir):
+        """One order, always: ``archive+db`` would read as a new fault."""
+        client = FakeClient(*buckets, missing=frozenset({ARCHIVE}))
+        fault = self._fault(client, tmp_path, data_dir, runner=FakePg(fail="pg_dump"))
+        assert fault == "db+archive"
+
+
+class TestTimings:
+    """Per-phase seconds, so the next slow run attributes itself (#194 §2)."""
+
+    @staticmethod
+    def _clock(*readings):
+        return iter(readings).__next__
+
+    def test_each_phase_is_timed(self, client, tmp_path, data_dir):
+        summary = _run(client, tmp_path, data_dir, clock=self._clock(10.0, 14.5, 14.5, 26.04))
+        assert summary["database"]["seconds"] == 4.5
+        assert summary["archive"]["seconds"] == 11.5
+
+    def test_a_failed_phase_still_logs_its_time(self, client, tmp_path, data_dir, caplog):
+        """A phase that hit its timeout is exactly the slow run to attribute."""
+        from wslcb_licensing_tracker.backup import BackupError
+
+        clock = self._clock(0.0, 30.0, 30.0, 31.0)
+        with pytest.raises(BackupError):
+            _run(client, tmp_path, data_dir, runner=FakePg(fail="pg_dump"), clock=clock)
+        (record,) = [r for r in caplog.records if r.getMessage().startswith("Backup failed")]
+        assert record.summary["database"] == {"seconds": 30.0}
+        assert record.summary["archive"]["seconds"] == 1.0
+
+    def test_the_default_clock_is_monotonic(self):
+        """Wall time can step under NTP; a phase's length must not."""
+        import inspect
+        import time
+
+        from wslcb_licensing_tracker import backup
+
+        for fn in (backup.run_backup, backup.main):
+            assert inspect.signature(fn).parameters["clock"].default is time.monotonic
+
+
 class TestMd5:
     def test_matches_what_gcs_reports(self, tmp_path):
         from wslcb_licensing_tracker.backup import b64_md5_file
@@ -369,12 +433,14 @@ class TestMain:
         from wslcb_licensing_tracker import backup
 
         calls = []
-        monkeypatch.setattr(
-            backup, "post_checkin", lambda status, variables, **_: calls.append((status, variables))
-        )
+
+        def record(status, variables, *, metadata=None, **_):
+            calls.append((status, variables, metadata))
+
+        monkeypatch.setattr(backup, "post_checkin", record)
         return calls
 
-    def _main(self, env, client, data_dir, runner=None):
+    def _main(self, env, client, data_dir, runner=None, **overrides):
         from wslcb_licensing_tracker import backup
 
         return backup.main(
@@ -385,23 +451,38 @@ class TestMain:
             runner=runner or FakePg(),
             host=HOST,
             now=lambda: NOW,
+            **overrides,
         )
 
     def test_success_checks_in_ok(self, env, client, data_dir, checkins):
         assert self._main(env, client, data_dir) == 0
-        status, variables = checkins[0]
+        status, variables, metadata = checkins[0]
         assert status == "ok"
         assert variables["outcome"] == "ok"
         assert variables["source_host"] == HOST
         assert variables["archive_uploaded"] == 3
         assert variables["object"].startswith(f"gs://{BUCKET}/daily/")
+        assert metadata is None  # an ok ends a fault; it names none
+
+    def test_ok_carries_the_phase_timings(self, env, client, data_dir, checkins):
+        clock = iter((100.0, 104.0, 104.0, 115.3)).__next__
+        assert self._main(env, client, data_dir, clock=clock) == 0
+        _, variables, _ = checkins[0]
+        assert variables["db_seconds"] == 4.0
+        assert variables["archive_seconds"] == 11.3
 
     def test_failure_checks_in_alert_and_exits_1(self, env, client, data_dir, checkins):
         assert self._main(env, client, data_dir, runner=FakePg(fail="pg_dump")) == 1
-        status, variables = checkins[0]
+        status, variables, metadata = checkins[0]
         assert status == "alert"
         assert variables["outcome"] == "failed"
         assert "pg_dump" in variables["error"]
+        assert metadata == {"fault": "db"}
+
+    def test_archive_failure_alerts_archive(self, env, buckets, data_dir, checkins):
+        client = FakeClient(*buckets, missing=frozenset({ARCHIVE}))
+        assert self._main(env, client, data_dir) == 1
+        assert checkins[0][2] == {"fault": "archive"}
 
     @pytest.mark.parametrize("name", ["WSLCB_BACKUP_BUCKET", "WSLCB_ARCHIVE_BUCKET"])
     def test_missing_bucket_config_exits_2(self, env, client, data_dir, checkins, name):
@@ -410,6 +491,7 @@ class TestMain:
         assert self._main(env, client, data_dir) == 2
         assert checkins[0][0] == "alert"
         assert name in checkins[0][1]["error"]
+        assert checkins[0][2] == {"fault": "setup"}  # before either phase
 
     def test_misplaced_key_exits_2_before_any_client(self, env, data_dir, checkins):
         """backup.env overriding the key path would aim the job at the root-only original."""
@@ -425,6 +507,7 @@ class TestMain:
         )
         assert rc == 2
         assert "backup.env" in checkins[0][1]["error"]
+        assert checkins[0][2] == {"fault": "setup"}
 
     def test_client_construction_failure_alerts(self, env, data_dir, checkins):
         from wslcb_licensing_tracker import backup
@@ -437,3 +520,4 @@ class TestMain:
         )
         assert rc == 1
         assert "no key" in checkins[0][1]["error"]
+        assert checkins[0][2] == {"fault": "setup"}

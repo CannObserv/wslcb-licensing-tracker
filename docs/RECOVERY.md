@@ -153,11 +153,18 @@ tenant, `co-wslcb-scrape`: [`MONITORING.md`](MONITORING.md). The fields:
 
 The check-in is `POST /api/v1/monitors/<id>/checkin`, `X-API-Key` (not
 `Bearer` — that is a 403), body `{"status": "ok"|"alert", "variables": {…}}`.
-An `alert` carries `source_host`, `outcome` (`failed`) and `error`; an `ok`
-carries `outcome`, `source_host`, `db_outcome`, `object`, `monthly`,
-`dumped_at`, `size_bytes`, `sha256`, `alembic_head` and
-`archive_{uploaded,unchanged,unsettled,failed}`. Use the monitor's id, not its
-`tenant_id` — both are ULIDs, and the wrong one is a 404.
+An `alert` carries `source_host`, `outcome` (`failed`) and `error`, plus
+`metadata.fault` (#194): the failed phases, `db`, `archive` or `db+archive`
+(always in that order), or `setup` when the run failed before either phase (a
+bucket variable unset, a misplaced key, a GCS client that can't be built). A
+change of value opens a new fault and reports at once. An `ok` carries
+`outcome`, `source_host`, `db_outcome`, `object`, `monthly`, `dumped_at`,
+`size_bytes`, `sha256`, `alembic_head`, `db_seconds` and
+`archive_{uploaded,unchanged,unsettled,failed,seconds}`. The two `seconds` are
+each phase's wall time, to 0.1 s; the journal's `Backup ok` / `Backup failed`
+summary carries them as `database.seconds` and `archive.seconds`, a failed
+phase's too. Use the monitor's id, not its `tenant_id` — both are ULIDs, and
+the wrong one is a 404.
 
 ## Install and first run
 

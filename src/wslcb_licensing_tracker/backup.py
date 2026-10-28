@@ -48,6 +48,7 @@ import re
 import socket
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -94,6 +95,10 @@ ARCHIVE_ROOTS = (
 SETTLE_SECONDS = 600
 #: How many per-file archive failures the error message names.
 _FAILURES_NAMED = 5
+#: An alert's ``metadata.fault`` (#194): the failed phases, joined by ``+`` in
+#: this order, or ``setup`` when the run failed before either began. co-status
+#: opens a new fault, and reports at once, when it changes.
+DB_FAULT, ARCHIVE_FAULT, SETUP_FAULT = "db", "archive", "setup"
 
 # Bounds on the slow calls. The dump measured 33.4 MB in 4.8 s (2026-09-29);
 # these are generous for that and short enough that a wedged call is a failed
@@ -112,6 +117,11 @@ Runner = Callable[..., subprocess.CompletedProcess]
 
 class BackupError(Exception):
     """Anything that means the run did not ship everything it should have."""
+
+    def __init__(self, message: str, *, fault: str | None = None) -> None:
+        """``fault`` is set on the one :func:`run_backup` raises: its failed phases."""
+        super().__init__(message)
+        self.fault = fault
 
 
 @dataclass(frozen=True)
@@ -241,6 +251,10 @@ def _tail(text: str | bytes | None) -> str:
 
 def _describe(exc: Exception) -> str:
     return str(exc) if isinstance(exc, BackupError) else f"{type(exc).__name__}: {exc}"
+
+
+def _seconds_since(started: float, clock: Callable[[], float]) -> float:
+    return round(clock() - started, 1)
 
 
 # --- effects on the database and the dump file ---
@@ -530,6 +544,7 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
     runner: Runner | None = None,
     host: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict:
     """One run: the dump, then the archive. Returns the summary it logged.
 
@@ -540,13 +555,18 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
 
     ``runner`` defaults to ``subprocess.run`` looked up at call time, so a test
     that replaces it can never fall through to the real binaries.
+
+    Each phase's ``seconds`` is in the summary whether it failed or not (#194):
+    a phase that ran into its timeout is the slow run worth attributing.
     """
     host = host or socket.gethostname()
     runner = runner if runner is not None else subprocess.run
     errors: list[str] = []
+    failed: list[str] = []
     summary: dict = {"source_host": host}
+    started = clock()
     try:
-        summary["database"] = backup_database(
+        database = backup_database(
             database=database,
             bucket=bucket,
             prefix=prefix,
@@ -558,6 +578,10 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
         )
     except Exception as exc:  # noqa: BLE001 — reported below, after the archive runs
         errors.append(f"database: {_describe(exc)}")
+        failed.append(DB_FAULT)
+        database = {}
+    summary["database"] = {**database, "seconds": _seconds_since(started, clock)}
+    started = clock()
     try:
         archive = mirror_archive(
             bucket=archive_bucket,
@@ -569,8 +593,10 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
         )
     except Exception as exc:  # noqa: BLE001 — reported below
         errors.append(f"archive: {_describe(exc)}")
+        failed.append(ARCHIVE_FAULT)
+        summary["archive"] = {"seconds": _seconds_since(started, clock)}
     else:
-        summary["archive"] = archive.counts()
+        summary["archive"] = {**archive.counts(), "seconds": _seconds_since(started, clock)}
         if archive.failures:
             named = "; ".join(archive.failures[:_FAILURES_NAMED])
             more = len(archive.failures) - _FAILURES_NAMED
@@ -578,10 +604,11 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
                 f"archive: {len(archive.failures)} file(s) failed: {named}"
                 + (f"; and {more} more" if more > 0 else "")
             )
+            failed.append(ARCHIVE_FAULT)
     if errors:
         error = " || ".join(errors)
         logger.error("Backup failed: %s", error, extra={"summary": summary})
-        raise BackupError(error)
+        raise BackupError(error, fault="+".join(failed))
     logger.info("Backup ok: %s", summary["database"]["object"], extra={"summary": summary})
     return summary
 
@@ -599,7 +626,8 @@ def _ok_variables(summary: dict) -> dict:
         "size_bytes": database["size_bytes"],
         "sha256": database["sha256"],
         "alembic_head": database["alembic_head"],
-        **{f"archive_{name}": count for name, count in archive.items()},
+        "db_seconds": database["seconds"],
+        **{f"archive_{name}": value for name, value in archive.items()},
     }
 
 
@@ -612,17 +640,19 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
     runner: Runner | None = None,
     host: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    clock: Callable[[], float] = time.monotonic,
 ) -> int:
     """Timer entrypoint. Exit 0 only when everything in scope is in a bucket."""
     host = host or socket.gethostname()
 
-    def fail(code: int, error: str) -> int:
+    def fail(code: int, error: str, fault: str = SETUP_FAULT) -> int:
         # The variables a monitor's alert template can use; RECOVERY.md lists them.
         post_checkin(
             "alert",
             {"source_host": host, "outcome": "failed", "error": error},
             monitor=BACKUP,
             environ=environ,
+            metadata={"fault": fault},
         )
         return code
 
@@ -656,8 +686,9 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
                 runner=runner,
                 host=host,
                 now=now,
+                clock=clock,
             )
         except BackupError as exc:
-            return fail(1, str(exc))
+            return fail(1, str(exc), exc.fault or SETUP_FAULT)
     post_checkin("ok", _ok_variables(summary), monitor=BACKUP, environ=environ)
     return 0
