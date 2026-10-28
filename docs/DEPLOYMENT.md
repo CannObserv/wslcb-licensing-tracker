@@ -92,7 +92,8 @@ No swap, a co-hosted prod service, and earlyoom: the budget, the configs in
 The exeuntu image masks the apt timers, so patching is a scheduled monthly run
 under the vendored `patching-hosts` skill (#192; first run by hand in #184,
 gregoryfoster/skills#313). Its host knob, `.skills/patching-hosts`, declares the
-window, a UTC `quiet` range per ingest timer, the in-flight gate, the restarter
+window, a UTC `quiet` range per timer firing (derived from `infra/*.timer` by
+`tests/test_patching_hosts_knob.py`, #223), the in-flight gate, the restarter
 and the Postgres databases; see [`SKILLS.md`](SKILLS.md#patching-hosts). Its
 `backup` line makes a fresh `wslcb-backup.service` run (#185) the recovery
 point, in place of a second `pg_dump`. Its one third-party origin is Tailscale
@@ -130,6 +131,39 @@ Under systemd (non-TTY), all output is JSON lines — `timestamp`, `level`, `nam
 journalctl -u wslcb-web.service -f
 journalctl -u 'wslcb-task@scrape.service' -f
 ```
+
+## Journal (#186)
+
+Persistent, capped at 512M. The Feb-2026 exeuntu image masks
+`systemd-journal-flush.service`, so journald stayed in `/run` despite the
+image's `Storage=persistent`, and the #184 and #220 reboots each lost a boot.
+The fix is the **unmask**: systemd ignores drop-ins on a masked unit, and
+`sysinit.target.wants/` already pulls the vendor unit in (`is-enabled` then
+reads `static`). `infra/journald.conf.d/wslcb.conf` tracks the setting and the
+cap; its comment covers #200's equal 512M drop-in, which makes it redundant.
+
+```bash
+sudo install -m 644 infra/journald.conf.d/wslcb.conf /etc/systemd/journald.conf.d/
+sudo systemctl unmask systemd-journal-flush.service
+sudo systemctl restart systemd-journald     # stdout streams survive: fd store
+sudo systemctl start systemd-journal-flush.service
+```
+
+- **Verify:** the flush is `static` and `active`, `/run/systemd/journal/flushed`
+  exists, `/var/log/journal/<machine-id>/system.journal` starts at the boot's
+  first line, `journalctl --disk-usage` < 512M, a `curl` of `/api/v1/health`
+  logs a fresh `uvicorn.access` line, and the probe's `journal.verdict` is
+  `persistent`. `tests/test_journald_config.py` passes on the host, 0 skipped.
+  Reboot survival shows only after the next one: `journalctl --list-boots` > 1
+  boot, `journalctl -b -1 -n 5` ends in `Journal stopped`.
+- **Retention:** ~1.5 MB/day (16M in 10.4 d, 24M in 17 d), so 512M ≈ a year.
+- **Personal data** (2026-10-28): no email addresses outside unit names.
+  `wslcb-web` access lines carry the client socket (127.0.0.1, bar one) and the
+  path and query string of searches over public data, kept as long as the
+  journal. `sudo journalctl --vacuum-time=<age>` shortens it.
+- **Re-mask:** only a rebuild from the Feb-2026 image; dpkg never writes masks
+  to `/etc/systemd/system`. The host test and the probe (`journal:volatile`)
+  both catch it.
 
 ## Address Validation
 
