@@ -153,7 +153,9 @@ def test_tailscale_pins_scope_the_followed_origin() -> None:
 # The quiet set derived from the timers (#223). A range starts before the
 # timer's PDT start and ends this long after its PST start plus its jitter:
 # at least twice every measured or projected run (scrape 7-10 min, a full
-# renewal ~16 min, the rest seconds), and the scrape ranges' convention.
+# renewal ~16 min, the rest seconds), and the scrape ranges' convention. It
+# also absorbs AccuracySec (systemd's default 1 min: a timer may fire that much
+# late), which test_no_timer_fires_later_than_a_minute keeps from growing.
 RUN_MARGIN_MIN = 30
 PACIFIC_OFFSETS_H = (7, 8)  # PDT, PST
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -219,6 +221,15 @@ def test_the_guard_sees_every_scheduled_timer() -> None:
         "wslcb-entity-classification.timer",
         "wslcb-scraper.timer",
     }
+
+
+def test_no_timer_fires_later_than_a_minute() -> None:
+    """A wider AccuracySec would let a timer fire past the margin unseen."""
+    for timer in sorted((REPO_ROOT / "infra").glob("*.timer")):
+        for raw in timer.read_text(encoding="utf-8").splitlines():
+            key, _, value = raw.partition("=")
+            if key.strip() == "AccuracySec":
+                assert value.strip() in {"1min", "60", "60s", "1s"}, f"{timer.name}: {raw}"
 
 
 @pytest.mark.parametrize("offset_h", PACIFIC_OFFSETS_H, ids=("PDT", "PST"))
