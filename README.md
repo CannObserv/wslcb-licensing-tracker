@@ -277,8 +277,9 @@ wslcb-licensing-tracker/
 │   ├── test_docs_layout.py      # Dated docs stay in docs/specs/ + docs/plans/, not docs/superpowers/ (#176)
 │   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs, SocratiCode pin agreement + loopback recreate (#175, #180, #222)
 │   ├── test_infra_web_unit.py    # wslcb-web starts after Postgres, never bound to its lifetime (#184)
+│   ├── test_journald_config.py # journald drop-in: persistent, 512M; on the host, the flush unmasked + journal on disk (#186)
 │   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
-│   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup + Tailscale origin/pins (#192, #193, #220)
+│   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup + Tailscale origin/pins; a quiet range covers every timer firing (#192, #193, #220, #223)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
 │   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224) ≥ advisory fix in lock + venv
 │   ├── test_warning_ratchet.py  # pyproject filterwarnings fail a run on a new RuntimeWarning / PytestWarning / own DeprecationWarning; one narrow starlette ignore, live only while httpx2 is absent (#216)

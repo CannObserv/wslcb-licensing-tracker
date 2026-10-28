@@ -80,6 +80,14 @@ this rollout. Re-measure
 if either the service's footprint or the earlyoom config changes — the two are
 coupled, and changing one alone silently re-arms the bug.
 
+## The journal is off tmpfs (#186)
+
+Until #186, the journal lived in `/run/log/journal`. `/run` is tmpfs, so on a
+host with no swap the journal held RAM: up to its 147.6M runtime cap before it
+rotated. It's on disk now, capped at 512M
+([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal-186)). If `/run/log/journal`
+grows again, the flush has been re-masked.
+
 ## Verifying earlyoom actually took the config
 
 `apt install earlyoom` **starts the daemon itself**, before any config is in
