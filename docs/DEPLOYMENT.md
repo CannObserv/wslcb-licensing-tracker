@@ -157,7 +157,8 @@ sudo systemctl start systemd-journal-flush.service
   Reboot survival shows only after the next one: `journalctl --list-boots` > 1
   boot, `journalctl -b -1 -n 5` ends in `Journal stopped`.
 - **Retention:** ~1.5 MB/day (16M in 10.4 d, 24M in 17 d), so 512M ≈ a year.
-- **Personal data** (2026-10-28): no email addresses outside unit names.
+- **Personal data** (2026-10-28): no personal email addresses (only unit names
+  and kernel boot lines).
   `wslcb-web` access lines carry the client socket (127.0.0.1, bar one) and the
   path and query string of searches over public data, kept as long as the
   journal. `sudo journalctl --vacuum-time=<age>` shortens it.
