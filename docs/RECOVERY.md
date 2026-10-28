@@ -294,7 +294,9 @@ sudo -u postgres psql -d wslcb < scripts/setup-backup-role.sql
 
 `--into` loads with `--exit-on-error --single-transaction`, on stdin, so a
 failure leaves the target empty and `postgres` never reads a root-written
-file. Fetch-only, to inspect: `--download-only DIR` (a new or private `0700`
+file. `--into` takes a DSN too: a password in it goes to `pg_restore` as
+`PGPASSWORD`, never on its argv (#194). `--run-as` refuses a password DSN,
+because `setpriv --reset-env` would drop it; with `--run-as`, use peer auth. Fetch-only, to inspect: `--download-only DIR` (a new or private `0700`
 directory; the file is written `O_EXCL`, `0600`, sha256- and
 `pg_restore`-verified).
 

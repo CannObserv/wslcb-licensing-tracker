@@ -34,6 +34,8 @@ import warnings
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from wslcb_licensing_tracker.backup import libpq_target
+
 SHAPE = re.compile(r"wslcb_test_restore_(?P<ns>\d+)_(?P<pid>\d+)")
 
 INSUFFICIENT_PRIVILEGE = "42501"
@@ -72,7 +74,11 @@ class PsqlError(Exception):
 
 
 def psql(dsn: str, sql: str) -> str:
-    """Run one statement through ``psql``; its stdout, or :class:`PsqlError`."""
+    """Run one statement through ``psql``; its stdout, or :class:`PsqlError`.
+
+    The password goes by env, never argv (:func:`libpq_target`, #194 §3).
+    """
+    target, env = libpq_target(dsn)
     # Fixed argv, the SQL the tests' own; psql from PATH, as the job's pg_dump is.
     argv = [
         "psql",
@@ -82,11 +88,11 @@ def psql(dsn: str, sql: str) -> str:
         "ON_ERROR_STOP=1",
         "-v",
         "VERBOSITY=verbose",
-        f"--dbname={dsn}",
+        f"--dbname={target}",
         "-c",
         sql,
     ]
-    result = subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
+    result = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)  # noqa: S603
     if result.returncode:
         raise PsqlError(sql, result.returncode, result.stderr)
     return result.stdout.strip()

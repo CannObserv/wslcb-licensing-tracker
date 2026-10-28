@@ -53,6 +53,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
@@ -111,6 +112,13 @@ LIST_TIMEOUT_SECONDS = 30.0
 _HEADER_RE = re.compile(r"^;\s+(Dumped from database version|Dumped by pg_dump version): (.+)$")
 _ENTRIES_RE = re.compile(r"^;\s+TOC Entries: (\d+)$")
 _TABLE_DATA_RE = re.compile(r"^\d+; \d+ \d+ TABLE DATA (\S+) (\S+) ")
+# libpq's connection-string grammar (conninfo_parse): key = value, the value
+# single-quoted or bare, a backslash escaping the next character in either.
+_URI_PREFIXES = ("postgresql://", "postgres://")
+_KEYWORD_PAIR_RE = re.compile(
+    r"\s*([^=\s]+)\s*=\s*('(?:[^'\\]|\\.)*'|(?!')(?:[^\s\\]|\\.)*)", re.DOTALL
+)
+_ESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -225,6 +233,65 @@ def misplaced_key(environ: Mapping[str, str]) -> str | None:
     )
 
 
+def _split_uri_password(dsn: str) -> tuple[str, str | None]:
+    scheme, _, rest = dsn.partition("://")
+    # libpq: the user info runs to the first '@' before any '/'.
+    end = next((i for i, ch in enumerate(rest) if ch in "@/"), len(rest))
+    userinfo, after = (rest[:end], rest[end + 1 :]) if rest[end : end + 1] == "@" else ("", rest)
+    user, colon, encoded = userinfo.partition(":")
+    password = unquote(encoded) if colon else None
+    base, question, query = after.partition("?")
+    kept = []
+    for param in query.split("&") if question else []:
+        key, _, value = param.partition("=")
+        if unquote(key) == "password":
+            password = unquote(value)  # the query's wins, as in libpq
+        else:
+            kept.append(param)
+    if password is None:
+        return dsn, None
+    authority = f"{user}@" if userinfo else ""
+    return f"{scheme}://{authority}{base}" + (f"?{'&'.join(kept)}" if kept else ""), password
+
+
+def _split_keyword_password(dsn: str) -> tuple[str, str | None]:
+    pairs, password, at = [], None, 0
+    while dsn[at:].strip():
+        match = _KEYWORD_PAIR_RE.match(dsn, at)
+        if match is None:
+            return dsn, None  # malformed: libpq refuses it before connecting
+        key, value = match.groups()
+        if key == "password":
+            value = value[1:-1] if value.startswith("'") else value
+            password = _ESCAPE_RE.sub(r"\1", value)
+        else:
+            pairs.append(match.group(0).strip())
+        at = match.end()
+    return (dsn, None) if password is None else (" ".join(pairs), password)
+
+
+def libpq_target(
+    dsn: str, *, environ: Mapping[str, str] = os.environ
+) -> tuple[str, dict[str, str] | None]:
+    """``(--dbname value, child env)`` for a libpq program, the password moved out.
+
+    Any local user can read a process's argv from ``/proc/<pid>/cmdline``
+    while it runs, so a DSN's password goes to ``PGPASSWORD`` in a copy of
+    *environ* instead (#194 §3). A URI (user info or ``?password=``) and a
+    ``key=value`` string are both split. With no password — a bare database
+    name over peer auth, as the nightly backup runs — the DSN is unchanged and
+    the env None: the child inherits this process's, with nothing added.
+    """
+    if dsn.startswith(_URI_PREFIXES):
+        target, password = _split_uri_password(dsn)
+    elif "=" in dsn:
+        target, password = _split_keyword_password(dsn)
+    else:
+        return dsn, None
+    # An empty password is none, to libpq too; PGPASSWORD="" would say otherwise.
+    return target, ({**environ, "PGPASSWORD": password} if password else None)
+
+
 def sha256_file(path: Path) -> str:
     """Hex sha256 of a file, streamed."""
     digest = hashlib.sha256()
@@ -262,6 +329,7 @@ def _seconds_since(started: float, clock: Callable[[], float]) -> float:
 
 def read_alembic_head(database: str, *, runner: Runner) -> str | None:
     """The schema version, recorded so a restore can be checked against it."""
+    target, env = libpq_target(database)
     argv = [
         "psql",
         "--no-password",
@@ -269,11 +337,11 @@ def read_alembic_head(database: str, *, runner: Runner) -> str | None:
         "--quiet",
         "--tuples-only",
         "--no-align",
-        f"--dbname={database}",
+        f"--dbname={target}",
         "--command=SELECT version_num FROM alembic_version",
     ]
     result = runner(
-        argv, capture_output=True, text=True, check=False, timeout=QUERY_TIMEOUT_SECONDS
+        argv, capture_output=True, text=True, check=False, timeout=QUERY_TIMEOUT_SECONDS, env=env
     )
     if result.returncode != 0:
         msg = f"psql could not read alembic_version: {_tail(result.stderr)}"
@@ -293,15 +361,16 @@ def run_pg_dump(database: str, out: Path, *, runner: Runner) -> None:
     removed only that copy passed both reads — harmlessly, as it restored
     identically, but no longer a clean signal.
     """
+    target, env = libpq_target(database)
     argv = [
         "pg_dump",
         "--format=custom",
         "--no-password",
         f"--file={out}",
-        f"--dbname={database}",
+        f"--dbname={target}",
     ]
     result = runner(
-        argv, capture_output=True, text=True, check=False, timeout=PG_DUMP_TIMEOUT_SECONDS
+        argv, capture_output=True, text=True, check=False, timeout=PG_DUMP_TIMEOUT_SECONDS, env=env
     )
     if result.returncode != 0:
         msg = f"pg_dump exited {result.returncode}: {_tail(result.stderr)}"

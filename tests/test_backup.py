@@ -56,9 +56,12 @@ class FakePg:
         # precedes the data. Only reading the data through finds the cut.
         self.truncated = truncated
         self.calls: list[list[str]] = []
+        #: Each call's ``env``: None means the child inherits this process's.
+        self.envs: list[dict | None] = []
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
+        self.envs.append(kwargs.get("env"))
         program = argv[argv.index("--") + 1] if argv[0] == "setpriv" else argv[0]
         if program == self.fail:
             return subprocess.CompletedProcess(argv, 1, stdout="", stderr=f"{program}: boom\n")
@@ -403,6 +406,122 @@ class TestTimings:
 
         for fn in (backup.run_backup, backup.main):
             assert inspect.signature(fn).parameters["clock"].default is time.monotonic
+
+
+PASSWORD = "s3cr@t/pw"  # noqa: S105 — a fixture, and one that needs escaping
+PASSWORD_DSN = "postgresql://wslcb:s3cr%40t%2Fpw@localhost:5432/wslcb_test?sslmode=disable"  # noqa: S105
+
+
+class TestLibpqTarget:
+    """A DSN's password goes to the child's env, never its argv (#194 §3):
+    any local user can read ``/proc/<pid>/cmdline`` while the child runs."""
+
+    @staticmethod
+    def _target(dsn, environ=None):
+        from wslcb_licensing_tracker.backup import libpq_target
+
+        return libpq_target(dsn, environ={"PATH": "/usr/bin"} if environ is None else environ)
+
+    @pytest.mark.parametrize(
+        "dsn",
+        [
+            "wslcb",  # the nightly backup: a bare name, peer auth
+            "postgresql://wslcb@localhost/wslcb_test",
+            "postgres:///wslcb?host=/var/run/postgresql",
+            "host=/var/run/postgresql dbname=wslcb",
+        ],
+    )
+    def test_no_password_changes_nothing(self, dsn):
+        """No ``PGPASSWORD`` set, and the child inherits its env as before."""
+        assert self._target(dsn) == (dsn, None)
+
+    def test_uri_userinfo_password_moves_to_the_env(self):
+        dsn, env = self._target(PASSWORD_DSN)
+        assert dsn == "postgresql://wslcb@localhost:5432/wslcb_test?sslmode=disable"
+        assert env == {"PATH": "/usr/bin", "PGPASSWORD": PASSWORD}
+
+    def test_postgres_scheme(self):
+        assert self._target("postgres://u:pw@h/db") == (
+            "postgres://u@h/db",
+            {"PATH": "/usr/bin", "PGPASSWORD": "pw"},
+        )
+
+    def test_userinfo_runs_to_the_first_at(self):
+        """libpq's rule: an unescaped ``?`` before the ``@`` is still the password's."""
+        dsn, env = self._target("postgresql://u:p?q@h/db")
+        assert dsn == "postgresql://u@h/db"
+        assert env["PGPASSWORD"] == "p?q"
+
+    @pytest.mark.parametrize(
+        ("given", "kept"),
+        [
+            (
+                "postgresql://u@h/db?password=pw%26x&sslmode=require",
+                "postgresql://u@h/db?sslmode=require",
+            ),
+            (
+                "postgresql://u@h/db?sslmode=require&password=pw%26x",
+                "postgresql://u@h/db?sslmode=require",
+            ),
+            ("postgresql://u@h/db?password=pw%26x", "postgresql://u@h/db"),
+            ("postgresql://u:other@h/db?password=pw%26x", "postgresql://u@h/db"),  # the query wins
+        ],
+    )
+    def test_uri_query_password_moves_to_the_env(self, given, kept):
+        dsn, env = self._target(given)
+        assert dsn == kept
+        assert env["PGPASSWORD"] == "pw&x"
+
+    @pytest.mark.parametrize(
+        ("given", "kept", "password"),
+        [
+            ("host=localhost password=pw dbname=x", "host=localhost dbname=x", "pw"),
+            ("password = 'a b\\'c' dbname=x", "dbname=x", "a b'c"),
+            ("dbname=x password=p\\ w", "dbname=x", "p w"),
+            ("dbname='my db' password=pw", "dbname='my db'", "pw"),
+        ],
+    )
+    def test_keyword_password_moves_to_the_env(self, given, kept, password):
+        dsn, env = self._target(given)
+        assert dsn == kept
+        assert env["PGPASSWORD"] == password
+
+    @pytest.mark.parametrize("dsn", ["dbname=x password='unterminated", "dbname=x junk"])
+    def test_a_malformed_string_is_left_to_libpq(self, dsn):
+        """libpq refuses it before connecting, with a better message than ours."""
+        assert self._target(dsn) == (dsn, None)
+
+    def test_an_empty_password_is_no_password(self):
+        """libpq treats ``u:@h`` as none; setting PGPASSWORD="" would say otherwise."""
+        assert self._target("postgresql://u:@h/db") == ("postgresql://u@h/db", None)
+
+    def test_the_env_is_a_copy(self):
+        environ = {"PATH": "/usr/bin"}
+        _, env = self._target(PASSWORD_DSN, environ)
+        assert environ == {"PATH": "/usr/bin"}
+        assert env is not environ
+
+
+class TestPasswordOffArgv:
+    def test_every_libpq_call_gets_the_password_by_env(self, client, tmp_path, data_dir):
+        pg = FakePg()
+        _run(client, tmp_path, data_dir, database=PASSWORD_DSN, runner=pg)
+        libpq = [
+            i for i, argv in enumerate(pg.calls) if any(a.startswith("--dbname=") for a in argv)
+        ]
+        assert [pg.calls[i][0] for i in libpq] == ["psql", "pg_dump"]
+        for i in libpq:
+            assert not any("s3cr" in arg for arg in pg.calls[i]), pg.calls[i]
+            assert pg.envs[i]["PGPASSWORD"] == PASSWORD
+
+    def test_the_nightly_bare_name_sets_no_password(self, client, tmp_path, data_dir):
+        """Peer auth, no credential: every child inherits its env untouched."""
+        pg = FakePg()
+        _run(client, tmp_path, data_dir, runner=pg)
+        assert pg.calls
+        assert pg.envs == [None] * len(pg.calls)
+        assert "--dbname=wslcb" in pg.calls[0]
+        assert "--no-password" in pg.calls[0]
 
 
 class TestMd5:
