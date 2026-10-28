@@ -412,6 +412,15 @@ PASSWORD = "s3cr@t/pw"  # noqa: S105 — a fixture, and one that needs escaping
 PASSWORD_DSN = "postgresql://wslcb:s3cr%40t%2Fpw@localhost:5432/wslcb_test?sslmode=disable"  # noqa: S105
 
 
+class TimingOutPg(FakePg):
+    """``pg_dump`` hits its timeout. ``TimeoutExpired``'s message quotes the whole argv."""
+
+    def __call__(self, argv, **kwargs):
+        if argv[0] == "pg_dump":
+            raise subprocess.TimeoutExpired(argv, 1800)
+        return super().__call__(argv, **kwargs)
+
+
 class TestLibpqTarget:
     """A DSN's password goes to the child's env, never its argv (#194 §3):
     any local user can read ``/proc/<pid>/cmdline`` while the child runs."""
@@ -520,6 +529,14 @@ class TestPasswordOffArgv:
             assert not any("s3cr" in arg for arg in pg.calls[i]), pg.calls[i]
             assert pg.envs[i]["PGPASSWORD"] == PASSWORD
 
+    def test_a_timeout_reports_no_password(self, client, tmp_path, data_dir):
+        """The run's error goes to the journal and the alert verbatim (#194 CR 8)."""
+        from wslcb_licensing_tracker.backup import BackupError
+
+        with pytest.raises(BackupError, match=r"TimeoutExpired.*pg_dump") as caught:
+            _run(client, tmp_path, data_dir, database=PASSWORD_DSN, runner=TimingOutPg())
+        assert "s3cr" not in str(caught.value)
+
     def test_the_nightly_bare_name_sets_no_password(self, client, tmp_path, data_dir):
         """Peer auth, no credential: every child inherits its env untouched."""
         pg = FakePg()
@@ -568,16 +585,16 @@ class TestMain:
     def _main(self, env, client, data_dir, runner=None, **overrides):
         from wslcb_licensing_tracker import backup
 
-        return backup.main(
-            database="wslcb",
-            environ=env,
-            client_factory=lambda: client,
-            data_dir=data_dir,
-            runner=runner or FakePg(),
-            host=HOST,
-            now=lambda: NOW,
-            **overrides,
-        )
+        kwargs = {
+            "database": "wslcb",
+            "environ": env,
+            "client_factory": lambda: client,
+            "data_dir": data_dir,
+            "runner": runner or FakePg(),
+            "host": HOST,
+            "now": lambda: NOW,
+        }
+        return backup.main(**(kwargs | overrides))
 
     def test_success_checks_in_ok(self, env, client, data_dir, checkins):
         assert self._main(env, client, data_dir) == 0
@@ -602,6 +619,16 @@ class TestMain:
         assert status == "alert"
         assert variables["outcome"] == "failed"
         assert "pg_dump" in variables["error"]
+        assert metadata == {"fault": "db"}
+
+    def test_a_timed_out_dump_alerts_without_the_password(self, env, client, data_dir, checkins):
+        """co-status stores and forwards ``error``: a password there leaves the host."""
+        rc = self._main(env, client, data_dir, runner=TimingOutPg(), database=PASSWORD_DSN)
+        assert rc == 1
+        status, variables, metadata = checkins[0]
+        assert status == "alert"
+        assert "timed out" in variables["error"]
+        assert "s3cr" not in variables["error"]
         assert metadata == {"fault": "db"}
 
     def test_archive_failure_alerts_archive(self, env, buckets, data_dir, checkins):
