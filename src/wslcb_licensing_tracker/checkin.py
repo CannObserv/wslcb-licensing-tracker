@@ -76,14 +76,47 @@ _ATTEMPTS = 2
 #: Monitor ids are ULIDs; the value becomes a URL path segment.
 _MONITOR_ID_RE = re.compile(r"^[0-9A-Za-z]+$")
 _HTTP_OK_MIN, _HTTP_OK_MAX, _HTTP_SERVER_ERROR = 200, 299, 500
+#: What a 4xx means at co-status (#199). Bad key, wrong tenant, unknown monitor:
+_AUTH_REJECTIONS = frozenset({401, 403, 404})
+#: The payload refused: nothing recorded, no event, the timer not reset.
+_UNPROCESSABLE = 422
+_REJECTION_HINTS = {
+    **dict.fromkeys(_AUTH_REJECTIONS, "check the monitor id and key"),
+    _UNPROCESSABLE: (
+        "the monitor's templates could not render these variables, or the payload "
+        "is not valid JSON as co-status defines it; nothing was recorded"
+    ),
+}
+#: How much of a rejection's body to log. co-status's 422 names the field or
+#: template section at fault in its first line or two.
+_BODY_LOGGED_CHARS = 300
 
-Post = Callable[[str, dict, dict, float], int]
+#: ``(status code, response body)``.
+Post = Callable[[str, dict, dict, float], tuple[int, str]]
 
 
-def _http_post(url: str, payload: dict, headers: dict, timeout: float) -> int:
-    """One POST, returning the status code. The seam the tests replace."""
+def _http_post(url: str, payload: dict, headers: dict, timeout: float) -> tuple[int, str]:
+    """One POST, returning the status code and body. The seam the tests replace."""
     with httpx.Client(timeout=timeout) as client:
-        return client.post(url, json=payload, headers=headers).status_code
+        response = client.post(url, json=payload, headers=headers)
+        return response.status_code, response.text
+
+
+def _rejected(monitor: Monitor, code: int, body: str) -> None:
+    """Log a 4xx with what it means here, and what co-status said.
+
+    The body, never the request headers: the key goes only in a header, so a
+    body can't echo it back.
+    """
+    hint = _REJECTION_HINTS.get(code)
+    said = " ".join(body.split())[:_BODY_LOGGED_CHARS]
+    logger.warning(
+        "%s check-in rejected with HTTP %s%s%s",
+        monitor.label,
+        code,
+        f" — {hint}" if hint else "",
+        f"; co-status said: {said}" if said else "",
+    )
 
 
 def _read_key(environ: Mapping[str, str]) -> str:
@@ -195,18 +228,14 @@ def _post_checkin(  # noqa: PLR0913 — post_checkin's arguments, passed through
     failure = ""
     for _ in range(_ATTEMPTS):
         try:
-            code = post(url, payload, headers, TIMEOUT_SECONDS)
+            code, body = post(url, payload, headers, TIMEOUT_SECONDS)
         except httpx.TransportError as e:
             failure = f"{type(e).__name__}: {e}"
             continue
         if _HTTP_OK_MIN <= code <= _HTTP_OK_MAX:
             return True
         if code < _HTTP_SERVER_ERROR:
-            logger.warning(
-                "%s check-in rejected with HTTP %s — check the monitor id and key",
-                monitor.label,
-                code,
-            )
+            _rejected(monitor, code, body)
             return False
         failure = f"HTTP {code}"
     logger.warning("%s check-in failed: %s", monitor.label, failure)

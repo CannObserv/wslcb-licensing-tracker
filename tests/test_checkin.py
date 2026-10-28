@@ -29,6 +29,8 @@ def _environ(tmp_path, *, base=BASE, monitor=MONITOR, key="sekrit"):
 
 
 class _Recorder:
+    """Answers each POST with the next of *codes*: a status, ``(status, body)``, or a raise."""
+
     def __init__(self, *codes):
         self.codes = list(codes) or [202]
         self.calls = []
@@ -38,7 +40,12 @@ class _Recorder:
         code = self.codes.pop(0)
         if isinstance(code, Exception):
             raise code
-        return code
+        return code if isinstance(code, tuple) else (code, "")
+
+
+def _scrape_env(tmp_path):
+    env = _environ(tmp_path, base=None, monitor=None)
+    return env | {"WSLCB_SCRAPE_CHECKIN_BASE_URL": BASE, "WSLCB_SCRAPE_MONITOR_ID": MONITOR}
 
 
 class TestPostCheckin:
@@ -104,6 +111,67 @@ class TestPostCheckin:
             post_checkin("ok", {}, monitor=BACKUP, environ=_environ(tmp_path), post=post) is False
         )
         assert len(post.calls) == 1
+
+    @pytest.mark.parametrize("code", [401, 403, 404])
+    def test_auth_rejections_point_at_the_id_and_key(self, tmp_path, caplog, code):
+        """Bad key, wrong tenant, unknown monitor: the id/key hint is the right one."""
+        post = _Recorder(code)
+        with caplog.at_level(logging.WARNING):
+            assert (
+                post_checkin("ok", {}, monitor=BACKUP, environ=_environ(tmp_path), post=post)
+                is False
+            )
+        assert f"rejected with HTTP {code}" in caplog.text
+        assert "check the monitor id and key" in caplog.text
+
+    def test_422_names_the_payload_not_the_key(self, tmp_path, caplog):
+        """A 422 is the payload refused — a template that can't render these
+        variables, or a body co-status won't take as JSON. Nothing is recorded,
+        and nothing is retried (#199)."""
+        post = _Recorder(422, 202)
+        with caplog.at_level(logging.WARNING):
+            assert (
+                post_checkin("alert", {}, monitor=SCRAPE, environ=_scrape_env(tmp_path), post=post)
+                is False
+            )
+        assert len(post.calls) == 1
+        assert "scrape check-in rejected with HTTP 422" in caplog.text
+        assert "templates could not render these variables" in caplog.text
+        assert "not valid JSON" in caplog.text
+        assert "nothing was recorded" in caplog.text
+        assert "monitor id and key" not in caplog.text
+
+    @pytest.mark.parametrize("code", [400, 409, 413])
+    def test_other_4xx_is_neutral(self, tmp_path, caplog, code):
+        """Neither hint: a 4xx co-status gives no meaning to here has none to point at."""
+        post = _Recorder(code)
+        with caplog.at_level(logging.WARNING):
+            assert (
+                post_checkin("ok", {}, monitor=BACKUP, environ=_environ(tmp_path), post=post)
+                is False
+            )
+        assert f"rejected with HTTP {code}" in caplog.text
+        assert "monitor id and key" not in caplog.text
+        assert "templates" not in caplog.text
+
+    def test_rejection_logs_the_body_on_one_line_capped(self, tmp_path, caplog):
+        """co-status's 422 names the field or template section at fault; logging
+        it saves a round trip. One line, capped, and never the headers."""
+        body = '{"detail": "body_template: \'window_expires\' is undefined"}\n' + "x" * 1000
+        post = _Recorder((422, body))
+        with caplog.at_level(logging.WARNING):
+            post_checkin("alert", {}, monitor=BACKUP, environ=_environ(tmp_path), post=post)
+        (line,) = [r.getMessage() for r in caplog.records if "HTTP 422" in r.getMessage()]
+        assert "body_template: 'window_expires' is undefined" in line
+        assert "\n" not in line
+        assert len(line) < 600
+        assert "sekrit" not in caplog.text
+
+    def test_rejection_without_a_body_logs_no_body(self, tmp_path, caplog):
+        post = _Recorder((403, "  "))
+        with caplog.at_level(logging.WARNING):
+            post_checkin("ok", {}, monitor=BACKUP, environ=_environ(tmp_path), post=post)
+        assert "co-status said" not in caplog.text
 
     @pytest.mark.parametrize("base", ["status:9000", "ftp://status", "http://status:port"])
     def test_malformed_base_url_posts_nothing(self, tmp_path, base):

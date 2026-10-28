@@ -168,8 +168,9 @@ class TestCmdScrapeCheckin:
         assert isinstance(result.exception, OSError)
         (status, variables), _ = checkin.call_args
         assert status == "alert"
-        assert variables["consecutive_errors"] == ""
-        assert variables["last_success_at"] == ""
+        assert variables["consecutive_errors"] == "unknown"
+        assert variables["last_success_at"] == "unknown"
+        assert variables["window_expires"] == "unknown"
 
 
 def _summary(**kw):

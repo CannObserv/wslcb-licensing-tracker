@@ -568,22 +568,33 @@ class TestCheckinVariables:
         }
 
     def test_alert_without_history_keeps_every_key(self):
-        """The monitor's template names every key; a missing one could break the render."""
+        """The monitor's template names every key; a missing one is a 422. An
+        unreadable history reads ``unknown``, not blanks the body runs together (#199)."""
         variables = alert_variables(ValueError(""), None, "host")
+        full = alert_variables(
+            ValueError(""), ScrapeHealth(datetime(2026, 10, 1, tzinfo=UTC), 1), "h"
+        )
+        assert variables.keys() == full.keys()
         assert variables["error"] == "ValueError"
         assert (
             variables["consecutive_errors"],
             variables["last_success_at"],
             variables["window_expires"],
-        ) == ("", "", "")
+        ) == ("unknown", "unknown", "unknown")
 
     def test_alert_never_succeeded(self):
+        """The count is real; there is no last success, so no window was captured (#199)."""
         variables = alert_variables(ValueError("x"), ScrapeHealth(None, 2), "host")
         assert (
             variables["consecutive_errors"],
             variables["last_success_at"],
             variables["window_expires"],
-        ) == (2, "", "")
+        ) == (2, "never", "n/a")
+
+    @pytest.mark.parametrize("health", [None, ScrapeHealth(None, 0)])
+    def test_alert_has_no_blank_variable(self, health):
+        """A blank renders as a gap in the body: ` consecutive; last success ;`."""
+        assert "" not in alert_variables(ValueError("x"), health, "host").values()
 
     def test_alert_survives_an_exception_that_cannot_be_printed(self):
         """str(exc) is the one foreign call here; if it raises, the alert still goes."""
