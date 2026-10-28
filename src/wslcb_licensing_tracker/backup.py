@@ -250,7 +250,7 @@ def _split_uri_password(dsn: str) -> tuple[str, str | None]:
             kept.append(param)
     if password is None:
         return dsn, None
-    authority = f"{user}@" if userinfo else ""
+    authority = f"{user}@" if user else ""
     return f"{scheme}://{authority}{base}" + (f"?{'&'.join(kept)}" if kept else ""), password
 
 

@@ -446,6 +446,12 @@ class TestLibpqTarget:
             {"PATH": "/usr/bin", "PGPASSWORD": "pw"},
         )
 
+    def test_no_user_leaves_no_bare_at(self):
+        assert self._target("postgresql://:pw@h/db") == (
+            "postgresql://h/db",
+            {"PATH": "/usr/bin", "PGPASSWORD": "pw"},
+        )
+
     def test_userinfo_runs_to_the_first_at(self):
         """libpq's rule: an unescaped ``?`` before the ``@`` is still the password's."""
         dsn, env = self._target("postgresql://u:p?q@h/db")
