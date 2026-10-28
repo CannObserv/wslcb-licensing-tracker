@@ -151,9 +151,9 @@ def test_tailscale_pins_scope_the_followed_origin() -> None:
 
 
 # The quiet set derived from the timers (#223). A range starts before the
-# timer's PDT start and ends this long after its PST start plus its jitter:
-# at least twice every measured or projected run (scrape 7-10 min, a full
-# renewal ~16 min, the rest seconds), and the scrape ranges' convention. It
+# timer's PDT start and ends this long after its PST start plus its jitter,
+# outlasting every run with room to spare (scrape 7-10 min, a full renewal
+# ~16 min projected, the rest seconds): the scrape ranges' convention. It
 # also absorbs AccuracySec (systemd's default 1 min: a timer may fire that much
 # late), which test_no_timer_fires_later_than_a_minute keeps from growing.
 RUN_MARGIN_MIN = 30

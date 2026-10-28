@@ -11,9 +11,10 @@ window Tue 15:15-23:30             # 08:15-16:30 PDT / 07:15-15:30 PST
 
 # One range per infra/*.timer firing: from 5 min before its PDT start to 30 min
 # after its PST start plus jitter (RandomizedDelaySec: 5 min, the backup's 10).
-# 30 min is at least twice every run: a scrape takes 7-10 min, a full renewal
-# ~16 min, the rest seconds. tests/test_patching_hosts_knob.py derives this
-# from the timers, so a timer change that leaves a range stale fails (#223).
+# 30 min outlasts every run with room to spare: a scrape takes 7-10 min, a
+# full renewal ~16 min (projected), the rest seconds. The guard in
+# tests/test_patching_hosts_knob.py derives the ranges from the timers, so a
+# timer change that leaves a range stale fails (#223).
 quiet 07:25-09:05                  # 00:30 PT scrape; 00:40 PT relay import (#201)
 quiet 13:25-15:05                  # 06:30 PT scrape; 06:40 PT relay import
 quiet 08:55-10:35                  # 02:00 PT address renewal, daily since #195
