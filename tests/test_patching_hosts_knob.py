@@ -164,6 +164,31 @@ _ON_CALENDAR = re.compile(
     r"(?P<h>\d\d):(?P<m>\d\d):00 America/Los_Angeles$"
 )
 _JITTER = re.compile(r"^(?P<n>\d+)(?P<unit>min)?$")
+_TIMESPAN = re.compile(r"^(?P<n>\d+)(?P<unit>us|ms|s|sec|m|min|h)?$")
+_TIMESPAN_SECONDS = {
+    "us": 1e-6,
+    "ms": 1e-3,
+    None: 1,
+    "s": 1,
+    "sec": 1,
+    "m": 60,
+    "min": 60,
+    "h": 3600,
+}
+
+
+def _timers() -> list[Path]:
+    return sorted((REPO_ROOT / "infra").glob("*.timer"))
+
+
+def _timer_keys(timer: Path) -> dict[str, list[str]]:
+    """Every ``Key=value`` in a unit file, comments skipped, in file order."""
+    keys: dict[str, list[str]] = {}
+    for raw in timer.read_text(encoding="utf-8").splitlines():
+        key, sep, value = raw.partition("=")
+        if sep and not raw.lstrip().startswith(("#", ";")):
+            keys.setdefault(key.strip(), []).append(value.strip())
+    return keys
 
 
 def _timer_firings() -> list[tuple[str, str, int, int]]:
@@ -174,12 +199,8 @@ def _timer_firings() -> list[tuple[str, str, int, int]]:
     fails, rather than passing as uncovered-but-unseen.
     """
     firings = []
-    for timer in sorted((REPO_ROOT / "infra").glob("*.timer")):
-        keys: dict[str, list[str]] = {}
-        for raw in timer.read_text(encoding="utf-8").splitlines():
-            key, sep, value = raw.partition("=")
-            if sep and not raw.startswith("#"):
-                keys.setdefault(key.strip(), []).append(value.strip())
+    for timer in _timers():
+        keys = _timer_keys(timer)
         jitter = 0
         if "RandomizedDelaySec" in keys:
             m = _JITTER.match(keys["RandomizedDelaySec"][-1])
@@ -225,11 +246,11 @@ def test_the_guard_sees_every_scheduled_timer() -> None:
 
 def test_no_timer_fires_later_than_a_minute() -> None:
     """A wider AccuracySec would let a timer fire past the margin unseen."""
-    for timer in sorted((REPO_ROOT / "infra").glob("*.timer")):
-        for raw in timer.read_text(encoding="utf-8").splitlines():
-            key, _, value = raw.partition("=")
-            if key.strip() == "AccuracySec":
-                assert value.strip() in {"1min", "60", "60s", "1s"}, f"{timer.name}: {raw}"
+    for timer in _timers():
+        for value in _timer_keys(timer).get("AccuracySec", []):
+            m = _TIMESPAN.match(value)
+            assert m, f"{timer.name}: AccuracySec={value} is a form this guard can't read"
+            assert int(m["n"]) * _TIMESPAN_SECONDS[m["unit"]] <= 60, f"{timer.name}: {value}"
 
 
 @pytest.mark.parametrize("offset_h", PACIFIC_OFFSETS_H, ids=("PDT", "PST"))
