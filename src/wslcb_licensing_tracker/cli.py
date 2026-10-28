@@ -1006,7 +1006,8 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
         raise click.UsageError(msg)
     if into is not None:
         try:
-            restore.check_target(into, run_as)
+            # Printed below as the target: the DSN without its password.
+            target, _ = restore.check_target(into, run_as)
         except restore.RestoreError as exc:
             raise click.UsageError(str(exc)) from None
     try:
@@ -1043,7 +1044,7 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
         logger.error("Restore failed: %s", error)  # noqa: TRY400 — one sentence, no traceback
         click.echo(f"restore failed: {error}", err=True)
         sys.exit(1)
-    click.echo(f"restored gs://{bucket}/{key} into {into}")
+    click.echo(f"restored gs://{bucket}/{key} into {target}")
     click.echo("next: the go/no-go gates in docs/RECOVERY.md")
 
 

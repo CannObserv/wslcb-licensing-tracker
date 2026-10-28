@@ -81,6 +81,18 @@ class TestRestore:
         assert result.exit_code == 0, result.output
         assert "restored" in result.output
 
+    def test_success_line_carries_no_password(self, dumps):
+        """§3 keeps the password off argv; the success line must not print it either."""
+        from test_backup import PASSWORD_DSN
+
+        _dump(dumps, "daily", HOST, T0)
+        result = CliRunner().invoke(
+            main, ["ops", "restore", "--latest", "--prefix", HOST, "--into", PASSWORD_DSN]
+        )
+        assert result.exit_code == 0, result.output
+        assert "into postgresql://wslcb@localhost:5432/wslcb_test" in result.output
+        assert "s3cr" not in result.output
+
     def test_run_as_with_a_password_fails_before_any_fetch(self, monkeypatch):
         """A flag conflict is a usage error: refused before the key is read or a
         byte is downloaded, not after a full fetch and verify (#194 CR 1)."""
