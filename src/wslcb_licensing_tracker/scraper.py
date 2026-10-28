@@ -248,6 +248,7 @@ def alert_variables(exc: BaseException, health: ScrapeHealth | None, host: str) 
         text = ""
     message = text.splitlines()[0] if text else ""
     last = health.last_success_at if health else None
+    no_success, no_window = (NEVER, NOT_APPLICABLE) if health else (UNKNOWN, UNKNOWN)
     return {
         "outcome": "failed",
         "source_host": host,
@@ -255,10 +256,10 @@ def alert_variables(exc: BaseException, health: ScrapeHealth | None, host: str) 
         "consecutive_errors": health.consecutive_errors if health else UNKNOWN,
         "last_success_at": last.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         if last
-        else (NEVER if health else UNKNOWN),
+        else no_success,
         "window_expires": (last + SOURCE_WINDOW).astimezone(UTC).date().isoformat()
         if last
-        else (NOT_APPLICABLE if health else UNKNOWN),
+        else no_window,
     }
 
 
