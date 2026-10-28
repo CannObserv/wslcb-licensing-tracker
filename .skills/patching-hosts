@@ -9,11 +9,16 @@ posture scheduled
 
 window Tue 15:15-23:30             # 08:15-16:30 PDT / 07:15-15:30 PST
 
-# Ingest timers (infra/*.timer): each has RandomizedDelaySec=300. A scrape task
-# ran 5m43s on 2026-10-06; a refresh can take ~20 min.
-quiet 07:25-09:05                  # 00:30 PT scrape
-quiet 13:25-15:05                  # 06:30 PT scrape
-quiet 08:55-11:35 Sun              # 02:00 PT address backfill, 03:00 PT disk hygiene
+# One range per infra/*.timer firing: from 5 min before its PDT start to 30 min
+# after its PST start plus jitter (RandomizedDelaySec: 5 min, the backup's 10).
+# 30 min is at least twice every run: a scrape takes 7-10 min, a full renewal
+# ~16 min, the rest seconds. tests/test_patching_hosts_knob.py derives this
+# from the timers, so a timer change that leaves a range stale fails (#223).
+quiet 07:25-09:05                  # 00:30 PT scrape; 00:40 PT relay import (#201)
+quiet 13:25-15:05                  # 06:30 PT scrape; 06:40 PT relay import
+quiet 08:55-10:35                  # 02:00 PT address renewal, daily since #195
+quiet 15:12-16:57                  # 08:17 PT backup, inside the window (#223)
+quiet 09:55-12:35 Sun              # 03:00 PT disk hygiene, 04:00 PT entity classification
 
 # wslcb-task@ is Type=oneshot: a running task is "activating", not "active".
 inflight systemctl list-units 'wslcb-task@*' --state=activating,active,deactivating --no-legend | wc -l

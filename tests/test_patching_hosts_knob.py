@@ -13,6 +13,7 @@ and lets a step start on top of it.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -147,3 +148,104 @@ def test_tailscale_pins_scope_the_followed_origin() -> None:
     assert by_package["*"] < 500
     assert by_package["tailscale tailscale-archive-keyring"] > 500
     assert len(by_package) == 2
+
+
+# The quiet set derived from the timers (#223). A range starts before the
+# timer's PDT start and ends this long after its PST start plus its jitter:
+# at least twice every measured or projected run (scrape 7-10 min, a full
+# renewal ~16 min, the rest seconds), and the scrape ranges' convention.
+RUN_MARGIN_MIN = 30
+PACIFIC_OFFSETS_H = (7, 8)  # PDT, PST
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_ON_CALENDAR = re.compile(
+    r"^(?:(?P<dow>Mon|Tue|Wed|Thu|Fri|Sat|Sun) )?\*-\*-\* "
+    r"(?P<h>\d\d):(?P<m>\d\d):00 America/Los_Angeles$"
+)
+_JITTER = re.compile(r"^(?P<n>\d+)(?P<unit>min)?$")
+
+
+def _timer_firings() -> list[tuple[str, str, int, int]]:
+    """Each infra timer's (name, OnCalendar, PT minute of day, jitter minutes).
+
+    A timer with no OnCalendar (the healthcheck, the knob's restarter) is
+    monotonic, not a run to keep clear of. A form this parser doesn't know
+    fails, rather than passing as uncovered-but-unseen.
+    """
+    firings = []
+    for timer in sorted((REPO_ROOT / "infra").glob("*.timer")):
+        keys: dict[str, list[str]] = {}
+        for raw in timer.read_text(encoding="utf-8").splitlines():
+            key, sep, value = raw.partition("=")
+            if sep and not raw.startswith("#"):
+                keys.setdefault(key.strip(), []).append(value.strip())
+        jitter = 0
+        if "RandomizedDelaySec" in keys:
+            m = _JITTER.match(keys["RandomizedDelaySec"][-1])
+            assert m, f"{timer.name}: RandomizedDelaySec form unknown to this guard"
+            jitter = int(m["n"]) if m["unit"] else -(-int(m["n"]) // 60)
+        for cal in keys.get("OnCalendar", []):
+            m = _ON_CALENDAR.match(cal)
+            assert m, f"{timer.name}: OnCalendar={cal} is a form this guard can't read; teach it"
+            firings.append((timer.name, cal, int(m["h"]) * 60 + int(m["m"]), jitter))
+    return firings
+
+
+def _minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _covered(knob: dict, dow: str | None, start: int, end: int) -> bool:
+    """One quiet range on ``dow`` (or every day) holds [start, end], UTC minutes."""
+    for q in knob["quiet"]:
+        if dow is None and q["weekday"] is not None:
+            continue
+        if dow is not None and q["weekday"] not in (None, dow):
+            continue
+        qs, qe = _minutes(q["start"]), _minutes(q["end"])
+        if q["wraps"]:
+            qe += 24 * 60
+        if qs <= start and end <= qe:
+            return True
+    return False
+
+
+def test_the_guard_sees_every_scheduled_timer() -> None:
+    names = {name for name, *_ in _timer_firings()}
+    assert names == {
+        "wslcb-address-validation.timer",
+        "wslcb-backup.timer",
+        "wslcb-disk-hygiene.timer",
+        "wslcb-entity-classification.timer",
+        "wslcb-scraper.timer",
+    }
+
+
+@pytest.mark.parametrize("offset_h", PACIFIC_OFFSETS_H, ids=("PDT", "PST"))
+@pytest.mark.parametrize(
+    "firing",
+    [
+        pytest.param(f, id=f"{f[0].removesuffix('.timer')}@{f[2] // 60:02d}:{f[2] % 60:02d}PT")
+        for f in _timer_firings()
+    ],
+)
+def test_a_quiet_range_covers_each_timer_firing(
+    knob: dict, firing: tuple[str, str, int, int], offset_h: int
+) -> None:
+    """A patch step can't start on top of a timer's run, under either offset (#223).
+
+    The knob's `quiet` set went stale twice (#195 made renewal daily; the
+    backup was never in it) because nothing tied it to `infra/*.timer`.
+    """
+    timer, calendar, pt_min, jitter = firing
+    utc = pt_min + offset_h * 60
+    dow = _ON_CALENDAR.match(calendar)["dow"]
+    if dow and utc >= 24 * 60:
+        dow = WEEKDAYS[(WEEKDAYS.index(dow) + 1) % 7]
+    start = utc % (24 * 60)
+    end = start + jitter + RUN_MARGIN_MIN
+    assert _covered(knob, dow, start, end), (
+        f"{timer} {calendar} fires {start // 60:02d}:{start % 60:02d}Z under UTC-{offset_h}"
+        f"{' ' + dow if dow else ''}; no quiet range covers it through"
+        f" {end // 60 % 24:02d}:{end % 60:02d}Z (jitter {jitter} + margin {RUN_MARGIN_MIN} min)"
+    )
