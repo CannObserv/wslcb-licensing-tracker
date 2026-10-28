@@ -231,12 +231,12 @@ def _verify_fetched(path: Path, key: str, expected: str, *, runner: Runner) -> N
         raise RestoreError(str(exc)) from exc
 
 
-def restore_into(path: Path, database: str, *, run_as: str | None, runner: Runner) -> None:
-    """Load ``path`` into an existing, empty ``database``, all or nothing.
+def check_target(database: str, run_as: str | None) -> tuple[str, dict[str, str] | None]:
+    """:func:`libpq_target` for a restore, refusing a password under ``run_as``.
 
-    The archive goes in on stdin, so ``postgres`` never needs to read a file
-    root wrote. A DSN's password goes by env, not argv (:func:`libpq_target`),
-    so it can't pass ``setpriv --reset-env``: with ``run_as`` it is refused.
+    The password goes by env, not argv, so it can't pass ``setpriv
+    --reset-env``. The CLI calls this before any fetch: a flag conflict should
+    not wait on a download.
     """
     target, env = libpq_target(database)
     if env is not None and run_as is not None:
@@ -245,6 +245,16 @@ def restore_into(path: Path, database: str, *, run_as: str | None, runner: Runne
             "password; with --run-as, connect by peer auth (a bare database name)"
         )
         raise RestoreError(msg)
+    return target, env
+
+
+def restore_into(path: Path, database: str, *, run_as: str | None, runner: Runner) -> None:
+    """Load ``path`` into an existing, empty ``database``, all or nothing.
+
+    The archive goes in on stdin, so ``postgres`` never needs to read a file
+    root wrote. A DSN's password goes by env, not argv: :func:`check_target`.
+    """
+    target, env = check_target(database, run_as)
     argv = as_user(
         [
             "pg_restore",

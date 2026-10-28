@@ -1004,6 +1004,11 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
     if not list_ and (into is None) == (download_only is None):
         msg = "say where: exactly one of --into DATABASE, --download-only DIR"
         raise click.UsageError(msg)
+    if into is not None:
+        try:
+            restore.check_target(into, run_as)
+        except restore.RestoreError as exc:
+            raise click.UsageError(str(exc)) from None
     try:
         # Inside the try: a missing or revoked key raises from google.auth here.
         client = restore.make_client()
