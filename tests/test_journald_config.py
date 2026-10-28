@@ -8,7 +8,8 @@ the cap. The host checks catch a re-mask (a rebuild from that image) and an
 installed copy that drifted.
 
 Shape from CannObserv/address-validator#241. The host checks run only on the
-host, and skip there until the file is installed.
+host. Unlike the template's, they fail rather than skip when the file is
+missing: it was installed on 2026-10-28, so its absence is drift.
 """
 
 import shutil
@@ -50,9 +51,11 @@ def _systemctl(*args: str) -> str:
     ).stdout.strip()
 
 
-def _require_installed() -> None:
-    if not INSTALLED.exists():
-        pytest.skip(f"{INSTALLED} not installed yet")
+def _assert_installed() -> None:
+    assert INSTALLED.exists(), (
+        f"{INSTALLED} is missing (installed 2026-10-28, #186): "
+        f"sudo install -m 644 infra/journald.conf.d/{DROPIN.name} {INSTALLED.parent}/"
+    )
 
 
 def test_the_drop_in_sets_persistent_storage_and_the_cap_only() -> None:
@@ -63,7 +66,7 @@ def test_the_drop_in_sets_persistent_storage_and_the_cap_only() -> None:
 
 @on_the_host
 def test_the_installed_copy_matches_the_tracked_one() -> None:
-    _require_installed()
+    _assert_installed()
     assert INSTALLED.read_text(encoding="utf-8") == DROPIN.read_text(encoding="utf-8"), (
         f"{INSTALLED} differs from infra/journald.conf.d/{DROPIN.name}: "
         f"sudo install -m 644 infra/journald.conf.d/{DROPIN.name} {INSTALLED.parent}/"
@@ -73,7 +76,7 @@ def test_the_installed_copy_matches_the_tracked_one() -> None:
 @on_the_host
 def test_the_live_chain_resolves_to_persistent_and_the_cap() -> None:
     """Every conf.d file, in the order journald reads them, #200's included."""
-    _require_installed()
+    _assert_installed()
     analyze = shutil.which("systemd-analyze")
     assert analyze
     chain = subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
@@ -90,7 +93,7 @@ def test_the_live_chain_resolves_to_persistent_and_the_cap() -> None:
 @on_the_host
 def test_the_flush_is_not_masked_and_the_journal_is_on_disk() -> None:
     """A mask leaves Storage=persistent inert: read where the journal is."""
-    _require_installed()
+    _assert_installed()
     state = _systemctl("is-enabled", "systemd-journal-flush.service")
     assert state != "masked", "sudo systemctl unmask systemd-journal-flush (DEPLOYMENT.md)"
     machine_id = Path("/etc/machine-id").read_text(encoding="utf-8").strip()
