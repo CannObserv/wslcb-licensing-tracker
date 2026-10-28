@@ -3,7 +3,9 @@
 Ported from watcher's ``tests/ops/scratch_db.py`` (CannObserv/watcher#383) —
 the logic, not the transport. watcher drives asyncpg; this module, like the
 rehearsal, drives ``psql``, which reports the server's SQLSTATE on stderr under
-``-v VERBOSITY=verbose``. :class:`PsqlError` carries it.
+``-v VERBOSITY=verbose``. :class:`PsqlError` carries it. The DSN reaches
+``psql`` through ``backup.libpq_target``, its password by ``PGPASSWORD`` and
+never on argv (#194 §3): a dependency on ``src`` that upstream does not have.
 
 **Why a plain ``DROP`` backs up ``WITH (FORCE)``.** The autovacuum launcher
 visits a freshly restored database within a minute, and on PostgreSQL 16 a
