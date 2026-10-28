@@ -10,6 +10,19 @@ module, `checkin.py`, one `Monitor` per job; all on tenant `co-wslcb`.
 | `wslcb-task@scrape.service` | `co-wslcb-scrape` | below |
 | `wslcb-entity-classification.timer` | `co-wslcb-classify` | [below](#entity-classification-check-in-207) |
 
+**A rejected check-in** logs `<job> check-in rejected with HTTP <code>`, with
+what the code means at co-status and co-status's own response body (one line,
+capped at 300 characters; never the request headers), for every monitor. None
+is retried, and none changes the job's exit status (#199):
+
+| Code | Hint logged | Means |
+|---|---|---|
+| 401 / 403 / 404 | `check the monitor id and key` | bad key, wrong tenant, unknown monitor id |
+| 422 | `the monitor's templates could not render these variables, or the payload is not valid JSON …; nothing was recorded` | the payload was refused: no event, and the timer isn't reset. The body names the field or template section. co-status renders only an `alert` that is due a report (the fault's first, or a reminder), so a repeat inside a fault can't catch a template a variable breaks |
+| other 4xx | none | |
+
+A 5xx or a transport error is retried once, then logged as `check-in failed`.
+
 ## Scrape check-in (#196)
 
 Each scrape checks in to co-status, as the backup does ([`RECOVERY.md`](RECOVERY.md)
@@ -45,8 +58,10 @@ anyone looked (#198).
 timer. An `alert` carries `outcome` (`failed`), `source_host`, `error`,
 `consecutive_errors`, `last_success_at` and `window_expires`: the last success
 plus 30 days, after which the source window drops records the gap missed.
-All of them are always present; the last three are `""` when the database
-can't be read. An `ok` carries `outcome`, `source_host`, `scrape_status`,
+All of them are always present, never blank (#199). The last three read
+`unknown` when the database can't be read. With no success on record,
+`consecutive_errors` stays the real count, `last_success_at` reads `never` and
+`window_expires` reads `n/a`. An `ok` carries `outcome`, `source_host`, `scrape_status`,
 `records_{new,approved,discontinued,skipped}` and `scrape_log_id`.
 
 **Install, in this order.** The key file first: a missing `LoadCredential=`

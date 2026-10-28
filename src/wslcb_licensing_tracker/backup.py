@@ -48,10 +48,12 @@ import re
 import socket
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
@@ -94,6 +96,10 @@ ARCHIVE_ROOTS = (
 SETTLE_SECONDS = 600
 #: How many per-file archive failures the error message names.
 _FAILURES_NAMED = 5
+#: An alert's ``metadata.fault`` (#194): the failed phases, joined by ``+`` in
+#: this order, or ``setup`` when the run failed before either began. co-status
+#: opens a new fault, and reports at once, when it changes.
+DB_FAULT, ARCHIVE_FAULT, SETUP_FAULT = "db", "archive", "setup"
 
 # Bounds on the slow calls. The dump measured 33.4 MB in 4.8 s (2026-09-29);
 # these are generous for that and short enough that a wedged call is a failed
@@ -106,12 +112,24 @@ LIST_TIMEOUT_SECONDS = 30.0
 _HEADER_RE = re.compile(r"^;\s+(Dumped from database version|Dumped by pg_dump version): (.+)$")
 _ENTRIES_RE = re.compile(r"^;\s+TOC Entries: (\d+)$")
 _TABLE_DATA_RE = re.compile(r"^\d+; \d+ \d+ TABLE DATA (\S+) (\S+) ")
+# libpq's connection-string grammar (conninfo_parse): key = value, the value
+# single-quoted or bare, a backslash escaping the next character in either.
+_URI_PREFIXES = ("postgresql://", "postgres://")
+_KEYWORD_PAIR_RE = re.compile(
+    r"\s*([^=\s]+)\s*=\s*('(?:[^'\\]|\\.)*'|(?!')(?:[^\s\\]|\\.)*)", re.DOTALL
+)
+_ESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
 class BackupError(Exception):
     """Anything that means the run did not ship everything it should have."""
+
+    def __init__(self, message: str, *, fault: str | None = None) -> None:
+        """``fault`` is set on the one :func:`run_backup` raises: its failed phases."""
+        super().__init__(message)
+        self.fault = fault
 
 
 @dataclass(frozen=True)
@@ -215,6 +233,65 @@ def misplaced_key(environ: Mapping[str, str]) -> str | None:
     )
 
 
+def _split_uri_password(dsn: str) -> tuple[str, str | None]:
+    scheme, _, rest = dsn.partition("://")
+    # libpq: the user info runs to the first '@' before any '/'.
+    end = next((i for i, ch in enumerate(rest) if ch in "@/"), len(rest))
+    userinfo, after = (rest[:end], rest[end + 1 :]) if rest[end : end + 1] == "@" else ("", rest)
+    user, colon, encoded = userinfo.partition(":")
+    password = unquote(encoded) if colon else None
+    base, question, query = after.partition("?")
+    kept = []
+    for param in query.split("&") if question else []:
+        key, _, value = param.partition("=")
+        if unquote(key) == "password":
+            password = unquote(value)  # the query's wins, as in libpq
+        else:
+            kept.append(param)
+    if password is None:
+        return dsn, None
+    authority = f"{user}@" if user else ""
+    return f"{scheme}://{authority}{base}" + (f"?{'&'.join(kept)}" if kept else ""), password
+
+
+def _split_keyword_password(dsn: str) -> tuple[str, str | None]:
+    pairs, password, at = [], None, 0
+    while dsn[at:].strip():
+        match = _KEYWORD_PAIR_RE.match(dsn, at)
+        if match is None:
+            return dsn, None  # malformed: libpq refuses it before connecting
+        key, value = match.groups()
+        if key == "password":
+            value = value[1:-1] if value.startswith("'") else value
+            password = _ESCAPE_RE.sub(r"\1", value)
+        else:
+            pairs.append(match.group(0).strip())
+        at = match.end()
+    return (dsn, None) if password is None else (" ".join(pairs), password)
+
+
+def libpq_target(
+    dsn: str, *, environ: Mapping[str, str] = os.environ
+) -> tuple[str, dict[str, str] | None]:
+    """``(--dbname value, child env)`` for a libpq program, the password moved out.
+
+    Any local user can read a process's argv from ``/proc/<pid>/cmdline``
+    while it runs, so a DSN's password goes to ``PGPASSWORD`` in a copy of
+    *environ* instead (#194 §3). A URI (user info or ``?password=``) and a
+    ``key=value`` string are both split. With no password — a bare database
+    name over peer auth, as the nightly backup runs — the DSN is unchanged and
+    the env None: the child inherits this process's, with nothing added.
+    """
+    if dsn.startswith(_URI_PREFIXES):
+        target, password = _split_uri_password(dsn)
+    elif "=" in dsn:
+        target, password = _split_keyword_password(dsn)
+    else:
+        return dsn, None
+    # An empty password is none, to libpq too; PGPASSWORD="" would say otherwise.
+    return target, ({**environ, "PGPASSWORD": password} if password else None)
+
+
 def sha256_file(path: Path) -> str:
     """Hex sha256 of a file, streamed."""
     digest = hashlib.sha256()
@@ -243,11 +320,16 @@ def _describe(exc: Exception) -> str:
     return str(exc) if isinstance(exc, BackupError) else f"{type(exc).__name__}: {exc}"
 
 
+def _seconds_since(started: float, clock: Callable[[], float]) -> float:
+    return round(clock() - started, 1)
+
+
 # --- effects on the database and the dump file ---
 
 
 def read_alembic_head(database: str, *, runner: Runner) -> str | None:
     """The schema version, recorded so a restore can be checked against it."""
+    target, env = libpq_target(database)
     argv = [
         "psql",
         "--no-password",
@@ -255,11 +337,11 @@ def read_alembic_head(database: str, *, runner: Runner) -> str | None:
         "--quiet",
         "--tuples-only",
         "--no-align",
-        f"--dbname={database}",
+        f"--dbname={target}",
         "--command=SELECT version_num FROM alembic_version",
     ]
     result = runner(
-        argv, capture_output=True, text=True, check=False, timeout=QUERY_TIMEOUT_SECONDS
+        argv, capture_output=True, text=True, check=False, timeout=QUERY_TIMEOUT_SECONDS, env=env
     )
     if result.returncode != 0:
         msg = f"psql could not read alembic_version: {_tail(result.stderr)}"
@@ -279,15 +361,16 @@ def run_pg_dump(database: str, out: Path, *, runner: Runner) -> None:
     removed only that copy passed both reads — harmlessly, as it restored
     identically, but no longer a clean signal.
     """
+    target, env = libpq_target(database)
     argv = [
         "pg_dump",
         "--format=custom",
         "--no-password",
         f"--file={out}",
-        f"--dbname={database}",
+        f"--dbname={target}",
     ]
     result = runner(
-        argv, capture_output=True, text=True, check=False, timeout=PG_DUMP_TIMEOUT_SECONDS
+        argv, capture_output=True, text=True, check=False, timeout=PG_DUMP_TIMEOUT_SECONDS, env=env
     )
     if result.returncode != 0:
         msg = f"pg_dump exited {result.returncode}: {_tail(result.stderr)}"
@@ -530,6 +613,7 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
     runner: Runner | None = None,
     host: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict:
     """One run: the dump, then the archive. Returns the summary it logged.
 
@@ -540,13 +624,18 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
 
     ``runner`` defaults to ``subprocess.run`` looked up at call time, so a test
     that replaces it can never fall through to the real binaries.
+
+    Each phase's ``seconds`` is in the summary whether it failed or not (#194):
+    a phase that ran into its timeout is the slow run worth attributing.
     """
     host = host or socket.gethostname()
     runner = runner if runner is not None else subprocess.run
     errors: list[str] = []
+    failed: list[str] = []
     summary: dict = {"source_host": host}
+    started = clock()
     try:
-        summary["database"] = backup_database(
+        database = backup_database(
             database=database,
             bucket=bucket,
             prefix=prefix,
@@ -558,6 +647,10 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
         )
     except Exception as exc:  # noqa: BLE001 — reported below, after the archive runs
         errors.append(f"database: {_describe(exc)}")
+        failed.append(DB_FAULT)
+        database = {}
+    summary["database"] = {**database, "seconds": _seconds_since(started, clock)}
+    started = clock()
     try:
         archive = mirror_archive(
             bucket=archive_bucket,
@@ -569,8 +662,10 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
         )
     except Exception as exc:  # noqa: BLE001 — reported below
         errors.append(f"archive: {_describe(exc)}")
+        failed.append(ARCHIVE_FAULT)
+        summary["archive"] = {"seconds": _seconds_since(started, clock)}
     else:
-        summary["archive"] = archive.counts()
+        summary["archive"] = {**archive.counts(), "seconds": _seconds_since(started, clock)}
         if archive.failures:
             named = "; ".join(archive.failures[:_FAILURES_NAMED])
             more = len(archive.failures) - _FAILURES_NAMED
@@ -578,10 +673,11 @@ def run_backup(  # noqa: PLR0913 — every collaborator is injectable for the te
                 f"archive: {len(archive.failures)} file(s) failed: {named}"
                 + (f"; and {more} more" if more > 0 else "")
             )
+            failed.append(ARCHIVE_FAULT)
     if errors:
         error = " || ".join(errors)
         logger.error("Backup failed: %s", error, extra={"summary": summary})
-        raise BackupError(error)
+        raise BackupError(error, fault="+".join(failed))
     logger.info("Backup ok: %s", summary["database"]["object"], extra={"summary": summary})
     return summary
 
@@ -599,7 +695,8 @@ def _ok_variables(summary: dict) -> dict:
         "size_bytes": database["size_bytes"],
         "sha256": database["sha256"],
         "alembic_head": database["alembic_head"],
-        **{f"archive_{name}": count for name, count in archive.items()},
+        "db_seconds": database["seconds"],
+        **{f"archive_{name}": value for name, value in archive.items()},
     }
 
 
@@ -612,17 +709,19 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
     runner: Runner | None = None,
     host: str | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    clock: Callable[[], float] = time.monotonic,
 ) -> int:
     """Timer entrypoint. Exit 0 only when everything in scope is in a bucket."""
     host = host or socket.gethostname()
 
-    def fail(code: int, error: str) -> int:
+    def fail(code: int, error: str, fault: str = SETUP_FAULT) -> int:
         # The variables a monitor's alert template can use; RECOVERY.md lists them.
         post_checkin(
             "alert",
             {"source_host": host, "outcome": "failed", "error": error},
             monitor=BACKUP,
             environ=environ,
+            metadata={"fault": fault},
         )
         return code
 
@@ -656,8 +755,9 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
                 runner=runner,
                 host=host,
                 now=now,
+                clock=clock,
             )
         except BackupError as exc:
-            return fail(1, str(exc))
+            return fail(1, str(exc), exc.fault or SETUP_FAULT)
     post_checkin("ok", _ok_variables(summary), monitor=BACKUP, environ=environ)
     return 0

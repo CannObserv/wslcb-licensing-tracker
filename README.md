@@ -117,7 +117,7 @@ wslcb-licensing-tracker/
 ├── substances.py           # Async regulated substance CRUD
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
 ├── disk_hygiene.py         # Weekly cache/worktree/data-straggler cleanup (#138)
-├── backup.py               # Nightly pg_dump + data/ archive mirror to GCS, create-only (#185)
+├── backup.py               # Nightly pg_dump + data/ archive mirror to GCS, create-only (#185); libpq passwords by env (#194)
 ├── checkin.py              # co-status dead-man check-ins: backup (#185), scrape (#196), classify (#207)
 ├── restore.py              # Fetch/verify/restore a dump; fetch archive files (#185)
 ├── log_config.py           # Centralized logging configuration
@@ -257,8 +257,8 @@ wslcb-licensing-tracker/
 │   ├── test_relay_laptop.py     # relay-capture.sh (stubbed curl/scp/ssh), plist, drop-in (#201)
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
 │   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
-│   ├── test_backup.py           # Dump verify/tiers + archive mirror rules, against GCS fakes (#185)
-│   ├── test_checkin.py          # Dead-man check-in config + retry rules, per monitor (#185, #196)
+│   ├── test_backup.py           # Dump verify/tiers + archive mirror rules, against GCS fakes (#185); fault, timings, DSN split (#194)
+│   ├── test_checkin.py          # Dead-man check-in config + retry rules, per monitor (#185, #196); 4xx hints + body (#199)
 │   ├── test_restore.py          # --latest across tiers, suspect names, verified fetch (#185)
 │   ├── test_cli_backup.py       # `wslcb ops backup|restore|restore-archive` (#185)
 │   ├── test_backup_restore_rehearsal.py  # Real pg_dump → fake bucket → pg_restore round trip (#185)

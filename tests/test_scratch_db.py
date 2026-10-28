@@ -20,6 +20,8 @@ import pytest
 import scratch_db
 from scratch_db import PsqlError, ScratchDatabaseLeaked, with_database
 
+from wslcb_licensing_tracker.backup import libpq_target
+
 NS = 4026531836
 PID = 4242
 NAME = f"wslcb_test_restore_{NS}_{PID}"
@@ -325,6 +327,21 @@ class Recording:
         return self._run(sql)
 
 
+def test_psql_passes_the_password_by_env(monkeypatch):
+    """The suite's DSN carries the role's password; argv is world-readable (#194 §3)."""
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen["argv"], seen["env"] = argv, kwargs.get("env")
+        return subprocess.CompletedProcess(argv, 0, stdout="1\n", stderr="")
+
+    monkeypatch.setattr(scratch_db.subprocess, "run", run)
+    assert scratch_db.psql("postgresql://wslcb:hunter2@localhost/wslcb_test", "SELECT 1") == "1"
+    assert "--dbname=postgresql://wslcb@localhost/wslcb_test" in seen["argv"]
+    assert not any("hunter2" in arg for arg in seen["argv"])
+    assert seen["env"]["PGPASSWORD"] == "hunter2"
+
+
 def _exists(run, name: str) -> bool:
     return run(f"SELECT count(*) FROM pg_database WHERE datname = '{name}'") == "1"
 
@@ -336,12 +353,13 @@ def test_drop_ends_the_roles_own_stray_connection(dsn) -> None:
     name = scratch_db.name(pid=scratch_db.dead_pid())
     run(f"CREATE DATABASE {name}")
     # Fixed argv; psql from PATH, as the rehearsal's is.
-    target = with_database(dsn, name)
+    target, env = libpq_target(with_database(dsn, name))
     argv = ["psql", "--no-psqlrc", f"--dbname={target}", "-c", "SELECT pg_sleep(60)"]
     held = subprocess.Popen(  # noqa: S603
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=env,
     )
     try:
         deadline = time.monotonic() + 10

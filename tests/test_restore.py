@@ -150,6 +150,43 @@ class TestRestoreInto:
         assert "--exit-on-error" in argv
         assert "--dbname=wslcb_drill" in argv
 
+    def test_password_goes_by_env_not_argv(self, tmp_path):
+        from test_backup import PASSWORD, PASSWORD_DSN
+
+        from wslcb_licensing_tracker.restore import restore_into
+
+        path = tmp_path / "x.dump"
+        path.write_bytes(DUMP_BYTES)
+        pg = FakePg()
+        restore_into(path, PASSWORD_DSN, run_as=None, runner=pg)
+        assert not any("s3cr" in arg for arg in pg.calls[0])
+        assert "--no-password" in pg.calls[0]
+        assert pg.envs[0]["PGPASSWORD"] == PASSWORD
+
+    def test_peer_auth_sets_no_password(self, tmp_path):
+        from wslcb_licensing_tracker.restore import restore_into
+
+        path = tmp_path / "x.dump"
+        path.write_bytes(DUMP_BYTES)
+        pg = FakePg()
+        restore_into(path, "wslcb_drill", run_as="postgres", runner=pg)
+        assert pg.envs == [None]
+
+    def test_as_user_refuses_a_password(self, tmp_path):
+        """setpriv --reset-env would drop PGPASSWORD, and --no-password fail the
+        load; on argv it would be readable. --run-as means peer auth: say so."""
+        from test_backup import PASSWORD_DSN
+
+        from wslcb_licensing_tracker.restore import RestoreError, restore_into
+
+        path = tmp_path / "x.dump"
+        path.write_bytes(DUMP_BYTES)
+        pg = FakePg()
+        with pytest.raises(RestoreError, match=r"--run-as.*peer") as caught:
+            restore_into(path, PASSWORD_DSN, run_as="postgres", runner=pg)
+        assert pg.calls == []
+        assert "s3cr" not in str(caught.value)
+
     def test_failure_is_a_restore_error(self, tmp_path):
         from wslcb_licensing_tracker.restore import RestoreError, restore_into
 

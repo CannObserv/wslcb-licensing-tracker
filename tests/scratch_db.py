@@ -3,7 +3,9 @@
 Ported from watcher's ``tests/ops/scratch_db.py`` (CannObserv/watcher#383) —
 the logic, not the transport. watcher drives asyncpg; this module, like the
 rehearsal, drives ``psql``, which reports the server's SQLSTATE on stderr under
-``-v VERBOSITY=verbose``. :class:`PsqlError` carries it.
+``-v VERBOSITY=verbose``. :class:`PsqlError` carries it. The DSN reaches
+``psql`` through ``backup.libpq_target``, its password by ``PGPASSWORD`` and
+never on argv (#194 §3): a dependency on ``src`` that upstream does not have.
 
 **Why a plain ``DROP`` backs up ``WITH (FORCE)``.** The autovacuum launcher
 visits a freshly restored database within a minute, and on PostgreSQL 16 a
@@ -33,6 +35,8 @@ import time
 import warnings
 from collections.abc import Callable, Iterable
 from pathlib import Path
+
+from wslcb_licensing_tracker.backup import libpq_target
 
 SHAPE = re.compile(r"wslcb_test_restore_(?P<ns>\d+)_(?P<pid>\d+)")
 
@@ -72,7 +76,11 @@ class PsqlError(Exception):
 
 
 def psql(dsn: str, sql: str) -> str:
-    """Run one statement through ``psql``; its stdout, or :class:`PsqlError`."""
+    """Run one statement through ``psql``; its stdout, or :class:`PsqlError`.
+
+    The password goes by env, never argv (:func:`libpq_target`, #194 §3).
+    """
+    target, env = libpq_target(dsn)
     # Fixed argv, the SQL the tests' own; psql from PATH, as the job's pg_dump is.
     argv = [
         "psql",
@@ -82,11 +90,11 @@ def psql(dsn: str, sql: str) -> str:
         "ON_ERROR_STOP=1",
         "-v",
         "VERBOSITY=verbose",
-        f"--dbname={dsn}",
+        f"--dbname={target}",
         "-c",
         sql,
     ]
-    result = subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
+    result = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)  # noqa: S603
     if result.returncode:
         raise PsqlError(sql, result.returncode, result.stderr)
     return result.stdout.strip()

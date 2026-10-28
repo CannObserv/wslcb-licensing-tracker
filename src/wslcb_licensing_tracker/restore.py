@@ -41,6 +41,7 @@ from .backup import (
     BackupError,
     Runner,
     b64_md5_file,
+    libpq_target,
     sha256_file,
     verify_dump,
 )
@@ -230,19 +231,37 @@ def _verify_fetched(path: Path, key: str, expected: str, *, runner: Runner) -> N
         raise RestoreError(str(exc)) from exc
 
 
+def check_target(database: str, run_as: str | None) -> tuple[str, dict[str, str] | None]:
+    """:func:`libpq_target` for a restore, refusing a password under ``run_as``.
+
+    The password goes by env, not argv, so it can't pass ``setpriv
+    --reset-env``. The CLI calls this before any fetch: a flag conflict should
+    not wait on a download.
+    """
+    target, env = libpq_target(database)
+    if env is not None and run_as is not None:
+        msg = (
+            "--run-as runs pg_restore under setpriv --reset-env, which would drop the DSN's "
+            "password; with --run-as, connect by peer auth (a bare database name)"
+        )
+        raise RestoreError(msg)
+    return target, env
+
+
 def restore_into(path: Path, database: str, *, run_as: str | None, runner: Runner) -> None:
     """Load ``path`` into an existing, empty ``database``, all or nothing.
 
     The archive goes in on stdin, so ``postgres`` never needs to read a file
-    root wrote.
+    root wrote. A DSN's password goes by env, not argv: :func:`check_target`.
     """
+    target, env = check_target(database, run_as)
     argv = as_user(
         [
             "pg_restore",
             "--no-password",
             "--exit-on-error",
             "--single-transaction",
-            f"--dbname={database}",
+            f"--dbname={target}",
         ],
         run_as,
     )
@@ -254,6 +273,7 @@ def restore_into(path: Path, database: str, *, run_as: str | None, runner: Runne
             text=True,
             check=False,
             timeout=PG_DUMP_TIMEOUT_SECONDS,
+            env=env,
         )
     if result.returncode != 0:
         tail = " | ".join((result.stderr or "").strip().splitlines()[-3:])

@@ -199,6 +199,11 @@ async def scrape_freshness(conn: AsyncConnection, now: datetime | None = None) -
     )
 
 
+#: What an alert's history variables read without a value (#199). Plain
+#: strings: co-status passes them to the template untouched.
+UNKNOWN, NEVER, NOT_APPLICABLE = "unknown", "never", "n/a"
+
+
 def fault_key(exc: BaseException) -> str:
     """The stable part of a failure, for the check-in's ``metadata.fault``.
 
@@ -228,7 +233,10 @@ def alert_variables(exc: BaseException, health: ScrapeHealth | None, host: str) 
     """The flat variables an ``alert`` check-in carries; every key always present.
 
     *health* is None when the history couldn't be read (the database being
-    what failed): its three keys are then empty, and the alert still goes.
+    what failed): its three keys then read ``unknown``, and the alert still
+    goes. With no success on record, ``last_success_at`` reads ``never`` and
+    ``window_expires`` ``n/a``: no window was captured to expire (#199).
+    Never blank — the body template runs a blank into its neighbours.
     ``error`` is the exception's first line — httpx appends an MDN link — or
     just its type when it has none, or can't be printed. Nothing here may
     raise: the CLI builds this inside its ``except``, where a new exception
@@ -240,13 +248,18 @@ def alert_variables(exc: BaseException, health: ScrapeHealth | None, host: str) 
         text = ""
     message = text.splitlines()[0] if text else ""
     last = health.last_success_at if health else None
+    no_success, no_window = (NEVER, NOT_APPLICABLE) if health else (UNKNOWN, UNKNOWN)
     return {
         "outcome": "failed",
         "source_host": host,
         "error": f"{type(exc).__name__}: {message}" if message else type(exc).__name__,
-        "consecutive_errors": health.consecutive_errors if health else "",
-        "last_success_at": last.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if last else "",
-        "window_expires": (last + SOURCE_WINDOW).astimezone(UTC).date().isoformat() if last else "",
+        "consecutive_errors": health.consecutive_errors if health else UNKNOWN,
+        "last_success_at": last.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if last
+        else no_success,
+        "window_expires": (last + SOURCE_WINDOW).astimezone(UTC).date().isoformat()
+        if last
+        else no_window,
     }
 
 

@@ -56,9 +56,12 @@ class FakePg:
         # precedes the data. Only reading the data through finds the cut.
         self.truncated = truncated
         self.calls: list[list[str]] = []
+        #: Each call's ``env``: None means the child inherits this process's.
+        self.envs: list[dict | None] = []
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
+        self.envs.append(kwargs.get("env"))
         program = argv[argv.index("--") + 1] if argv[0] == "setpriv" else argv[0]
         if program == self.fail:
             return subprocess.CompletedProcess(argv, 1, stdout="", stderr=f"{program}: boom\n")
@@ -258,7 +261,8 @@ class TestArchive:
         before = len(archive.preconditions)
         summary = _run(client, tmp_path, data_dir)
         assert len(archive.preconditions) == before
-        assert summary["archive"] == {"uploaded": 0, "unchanged": 3, "unsettled": 0, "failed": 0}
+        counts = {k: v for k, v in summary["archive"].items() if k != "seconds"}
+        assert counts == {"uploaded": 0, "unchanged": 3, "unsettled": 0, "failed": 0}
 
     def test_new_file_is_uploaded_next_run(self, client, buckets, tmp_path, data_dir):
         _run(client, tmp_path, data_dir)
@@ -341,6 +345,208 @@ class TestArchive:
         assert buckets[0].objects  # the dump still shipped
 
 
+class TestFault:
+    """``metadata.fault`` names the failed phases, so a change of phase reports at once (#194)."""
+
+    def _fault(self, client, tmp_path, data_dir, **overrides):
+        from wslcb_licensing_tracker.backup import BackupError
+
+        with pytest.raises(BackupError) as caught:
+            _run(client, tmp_path, data_dir, **overrides)
+        return caught.value.fault
+
+    def test_dump_failure_is_db(self, client, tmp_path, data_dir):
+        assert self._fault(client, tmp_path, data_dir, runner=FakePg(fail="pg_dump")) == "db"
+
+    def test_archive_failure_is_archive(self, buckets, tmp_path, data_dir):
+        client = FakeClient(*buckets, missing=frozenset({ARCHIVE}))
+        assert self._fault(client, tmp_path, data_dir) == "archive"
+
+    def test_a_file_failure_is_archive(self, client, buckets, tmp_path, data_dir):
+        _run(client, tmp_path, data_dir)
+        _file(data_dir, "remediation-backups/151.json", b"changed")
+        assert self._fault(client, tmp_path, data_dir) == "archive"
+
+    def test_both_is_db_then_archive(self, buckets, tmp_path, data_dir):
+        """One order, always: ``archive+db`` would read as a new fault."""
+        client = FakeClient(*buckets, missing=frozenset({ARCHIVE}))
+        fault = self._fault(client, tmp_path, data_dir, runner=FakePg(fail="pg_dump"))
+        assert fault == "db+archive"
+
+
+class TestTimings:
+    """Per-phase seconds, so the next slow run attributes itself (#194 §2)."""
+
+    @staticmethod
+    def _clock(*readings):
+        return iter(readings).__next__
+
+    def test_each_phase_is_timed(self, client, tmp_path, data_dir):
+        summary = _run(client, tmp_path, data_dir, clock=self._clock(10.0, 14.5, 14.5, 26.04))
+        assert summary["database"]["seconds"] == 4.5
+        assert summary["archive"]["seconds"] == 11.5
+
+    def test_a_failed_phase_still_logs_its_time(self, client, tmp_path, data_dir, caplog):
+        """A phase that hit its timeout is exactly the slow run to attribute."""
+        from wslcb_licensing_tracker.backup import BackupError
+
+        clock = self._clock(0.0, 30.0, 30.0, 31.0)
+        with pytest.raises(BackupError):
+            _run(client, tmp_path, data_dir, runner=FakePg(fail="pg_dump"), clock=clock)
+        (record,) = [r for r in caplog.records if r.getMessage().startswith("Backup failed")]
+        assert record.summary["database"] == {"seconds": 30.0}
+        assert record.summary["archive"]["seconds"] == 1.0
+
+    def test_the_default_clock_is_monotonic(self):
+        """Wall time can step under NTP; a phase's length must not."""
+        import inspect
+        import time
+
+        from wslcb_licensing_tracker import backup
+
+        for fn in (backup.run_backup, backup.main):
+            assert inspect.signature(fn).parameters["clock"].default is time.monotonic
+
+
+PASSWORD = "s3cr@t/pw"  # noqa: S105 — a fixture, and one that needs escaping
+PASSWORD_DSN = "postgresql://wslcb:s3cr%40t%2Fpw@localhost:5432/wslcb_test?sslmode=disable"  # noqa: S105
+
+
+class TimingOutPg(FakePg):
+    """``pg_dump`` hits its timeout. ``TimeoutExpired``'s message quotes the whole argv."""
+
+    def __call__(self, argv, **kwargs):
+        if argv[0] == "pg_dump":
+            raise subprocess.TimeoutExpired(argv, 1800)
+        return super().__call__(argv, **kwargs)
+
+
+class TestLibpqTarget:
+    """A DSN's password goes to the child's env, never its argv (#194 §3):
+    any local user can read ``/proc/<pid>/cmdline`` while the child runs."""
+
+    @staticmethod
+    def _target(dsn, environ=None):
+        from wslcb_licensing_tracker.backup import libpq_target
+
+        return libpq_target(dsn, environ={"PATH": "/usr/bin"} if environ is None else environ)
+
+    @pytest.mark.parametrize(
+        "dsn",
+        [
+            "wslcb",  # the nightly backup: a bare name, peer auth
+            "postgresql://wslcb@localhost/wslcb_test",
+            "postgres:///wslcb?host=/var/run/postgresql",
+            "host=/var/run/postgresql dbname=wslcb",
+        ],
+    )
+    def test_no_password_changes_nothing(self, dsn):
+        """No ``PGPASSWORD`` set, and the child inherits its env as before."""
+        assert self._target(dsn) == (dsn, None)
+
+    def test_uri_userinfo_password_moves_to_the_env(self):
+        dsn, env = self._target(PASSWORD_DSN)
+        assert dsn == "postgresql://wslcb@localhost:5432/wslcb_test?sslmode=disable"
+        assert env == {"PATH": "/usr/bin", "PGPASSWORD": PASSWORD}
+
+    def test_postgres_scheme(self):
+        assert self._target("postgres://u:pw@h/db") == (
+            "postgres://u@h/db",
+            {"PATH": "/usr/bin", "PGPASSWORD": "pw"},
+        )
+
+    def test_no_user_leaves_no_bare_at(self):
+        assert self._target("postgresql://:pw@h/db") == (
+            "postgresql://h/db",
+            {"PATH": "/usr/bin", "PGPASSWORD": "pw"},
+        )
+
+    def test_userinfo_runs_to_the_first_at(self):
+        """libpq's rule: an unescaped ``?`` before the ``@`` is still the password's."""
+        dsn, env = self._target("postgresql://u:p?q@h/db")
+        assert dsn == "postgresql://u@h/db"
+        assert env["PGPASSWORD"] == "p?q"
+
+    @pytest.mark.parametrize(
+        ("given", "kept"),
+        [
+            (
+                "postgresql://u@h/db?password=pw%26x&sslmode=require",
+                "postgresql://u@h/db?sslmode=require",
+            ),
+            (
+                "postgresql://u@h/db?sslmode=require&password=pw%26x",
+                "postgresql://u@h/db?sslmode=require",
+            ),
+            ("postgresql://u@h/db?password=pw%26x", "postgresql://u@h/db"),
+            ("postgresql://u:other@h/db?password=pw%26x", "postgresql://u@h/db"),  # the query wins
+        ],
+    )
+    def test_uri_query_password_moves_to_the_env(self, given, kept):
+        dsn, env = self._target(given)
+        assert dsn == kept
+        assert env["PGPASSWORD"] == "pw&x"
+
+    @pytest.mark.parametrize(
+        ("given", "kept", "password"),
+        [
+            ("host=localhost password=pw dbname=x", "host=localhost dbname=x", "pw"),
+            ("password = 'a b\\'c' dbname=x", "dbname=x", "a b'c"),
+            ("dbname=x password=p\\ w", "dbname=x", "p w"),
+            ("dbname='my db' password=pw", "dbname='my db'", "pw"),
+        ],
+    )
+    def test_keyword_password_moves_to_the_env(self, given, kept, password):
+        dsn, env = self._target(given)
+        assert dsn == kept
+        assert env["PGPASSWORD"] == password
+
+    @pytest.mark.parametrize("dsn", ["dbname=x password='unterminated", "dbname=x junk"])
+    def test_a_malformed_string_is_left_to_libpq(self, dsn):
+        """libpq refuses it before connecting, with a better message than ours."""
+        assert self._target(dsn) == (dsn, None)
+
+    def test_an_empty_password_is_no_password(self):
+        """libpq treats ``u:@h`` as none; setting PGPASSWORD="" would say otherwise."""
+        assert self._target("postgresql://u:@h/db") == ("postgresql://u@h/db", None)
+
+    def test_the_env_is_a_copy(self):
+        environ = {"PATH": "/usr/bin"}
+        _, env = self._target(PASSWORD_DSN, environ)
+        assert environ == {"PATH": "/usr/bin"}
+        assert env is not environ
+
+
+class TestPasswordOffArgv:
+    def test_every_libpq_call_gets_the_password_by_env(self, client, tmp_path, data_dir):
+        pg = FakePg()
+        _run(client, tmp_path, data_dir, database=PASSWORD_DSN, runner=pg)
+        libpq = [
+            i for i, argv in enumerate(pg.calls) if any(a.startswith("--dbname=") for a in argv)
+        ]
+        assert [pg.calls[i][0] for i in libpq] == ["psql", "pg_dump"]
+        for i in libpq:
+            assert not any("s3cr" in arg for arg in pg.calls[i]), pg.calls[i]
+            assert pg.envs[i]["PGPASSWORD"] == PASSWORD
+
+    def test_a_timeout_reports_no_password(self, client, tmp_path, data_dir):
+        """The run's error goes to the journal and the alert verbatim (#194 CR 8)."""
+        from wslcb_licensing_tracker.backup import BackupError
+
+        with pytest.raises(BackupError, match=r"TimeoutExpired.*pg_dump") as caught:
+            _run(client, tmp_path, data_dir, database=PASSWORD_DSN, runner=TimingOutPg())
+        assert "s3cr" not in str(caught.value)
+
+    def test_the_nightly_bare_name_sets_no_password(self, client, tmp_path, data_dir):
+        """Peer auth, no credential: every child inherits its env untouched."""
+        pg = FakePg()
+        _run(client, tmp_path, data_dir, runner=pg)
+        assert pg.calls
+        assert pg.envs == [None] * len(pg.calls)
+        assert "--dbname=wslcb" in pg.calls[0]
+        assert "--no-password" in pg.calls[0]
+
+
 class TestMd5:
     def test_matches_what_gcs_reports(self, tmp_path):
         from wslcb_licensing_tracker.backup import b64_md5_file
@@ -369,39 +575,66 @@ class TestMain:
         from wslcb_licensing_tracker import backup
 
         calls = []
-        monkeypatch.setattr(
-            backup, "post_checkin", lambda status, variables, **_: calls.append((status, variables))
-        )
+
+        def record(status, variables, *, metadata=None, **_):
+            calls.append((status, variables, metadata))
+
+        monkeypatch.setattr(backup, "post_checkin", record)
         return calls
 
-    def _main(self, env, client, data_dir, runner=None):
+    def _main(self, env, client, data_dir, runner=None, **overrides):
         from wslcb_licensing_tracker import backup
 
-        return backup.main(
-            database="wslcb",
-            environ=env,
-            client_factory=lambda: client,
-            data_dir=data_dir,
-            runner=runner or FakePg(),
-            host=HOST,
-            now=lambda: NOW,
-        )
+        kwargs = {
+            "database": "wslcb",
+            "environ": env,
+            "client_factory": lambda: client,
+            "data_dir": data_dir,
+            "runner": runner or FakePg(),
+            "host": HOST,
+            "now": lambda: NOW,
+        }
+        return backup.main(**(kwargs | overrides))
 
     def test_success_checks_in_ok(self, env, client, data_dir, checkins):
         assert self._main(env, client, data_dir) == 0
-        status, variables = checkins[0]
+        status, variables, metadata = checkins[0]
         assert status == "ok"
         assert variables["outcome"] == "ok"
         assert variables["source_host"] == HOST
         assert variables["archive_uploaded"] == 3
         assert variables["object"].startswith(f"gs://{BUCKET}/daily/")
+        assert metadata is None  # an ok ends a fault; it names none
+
+    def test_ok_carries_the_phase_timings(self, env, client, data_dir, checkins):
+        clock = iter((100.0, 104.0, 104.0, 115.3)).__next__
+        assert self._main(env, client, data_dir, clock=clock) == 0
+        _, variables, _ = checkins[0]
+        assert variables["db_seconds"] == 4.0
+        assert variables["archive_seconds"] == 11.3
 
     def test_failure_checks_in_alert_and_exits_1(self, env, client, data_dir, checkins):
         assert self._main(env, client, data_dir, runner=FakePg(fail="pg_dump")) == 1
-        status, variables = checkins[0]
+        status, variables, metadata = checkins[0]
         assert status == "alert"
         assert variables["outcome"] == "failed"
         assert "pg_dump" in variables["error"]
+        assert metadata == {"fault": "db"}
+
+    def test_a_timed_out_dump_alerts_without_the_password(self, env, client, data_dir, checkins):
+        """co-status stores and forwards ``error``: a password there leaves the host."""
+        rc = self._main(env, client, data_dir, runner=TimingOutPg(), database=PASSWORD_DSN)
+        assert rc == 1
+        status, variables, metadata = checkins[0]
+        assert status == "alert"
+        assert "timed out" in variables["error"]
+        assert "s3cr" not in variables["error"]
+        assert metadata == {"fault": "db"}
+
+    def test_archive_failure_alerts_archive(self, env, buckets, data_dir, checkins):
+        client = FakeClient(*buckets, missing=frozenset({ARCHIVE}))
+        assert self._main(env, client, data_dir) == 1
+        assert checkins[0][2] == {"fault": "archive"}
 
     @pytest.mark.parametrize("name", ["WSLCB_BACKUP_BUCKET", "WSLCB_ARCHIVE_BUCKET"])
     def test_missing_bucket_config_exits_2(self, env, client, data_dir, checkins, name):
@@ -410,6 +643,7 @@ class TestMain:
         assert self._main(env, client, data_dir) == 2
         assert checkins[0][0] == "alert"
         assert name in checkins[0][1]["error"]
+        assert checkins[0][2] == {"fault": "setup"}  # before either phase
 
     def test_misplaced_key_exits_2_before_any_client(self, env, data_dir, checkins):
         """backup.env overriding the key path would aim the job at the root-only original."""
@@ -425,6 +659,7 @@ class TestMain:
         )
         assert rc == 2
         assert "backup.env" in checkins[0][1]["error"]
+        assert checkins[0][2] == {"fault": "setup"}
 
     def test_client_construction_failure_alerts(self, env, data_dir, checkins):
         from wslcb_licensing_tracker import backup
@@ -437,3 +672,4 @@ class TestMain:
         )
         assert rc == 1
         assert "no key" in checkins[0][1]["error"]
+        assert checkins[0][2] == {"fault": "setup"}

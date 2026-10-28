@@ -972,7 +972,12 @@ def backup(database: str) -> None:
 @click.option("--latest", is_flag=True, help="The newest dump of --prefix's host.")
 @click.option("--object", "key", metavar="KEY", help="A dump by its object key.")
 @click.option("--prefix", metavar="HOST", help="Whose dumps (required with --latest).")
-@click.option("--into", metavar="DATABASE", help="Restore into this existing, empty database.")
+@click.option(
+    "--into",
+    metavar="DATABASE",
+    help="Restore into this existing, empty database: a name or a DSN (its password "
+    "goes by PGPASSWORD, never argv; refused with --run-as, which means peer auth).",
+)
 @click.option(
     "--download-only",
     metavar="DIR",
@@ -1004,6 +1009,12 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
     if not list_ and (into is None) == (download_only is None):
         msg = "say where: exactly one of --into DATABASE, --download-only DIR"
         raise click.UsageError(msg)
+    if into is not None:
+        try:
+            # Printed below as the target: the DSN without its password.
+            target, _ = restore.check_target(into, run_as)
+        except restore.RestoreError as exc:
+            raise click.UsageError(str(exc)) from None
     try:
         # Inside the try: a missing or revoked key raises from google.auth here.
         client = restore.make_client()
@@ -1038,7 +1049,7 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
         logger.error("Restore failed: %s", error)  # noqa: TRY400 — one sentence, no traceback
         click.echo(f"restore failed: {error}", err=True)
         sys.exit(1)
-    click.echo(f"restored gs://{bucket}/{key} into {into}")
+    click.echo(f"restored gs://{bucket}/{key} into {target}")
     click.echo("next: the go/no-go gates in docs/RECOVERY.md")
 
 
