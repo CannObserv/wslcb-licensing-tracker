@@ -96,8 +96,7 @@ window, a UTC `quiet` range per timer firing (derived from `infra/*.timer` by
 `tests/test_patching_hosts_knob.py`, #223), the in-flight gate, the restarter
 and the Postgres databases; see [`SKILLS.md`](SKILLS.md#patching-hosts). Its
 `backup` line makes a fresh `wslcb-backup.service` run (#185) the recovery
-point for `wslcb`, in place of a second `pg_dump`; it names the database
-(`postgresql@16-main:wslcb`, #237), so the recovery point dumps `wslcb_test`. Its one third-party origin is Tailscale
+point for `wslcb` (#237), in place of a second `pg_dump`. Its one third-party origin is Tailscale
 (`origin pkgs.tailscale.com follow`, its own held step; pins in
 `infra/preferences.d-tailscale`, [`RECOVERY.md`](RECOVERY.md#tailnet), #220).
 apt's needrestart hook (`/etc/apt/apt.conf.d/99needrestart`)
