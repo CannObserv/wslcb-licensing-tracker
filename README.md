@@ -279,7 +279,7 @@ wslcb-licensing-tracker/
 │   ├── test_infra_web_unit.py    # wslcb-web starts after Postgres, never bound to its lifetime (#184)
 │   ├── test_journald_config.py # journald drop-in: persistent, 512M; on the host, the flush unmasked + journal on disk (#186)
 │   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
-│   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup line names what the unit dumps and the vendored backup_covers accepts it; Tailscale origin/pins; a quiet range covers every timer firing (#192, #193, #220, #223, #237)
+│   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup line names what the unit dumps and the vendored backup_covers accepts it; Tailscale origin/pins; a quiet range covers every timer firing, and each is a restarter or excepted as none (#192, #193, #220, #223, #237, #238)
 │   ├── test_pre_ship_wrapper.py # ship-gate wrapper: linked worktree loads the primary's .env, exports names only, warns when none, never loads /etc's (#235)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
 │   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224) ≥ advisory fix in lock + venv

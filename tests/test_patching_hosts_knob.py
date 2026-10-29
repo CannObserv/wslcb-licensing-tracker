@@ -327,3 +327,34 @@ def test_a_quiet_range_covers_each_timer_firing(
         f"{' ' + dow if dow else ''}; no quiet range covers it through"
         f" {end // 60 % 24:02d}:{end % 60:02d}Z (jitter {jitter} + margin {RUN_MARGIN_MIN} min)"
     )
+
+
+def _timer_service(timer: Path) -> str:
+    """The service a timer starts: its ``Unit=``, else its own name's ``.service``."""
+    return (_timer_keys(timer).get("Unit") or [f"{timer.stem}.service"])[-1]
+
+
+def test_each_timer_is_a_restarter_or_excepted_as_none(knob: dict) -> None:
+    """Every timer's service runs `python -m …cli`, which the probe can't follow (#238).
+
+    Undeclared, each is a `restarters:unread:` finding at patch time; a new
+    timer would reach the window that way, as the backup's quiet range did (#223).
+    """
+    restarters = {r["unit"] for r in knob["restarter"]}
+    excepted = {e["what"] for e in knob["exception"]}
+    missing = [
+        timer.name
+        for timer in _timers()
+        if timer.name not in restarters and f"not-restarter:{_timer_service(timer)}" not in excepted
+    ]
+    assert missing == []
+    services = {f"not-restarter:{_timer_service(timer)}" for timer in _timers()}
+    stale = sorted(w for w in excepted if w.startswith("not-restarter:") and w not in services)
+    assert stale == [], "an exception outlived its timer"
+
+
+def test_the_not_restarter_exceptions_still_hold() -> None:
+    """They say no task starts or restarts a service: src/ calls no systemctl (#238)."""
+    src = REPO_ROOT / "src" / "wslcb_licensing_tracker"
+    hits = [p.name for p in sorted(src.rglob("*.py")) if "systemctl" in p.read_text()]
+    assert hits == []
