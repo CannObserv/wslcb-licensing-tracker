@@ -140,7 +140,8 @@ def test_backup_regime_covers_what_the_unit_dumps(knob: dict) -> None:
     """
     (backup,) = knob["backup"]
     assert backup["unit"] == BACKUP_UNIT.name
-    dumped = re.findall(r"--database[= ](\S+)", BACKUP_UNIT.read_text())
+    execs = [ln for ln in BACKUP_UNIT.read_text().splitlines() if ln.startswith("ExecStart=")]
+    dumped = [db for ln in execs for db in re.findall(r"--database[= ](\S+)", ln)]
     assert dumped == ["wslcb"]
     assert backup["datastores"] == [f"postgresql@16-main:{','.join(dumped)}"]
 
