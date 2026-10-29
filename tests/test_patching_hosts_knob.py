@@ -348,6 +348,9 @@ def test_each_timer_is_a_restarter_or_excepted_as_none(knob: dict) -> None:
         if timer.name not in restarters and f"not-restarter:{_timer_service(timer)}" not in excepted
     ]
     assert missing == []
+    services = {f"not-restarter:{_timer_service(timer)}" for timer in _timers()}
+    stale = sorted(w for w in excepted if w.startswith("not-restarter:") and w not in services)
+    assert stale == [], "an exception outlived its timer"
 
 
 def test_the_not_restarter_exceptions_still_hold() -> None:
