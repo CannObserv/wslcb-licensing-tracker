@@ -31,9 +31,11 @@ health curl -sf http://localhost:8000/api/v1/health
 datastore postgres postgresql@16-main wslcb wslcb_test
 
 # The nightly GCS backup (#185, docs/RECOVERY.md) stands in for the recovery
-# point's own dump of this cluster. It dumps wslcb only, so wslcb_test (pytest
-# scratch, rebuilt by alembic upgrade head) gets no dump (#220).
-backup wslcb-backup.service postgresql@16-main
+# point's own dump of wslcb, the one database it takes (`--database wslcb`).
+# The line must name it (skills#480, #237): the recovery point dumps the
+# cluster's other declared databases itself, so wslcb_test (pytest scratch,
+# 12 MB) gets its own dump before each patch run.
+backup wslcb-backup.service postgresql@16-main:wslcb
 
 # Third-party apt origins, maintenance lane (#220). Tailscale was installed
 # 2026-10-09; its own auto-update is off (AutoUpdate.Apply false), so apt is

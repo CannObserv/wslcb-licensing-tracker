@@ -9,10 +9,10 @@
 # upstream's and is deliberately NOT forked.
 #
 # Shape follows the wrapper contract documented in the vendored pre-ship.sh
-# ("Project-local env loading (optional override point)"), with one deliberate
-# deviation noted below.
+# ("Project-local env loading (optional override point)"), with two deliberate
+# deviations noted below.
 #
-# DEVIATION from that contract: it says to delegate through the `skills/...`
+# DEVIATION 1: the contract says to delegate through the `skills/...`
 # symlink rather than `skills-vendor/...`. That assumes the wrapper sits at the
 # project's own `scripts/pre-ship.sh`, leaving `skills/<name>/` free to be the
 # vendor symlink. That layout does not work here: the skill's Step 1 resolution
@@ -25,6 +25,10 @@
 # the delegate has to be the vendor path. It is globbed, not hand-substituted,
 # so a renamed vendor directory does not silently produce a plausible-but-dead
 # path.
+#
+# DEVIATION 2 (#235): the contract also loads `/etc/<project>/.env`. Not here:
+# /etc/wslcb-licensing-tracker/.env is group-readable by this user and holds
+# the PRODUCTION DATABASE_URL, which a test gate must never carry.
 set -euo pipefail
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
@@ -69,10 +73,28 @@ load_env() {
       \'*\') val=${val#\'} val=${val%\'} ;;
     esac
     export "$key=$val"
+    PRE_SHIP_ENV_NAMES="${PRE_SHIP_ENV_NAMES:+$PRE_SHIP_ENV_NAMES }$key"
   done < "$1"
 }
 
-load_env "$PROJECT_ROOT/.env"
+# Names only, never values: the vendored gate folds a hash of them into its
+# per-SHA stamp, and writes none when the list is empty, so a run that loaded
+# no env can't bless the commit for the run that does (skills#497).
+export PRE_SHIP_ENV_NAMES=""
+
+# A linked worktree has no .env (it's gitignored), so fall back to the primary
+# checkout's: --git-common-dir names the primary's .git from any worktree.
+# Without the fallback the PG tests skipped and the gate passed (#235).
+LOCAL_ENV="$PROJECT_ROOT/.env"
+ENV_FILE=$LOCAL_ENV
+[ -r "$ENV_FILE" ] ||
+  ENV_FILE="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.env"
+[ -r "$ENV_FILE" ] || {
+  [ "$ENV_FILE" = "$LOCAL_ENV" ] || LOCAL_ENV="$LOCAL_ENV or $ENV_FILE"
+  echo "WARN: no env file at $LOCAL_ENV;" >&2
+  echo "      tests that need one will skip, and no stamp is written" >&2
+}
+load_env "$ENV_FILE"
 
 # exec so the exit code the Iron Law gates on propagates unchanged; "$@" so
 # --help still reaches the delegate.

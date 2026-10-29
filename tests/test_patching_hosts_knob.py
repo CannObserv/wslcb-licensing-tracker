@@ -100,11 +100,57 @@ def test_restarter_and_service(knob: dict) -> None:
     assert [s["unit"] for s in knob["service"]] == ["wslcb-web.service"]
 
 
-def test_backup_regime_covers_the_cluster(knob: dict) -> None:
-    """#185's nightly backup stands in for a second dump of the cluster (#220)."""
+BACKUP_UNIT = REPO_ROOT / "infra" / "wslcb-backup.service"
+PROBE_LIBS = ("_knob-lib.sh", "_probe-lib.sh")
+
+
+def _backup_covers() -> tuple[list[str], str]:
+    """The vendored `backup_covers` on each backup line: (refusals, covered).
+
+    `read-knob.sh` accepts a backup line that the probe, the recovery point and
+    the bulk refuse (#237, skills#480), so the refusal is read from the
+    function they share.
+    """
+    bash = shutil.which("bash")
+    assert bash
+    libs = "".join(f'. "{READ_KNOB.parent / lib}"; ' for lib in PROBE_LIBS)
+    script = (
+        f"set -u; {libs}"
+        'knob_load "$1" "$2" "$(date -u +%F)"; '
+        'for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do backup_covers "$r"; '
+        'for w in ${BC_WHY[@]+"${BC_WHY[@]}"}; do printf "why\\t%s\\n" "$w"; done; '
+        'printf "covers\\t%s\\n" "$BC_COVERS"; done'
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
+        [bash, "-c", script, "backup-covers", str(KNOB), HOST],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    rows = [line.split("\t", 1) for line in result.stdout.splitlines()]
+    return [v for k, v in rows if k == "why"], " ".join(v for k, v in rows if k == "covers")
+
+
+def test_backup_regime_covers_what_the_unit_dumps(knob: dict) -> None:
+    """#185's nightly backup stands in for the databases it dumps, no others (#220, #237).
+
+    `wslcb_test` (pytest scratch) is left to the recovery point's own dump. The
+    line must name the databases, or patching-hosts refuses it (skills#480).
+    """
     (backup,) = knob["backup"]
-    assert backup["unit"] == "wslcb-backup.service"
-    assert backup["datastores"] == ["postgresql@16-main"]
+    assert backup["unit"] == BACKUP_UNIT.name
+    execs = [ln for ln in BACKUP_UNIT.read_text().splitlines() if ln.startswith("ExecStart=")]
+    dumped = [db for ln in execs for db in re.findall(r"--database[= ](\S+)", ln)]
+    assert dumped == ["wslcb"]
+    assert backup["datastores"] == [f"postgresql@16-main:{','.join(dumped)}"]
+
+
+def test_patching_hosts_accepts_the_backup_line() -> None:
+    """The probe, recovery point and bulk share `backup_covers`; it must not refuse."""
+    refusals, covers = _backup_covers()
+    assert refusals == []
+    assert covers == "postgresql@16-main.service:wslcb"
 
 
 def test_tailscale_origin_is_followed_in_its_own_step(knob: dict) -> None:
