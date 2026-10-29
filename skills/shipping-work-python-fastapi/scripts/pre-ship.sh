@@ -12,11 +12,7 @@
 # ("Project-local env loading (optional override point)"), with two deliberate
 # deviations noted below.
 #
-# DEVIATION 2 (#235): the contract also loads `/etc/<project>/.env`. Not here:
-# /etc/wslcb-licensing-tracker/.env is group-readable by this user and holds
-# the PRODUCTION DATABASE_URL, which a test gate must never carry.
-#
-# DEVIATION from that contract: it says to delegate through the `skills/...`
+# DEVIATION 1: the contract says to delegate through the `skills/...`
 # symlink rather than `skills-vendor/...`. That assumes the wrapper sits at the
 # project's own `scripts/pre-ship.sh`, leaving `skills/<name>/` free to be the
 # vendor symlink. That layout does not work here: the skill's Step 1 resolution
@@ -29,6 +25,10 @@
 # the delegate has to be the vendor path. It is globbed, not hand-substituted,
 # so a renamed vendor directory does not silently produce a plausible-but-dead
 # path.
+#
+# DEVIATION 2 (#235): the contract also loads `/etc/<project>/.env`. Not here:
+# /etc/wslcb-licensing-tracker/.env is group-readable by this user and holds
+# the PRODUCTION DATABASE_URL, which a test gate must never carry.
 set -euo pipefail
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
