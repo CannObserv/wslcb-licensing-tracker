@@ -282,7 +282,7 @@ wslcb-licensing-tracker/
 │   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup line names what the unit dumps and the vendored backup_covers accepts it; Tailscale origin/pins; a quiet range covers every timer firing, and each is a restarter or excepted as none (#192, #193, #220, #223, #237, #238)
 │   ├── test_pre_ship_wrapper.py # ship-gate wrapper: linked worktree loads the primary's .env, exports names only, warns when none, never loads /etc's (#235)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
-│   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224) ≥ advisory fix in lock + venv
+│   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224, #229) ≥ advisory fix in lock + venv; npm: ws, form-data (#229) in package-lock.json
 │   ├── test_warning_ratchet.py  # pyproject filterwarnings fail a run on a new RuntimeWarning / PytestWarning / own DeprecationWarning; one narrow starlette ignore, live only while httpx2 is absent (#216)
 │   ├── js/
 │   │   ├── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)
@@ -326,6 +326,9 @@ uv sync --dev
 
 # Install pre-commit hooks (ruff lint/format + Tailwind CSS rebuild)
 uv run pre-commit install
+
+# JS test dependencies (jsdom, for `npm test`; not used in production)
+npm ci
 ```
 
 ### Configure the database

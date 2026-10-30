@@ -385,6 +385,7 @@ Worker count has no effect on data freshness — safe to scale workers freely.
 
 - Virtualenv at `.venv/` (managed by `uv sync`). If project directory moves, recreate.
 - `.venv/` keeps the dev group on purpose (#224): the test gate and pre-commit run from it, and `--no-dev` wouldn't stick anyway, because `uv run` reinstalls default groups. Audit it with `uv audit --frozen` (dev included), not `--no-dev`.
+- `node_modules/` holds jsdom, for `npm test` only; `wslcb-web` never loads it. After a `package-lock.json` change, run `npm ci`, then `npm audit` (#229).
 - All persistent data in `./data/` (gitignored).
 
 ### BUILD_ID
