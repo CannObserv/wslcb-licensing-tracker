@@ -441,7 +441,7 @@ wslcb admin list-users
 wslcb admin remove-user you@example.com
 
 # Data stragglers: any uncompressed snapshot/diff left in data/ (the weekly
-# timer's job; #200). Tooling garbage is the disk GC's: see "Disk GC" below.
+# timer's job; #200). Tooling garbage is the disk GC's: docs/DISK_GC.md.
 uv run wslcb ingest compress-stragglers --dry-run
 uv run wslcb ingest compress-stragglers
 ```
