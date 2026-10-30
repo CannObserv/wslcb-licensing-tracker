@@ -792,51 +792,54 @@ class TestCompressDiffs:
 
 
 class TestOpsGroup:
-    """Tests for `wslcb ops disk-hygiene`."""
+    """`wslcb ops disk-hygiene` retired to the cohort's disk GC (#200)."""
 
-    def test_help(self):
-        result = CliRunner().invoke(main, ["ops", "--help"])
+    def test_disk_hygiene_is_gone(self):
+        assert "disk-hygiene" not in CliRunner().invoke(main, ["ops", "--help"]).output
+        for argv in (["ops", "disk-hygiene"], ["disk-hygiene"]):
+            assert CliRunner().invoke(main, argv).exit_code != 0, argv
+
+
+class TestCompressStragglers:
+    """Tests for `wslcb ingest compress-stragglers`, the weekly timer's job (#200)."""
+
+    def _stragglers(self, tmp_path):
+        snap = tmp_path / "wslcb" / "licensinginfo" / "2026" / "2026_01_01"
+        snap.mkdir(parents=True)
+        (snap / "2026_01_01-test-v1.html").write_text("<html/>")
+        diff = tmp_path / "wslcb" / "licensinginfo-diffs" / "notifications"
+        diff.mkdir(parents=True)
+        (diff / "2025_06_15-notifications-diff.txt").write_text("diff content")
+        return snap / "2026_01_01-test-v1.html", diff / "2025_06_15-notifications-diff.txt"
+
+    def test_none_found(self, tmp_path):
+        with patch("wslcb_licensing_tracker.disk_hygiene.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-stragglers"])
         assert result.exit_code == 0
-        assert "disk-hygiene" in result.output
+        assert "No uncompressed snapshots or diffs found." in result.output
 
-    def test_dry_run_reports_freed_and_does_not_mutate(self):
-        summary = {
-            "freed_bytes": 0,
-            "warnings": [],
-            "compress": {"snapshots": None, "diffs": None},
-        }
-        with patch(
-            "wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary
-        ) as mock_run:
-            result = CliRunner().invoke(main, ["ops", "disk-hygiene", "--dry-run"])
+    def test_dry_run_names_each_kind_and_writes_nothing(self, tmp_path):
+        snap, diff = self._stragglers(tmp_path)
+        with patch("wslcb_licensing_tracker.disk_hygiene.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-stragglers", "--dry-run"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with(dry_run=True)
-        assert "0.0 MB" in result.output
+        assert "Would compress 1 snapshot(s)" in result.output
+        assert "Would compress 1 diff(s)" in result.output
+        assert snap.exists() and diff.exists()
 
-    def test_reports_freed_bytes(self):
-        summary = {
-            "freed_bytes": 5_242_880,
-            "warnings": [],
-            "compress": {"snapshots": None, "diffs": None},
-        }
-        with patch("wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary):
-            result = CliRunner().invoke(main, ["ops", "disk-hygiene"])
+    def test_compresses_both_kinds(self, tmp_path):
+        snap, diff = self._stragglers(tmp_path)
+        with patch("wslcb_licensing_tracker.disk_hygiene.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["ingest", "compress-stragglers"])
         assert result.exit_code == 0
-        assert "5.0 MB" in result.output
+        assert "Compressed 1 snapshot(s)" in result.output
+        assert "Compressed 1 diff(s)" in result.output
+        for path in (snap, diff):
+            assert not path.exists()
+            assert path.with_name(path.name + ".gz").exists()
 
-    def test_warnings_echoed(self):
-        summary = {
-            "freed_bytes": 0,
-            "warnings": ["could not read keep-list from x/lru.json — skipping"],
-            "compress": {"snapshots": None, "diffs": None},
-        }
-        with patch("wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary):
-            result = CliRunner().invoke(main, ["ops", "disk-hygiene"])
-        assert result.exit_code == 0
-        assert "lru.json" in result.output
-
-    def test_top_level_alias(self):
-        summary = {"freed_bytes": 0, "warnings": [], "compress": {"snapshots": None, "diffs": None}}
-        with patch("wslcb_licensing_tracker.cli.run_disk_hygiene", return_value=summary):
-            result = CliRunner().invoke(main, ["disk-hygiene", "--dry-run"])
+    def test_top_level_alias(self, tmp_path):
+        """wslcb-task@compress-stragglers runs `cli compress-stragglers`."""
+        with patch("wslcb_licensing_tracker.disk_hygiene.DATA_DIR", tmp_path):
+            result = CliRunner().invoke(main, ["compress-stragglers", "--dry-run"])
         assert result.exit_code == 0
