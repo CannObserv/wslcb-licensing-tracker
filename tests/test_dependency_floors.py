@@ -12,8 +12,12 @@ they matter most. mako is reached only through alembic at migration time.
 tooling (#224). The prod ``.venv`` installs the dev group, so the installed-tree
 check covers the host too. virtualenv and filelock run when pre-commit builds a
 hook env; pytest and pygments run in the gate.
+
+``npm audit`` flagged ws and form-data under jsdom, the only devDependency (#229).
+They run only in ``node --test tests/js/``, so only ``package-lock.json`` is checked.
 """
 
+import json
 import tomllib
 from importlib.metadata import version as installed_version
 from pathlib import Path
@@ -34,17 +38,22 @@ FIXED = {
     "mako": "1.4.2",
 }
 
-# Same, for the dev group (#224). filelock's fixes exist only in 4.x.
-# virtualenv 21.14.10 leaves GHSA-cx6f-vjhg-g3cc open (a 21.14.9 regression,
-# fixed in 21.14.13): accepted on #224, since pre-commit passes no --prompt.
+# Same, for the dev group (#224, #229). filelock's fixes exist only in 4.x.
 DEV_FIXED = {
-    "virtualenv": "21.14.10",
+    "virtualenv": "21.14.13",
     "filelock": "4.2.1",
     "pytest": "9.0.3",
     "pygments": "2.20.0",
 }
 
 FLOORS = sorted({**FIXED, **DEV_FIXED}.items())
+
+# npm package -> floor (#229). ws 8.21.0 fixed GHSA-96hv-2xvq-fx4p, but its limit
+# skipped empty fragments until 8.21.1.
+NPM_FIXED = {
+    "ws": "8.21.1",
+    "form-data": "4.0.6",
+}
 
 
 def _locked() -> dict[str, str]:
@@ -67,3 +76,16 @@ def test_installed_version_is_fixed(package: str, floor: str) -> None:
 def test_floor_tables_are_disjoint() -> None:
     # FLOORS merges the two tables, so a shared key would drop one floor silently.
     assert not FIXED.keys() & DEV_FIXED.keys()
+
+
+@pytest.mark.parametrize(("package", "floor"), sorted(NPM_FIXED.items()))
+def test_npm_lock_pins_fixed_version(package: str, floor: str) -> None:
+    lock = json.loads((REPO_ROOT / "package-lock.json").read_text())
+    copies = {
+        path: entry["version"]
+        for path, entry in lock["packages"].items()
+        if path.rsplit("node_modules/", 1)[-1] == package
+    }
+    assert copies, f"{package} not in package-lock.json"
+    for path, locked in copies.items():
+        assert Version(locked) >= Version(floor), f"{path} {locked} < {floor}"
