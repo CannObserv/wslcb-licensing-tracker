@@ -140,7 +140,11 @@ image's `Storage=persistent`, and the #184 and #220 reboots each lost a boot.
 The fix is the **unmask**: systemd ignores drop-ins on a masked unit, and
 `sysinit.target.wants/` already pulls the vendor unit in (`is-enabled` then
 reads `static`). `infra/journald.conf.d/wslcb.conf` tracks the setting and the
-cap; its comment covers #200's equal 512M drop-in, which makes it redundant.
+cap. #200's disk-gc layer adds `zz-cannobserv-journal.conf` with the same 512M
+but no `Storage=`, so its cap duplicates ours while our `Storage=persistent`
+stays the repo's only tracked copy: keep the file. (Its header still says
+"redundant": rewording it needs the installed copy reinstalled, which
+`tests/test_journald_config.py` byte-compares.)
 
 ```bash
 sudo install -m 644 infra/journald.conf.d/wslcb.conf /etc/systemd/journald.conf.d/
