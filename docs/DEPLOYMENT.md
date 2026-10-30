@@ -143,9 +143,9 @@ The fix is the **unmask**: systemd ignores drop-ins on a masked unit, and
 reads `static`). `infra/journald.conf.d/wslcb.conf` tracks the setting and the
 cap. #200's disk-gc layer adds `zz-cannobserv-journal.conf` with the same 512M
 but no `Storage=`, so its cap duplicates ours while our `Storage=persistent`
-stays the repo's only tracked copy: keep the file. (Its header still says
-"redundant": rewording it needs the installed copy reinstalled, which
-`tests/test_journald_config.py` byte-compares.)
+stays the repo's only tracked copy: keep the file. (Its header's "redundant" is
+corrected together with a reinstall of the installed copy, which
+`tests/test_journald_config.py` byte-compares: a gated host step on #200.)
 
 ```bash
 sudo install -m 644 infra/journald.conf.d/wslcb.conf /etc/systemd/journald.conf.d/
