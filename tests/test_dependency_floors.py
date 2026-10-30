@@ -1,4 +1,4 @@
-"""Guard: locked and installed deps stay at or above their advisory fixes (#221, #224).
+"""Guard: locked and installed deps stay at or above their advisory fixes (#221, #224, #229).
 
 ``uv audit --frozen --no-dev`` at bff24d3 reported 44 advisories across seven
 packages. These tests fail if ``uv.lock`` or an installed tree goes back below
