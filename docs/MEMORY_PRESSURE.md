@@ -155,7 +155,7 @@ node skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driv
 # then fully reconnect the VS Code remote, so claude restarts with the new value
 ```
 
-The cohort disk GC's `npx` tier (#200, [`DEPLOYMENT.md`](DEPLOYMENT.md) § Disk GC)
+The cohort disk GC's `npx` tier (#200, [`DISK_GC.md`](DISK_GC.md))
 never prunes the plugin session's npx tree, `~/.npm/_npx/<sha512(spec)[:16]>`. It
 reads the spec from both halves of the session pin: the declared one through its
 `npx_spec_files` (this repo's `.claude/settings.json`), and the delivered one from VS

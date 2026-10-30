@@ -9,7 +9,7 @@ module, `checkin.py`, one `Monitor` per job; all on tenant `co-wslcb`.
 | `wslcb-backup.service` | `co-wslcb-backup` | [`RECOVERY.md`](RECOVERY.md) § The co-status monitor |
 | `wslcb-task@scrape.service` | `co-wslcb-scrape` | below |
 | `wslcb-entity-classification.timer` | `co-wslcb-classify` | [below](#entity-classification-check-in-207) |
-| `cannobserv-disk-headroom.timer` | `co-wslcb-disk-headroom` | [`DEPLOYMENT.md`](DEPLOYMENT.md) § Disk GC: the cohort GC's own sensor, not `checkin.py` (#200) |
+| `cannobserv-disk-headroom.timer` | `co-wslcb-disk-headroom` | [`DISK_GC.md`](DISK_GC.md): the cohort GC's own sensor, not `checkin.py` (#200) |
 
 **A rejected check-in** logs `<job> check-in rejected with HTTP <code>`, with
 what the code means at co-status and co-status's own response body (one line,
