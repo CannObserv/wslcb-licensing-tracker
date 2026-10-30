@@ -116,7 +116,7 @@ wslcb-licensing-tracker/
 ├── admin_audit.py          # Async admin audit log
 ├── substances.py           # Async regulated substance CRUD
 ├── data_migration.py       # Run-once data migration framework (resolves #85)
-├── disk_hygiene.py         # Weekly cache/worktree/data-straggler cleanup (#138)
+├── disk_hygiene.py         # Data-straggler compression (#138); tooling tiers retired to the disk GC (#200)
 ├── backup.py               # Nightly pg_dump + data/ archive mirror to GCS, create-only (#185); libpq passwords by env (#194)
 ├── checkin.py              # co-status dead-man check-ins: backup (#185), scrape (#196), classify (#207)
 ├── restore.py              # Fetch/verify/restore a dump; fetch archive files (#185)
@@ -256,7 +256,7 @@ wslcb-licensing-tracker/
 │   ├── test_cli_relay.py        # `wslcb ingest import-relayed` exit codes, no check-in (#201)
 │   ├── test_relay_laptop.py     # relay-capture.sh (stubbed curl/scp/ssh), plist, drop-in (#201)
 │   ├── test_cache_removal.py    # Cache removal verification tests (#99)
-│   ├── test_disk_hygiene.py     # Disk-hygiene selection logic + fail-open removal (#138)
+│   ├── test_disk_hygiene.py     # Straggler compression; the tooling tiers stay retired (#200)
 │   ├── test_backup.py           # Dump verify/tiers + archive mirror rules, against GCS fakes (#185); fault, timings, DSN split (#194)
 │   ├── test_checkin.py          # Dead-man check-in config + retry rules, per monitor (#185, #196); 4xx hints + body (#199)
 │   ├── test_restore.py          # --latest across tiers, suspect names, verified fetch (#185)
@@ -268,6 +268,7 @@ wslcb-licensing-tracker/
 │   ├── test_infra_scrape_unit.py   # scrape check-in drop-in + monitor timing pins (#196)
 │   ├── test_infra_classify_unit.py # classify timer + check-in drop-in + monitor window pins (#207)
 │   ├── test_infra_address_validation_unit.py # daily renew-addresses timer + timeout drop-in pins (#195)
+│   ├── test_infra_compress_stragglers_unit.py # weekly straggler timer in the old disk-hygiene slot; the tooling timer stays retired (#200)
 │   ├── test_jev_client.py       # Jev transport: request shape, retries, malformed answers (#207)
 │   ├── test_jev_classifier.py   # Classify-once runs, lock, failures, check-in payload (require TEST_DATABASE_URL)
 │   ├── gcs_fakes.py             # SDK-faithful google-cloud-storage fakes (#185)
@@ -283,6 +284,7 @@ wslcb-licensing-tracker/
 │   ├── test_pre_ship_wrapper.py # ship-gate wrapper: linked worktree loads the primary's .env, exports names only, warns when none, never loads /etc's (#235)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
 │   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224, #229) ≥ advisory fix in lock + venv; npm: ws, form-data (#229) in package-lock.json
+│   ├── test_pytest_basetemp.py  # pytest keeps one basetemp, only for a failed run (#200)
 │   ├── test_warning_ratchet.py  # pyproject filterwarnings fail a run on a new RuntimeWarning / PytestWarning / own DeprecationWarning; one narrow starlette ignore, live only while httpx2 is absent (#216)
 │   ├── js/
 │   │   ├── test_detail.js       # Source viewer toggle JS tests (Node + jsdom)

@@ -35,7 +35,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 
 Audits a repository's GitHub Actions spend by measuring its cost shape first: a per-job billed-minute census computed from job timestamps, platform-incident days separated from the structural baseline, then a prescription that branches on whether the spend is job **count** or job **duration** — the levers for one are actively wrong for the other. Emits severity-tiered findings with a measured-or-estimated confidence label per finding, a path-filter replay gated on zero false skips, and a required non-levers section, then hands an accepted filter to `enforcing-architecture`. Needs an authenticated `gh` and `jq`.
 
-This project has no hosted CI at all — no `.github/` tree; the scheduled work in `infra/` is host-side systemd timers (scrape, healthcheck, disk hygiene), which Actions billing never sees. The skill is linked so it is available the day that changes; until then it has no subject to measure.
+This project has no hosted CI at all — no `.github/` tree; the scheduled work in `infra/` is host-side systemd timers (scrape, healthcheck, straggler compression), which Actions billing never sees. The skill is linked so it is available the day that changes; until then it has no subject to measure.
 
 **Trigger:** "audit CI", "CI cost", "Actions spend", "optimize CI", "why is CI so expensive".
 
@@ -85,7 +85,7 @@ Re-running it on a project that already has SocratiCode **is** the audit: every 
 
 ## maintaining-host-disk
 
-Adopts Provisioner's canonical disk GC and headroom sensor (CannObserv/provisioner#61) on this host: pulls the one layer from a digest-pinned `co-image-base` release, installs it from its MANIFEST, and turns it on from `/etc/cannobserv/disk-gc/disk-gc.conf` (homes, tiers, `npx_spec_files`, the alert lines) with a report-only run, the co-status monitor and the tenant key. It retires a host's own disk tooling only after its retire check, in the same change that enables the timers. The release pin lives in the skill (`scripts/_pin.sh`); a new GC release reaches this host through a `skills-vendor` bump. Adoption here: #200. Every install, enable or removal is owner-approved, in this host's session.
+Adopts Provisioner's canonical disk GC and headroom sensor (CannObserv/provisioner#61) on this host: pulls the one layer from a digest-pinned `co-image-base` release, installs it from its MANIFEST, and turns it on from `/etc/cannobserv/disk-gc/disk-gc.conf` (homes, tiers, `npx_spec_files`, the alert lines) with a report-only run, the co-status monitor and the tenant key. It retires a host's own disk tooling only after its retire check, in the same change that enables the timers. The release pin lives in the skill (`scripts/_pin.sh`); a new GC release reaches this host through a `skills-vendor` bump. Adoption here: #200, which retired this repo's own tooling tiers and kept the data-straggler compression repo-side (`wslcb ingest compress-stragglers`). Every install, enable or removal is owner-approved, in this host's session.
 
 **Trigger:** "disk GC", "root disk is full", "disk headroom", "install the disk GC", "update the disk GC", "retire disk hygiene", "VS Code server builds".
 

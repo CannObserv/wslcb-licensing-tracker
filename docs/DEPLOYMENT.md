@@ -12,7 +12,8 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure. Liveness only; a stale scrape stays 200 (#197) |
 | `wslcb-address-validation.timer` | Daily `renew-addresses` (new, due and early renewals; #195), 2:00 AM Pacific, ±5 min jitter. Weekly `backfill-addresses` before #195 |
 | `wslcb-entity-classification.timer` | Weekly Jev classification, Sunday 4:00 AM Pacific ±5 min; the classify monitor's dead-man (#207). Installed from [`MONITORING.md`](MONITORING.md), not the copy block |
-| `wslcb-disk-hygiene.timer` | Weekly cache/worktree/data-straggler cleanup, Sunday 3:00 AM Pacific, ±5 min jitter (#138) |
+| `wslcb-compress-stragglers.timer` | Weekly `ingest compress-stragglers`: gzips any uncompressed snapshot/diff left in `data/`, Sunday 3:00 AM Pacific, ±5 min jitter (#200; was #138's disk hygiene) |
+| `cannobserv-disk-gc.timer` + `cannobserv-disk-headroom.timer` | The cohort's disk GC (daily 05:15 UTC) and headroom sensor (every 10 min), Provisioner's, installed by `maintaining-host-disk` under `/usr/local/lib`, configured in `/etc/cannobserv/disk-gc/` (#200). See [Disk GC](#disk-gc-200) |
 | `wslcb-backup.service` + `.timer` | Nightly DB dump + `data/` archive to GCS, 08:17 AM Pacific ±10 min; dynamic user, keys as credentials, co-status dead-man check-in (#185). Install, restore and drills: [`RECOVERY.md`](RECOVERY.md) — not part of the copy block below, as it needs its key files first |
 
 ### Task service instances
@@ -26,12 +27,12 @@ wslcb-task@renew-addresses
 wslcb-task@backfill-snapshots
 wslcb-task@backfill-provenance
 wslcb-task@rebuild-links
-wslcb-task@disk-hygiene
+wslcb-task@compress-stragglers
 wslcb-task@classify-entities
 ```
 
-`wslcb-task@disk-hygiene.service` additionally gets a
-`wslcb-task@disk-hygiene.service.d/override.conf` drop-in (`Nice=10`,
+`wslcb-task@compress-stragglers.service` additionally gets a
+`wslcb-task@compress-stragglers.service.d/override.conf` drop-in (`Nice=10`,
 `IOSchedulingClass=idle`) — this is genuinely idle-priority background
 work, scoped to just this instance so scrape/backfill-addresses keep
 default scheduling priority.
@@ -61,13 +62,13 @@ Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`
 
 ```bash
 sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
-     infra/wslcb-address-validation.timer infra/wslcb-disk-hygiene.timer \
+     infra/wslcb-address-validation.timer infra/wslcb-compress-stragglers.timer \
      infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
-sudo cp -r infra/wslcb-task@disk-hygiene.service.d infra/wslcb-task@import-relayed.service.d \
+sudo cp -r infra/wslcb-task@compress-stragglers.service.d infra/wslcb-task@import-relayed.service.d \
      infra/wslcb-task@renew-addresses.service.d /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-address-validation.timer
-sudo systemctl enable --now wslcb-disk-hygiene.timer
+sudo systemctl enable --now wslcb-compress-stragglers.timer
 sudo systemctl enable --now wslcb-healthcheck.timer
 sudo systemctl restart wslcb-web.service
 ```
@@ -171,6 +172,39 @@ sudo systemctl start systemd-journal-flush.service
 - **Re-mask:** only a rebuild from the Feb-2026 image; dpkg never writes masks
   to `/etc/systemd/system`. The host test and the probe (`journal:volatile`)
   both catch it.
+
+## Disk GC (#200)
+
+Tooling garbage on this host is the cohort's disk GC's, not the repo's: Provisioner's
+GC and headroom sensor (CannObserv/provisioner#61), pulled from a digest-pinned
+`co-image-base` release and installed by the vendored `maintaining-host-disk` skill
+(its `scripts/_pin.sh` pins the `VERSION`; an update is a `skills-vendor` bump, then the
+skill's pull and install). Its files live under `/usr/local/lib` and are never edited
+here: raise a rule change through the operator. It replaced this repo's own tooling
+tiers in #200. What stays repo-side: the data stragglers
+(`wslcb-compress-stragglers.timer`), pytest's basetemp knobs (`pyproject.toml`), and
+the journal's `Storage=persistent` (above).
+
+This host's `/etc/cannobserv/disk-gc/disk-gc.conf` (root, 0644), from the template:
+
+| Key | Value | Why |
+|---|---|---|
+| `homes` | `/home/exedev` | the only user with tooling trees |
+| `tiers` | the template's, plus `worktrees` | `docker` stays off: Docker runs only SocratiCode's containers, and the GC never removes a container or volume |
+| `npx_spec_files` | `/home/exedev/wslcb-licensing-tracker/.claude/settings.json` | keeps the pinned SocratiCode tree; the GC reads VS Code's machine setting (`claudeCode.environmentVariables`, the one that delivers the pin, #180) itself |
+| `worktree_repos` | `/home/exedev/wslcb-licensing-tracker` | covers `.worktrees/` and `.claude/worktrees/` |
+| `alert_at_percent` / `clear_at_percent` | 80 / 75 | baseline after a GC run plus a staged editor build and a worktree; patching-hosts refuses a step that would cross 80 |
+| `monitor_id` | `co-wslcb-disk-headroom`'s id | tenant `co-wslcb`; `checkin.key` (root, 0600) is the tenant key, as `backup-checkin.key` |
+
+The GC runs daily at 05:15 UTC (+≤30 min, no catch-up), the sensor every 10 minutes.
+VERSION 3's `vscode-servers` keeps every server build newer than the newest live one,
+so staged builds stay until the client moves to them.
+
+```bash
+sudo /usr/bin/python3 -I /usr/local/lib/cannobserv/disk-gc/disk-gc gc   # report only, removes nothing
+sudo journalctl -u cannobserv-disk-gc -u cannobserv-disk-headroom --since today
+sudo journalctl -p err -u cannobserv-disk-gc                            # sudo: else "-- No entries --"
+```
 
 ## Address Validation
 
@@ -439,10 +473,8 @@ wslcb admin add-user you@example.com
 wslcb admin list-users
 wslcb admin remove-user you@example.com
 
-# Disk hygiene (weekly cache/worktree/data-straggler cleanup, #138)
-# ~/.npm/_npx: logs "Keeping <path>: <reason>" for each install it spares —
-# pinned SOCRATICODE_SPEC, in use (/proc), younger than 30d, touched <60 min (#217).
-# An unreadable tree, or one past the walk bound, is kept and reported as a WARNING.
-uv run wslcb ops disk-hygiene --dry-run
-uv run wslcb ops disk-hygiene
+# Data stragglers: any uncompressed snapshot/diff left in data/ (the weekly
+# timer's job; #200). Tooling garbage is the disk GC's: see "Disk GC" below.
+uv run wslcb ingest compress-stragglers --dry-run
+uv run wslcb ingest compress-stragglers
 ```
