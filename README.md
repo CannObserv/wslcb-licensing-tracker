@@ -326,6 +326,9 @@ uv sync --dev
 
 # Install pre-commit hooks (ruff lint/format + Tailwind CSS rebuild)
 uv run pre-commit install
+
+# JS test dependencies (jsdom, for `npm test`; not used in production)
+npm ci
 ```
 
 ### Configure the database
