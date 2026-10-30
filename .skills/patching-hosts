@@ -19,7 +19,7 @@ quiet 07:25-09:05                  # 00:30 PT scrape; 00:40 PT relay import (#20
 quiet 13:25-15:05                  # 06:30 PT scrape; 06:40 PT relay import
 quiet 08:55-10:35                  # 02:00 PT address renewal, daily since #195
 quiet 15:12-16:57                  # 08:17 PT backup, inside the window (#223)
-quiet 09:55-12:35 Sun              # 03:00 PT disk hygiene, 04:00 PT entity classification
+quiet 09:55-12:35 Sun              # 03:00 PT straggler compression (#200), 04:00 PT entity classification
 
 # wslcb-task@ is Type=oneshot: a running task is "activating", not "active".
 inflight systemctl list-units 'wslcb-task@*' --state=activating,active,deactivating --no-legend | wc -l
@@ -55,13 +55,13 @@ exception purged:fwupd 2027-04-08 purged with its orphans; the image still ships
 
 # The timers' services run `python -m wslcb_licensing_tracker.cli <task>`,
 # which the restarter scan can't follow. None starts or restarts a service:
-# src/ calls no systemctl. Their only subprocesses are pg_dump (backup) and
-# git/pgrep/npm/uv/pre-commit cache steps (disk hygiene); the test keeps
-# that true (#238). One line per instance: not-restarter takes no glob.
+# src/ calls no systemctl. Their only subprocess is pg_dump (backup). Tests
+# keep src/ free of systemctl (#238) and the straggler job free of any
+# subprocess (#200). One line per instance: not-restarter takes no glob.
 exception not-restarter:wslcb-task@scrape.service 2027-04-29 the scrape (or relay import) writes the database and data/; it starts and restarts no service
 exception not-restarter:wslcb-task@renew-addresses.service 2027-04-29 address renewal calls the validator API and writes the database; it starts and restarts no service
 exception not-restarter:wslcb-task@classify-entities.service 2027-04-29 entity classification calls Jev and writes the database; it starts and restarts no service
-exception not-restarter:wslcb-task@disk-hygiene.service 2027-04-29 disk hygiene prunes caches and stale worktrees (git, pgrep, npm, uv, pre-commit gc); it starts and restarts no service
+exception not-restarter:wslcb-task@compress-stragglers.service 2027-04-29 straggler compression gzips leftover archives in data/ and runs no subprocess; it starts and restarts no service
 exception not-restarter:wslcb-backup.service 2027-04-29 the backup runs pg_dump and uploads to GCS; it starts and restarts no service
 
 # SocratiCode's local Qdrant (#222) holds a derived code index: rebuilt from
