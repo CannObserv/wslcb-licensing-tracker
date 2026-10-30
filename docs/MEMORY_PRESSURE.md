@@ -160,8 +160,8 @@ never prunes the plugin session's npx tree, `~/.npm/_npx/<sha512(spec)[:16]>`. I
 reads the spec from both halves of the session pin: the declared one through its
 `npx_spec_files` (this repo's `.claude/settings.json`), and the delivered one from VS
 Code's machine setting, which it reads itself. Its report lists the tree as `pinned
-<spec>`. If either source exists but can't be parsed, it keeps every npx tree and
-warns. (`~/.socraticode/pin` is outside `_npx`, so the GC never touches it.)
+<spec>`. If the configured file is missing or unreadable, or the machine setting
+exists but won't parse, it keeps every npx tree and warns. (`~/.socraticode/pin` is outside `_npx`, so the GC never touches it.)
 
 After a re-pin, the old version's tree goes on the GC's next daily run once nothing
 uses it (`/proc`) and no entry in it is newer than `grace_minutes` (60). There is no
