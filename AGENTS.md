@@ -162,7 +162,7 @@ uv run wslcb db check [--fix]               # integrity check
 uv run wslcb db reprocess-endorsements      # [--code N] [--record-id N] [--dry-run]
 uv run wslcb db rebuild-links               # rebuilds record_links + backfills previous_location_id
 uv run wslcb db classify-entities --dry-run # Jev pass cost; no flag = send (#207)
-uv run wslcb ops disk-hygiene [--dry-run]   # weekly cache/worktree/data-straggler cleanup (#138)
+uv run wslcb ingest compress-stragglers     # weekly data/ straggler gzip; tooling disk GC: DEPLOYMENT.md (#200)
 ```
 
 See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.

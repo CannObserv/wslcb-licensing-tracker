@@ -284,7 +284,7 @@ def test_the_guard_sees_every_scheduled_timer() -> None:
     assert names == {
         "wslcb-address-validation.timer",
         "wslcb-backup.timer",
-        "wslcb-disk-hygiene.timer",
+        "wslcb-compress-stragglers.timer",
         "wslcb-entity-classification.timer",
         "wslcb-scraper.timer",
     }

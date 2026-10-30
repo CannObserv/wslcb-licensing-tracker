@@ -3,11 +3,12 @@
 All operational commands are exposed as click subcommands grouped by domain:
 
 - ``ingest``: scrape, import-relayed, backfill-snapshots, backfill-diffs, generate-replay-extracts,
-  backfill-addresses, renew-addresses, refresh-addresses, compress-snapshots, compress-diffs
+  backfill-addresses, renew-addresses, refresh-addresses, compress-snapshots, compress-diffs,
+  compress-stragglers
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities,
   reclassify-entities, ignore-jev, classify-entities
 - ``admin``: add-user, list-users, remove-user
-- ``ops``: disk-hygiene, backup, restore, restore-archive
+- ``ops``: backup, restore, restore-archive
 
 Top-level aliases exist for backward compatibility with the systemd
 ``wslcb-task@%i`` template (which passes a single token).  Both forms
@@ -26,6 +27,7 @@ Usage::
     wslcb ingest refresh-addresses     # re-validate all locations
     wslcb ingest compress-snapshots    # compress .html snapshots to .html.gz in place
     wslcb ingest compress-diffs        # compress diff archive .txt files to .txt.gz in place
+    wslcb ingest compress-stragglers   # weekly: both, for any straggler left in data/ (#200)
     wslcb db rebuild-links             # rebuild application→outcome links
     wslcb db check                     # run integrity checks
     wslcb db check --fix               # run checks and auto-fix safe issues
@@ -34,7 +36,6 @@ Usage::
     wslcb admin add-user EMAIL         # add admin user
     wslcb admin list-users             # list admin users
     wslcb admin remove-user EMAIL      # remove admin user
-    wslcb ops disk-hygiene [--dry-run] # weekly cache/worktree/data-straggler cleanup (#138)
     wslcb ops backup                   # nightly dump + data archive to GCS (#185; the timer's job)
     wslcb ops restore --list           # dumps in WSLCB_BACKUP_BUCKET (see docs/RECOVERY.md)
     wslcb ops restore-archive --prefix HOST --into DIR  # data/ files back from the archive
@@ -66,7 +67,7 @@ from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
 from .checkin import CLASSIFY, SCRAPE, post_checkin
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
-from .disk_hygiene import CompressResult, compress_files, run_disk_hygiene
+from .disk_hygiene import CompressResult, compress_data_stragglers, compress_files
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
 from .engine import create_engine_from_env, get_db
 from .entities import reclassify_entities as run_reclassify_entities
@@ -456,7 +457,7 @@ def _report_compress_result(
     """Echo a summary line for a compress-* command, matching the compress-snapshots format."""
     if dry_run:
         summary = (
-            f"[dry-run] Would compress {result.compressed} file(s), "
+            f"[dry-run] Would compress {result.compressed} {noun}(s), "
             f"{result.skipped} already compressed."
         )
         if result.would_unlink:
@@ -505,6 +506,25 @@ def compress_diffs(dry_run: bool) -> None:
 
     result = compress_files(txt_files, dry_run)
     _report_compress_result("diff", "txt", result, dry_run)
+
+
+@ingest.command("compress-stragglers")
+@click.option("--dry-run", is_flag=True, help="Report what would be compressed without writing.")
+def compress_stragglers(dry_run: bool) -> None:
+    """Compress any uncompressed snapshot or diff archive left in data/.
+
+    The weekly wslcb-compress-stragglers.timer job (#200): compress-snapshots
+    and compress-diffs in one pass. The scraper and relay write .gz directly,
+    so this only catches a hand-placed file or an interrupted compress.
+    """
+    result = compress_data_stragglers(dry_run=dry_run)
+    if result["snapshots"] is None and result["diffs"] is None:
+        click.echo("No uncompressed snapshots or diffs found.")
+        return
+    if result["snapshots"] is not None:
+        _report_compress_result("snapshot", "html", result["snapshots"], dry_run)
+    if result["diffs"] is not None:
+        _report_compress_result("diff", "txt", result["diffs"], dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -924,21 +944,7 @@ def admin_remove_user(email: str) -> None:
 
 @main.group()
 def ops() -> None:
-    """Operational maintenance commands (disk hygiene, etc.)."""
-
-
-@ops.command("disk-hygiene")
-@click.option("--dry-run", is_flag=True, help="Report what would be pruned without deleting.")
-def disk_hygiene(dry_run: bool) -> None:
-    """Prune VS Code/npm/uv/pre-commit caches, orphaned worktrees, and data stragglers.
-
-    Weekly scheduled maintenance job (see #138) — safe to run manually.
-    """
-    summary = run_disk_hygiene(dry_run=dry_run)
-    for warning in summary["warnings"]:
-        click.echo(f"WARNING: {warning}")
-    verb = "Would free" if dry_run else "Freed"
-    click.echo(f"{verb} {summary['freed_bytes'] / 1_048_576:.1f} MB.")
+    """Operational maintenance commands (backup, restore)."""
 
 
 def _restore():  # noqa: ANN202 — returns the module
@@ -1100,7 +1106,7 @@ _ALIASES = [
     (reprocess_endorsements, "reprocess-endorsements"),
     (reprocess_entities, "reprocess-entities"),
     (classify_entities, "classify-entities"),
-    (disk_hygiene, "disk-hygiene"),
+    (compress_stragglers, "compress-stragglers"),
 ]
 for _cmd, _name in _ALIASES:
     _alias = click.Command(

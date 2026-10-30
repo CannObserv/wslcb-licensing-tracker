@@ -12,7 +12,8 @@ Operations reference for the exe.dev VM deployment.
 | `wslcb-healthcheck.service` + `.timer` | curl `/api/v1/health` every 5 min; restarts `wslcb-web` on failure. Liveness only; a stale scrape stays 200 (#197) |
 | `wslcb-address-validation.timer` | Daily `renew-addresses` (new, due and early renewals; #195), 2:00 AM Pacific, ±5 min jitter. Weekly `backfill-addresses` before #195 |
 | `wslcb-entity-classification.timer` | Weekly Jev classification, Sunday 4:00 AM Pacific ±5 min; the classify monitor's dead-man (#207). Installed from [`MONITORING.md`](MONITORING.md), not the copy block |
-| `wslcb-disk-hygiene.timer` | Weekly cache/worktree/data-straggler cleanup, Sunday 3:00 AM Pacific, ±5 min jitter (#138) |
+| `wslcb-compress-stragglers.timer` | Weekly `ingest compress-stragglers`: gzips any uncompressed snapshot/diff left in `data/`, Sunday 3:00 AM Pacific, ±5 min jitter (#200; was #138's disk hygiene) |
+| `cannobserv-disk-gc.timer` + `cannobserv-disk-headroom.timer` | The cohort's disk GC (daily 05:15 UTC) and headroom sensor (every 10 min), Provisioner's, installed by `maintaining-host-disk` under `/usr/local/lib`, configured in `/etc/cannobserv/disk-gc/` (#200): [`DISK_GC.md`](DISK_GC.md) |
 | `wslcb-backup.service` + `.timer` | Nightly DB dump + `data/` archive to GCS, 08:17 AM Pacific ±10 min; dynamic user, keys as credentials, co-status dead-man check-in (#185). Install, restore and drills: [`RECOVERY.md`](RECOVERY.md) — not part of the copy block below, as it needs its key files first |
 
 ### Task service instances
@@ -26,12 +27,12 @@ wslcb-task@renew-addresses
 wslcb-task@backfill-snapshots
 wslcb-task@backfill-provenance
 wslcb-task@rebuild-links
-wslcb-task@disk-hygiene
+wslcb-task@compress-stragglers
 wslcb-task@classify-entities
 ```
 
-`wslcb-task@disk-hygiene.service` additionally gets a
-`wslcb-task@disk-hygiene.service.d/override.conf` drop-in (`Nice=10`,
+`wslcb-task@compress-stragglers.service` additionally gets a
+`wslcb-task@compress-stragglers.service.d/override.conf` drop-in (`Nice=10`,
 `IOSchedulingClass=idle`) — this is genuinely idle-priority background
 work, scoped to just this instance so scrape/backfill-addresses keep
 default scheduling priority.
@@ -61,13 +62,13 @@ Grants `exedev` passwordless `sudo /usr/bin/systemctl restart wslcb-web.service`
 
 ```bash
 sudo cp infra/wslcb-web.service infra/wslcb-task@.service infra/wslcb-scraper.timer \
-     infra/wslcb-address-validation.timer infra/wslcb-disk-hygiene.timer \
+     infra/wslcb-address-validation.timer infra/wslcb-compress-stragglers.timer \
      infra/wslcb-healthcheck.service infra/wslcb-healthcheck.timer /etc/systemd/system/
-sudo cp -r infra/wslcb-task@disk-hygiene.service.d infra/wslcb-task@import-relayed.service.d \
+sudo cp -r infra/wslcb-task@compress-stragglers.service.d infra/wslcb-task@import-relayed.service.d \
      infra/wslcb-task@renew-addresses.service.d /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wslcb-address-validation.timer
-sudo systemctl enable --now wslcb-disk-hygiene.timer
+sudo systemctl enable --now wslcb-compress-stragglers.timer
 sudo systemctl enable --now wslcb-healthcheck.timer
 sudo systemctl restart wslcb-web.service
 ```
@@ -140,7 +141,9 @@ image's `Storage=persistent`, and the #184 and #220 reboots each lost a boot.
 The fix is the **unmask**: systemd ignores drop-ins on a masked unit, and
 `sysinit.target.wants/` already pulls the vendor unit in (`is-enabled` then
 reads `static`). `infra/journald.conf.d/wslcb.conf` tracks the setting and the
-cap; its comment covers #200's equal 512M drop-in, which makes it redundant.
+cap. #200's disk-gc layer adds `zz-cannobserv-journal.conf` with the same 512M
+but no `Storage=`, so its cap duplicates ours while our `Storage=persistent`
+stays the repo's only tracked copy: keep the file.
 
 ```bash
 sudo install -m 644 infra/journald.conf.d/wslcb.conf /etc/systemd/journald.conf.d/
@@ -435,10 +438,8 @@ wslcb admin add-user you@example.com
 wslcb admin list-users
 wslcb admin remove-user you@example.com
 
-# Disk hygiene (weekly cache/worktree/data-straggler cleanup, #138)
-# ~/.npm/_npx: logs "Keeping <path>: <reason>" for each install it spares —
-# pinned SOCRATICODE_SPEC, in use (/proc), younger than 30d, touched <60 min (#217).
-# An unreadable tree, or one past the walk bound, is kept and reported as a WARNING.
-uv run wslcb ops disk-hygiene --dry-run
-uv run wslcb ops disk-hygiene
+# Data stragglers: any uncompressed snapshot/diff left in data/ (the weekly
+# timer's job; #200). Tooling garbage is the disk GC's: docs/DISK_GC.md.
+uv run wslcb ingest compress-stragglers --dry-run
+uv run wslcb ingest compress-stragglers
 ```

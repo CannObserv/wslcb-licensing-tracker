@@ -96,7 +96,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[2] /
 
 # Glob patterns for uncompressed archive files, relative to DATA_DIR.
 # Shared by cli.py's compress-snapshots/compress-diffs commands and
-# disk_hygiene.py's straggler detection — single source of truth.
+# disk_hygiene.py's straggler compression — single source of truth.
 SNAPSHOT_GLOB = "wslcb/licensinginfo/**/*.html"
 DIFF_GLOB = "wslcb/licensinginfo-diffs/**/*.txt"
 

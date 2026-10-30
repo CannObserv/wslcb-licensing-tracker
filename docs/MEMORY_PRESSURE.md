@@ -155,16 +155,17 @@ node skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driv
 # then fully reconnect the VS Code remote, so claude restarts with the new value
 ```
 
-The weekly `wslcb ops disk-hygiene` never prunes the plugin session's npx
-tree, `~/.npm/_npx/<sha512(spec)[:16]>`, however old (#217). It reads the spec
-from both halves of the session pin, declared and delivered, and logs the tree
-as `Keeping … pinned (<spec>)`. If it finds no spec, it warns.
-(`~/.socraticode/pin` is outside `_npx`, so the job never touches it.)
+The cohort disk GC's `npx` tier (#200, [`DISK_GC.md`](DISK_GC.md))
+never prunes the plugin session's npx tree, `~/.npm/_npx/<sha512(spec)[:16]>`. It
+reads the spec from both halves of the session pin: the declared one through its
+`npx_spec_files` (this repo's `.claude/settings.json`), and the delivered one from VS
+Code's machine setting, which it reads itself. Its report lists the tree as `pinned
+<spec>`. If the configured file is missing or unreadable, or the machine setting
+exists but won't parse, it keeps every npx tree and warns. (`~/.socraticode/pin` is outside `_npx`, so the GC never touches it.)
 
-After a re-pin, the old version's tree is pruned once all three hold:
-- its top-level directory's mtime is more than 30 days old;
-- no process maps or holds a file under it;
-- no directory in it has a newer mtime or ctime than 60 minutes ago.
+After a re-pin, the old version's tree goes on the GC's next daily run once nothing
+uses it (`/proc`) and no entry in it is newer than `grace_minutes` (60). There is no
+age gate: #217's 30 days retired with this repo's own tier.
 
 `choom -n 500` makes each install killable: without it the scope inherits the
 session's -1000 and the cap stalls it instead (see above). `resolve` prints

@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly data-straggler compression (uncompressed snapshot/diff archives in data/; #200)
+
+[Timer]
+Unit=wslcb-task@compress-stragglers.service
+OnCalendar=Sun *-*-* 03:00:00 America/Los_Angeles
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -15,6 +15,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 | `dispatching-parallel-agents` | 2+ independent tasks with no shared state |
 | `enforcing-architecture` | "add a fitness function", "enforce this contract", "lock this rule" (also invoked by `reviewing-architecture` on a `fitness` directive) |
 | `init-socraticode` | "init socraticode", "set up code search", "index this project" — installs/enables the SocratiCode plugin + Qdrant and runs a full index |
+| `maintaining-host-disk` | "disk GC", "root disk is full", "install the disk GC", "retire disk hygiene" — the cohort's canonical disk GC + headroom sensor (#200) |
 | `managing-skills` | Add/update/remove skill repos (submodule + symlink) |
 | `orchestrating-issue-backlog` | Prioritize backlog, design parallel execution plan |
 | `patching-hosts` | "patch the host", "OS updates", "security updates", "needrestart" — the monthly owner-approved patch run; host knob in `.skills/patching-hosts` |
@@ -34,7 +35,7 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 
 Audits a repository's GitHub Actions spend by measuring its cost shape first: a per-job billed-minute census computed from job timestamps, platform-incident days separated from the structural baseline, then a prescription that branches on whether the spend is job **count** or job **duration** — the levers for one are actively wrong for the other. Emits severity-tiered findings with a measured-or-estimated confidence label per finding, a path-filter replay gated on zero false skips, and a required non-levers section, then hands an accepted filter to `enforcing-architecture`. Needs an authenticated `gh` and `jq`.
 
-This project has no hosted CI at all — no `.github/` tree; the scheduled work in `infra/` is host-side systemd timers (scrape, healthcheck, disk hygiene), which Actions billing never sees. The skill is linked so it is available the day that changes; until then it has no subject to measure.
+This project has no hosted CI at all — no `.github/` tree; the scheduled work in `infra/` is host-side systemd timers (scrape, healthcheck, straggler compression), which Actions billing never sees. The skill is linked so it is available the day that changes; until then it has no subject to measure.
 
 **Trigger:** "audit CI", "CI cost", "Actions spend", "optimize CI", "why is CI so expensive".
 
@@ -81,6 +82,12 @@ Re-running it on a project that already has SocratiCode **is** the audit: every 
 `init-socraticode` owns two more `SessionStart` hooks, both symlinks into `skills-vendor/` for the same reason (#186): `.claude/hooks/socraticode-reminder.sh` prints the deferred-tool prefetch each session, and `.claude/hooks/socraticode-health.sh` runs a once-per-day infra check gated by `.git/socraticode-health.lock`, logging to `.git/socraticode-health.log`. The health hook **reports only** — it never re-indexes, starts Docker, or edits a file. Its `graph unresolved 76%` line is a note, not a defect — it counts external/builtin edges by construction (verdict `ok`; see `docs/SOCRATICODE.md`).
 
 **Trigger:** "init socraticode", "set up code search", "index this project", "socraticode setup".
+
+## maintaining-host-disk
+
+Adopts Provisioner's canonical disk GC and headroom sensor (CannObserv/provisioner#61) on this host: pulls the one layer from a digest-pinned `co-image-base` release, installs it from its MANIFEST, and turns it on from `/etc/cannobserv/disk-gc/disk-gc.conf` (homes, tiers, `npx_spec_files`, the alert lines) with a report-only run, the co-status monitor and the tenant key. It retires a host's own disk tooling only after its retire check, in the same change that enables the timers. The release pin lives in the skill (`scripts/_pin.sh`); a new GC release reaches this host through a `skills-vendor` bump. Adoption here: #200, which retired this repo's own tooling tiers and kept the data-straggler compression repo-side (`wslcb ingest compress-stragglers`). Every install, enable or removal is owner-approved, in this host's session.
+
+**Trigger:** "disk GC", "root disk is full", "disk headroom", "install the disk GC", "update the disk GC", "retire disk hygiene", "VS Code server builds".
 
 ## managing-skills
 

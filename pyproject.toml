@@ -36,6 +36,10 @@ pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 addopts = "--cov --cov-report=term-missing"
+# One basetemp, kept only for a failed run (#200, maintaining-host-disk's
+# repo-knobs.md): the host's disk GC never prunes a repo's test residue.
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "failed"
 # Warning ratchet (#216): these kinds fail the run instead of piling up.
 # tests/test_warning_ratchet.py guards every entry. Later entries win.
 filterwarnings = [
