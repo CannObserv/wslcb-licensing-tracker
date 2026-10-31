@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-21-5"
+VERSION="2026-10-31-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -160,6 +160,17 @@ fork nested deeper than that is not seen. pre-ship.sh is exempt by name
 divergence is declared one repo-relative path per line in
 .skills/forked-ok. Advisory in every mode, and never healed: a fork is
 sometimes the right answer, so the operator decides.
+
+A vendor that retires a skill names its replacement in a retired-skills
+map at its root ("<old> <new>" per line). A whole-directory symlink
+skills/<old> into that vendor, and .claude/skills/<old> beside it, are
+repointed at <new> before the dangling scan, so a link whose target the
+vendor has since deleted heals without an init (#537). Held, and
+reported, while a tracked file still names skills/<old>/ (unless the
+link already dangles); a directory at skills/<old> and a skills/<new>
+that is not the vendor's link are reported, never rewritten. Nothing is
+committed — the report prints the git add that stages it. Advisory in
+every mode; --check-only says what it would repoint.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -2144,6 +2155,257 @@ report_uninit() {
   echo "doctor: exit 0 — pass --init (#176)." >&2
 }
 
+# ------------------------------------------------------ retired skills (#537)
+#
+# A vendor that folds or renames a skill ships a `retired-skills` map at its
+# root: one "<old> <new>" pair per line, `#`-comments. Deleting <old> outright
+# would leave a dangling skills/<old> in every consumer the day the daily
+# refresh bumps them, so the fold takes two releases: the first ships <new> and
+# the map and keeps <old>; the second deletes <old>. In between, this moves
+# both links of a consumer's chain onto <new> —
+#
+#   skills/<old>          -> ../skills-vendor/<v>/skills/<old>
+#   .claude/skills/<old>  -> ../../skills/<old>
+#
+# — and the map stays after the deletion, so a straggler still heals.
+#
+# Run BEFORE the dangling scan, so a release-2 straggler is repointed rather
+# than sent through a submodule init that cannot bring <old> back; and again
+# after the init when this pass found no map, because a fresh worktree's vendor
+# only appears with it — the two-call shape sync_self uses.
+#
+# Repoints only what is safe to repoint, and reports the rest; the exit code
+# never changes, in any mode:
+#
+#   - a DIRECTORY at skills/<old> — an override, or per-file links — is the
+#     operator's to rewrite against <new>, the way the drift check never merges;
+#   - a skills/<new> that is not the vendor's own link is a local choice;
+#   - a tracked file that still names skills/<old>/ — a wrapper's DELEGATE, the
+#     scaffolded load_env line in AGENTS.md — would break the moment the link
+#     moved, so it holds the link until rewritten. Except when the link already
+#     dangles: nothing works through it then, and the references are reported.
+#     The doctor's own copy is excluded: its comments are history.
+#
+# Nothing is committed: the report prints the one `git add` that stages it.
+declare -a RETIRED_DONE=()
+declare -a RETIRED_HELD=()
+declare -a RETIRED_PATHS=()
+RETIRED_SEEN=0
+
+retired_name_ok() {
+  case "$1" in ''|-*|*-|*--*|*[!a-z0-9-]*) return 1 ;; esac
+  return 0
+}
+
+# retired_claude_blocked <old> <new> — 0, with the hold recorded, when the
+# .claude/skills half could not follow the skills/ half: an existing
+# .claude/skills/<new> that is not the link it would create. Asked before
+# anything moves, because moving skills/<old> first strands
+# .claude/skills/<old> on a target that is gone, and .claude/skills/ is not in
+# the dangling scan (CR 1398).
+retired_claude_blocked() {
+  local old="$1" new="$2" link=".claude/skills/$1" dest=".claude/skills/$2" tgt
+  if [ ! -d .claude/skills ] || [ -L .claude/skills ] || [ ! -L "$link" ]; then
+    return 1
+  fi
+  tgt="$(readlink "$link")"
+  case "$tgt" in "$old"|*/"$old") ;; *) return 1 ;; esac
+  if [ ! -L "$dest" ] && [ ! -e "$dest" ]; then
+    return 1
+  fi
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "${tgt%"$old"}$new" ]; then
+    return 1
+  fi
+  RETIRED_HELD+=("skills/$old — retired for $new, but $dest exists and is not the link to ${tgt%"$old"}$new, so $link could not follow it")
+  return 0
+}
+
+# retired_claude_link <old> <new> — the .claude/skills half, after skills/<new>
+# exists (or, under --check-only, would).
+retired_claude_link() {
+  local old="$1" new="$2" link=".claude/skills/$1" dest=".claude/skills/$2"
+  local tgt newtgt
+  # A .claude/skills that is itself a symlink to ../skills has no links of its
+  # own: repointing skills/ was all there was.
+  if [ ! -d .claude/skills ] || [ -L .claude/skills ] || [ ! -L "$link" ]; then
+    return 0
+  fi
+  tgt="$(readlink "$link")"
+  case "$tgt" in "$old"|*/"$old") ;; *) return 0 ;; esac
+  newtgt="${tgt%"$old"}$new"
+  if [ -L "$dest" ] || [ -e "$dest" ]; then
+    if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$newtgt" ]; then
+      if [ "$CHECK_ONLY" = "1" ]; then
+        RETIRED_DONE+=("$link (removed; $dest already links $new)")
+      elif rm -f "$link"; then
+        RETIRED_DONE+=("$link (removed; $dest already links $new)")
+        RETIRED_PATHS+=("$link")
+      fi
+    else
+      RETIRED_HELD+=("$link — $dest exists and is not a link to $newtgt")
+    fi
+    return 0
+  fi
+  if [ "$CHECK_ONLY" = "1" ]; then
+    RETIRED_DONE+=("$link -> $dest")
+    return 0
+  fi
+  if ! (cd .claude/skills && [ -e "$newtgt" ]); then
+    RETIRED_HELD+=("$link — $dest would not resolve ($newtgt)")
+    return 0
+  fi
+  if ln -s "$newtgt" "$dest" && rm -f "$link"; then
+    RETIRED_DONE+=("$link -> $dest")
+    RETIRED_PATHS+=("$link" "$dest")
+  else
+    RETIRED_HELD+=("$link — could not repoint it")
+  fi
+}
+
+# retire_one <vendor-root> <vendor-name> <old> <new> — the skills/ half.
+# Returns 1 when the .claude/skills half must wait for it.
+retire_one() {
+  local vroot="$1" vname="$2" old="$3" new="$4"
+  local link="skills/$3" dest="skills/$4" tgt newtgt refs rc dangling=0 shown n f
+  local note=""
+  if [ ! -L "$link" ]; then
+    if [ -e "$link" ]; then
+      RETIRED_HELD+=("$link — retired for $new, but a directory (an override, or per-file links): replace it with a symlink to $new, moving its local changes into .skills/ configuration or a wrapper")
+      return 1
+    fi
+    return 0
+  fi
+  tgt="$(readlink "$link")"
+  case "$tgt" in
+    "skills-vendor/$vname/skills/$old"|*"/skills-vendor/$vname/skills/$old") ;;
+    *) return 1 ;;
+  esac
+  if [ ! -d "$vroot/skills/$new" ]; then
+    RETIRED_HELD+=("$link — $vname names $new as its replacement but ships none")
+    return 1
+  fi
+  newtgt="${tgt%"$old"}$new"
+  [ -e "$link" ] || dangling=1
+
+  # git grep searches tracked files as they stand in the working tree, so an
+  # uncommitted fix releases the hold. Exit 1 is "no match"; above that, git
+  # failed, and an unread reference must not be taken for none.
+  rc=0
+  refs="$(git grep -l -F -e "skills/$old/" -- . ':(exclude).skills/doctor.sh' 2>/dev/null)" || rc=$?
+  if [ "$rc" -gt 1 ] && [ "$dangling" = "0" ]; then
+    # git's own first line, from a reporting-only re-run: the exit code alone
+    # leaves the operator nothing to act on (CR 1402).
+    f="$(git grep -l -F -e "skills/$old/" -- . 2>&1 >/dev/null | head -n 1)" || true
+    RETIRED_HELD+=("$link — retired for $new; could not search for references to it (git grep exit $rc${f:+: $f})")
+    return 1
+  fi
+  if [ -n "$refs" ]; then
+    shown="" n=0
+    while IFS= read -r f; do
+      n=$((n + 1))
+      if [ "$n" -le 5 ]; then
+        shown="${shown:+$shown, }$f"
+      fi
+    done <<<"$refs"
+    if [ "$n" -gt 5 ]; then
+      shown="$shown and $((n - 5)) more"
+    fi
+    if [ "$dangling" = "0" ]; then
+      RETIRED_HELD+=("$link — retired for $new; still named as skills/$old/ by $shown: point them at skills/$new/ and re-run")
+      return 1
+    fi
+    # Repointed regardless, so reported with the repointed — under "not
+    # repointed" the report contradicted itself (CR 1399).
+    note="; skills/$old/ is still named by $shown: point them at skills/$new/"
+  fi
+  if retired_claude_blocked "$old" "$new"; then
+    return 1
+  fi
+
+  if [ -L "$dest" ] || [ -e "$dest" ]; then
+    if [ ! -L "$dest" ] || [ "$(readlink "$dest")" != "$newtgt" ]; then
+      RETIRED_HELD+=("$link — retired for $new, but $dest exists and is not $vname's link: remove $link by hand once $dest serves")
+      return 1
+    fi
+    if [ "$CHECK_ONLY" = "1" ]; then
+      RETIRED_DONE+=("$link (removed; $dest already links $new)$note")
+    elif rm -f "$link"; then
+      RETIRED_DONE+=("$link (removed; $dest already links $new)$note")
+      RETIRED_PATHS+=("$link")
+    fi
+    return 0
+  fi
+  if [ "$CHECK_ONLY" = "1" ]; then
+    RETIRED_DONE+=("$link -> $dest$note")
+    return 0
+  fi
+  if ln -s "$newtgt" "$dest" && rm -f "$link"; then
+    RETIRED_DONE+=("$link -> $dest$note")
+    RETIRED_PATHS+=("$link" "$dest")
+    return 0
+  fi
+  RETIRED_HELD+=("$link — could not repoint it")
+  return 1
+}
+
+report_retired() {
+  if [ "${#RETIRED_DONE[@]}" -gt 0 ]; then
+    if [ "$CHECK_ONLY" = "1" ]; then
+      echo "doctor: --check-only: would repoint skills their vendor retired:" >&2
+    else
+      echo "doctor: repointed skills their vendor retired:" >&2
+    fi
+    printf '  %s\n' "${RETIRED_DONE[@]}" >&2
+    if [ "${#RETIRED_PATHS[@]}" -gt 0 ]; then
+      echo "doctor: commit it: git add -A -- ${RETIRED_PATHS[*]}" >&2
+    fi
+  fi
+  if [ "${#RETIRED_HELD[@]}" -gt 0 ]; then
+    echo "doctor: retired skills not repointed (#537):" >&2
+    printf '  %s\n' "${RETIRED_HELD[@]}" >&2
+    echo "doctor: the vendor deletes a retired skill in a later release. Advisory:" >&2
+    echo "doctor: nothing above was changed for you. The rules: \"Retired skills\"" >&2
+    echo "doctor: in skills/managing-skills/references/the-doctor.md." >&2
+  fi
+}
+
+repoint_retired() {
+  RETIRED_DONE=()
+  RETIRED_HELD=()
+  RETIRED_PATHS=()
+  [ -d skills ] || return 0
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  local map vroot vname line old new extra
+  for map in skills-vendor/*/retired-skills; do
+    [ -f "$map" ] || continue
+    RETIRED_SEEN=1
+    if [ ! -r "$map" ]; then
+      RETIRED_HELD+=("$map — unreadable")
+      continue
+    fi
+    vroot="${map%/retired-skills}"
+    vname="${vroot#skills-vendor/}"
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line%%#*}"
+      old="" new="" extra=""
+      read -r old new extra <<<"$line" || true
+      [ -n "$old" ] || continue
+      if [ -n "$extra" ] || [ "$old" = "$new" ] \
+        || ! retired_name_ok "$old" || ! retired_name_ok "$new"; then
+        RETIRED_HELD+=("$map — not an '<old> <new>' pair: $line")
+        continue
+      fi
+      if retire_one "$vroot" "$vname" "$old" "$new"; then
+        retired_claude_link "$old" "$new"
+      fi
+    done < "$map"
+  done
+  report_retired
+}
+
+# Call site 1 of 2.
+repoint_retired
+
 scan_broken
 scan_uninit
 
@@ -2404,6 +2666,9 @@ fi
 # site 1 ran before the init and would have found nothing to sync against.
 sync_self
 
+# Call site 2 of 2, for the same reason — but only when call site 1 read no
+# map, or a vendor that was already present would report its holds twice.
+[ "$RETIRED_SEEN" = "1" ] || repoint_retired
 
 # Re-check after self-heal.
 scan_broken
