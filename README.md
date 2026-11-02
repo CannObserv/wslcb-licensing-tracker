@@ -173,6 +173,7 @@ wslcb-licensing-tracker/
 │   ├── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
 │   ├── pre-ship.sh             # Ship-gate wrapper: parses .env, execs the vendored shipping-work gate (#240)
 │   ├── setup-backup-role.sql   # Once per cluster: the backup's read-only `wslcb_backup` role (#185)
+│   ├── verify-memory-pressure.sh # Checks the memory-pressure stack is in force on this host (#175; see docs/MEMORY_PRESSURE.md)
 │   └── relay/                  # Operator's Mac: relay-capture.sh + LaunchAgent plist (#201)
 ├── alembic.ini             # Alembic config (repo root, not inside alembic/)
 ├── alembic/                # Alembic schema migrations
