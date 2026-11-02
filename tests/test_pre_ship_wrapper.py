@@ -1,7 +1,9 @@
 """The ship-gate wrapper loads the env in a linked worktree too (#235).
 
-`skills/shipping-work-python-fastapi/scripts/pre-ship.sh` is project-local: it
-loads the repo-root `.env` (TEST_DATABASE_URL), then execs the vendored gate.
+`scripts/pre-ship.sh` is project-local: it loads the repo-root `.env`
+(TEST_DATABASE_URL), then execs the vendored gate through the
+`skills/shipping-work` symlink. SKILL.md Step 1 resolves a repo-root
+`scripts/pre-ship.sh` for that script alone (gregoryfoster/skills#301, #240).
 A gitignored `.env` lives only in the primary checkout, so in a linked worktree
 it loaded nothing, the PG tests skipped, the gate passed, and its per-SHA stamp
 blessed the commit (gregoryfoster/skills#497).
@@ -20,9 +22,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WRAPPER_REL = Path("skills/shipping-work-python-fastapi/scripts/pre-ship.sh")
+WRAPPER_REL = Path("scripts/pre-ship.sh")
 WRAPPER = REPO_ROOT / WRAPPER_REL
-DELEGATE_REL = Path("skills-vendor/stand-in") / WRAPPER_REL
+DELEGATE_REL = Path("skills/shipping-work/scripts/pre-ship.sh")
 
 # Any output holding this means the wrapper printed a secret.
 SECRET = "sk-do-not-print-235"  # noqa: S105 — a fixture, never a real value
@@ -57,7 +59,7 @@ def _git(*args: str) -> None:
 
 
 def _stage(checkout: Path) -> None:
-    """The real wrapper, and a stand-in for the vendored gate it globs for."""
+    """The real wrapper, and a stand-in for the vendored gate it delegates to."""
     wrapper = checkout / WRAPPER_REL
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(WRAPPER, wrapper)
@@ -74,7 +76,7 @@ def checkouts(tmp_path: Path) -> tuple[Path, Path]:
     _git("-C", str(primary), "init", "-q")
     _git("-C", str(primary), "config", "user.email", "t@example.com")
     _git("-C", str(primary), "config", "user.name", "t")
-    (primary / ".gitignore").write_text(".env\nskills/\nskills-vendor/\n")
+    (primary / ".gitignore").write_text(".env\nscripts/\nskills/\n")
     _git("-C", str(primary), "add", ".gitignore")
     _git("-C", str(primary), "commit", "-q", "-m", "init")
     worktree = tmp_path / "wt"
@@ -84,7 +86,7 @@ def checkouts(tmp_path: Path) -> tuple[Path, Path]:
     return primary, worktree
 
 
-def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+def _run(cwd: Path, *args: str, rc: int = 0) -> subprocess.CompletedProcess:
     r = subprocess.run(  # noqa: S603 - fixed argv, test-owned paths
         ["bash", str(cwd / WRAPPER_REL), *args],  # noqa: S607 - bash on PATH
         cwd=str(cwd),
@@ -95,7 +97,7 @@ def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
         check=False,
     )
     assert SECRET not in r.stdout + r.stderr, "a value from an env file was printed"
-    assert r.returncode == 0, r.stderr
+    assert r.returncode == rc, r.stderr
     return r
 
 
@@ -144,6 +146,23 @@ def test_no_env_anywhere_warns_and_exports_no_names(checkouts) -> None:
 def test_arguments_reach_the_delegate(checkouts) -> None:
     _, worktree = checkouts
     assert "ARGS=[--help]" in _run(worktree, "--help").stdout
+
+
+def test_a_key_that_is_not_an_identifier_is_skipped_not_fatal(checkouts) -> None:
+    """`export "1X=v"` fails under `set -e`; a bad line must not stop the gate."""
+    primary, _ = checkouts
+    (primary / ".env").write_text(f"1BAD={SECRET}\nPRIMARY_ONLY={SECRET}\n")
+    r = _run(primary)
+    assert "NAMES=[PRIMARY_ONLY]" in r.stdout, r.stdout
+
+
+def test_a_missing_delegate_is_a_tooling_failure(checkouts) -> None:
+    """Exit 2, the gate's own tooling code, naming the fix (an uninitialised submodule)."""
+    _, worktree = checkouts
+    (worktree / DELEGATE_REL).unlink()
+    r = _run(worktree, rc=2)
+    assert str(DELEGATE_REL) in r.stderr
+    assert "git submodule update" in r.stderr
 
 
 def test_the_wrapper_never_loads_the_production_env() -> None:

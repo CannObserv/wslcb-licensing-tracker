@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pre-ship.sh — wslcb-licensing-tracker env-loading wrapper around the vendored
-# shipping-work-python-fastapi gate.
+# shipping-work gate.
 #
 # Why this exists: this repo's PostgreSQL tests read live secrets from the
 # repo-root .env (TEST_DATABASE_URL and friends). Without them loaded, ~160 PG
@@ -8,25 +8,12 @@
 # suite that never ran. Everything else — every gate below the delegate — is
 # upstream's and is deliberately NOT forked.
 #
-# Shape follows the wrapper contract documented in the vendored pre-ship.sh
-# ("Project-local env loading (optional override point)"), with two deliberate
-# deviations noted below.
+# Shape follows the wrapper recipe in the vendored pre-ship.sh ("Project-local
+# env loading (optional override point)"). SKILL.md Step 1 resolves a repo-root
+# scripts/pre-ship.sh for this script alone; the other five steps still find
+# theirs in the skill (gregoryfoster/skills#301, #240).
 #
-# DEVIATION 1: the contract says to delegate through the `skills/...`
-# symlink rather than `skills-vendor/...`. That assumes the wrapper sits at the
-# project's own `scripts/pre-ship.sh`, leaving `skills/<name>/` free to be the
-# vendor symlink. That layout does not work here: the skill's Step 1 resolution
-# loop probes ONE directory using pre-ship.sh and reuses it for every later
-# step, so a wrapper in `scripts/` resolves SKILL_SCRIPTS=scripts and then
-# push.sh / check-status.sh / comment-issue.sh / close-issue.sh are all missing
-# (this repo's `scripts/` carries only its own Tailwind tooling).
-# Keeping the wrapper inside the skill's own scripts/ dir is what makes all six
-# steps resolve — and it means the `skills/` path is occupied by this file, so
-# the delegate has to be the vendor path. It is globbed, not hand-substituted,
-# so a renamed vendor directory does not silently produce a plausible-but-dead
-# path.
-#
-# DEVIATION 2 (#235): the contract also loads `/etc/<project>/.env`. Not here:
+# DEVIATION (#235): the recipe also loads `/etc/<project>/.env`. Not here:
 # /etc/wslcb-licensing-tracker/.env is group-readable by this user and holds
 # the PRODUCTION DATABASE_URL, which a test gate must never carry.
 set -euo pipefail
@@ -34,12 +21,11 @@ set -euo pipefail
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
-DELEGATE=""
-for candidate in skills-vendor/*/skills/shipping-work-python-fastapi/scripts/pre-ship.sh; do
-  [[ -f "$candidate" ]] && { DELEGATE="$candidate"; break; }
-done
-[[ -n "$DELEGATE" ]] || {
-  echo "ERROR: vendored gate missing under skills-vendor/*/skills/shipping-work-python-fastapi/scripts/pre-ship.sh" >&2
+# Through the skills/ symlink, never skills-vendor/: the symlink is the stable
+# interface, the vendor layout is not.
+DELEGATE="skills/shipping-work/scripts/pre-ship.sh"
+[[ -f "$DELEGATE" ]] || {
+  echo "ERROR: vendored gate missing at $DELEGATE" >&2
   echo "       fix: git submodule update --init --recursive" >&2
   exit 2
 }
@@ -67,7 +53,7 @@ load_env() {
     case $line in *=*) ;; *) continue ;; esac
     key=${line%%=*} val=${line#*=}
     key=${key%"${key##*[![:space:]]}"}
-    case $key in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    case $key in ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;; esac
     case $val in                                  # strip matched quotes
       \"*\") val=${val#\"} val=${val%\"} ;;
       \'*\') val=${val#\'} val=${val%\'} ;;
@@ -77,9 +63,9 @@ load_env() {
   done < "$1"
 }
 
-# Names only, never values: the vendored gate folds a hash of them into its
-# per-SHA stamp, and writes none when the list is empty, so a run that loaded
-# no env can't bless the commit for the run that does (skills#497).
+# Names only, never values: the vendored gate folds them into its tree-keyed
+# pass stamp, and records none when the list is empty, so a run that loaded
+# no env can't bless the tree for the run that does (skills#497).
 export PRE_SHIP_ENV_NAMES=""
 
 # A linked worktree has no .env (it's gitignored), so fall back to the primary

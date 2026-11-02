@@ -1,5 +1,5 @@
 # doc-sections — advice the vendored doc-check.sh prints on a hit
-# (shipping-work-python-fastapi Step 1.5). One doc section per line; blank
+# (shipping-work Step 1.5). One doc section per line; blank
 # lines and `#`-comments ignored. This file REPLACES the script's built-in
 # defaults rather than extending them (gregoryfoster/skills#261, #173).
 #

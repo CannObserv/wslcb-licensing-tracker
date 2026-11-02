@@ -181,7 +181,7 @@ SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this ho
 
 Dated analyses go under `docs/research/`, `docs/plans/`, or `docs/specs/`, which are excluded from the live surface. Vendored superpowers skills default to `docs/superpowers/{specs,plans}/`; this project overrides that — specs → `docs/specs/`, plans → `docs/plans/` (their own "user preferences override" clause applies; `tests/test_docs_layout.py` guards it, #176).
 
-`shipping-work-python-fastapi`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172) and `.skills/doc-sections`, the advice printed on a hit (#173). Keep both files in step.
+`shipping-work`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172) and `.skills/doc-sections`, the advice printed on a hit (#173). Keep both files in step.
 
 See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases.
 
