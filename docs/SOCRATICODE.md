@@ -177,9 +177,10 @@ wslcb_licensing_tracker'` before concluding nothing depends on a module.
 
 This repo's `.socraticodeignore` excludes `skills-vendor/` and `.claude/skills/`.
 It deliberately does **not** exclude `skills/`: SocratiCode does not follow
-symlinks, so the vendor symlinks there index nothing anyway, while the repo's
-own first-party skill overrides (real directories, e.g.
-`skills/shipping-work-python-fastapi/`) stay indexed (#160). The `data/`
+symlinks, so the vendor symlinks there index nothing anyway (#160). Since #240
+no first-party override remains under `skills/` (the ship-gate wrapper moved to
+`scripts/pre-ship.sh`, indexed with the rest of `scripts/`), but leaving the
+directory in costs nothing and keeps any future override indexed. The `data/`
 snapshot archive is excluded through the `.gitignore` layer rather than named
 here.
 

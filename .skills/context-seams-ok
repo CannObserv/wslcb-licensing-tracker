@@ -35,7 +35,6 @@ docs/SKILLS.md :: `curating-context` owns `AGENTS.md`'s 6,000-token budget (#165
 .claude/hooks/skills-submodule-update.sh :: exit-2 of AGENTS.md's gate
 .claude/hooks/socraticode-health.sh :: AGENTS.md
 .socraticodecontextartifacts.json :: Code exploration reference: the full SocratiCode tool table
-skills/shipping-work-python-fastapi/scripts/doc-check.sh :: AGENTS.md
 src/wslcb_licensing_tracker/backup.py :: The frozen tables (AGENTS.md)
 src/wslcb_licensing_tracker/parser.py :: a bug; see AGENTS.md.
 tests/test_doc_sensitive_paths.py :: (scratch / "AGENTS.md")

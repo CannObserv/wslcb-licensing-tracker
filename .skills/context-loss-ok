@@ -16,3 +16,7 @@ AGENTS.md :: tighten :: `shipping-work-python-fastapi`'s Step 1.5 doc gate is ve
 
 # #208 CR 8: the apply commands moved to MEMORY_PRESSURE.md; the stub anchor made this a two-hop pointer.
 docs/DEPLOYMENT.md :: retarget :: | Memory-pressure config change | **Not covered by the globs above** — `infra/` also holds a slice drop-in, a sysctl conf and an earlyoom default, none of them `*.service`/`*.timer`. See [Memory pressure](#memory-pressure-175) for the four apply commands. |
+
+# 2026-11-02, #240: shipping-work-python-fastapi retired for the unified shipping-work skill
+# (gregoryfoster/skills#537); the skill name in the pointer followed its target.
+AGENTS.md :: retarget :: `shipping-work-python-fastapi`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172) and `.skills/doc-sections`, the advice printed on a hit (#173). Keep both files in step.

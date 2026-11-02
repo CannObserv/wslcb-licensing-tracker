@@ -7,9 +7,9 @@
 # .claude/skills/ holds only symlinks (into skills/), so it carries no real
 # content of its own.
 # skills/ is deliberately NOT excluded: SocratiCode does not follow symlinks, so
-# the vendor symlinks under it index nothing, while the repo's own first-party
-# skill overrides (real dirs under skills/, e.g. shipping-work-python-fastapi)
-# stay indexed. See GH #160.
+# the vendor symlinks under it index nothing. No first-party override remains
+# there (#240 moved the ship-gate wrapper to scripts/), but a future one would
+# stay indexed without an edit here. See GH #160.
 skills-vendor/
 .claude/skills/
 #

@@ -1,6 +1,6 @@
 """Tests for .skills/doc-sensitive-paths and .skills/doc-sections — doc-check.sh's tailoring.
 
-`doc-check.sh` (vendored, shipping-work-python-fastapi) flags branch changes
+`doc-check.sh` (vendored, shipping-work) flags branch changes
 that touch paths whose inventory is mirrored in project docs. The list is
 tailored here rather than in a fork of the script (#172). Upstream exits 2 when
 *no* entry matches any tracked file, because a list that cannot hit anything
@@ -66,13 +66,11 @@ def _tracked_files() -> tuple[str, ...]:
 
 
 def _vendored_doc_check() -> Path:
-    """The vendored doc-check.sh, globbed the way pre-ship.sh resolves its delegate."""
-    matches = sorted(
-        REPO_ROOT.glob("skills-vendor/*/skills/shipping-work-python-fastapi/scripts/doc-check.sh")
-    )
-    if not matches:
+    """The vendored doc-check.sh, through the skills/ symlink like the wrapper's delegate."""
+    script = REPO_ROOT / "skills/shipping-work/scripts/doc-check.sh"
+    if not script.is_file():
         pytest.skip("vendored skills submodule not initialized")
-    return matches[0]
+    return script
 
 
 def _path_matches(file: str, entry: str) -> bool:

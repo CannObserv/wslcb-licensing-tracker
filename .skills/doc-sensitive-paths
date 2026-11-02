@@ -1,5 +1,5 @@
 # doc-sensitive-paths — sensitive-path list for the vendored doc-check.sh
-# (shipping-work-python-fastapi Step 1.5). One path per line; blank lines and
+# (shipping-work Step 1.5). One path per line; blank lines and
 # `#`-comments ignored. This file REPLACES the script's built-in defaults
 # rather than extending them (gregoryfoster/skills#252, #172).
 #
