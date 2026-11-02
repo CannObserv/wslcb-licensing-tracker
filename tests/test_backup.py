@@ -673,3 +673,46 @@ class TestMain:
         assert rc == 1
         assert "no key" in checkins[0][1]["error"]
         assert checkins[0][2] == {"fault": "setup"}
+
+
+# ── GCS User-Agent (#243) ────────────────────────────────────────────
+
+
+def _capture_storage_client(monkeypatch):
+    from wslcb_licensing_tracker import backup
+
+    built: list[dict] = []
+    monkeypatch.setattr(backup.storage, "Client", lambda **kw: built.append(kw) or kw)
+    return built
+
+
+def test_storage_client_identifies_us(monkeypatch):
+    from wslcb_licensing_tracker.backup import make_storage_client
+    from wslcb_licensing_tracker.config import user_agent
+
+    built = _capture_storage_client(monkeypatch)
+    make_storage_client()
+    assert built[0]["client_info"].user_agent == user_agent()
+
+
+def test_storage_client_without_a_contact_still_builds(monkeypatch):
+    """A backup or a restore never fails over the contact email (#243)."""
+    from wslcb_licensing_tracker.backup import make_storage_client
+    from wslcb_licensing_tracker.config import CONTACT_EMAIL_ENV, user_agent_or_fallback
+
+    monkeypatch.delenv(CONTACT_EMAIL_ENV)
+    built = _capture_storage_client(monkeypatch)
+    make_storage_client()
+    assert built[0]["client_info"].user_agent == user_agent_or_fallback({})
+
+
+def test_backup_and_restore_share_the_factory(monkeypatch):
+    import inspect
+
+    from wslcb_licensing_tracker import backup, restore
+
+    built = _capture_storage_client(monkeypatch)
+    restore.make_client()
+    assert len(built) == 1
+    default = inspect.signature(backup.main).parameters["client_factory"].default
+    assert default is backup.make_storage_client

@@ -260,3 +260,47 @@ def test_classify_monitor_uses_prefixed_names():
     assert CLASSIFY.monitor_id_env == f"{ENV_PREFIX}CLASSIFY_MONITOR_ID"
     assert not BACKUP.base_url_env.startswith(ENV_PREFIX)
     assert not SCRAPE.base_url_env.startswith(ENV_PREFIX)
+
+
+# ── User-Agent (#243) ────────────────────────────────────────────────
+
+
+def _capture_requests(monkeypatch):
+    """Route checkin's real httpx.Client through a MockTransport; return the requests."""
+    from wslcb_licensing_tracker import checkin
+
+    seen: list[httpx.Request] = []
+    real = httpx.Client
+
+    def _client(**kwargs):
+        def _handler(request):
+            seen.append(request)
+            return httpx.Response(202)
+
+        return real(transport=httpx.MockTransport(_handler), **kwargs)
+
+    monkeypatch.setattr(checkin.httpx, "Client", _client)
+    return seen
+
+
+def test_checkin_identifies_us(monkeypatch):
+    from wslcb_licensing_tracker.checkin import _http_post
+    from wslcb_licensing_tracker.config import user_agent
+
+    seen = _capture_requests(monkeypatch)
+    _http_post("http://status:9000/x", {"a": 1}, {"X-API-Key": "k"}, 5.0)
+    assert seen[0].headers["User-Agent"] == user_agent()
+    assert seen[0].headers["X-API-Key"] == "k"
+
+
+def test_checkin_without_a_contact_still_goes(monkeypatch, caplog):
+    """A config slip must not silence the alert that reports it (#243)."""
+    from wslcb_licensing_tracker.checkin import _http_post
+    from wslcb_licensing_tracker.config import CONTACT_EMAIL_ENV, user_agent_or_fallback
+
+    monkeypatch.delenv(CONTACT_EMAIL_ENV)
+    seen = _capture_requests(monkeypatch)
+    with caplog.at_level(logging.ERROR):
+        assert _http_post("http://status:9000/x", {}, {}, 5.0)[0] == 202
+    assert seen[0].headers["User-Agent"] == user_agent_or_fallback({})
+    assert CONTACT_EMAIL_ENV in caplog.text

@@ -55,10 +55,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
+from google.api_core.client_info import ClientInfo
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
 from .checkin import BACKUP, CREDENTIALS_DIRECTORY_ENV, post_checkin
+from .config import user_agent_or_fallback
 from .db import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -700,11 +702,21 @@ def _ok_variables(summary: dict) -> dict:
     }
 
 
+def make_storage_client() -> storage.Client:
+    """The GCS client for backup and restore, identifying us (#243).
+
+    Credentials come from ``GOOGLE_APPLICATION_CREDENTIALS``. The User-Agent
+    degrades rather than raising: a backup or a restore never fails over the
+    contact email.
+    """
+    return storage.Client(client_info=ClientInfo(user_agent=user_agent_or_fallback()))
+
+
 def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
     *,
     database: str = "wslcb",
     environ: Mapping[str, str] = os.environ,
-    client_factory: Callable[[], storage.Client] = storage.Client,
+    client_factory: Callable[[], storage.Client] = make_storage_client,
     data_dir: Path = DATA_DIR,
     runner: Runner | None = None,
     host: str | None = None,

@@ -66,6 +66,7 @@ from .admin_audit import log_action
 from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
 from .checkin import CLASSIFY, SCRAPE, post_checkin
+from .config import CONTACT_EMAIL_ENV, ContactEmailError, user_agent
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_data_stragglers, compress_files
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
@@ -944,7 +945,32 @@ def admin_remove_user(email: str) -> None:
 
 @main.group()
 def ops() -> None:
-    """Operational maintenance commands (backup, restore)."""
+    """Operational maintenance commands (backup, restore, user-agent)."""
+
+
+@ops.command("user-agent")
+@click.option(
+    "--env-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read the contact email from this env file (that one key only, never sourced).",
+)
+def user_agent_cmd(env_file: Path | None) -> None:
+    """Print the User-Agent every outbound client sends (#243).
+
+    The relay's Mac fetches WSLCB with it: ``relay-capture.sh`` asks over ssh
+    with ``--env-file /etc/wslcb-licensing-tracker/.env``. Exits non-zero,
+    printing nothing on stdout, when the contact email is unset or malformed.
+    """
+    environ = dict(os.environ)
+    if env_file is not None:
+        prefix = f"{CONTACT_EMAIL_ENV}="
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith(prefix):
+                environ[CONTACT_EMAIL_ENV] = line[len(prefix) :].strip().strip("\"'")
+    try:
+        click.echo(user_agent(environ))
+    except ContactEmailError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _restore():  # noqa: ANN202 — returns the module

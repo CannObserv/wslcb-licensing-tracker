@@ -36,14 +36,20 @@ anyone looked (#198).
 - **`ok`** after `success` or `unchanged`. **`alert`** on any exception; the
   run still exits 1, so the unit still fails. co-status folds consecutive
   alerts into one fault (one report, a daily reminder, *has cleared* on the
-  next `ok`), and `metadata.fault` (`HTTPStatusError 403`, `ConnectError`, …)
-  reports a *different* failure at once.
+  next `ok`), and `metadata.fault` (`HTTPStatusError 403`, `ConnectError`,
+  `ContactEmailError` for a missing contact email (#243), …) reports a
+  *different* failure at once.
 - **Silence** alarms too: a stopped timer, a masked unit, a run hung until
   its timeout.
 - Config: `WSLCB_SCRAPE_CHECKIN_BASE_URL` and `WSLCB_SCRAPE_MONITOR_ID` in
   `/etc/wslcb-licensing-tracker/.env` (the template's `EnvironmentFile`); the
   key is the drop-in's `checkin-key` credential, never an env var. A manual
   `wslcb ingest scrape` has no credential and warns that it isn't checking in.
+- **Contact email (#243):** `CO_WSLCB_LICENSING_TRACKER_CONTACT_EMAIL` goes in
+  the app `.env` **and** `backup.env` (rules in `.env.example`). Check it with
+  `wslcb ops user-agent --env-file /etc/wslcb-licensing-tracker/.env`. Without
+  it the scrape fails with `ContactEmailError`. Check-ins still go, without
+  the contact.
 
 **The monitor** is `co-wslcb-scrape`, on tenant `co-wslcb` (CannObserv/status#46):
 

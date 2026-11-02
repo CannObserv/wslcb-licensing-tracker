@@ -42,6 +42,7 @@ from .backup import (
     Runner,
     b64_md5_file,
     libpq_target,
+    make_storage_client,
     sha256_file,
     verify_dump,
 )
@@ -61,8 +62,8 @@ class RestoreError(Exception):
 
 
 def make_client() -> storage.Client:
-    """The GCS client, from ``GOOGLE_APPLICATION_CREDENTIALS``. The seam tests replace."""
-    return storage.Client()
+    """The GCS client (``backup.make_storage_client``). The seam tests replace."""
+    return make_storage_client()
 
 
 def as_user(argv: list[str], run_as: str | None) -> list[str]:

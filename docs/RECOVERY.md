@@ -190,9 +190,14 @@ sudo install -m 0400 -o root -g root /dev/null /etc/wslcb-licensing-tracker/back
 sudo tee /etc/wslcb-licensing-tracker/backup.env >/dev/null <<'EOF'
 WSLCB_BACKUP_BUCKET=co-gcs-wslcb-backup
 WSLCB_ARCHIVE_BUCKET=co-gcs-wslcb-archive
+CO_WSLCB_LICENSING_TRACKER_CONTACT_EMAIL=code@cannabis.observer
 EOF
 sudo chmod 0644 /etc/wslcb-licensing-tracker/backup.env
 ```
+
+The contact email goes in the User-Agent that the GCS client and the check-in
+send (#243). Without it they still run, sending the User-Agent without a
+contact and logging an ERROR: a backup never fails over it.
 
 **No `GOOGLE_APPLICATION_CREDENTIALS` in `backup.env`**: the unit points it at
 the run's private copy (`%d/gcs`), and an env file's value would win, aiming

@@ -42,6 +42,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .config import user_agent_or_fallback
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,8 +98,12 @@ Post = Callable[[str, dict, dict, float], tuple[int, str]]
 
 
 def _http_post(url: str, payload: dict, headers: dict, timeout: float) -> tuple[int, str]:
-    """One POST, returning the status code and body. The seam the tests replace."""
-    with httpx.Client(timeout=timeout) as client:
+    """One POST, returning the status code and body. The seam the tests replace.
+
+    The User-Agent degrades rather than raising (#243): a config slip must not
+    silence the alert that would report it.
+    """
+    with httpx.Client(timeout=timeout, headers={"User-Agent": user_agent_or_fallback()}) as client:
         response = client.post(url, json=payload, headers=headers)
         return response.status_code, response.text
 
