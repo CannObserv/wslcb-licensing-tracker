@@ -11,12 +11,15 @@
 #   WSLCB_RELAY_HOST   ssh destination of the VM (required), e.g. wslcb-licensing-tracker.exe.xyz
 #   WSLCB_RELAY_INBOX  inbox path on the VM, relative to its home (default wslcb-relay-inbox)
 #   WSLCB_RELAY_URL    page to fetch (default: the WSLCB report)
+#   WSLCB_RELAY_CHECKOUT  the tracker checkout on the VM, relative to its home
+#                      (default wslcb-licensing-tracker)
 set -euo pipefail
 
 HOST="${WSLCB_RELAY_HOST:?set WSLCB_RELAY_HOST to the ssh destination of the VM}"
 INBOX="${WSLCB_RELAY_INBOX:-wslcb-relay-inbox}"
 URL="${WSLCB_RELAY_URL:-https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp}"
 UNIT="wslcb-task@import-relayed.service"
+CHECKOUT="${WSLCB_RELAY_CHECKOUT:-wslcb-licensing-tracker}"
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) relay: $*"; }
 
@@ -26,8 +29,18 @@ trap 'rm -rf "$work"' EXIT
 stamp=$(date -u +%Y%m%dT%H%M%SZ)   # the fetch time; the VM dates the capture by it
 name="$stamp.html.gz"
 
+# Identify us as every server-side client does (#243). The VM owns the string
+# (version + contact email); without a valid one it refuses, and so do we.
+ua=$(ssh -o BatchMode=yes "$HOST" \
+  "$CHECKOUT/.venv/bin/wslcb ops user-agent --env-file /etc/wslcb-licensing-tracker/.env")
+if [ -z "$ua" ]; then
+  log "no User-Agent from $HOST; not fetching" >&2
+  exit 1
+fi
+
 log "fetching $URL"
-curl --fail --silent --show-error --max-time 300 --output "$work/page.html" "$URL"
+curl --fail --silent --show-error --max-time 300 --user-agent "$ua" \
+  --output "$work/page.html" "$URL"
 if [ ! -s "$work/page.html" ]; then
   log "empty response; not relaying" >&2
   exit 1
