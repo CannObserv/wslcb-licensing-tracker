@@ -27,6 +27,7 @@ from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from .config import user_agent
 from .db import DATA_DIR, SOURCE_TYPE_LIVE_SCRAPE, WSLCB_SOURCE_URL, get_or_create_source
 from .engine import get_db
 from .models import scrape_log, sources
@@ -430,7 +431,11 @@ async def scrape(engine: AsyncEngine) -> ScrapeOutcome:
     async with get_db(engine) as conn:
         log_id = await start_log(conn)
         try:
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+            # Identifies us to WSLCB's WAF (#243); no contact email, no request.
+            headers = {"User-Agent": user_agent()}
+            async with httpx.AsyncClient(
+                timeout=120, follow_redirects=True, headers=headers
+            ) as client:
                 resp = await client.get(WSLCB_SOURCE_URL)
             resp.raise_for_status()
             html = resp.text

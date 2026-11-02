@@ -15,6 +15,8 @@ import os
 
 import httpx
 
+from .config import user_agent
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://address-validator.exe.xyz:8000"
@@ -83,15 +85,26 @@ class QuotaExhaustedError(Exception):
         self.status = status
 
 
-# Shared connection pool for all address validation HTTP calls.
-# httpx.AsyncClient binds to the event loop lazily (on first request), so
-# module-level construction is safe before any event loop exists.
-_shared_client: httpx.AsyncClient = httpx.AsyncClient(timeout=TIMEOUT)
+# Shared connection pool for all address validation HTTP calls. Built on
+# first use, not at import: its User-Agent needs the contact email, and a
+# module that merely imports this one shouldn't require it (#243).
+_shared_client: httpx.AsyncClient | None = None
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    """The shared client, built on first use; raises ``ContactEmailError``."""
+    global _shared_client  # noqa: PLW0603 — the one module-level pool
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": user_agent()})
+    return _shared_client
 
 
 async def close_shared_client() -> None:
-    """Close the module-level httpx client, releasing TLS sessions cleanly."""
-    await _shared_client.aclose()
+    """Close the shared client if built, releasing TLS sessions cleanly."""
+    global _shared_client  # noqa: PLW0603 — the one module-level pool
+    if _shared_client is not None:
+        await _shared_client.aclose()
+        _shared_client = None
 
 
 def get_api_key() -> str:
@@ -217,7 +230,7 @@ async def _call_endpoint(
     headers = {"X-API-Key": api_key}
     payload = {"address": address}
 
-    _client = client if client is not None else _shared_client
+    _client = client if client is not None else get_shared_client()
     response = await _post_with_retry(url, payload, headers, _client, label)
     if response is None:
         return None

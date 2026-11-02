@@ -30,7 +30,7 @@ import httpx
 from sqlalchemy import Select, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .config import JEV_USD_PER_MILLION_INPUT_TOKENS, jev_confidence_threshold
+from .config import JEV_USD_PER_MILLION_INPUT_TOKENS, jev_confidence_threshold, user_agent
 from .entities import is_noise_name
 from .entity_classification import (
     NOT_A_NAME,
@@ -500,7 +500,9 @@ async def classify_entities(  # noqa: PLR0913 — one keyword per CLI/admin opti
         await conn.commit()
         if candidates:
             if client is None:
-                async with httpx.AsyncClient(timeout=TIMEOUT) as own:
+                async with httpx.AsyncClient(
+                    timeout=TIMEOUT, headers={"User-Agent": user_agent()}
+                ) as own:
                     await _run_batches(
                         conn,
                         summary,
