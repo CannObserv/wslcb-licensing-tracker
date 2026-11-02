@@ -57,6 +57,16 @@ def test_disk_gc_copy_is_in_the_table_at_0600():
     assert "0600" in _row(_section(), DISK_GC_KEY)
 
 
+def test_every_copy_is_in_the_recipe_and_the_check():
+    """A table row alone isn't enough: the copy must be written and checked too."""
+    blocks = re.findall(r"```bash\n(.*?)```", _section(), re.DOTALL)
+    recipe = next(b for b in blocks if "install " in b)
+    check = next(b for b in blocks if "sha256sum" in b)
+    for path in sorted(_infra_key_paths() | {DISK_GC_KEY}):
+        assert path in recipe, f"the rotation recipe doesn't write {path}"
+        assert path in check, f"the check doesn't hash {path}"
+
+
 def test_rebuild_and_gc_docs_point_at_the_section():
     for doc in ("RECOVERY.md", "DISK_GC.md"):
         text = (DOCS / doc).read_text(encoding="utf-8")

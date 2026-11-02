@@ -85,8 +85,8 @@ sudo systemctl daemon-reload
 
 Then, once the monitor id is posted. The key below is the `co-wslcb` tenant's,
 the one the backup already holds, copied root to root and never shown: keys
-are tenant-scoped (status#46, from `_load_owned`). A wrong key reads as
-`rejected with HTTP 403`.
+are tenant-scoped (status#46, from `_load_owned`). An unknown or revoked key
+reads as `rejected with HTTP 401`.
 
 ```bash
 sudo install -m 0400 -o root -g root /etc/wslcb-licensing-tracker/backup-checkin.key \
@@ -230,7 +230,7 @@ unable to check in.
 | Copy | Mode | Loaded by | If the file is missing |
 |---|---|---|---|
 | `/etc/wslcb-licensing-tracker/backup-checkin.key` | 0400 | `wslcb-backup.service` | the start fails (243/CREDENTIALS): no backup |
-| `/etc/wslcb-licensing-tracker/scrape-checkin.key` | 0400 | `wslcb-task@scrape.service` (drop-in) | the start fails: no scrape, so no ingest |
+| `/etc/wslcb-licensing-tracker/scrape-checkin.key` | 0400 | `wslcb-task@scrape.service` (drop-in) | the start fails: no server scrape (the relay import, #201, needs no key) |
 | `/etc/wslcb-licensing-tracker/classify-checkin.key` | 0400 | `wslcb-task@classify-entities.service` (drop-in) | the start fails: no weekly classification |
 | `/etc/cannobserv/disk-gc/checkin.key` | 0600 | `cannobserv-disk-headroom.service`, the installed GC layer ([`DISK_GC.md`](DISK_GC.md)) | it runs, logs `no checkin-key credential: not checking in`, and goes quiet |
 
@@ -282,8 +282,8 @@ printing them, then shows each file's mode:
 ```bash
 K='/etc/wslcb-licensing-tracker/backup-checkin.key /etc/wslcb-licensing-tracker/scrape-checkin.key
    /etc/wslcb-licensing-tracker/classify-checkin.key /etc/cannobserv/disk-gc/checkin.key'
-sudo sha256sum $K | awk '{print $1}' | sort -u | wc -l   # 1, or a copy differs
-sudo stat -c '%a %U:%G %n' $K                            # 400 ×3 and 600, all root:root
+sudo sha256sum $K | awk '{print $1}' | sort | uniq -c | awk '{print $1}'   # 4: one hash, all four copies
+sudo stat -c '%a %U:%G %s %n' $K   # 400 ×3 and 600, all root:root, none 0 bytes
 ```
 
 Then each unit's first check-in after the rotation. A 202 proves the key,
@@ -302,13 +302,14 @@ logs its own.
 ```bash
 sudo journalctl -u cannobserv-disk-headroom -u wslcb-task@scrape -u wslcb-backup \
      -u wslcb-task@classify-entities --since '<rotation, UTC>' -o short-iso --no-pager \
-     -g '202 Accepted|HTTP 202|rejected|not sent|not checking in|configured'   # sudo: else "-- No entries --"
+     -g '202 Accepted|HTTP 202|rejected|check-in failed|not sent|not checking in|configured'   # sudo: else "-- No entries --"
 ```
 
 The old key can go once the hashes agree and both the sensor and the scrape
 have logged a 202. Start the scrape by hand rather than wait for it
-(`sudo systemctl start wslcb-task@scrape.service`). The other two are proven by
-their hashes:
+(`sudo systemctl start --no-block wslcb-task@scrape.service`). While WSLCB
+blocks the host that's one more 403'd attempt, and still a 202. The other two
+are proven by their hashes:
 - **Backup:** a manual start runs a whole backup, so let the timer's run log
   its 202 within a day.
 - **Classify:** a manual start is the timer's paid run, so let the weekly run
@@ -319,5 +320,5 @@ their hashes:
 three from it. Until then, each copy behaves as in the table: a missing one
 fails its scrape or classify start, and an empty one (the placeholders that §
 Scrape check-in and § Entity classification check-in create first) checks in
-nothing. The GC layer comes from `maintaining-host-disk`
-([`DISK_GC.md`](DISK_GC.md)).
+nothing. The disk-gc copy's `install` needs the GC layer first: its directory
+comes from `maintaining-host-disk` ([`DISK_GC.md`](DISK_GC.md)).

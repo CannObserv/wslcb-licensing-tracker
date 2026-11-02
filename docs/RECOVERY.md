@@ -237,8 +237,9 @@ All three or none: half a configuration logs an ERROR naming what is missing
 and checks in nothing. **The key has three more copies** (scrape, classify,
 the disk sensor): restore them from this one with
 [`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)'s `install`
-lines. Until then a missing copy fails the scrape or classify start (no
-ingest), and an empty one, or a missing disk-sensor copy, checks in nothing. A landed check-in shows in the journal only as httpx's
+lines. Until then a missing scrape or classify copy fails that unit's start,
+and an empty copy, or a missing disk-sensor one, checks in nothing. A landed
+check-in shows in the journal only as httpx's
 `"HTTP/1.1 202 Accepted"`; the proof is the monitor's fresh last check-in.
 **Then see the alarm fire** before relying on it: narrow the monitor to
 `interval_seconds` 60 / `grace_seconds` 0, wait for *"has stopped reporting"*,
