@@ -69,7 +69,10 @@ def _vendored_doc_check() -> Path:
     """The vendored doc-check.sh, through the skills/ symlink like the wrapper's delegate."""
     script = REPO_ROOT / "skills/shipping-work/scripts/doc-check.sh"
     if not script.is_file():
-        pytest.skip("vendored skills submodule not initialized")
+        # Only an empty submodule is a reason to skip; a broken link is a failure.
+        if not any(REPO_ROOT.glob("skills-vendor/*/skills")):
+            pytest.skip("vendored skills submodule not initialized")
+        pytest.fail(f"{script} missing with the vendored skills present: broken skills/ link?")
     return script
 
 
