@@ -1,5 +1,8 @@
 # Address Validation
 
+The timer and the `wslcb-task@*-addresses` units are installed from
+[`DEPLOYMENT.md`](DEPLOYMENT.md) § Services.
+
 External API at `https://address-validator.exe.xyz:8000`.
 
 - API key: `ADDRESS_VALIDATOR_API_KEY` in `/etc/wslcb-licensing-tracker/.env` (owned `root:exedev`, mode `640`)
