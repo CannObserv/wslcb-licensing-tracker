@@ -171,6 +171,7 @@ wslcb-licensing-tracker/
 │   ├── build-css.sh            # Rebuild Tailwind output (run manually or via pre-commit)
 │   ├── download-tailwind.sh    # Download platform-specific Tailwind CLI binary
 │   ├── pre-commit-tailwind.sh  # Pre-commit hook wrapper for build-css.sh
+│   ├── pre-ship.sh             # Ship-gate wrapper: parses .env, execs the vendored shipping-work gate (#240)
 │   ├── setup-backup-role.sql   # Once per cluster: the backup's read-only `wslcb_backup` role (#185)
 │   └── relay/                  # Operator's Mac: relay-capture.sh + LaunchAgent plist (#201)
 ├── alembic.ini             # Alembic config (repo root, not inside alembic/)
@@ -201,7 +202,7 @@ wslcb-licensing-tracker/
 │   ├── wslcb-backup.service        # Nightly DB + data/ backup to GCS (#185; see docs/RECOVERY.md)
 │   ├── wslcb-backup.timer          # Daily at 08:17 Pacific, after the morning scrape
 │   └── sudoers.d-wslcb-healthcheck # sudoers snippet for passwordless restart
-├── skills/                 # Claude Code agent skills (local + symlinks to skills-vendor/)
+├── skills/                 # Claude Code agent skills (symlinks to skills-vendor/)
 ├── skills-vendor/          # Vendored skill repos (git submodules)
 │   ├── gregoryfoster-skills/   # gregoryfoster/skills submodule
 │   └── obra-superpowers/       # obra/superpowers submodule
@@ -281,7 +282,7 @@ wslcb-licensing-tracker/
 │   ├── test_journald_config.py # journald drop-in: persistent, 512M; on the host, the flush unmasked + journal on disk (#186)
 │   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
 │   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup line names what the unit dumps and the vendored backup_covers accepts it; Tailscale origin/pins; a quiet range covers every timer firing, and each is a restarter or excepted as none (#192, #193, #220, #223, #237, #238)
-│   ├── test_pre_ship_wrapper.py # ship-gate wrapper: linked worktree loads the primary's .env, exports names only, warns when none, never loads /etc's (#235)
+│   ├── test_pre_ship_wrapper.py # scripts/pre-ship.sh: linked worktree loads the primary's .env, exports names only, warns when none, skips non-identifier keys, exit 2 without the delegate, never loads /etc's (#235, #240)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
 │   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221) + dev: virtualenv, filelock, pytest, pygments (#224, #229) ≥ advisory fix in lock + venv; npm: ws, form-data (#229) in package-lock.json
 │   ├── test_pytest_basetemp.py  # pytest keeps one basetemp, only for a failed run (#200)
