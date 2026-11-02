@@ -280,6 +280,7 @@ wslcb-licensing-tracker/
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
 │   ├── test_no_channel_urls.py  # No live Mayfly channel URL in any tracked file (#181)
 │   ├── test_docs_layout.py      # Dated docs stay in docs/specs/ + docs/plans/, not docs/superpowers/ (#176)
+│   ├── test_docs_checkin_keys.py # MONITORING.md § Key rotation names every co-wslcb check-in key copy, mode, recipe + check (#241)
 │   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs, SocratiCode pin agreement + loopback recreate (#175, #180, #222)
 │   ├── test_infra_web_unit.py    # wslcb-web starts after Postgres, never bound to its lifetime (#184)
 │   ├── test_journald_config.py # journald drop-in: persistent, 512M; on the host, the flush unmasked + journal on disk (#186)
