@@ -1,7 +1,11 @@
 """Tests for runtime configuration helpers (config.py)."""
 
+import importlib.metadata
 import logging
 
+import pytest
+
+from wslcb_licensing_tracker import config
 from wslcb_licensing_tracker.config import (
     ENV_PREFIX,
     JEV_USD_PER_MILLION_INPUT_TOKENS,
@@ -67,3 +71,74 @@ class TestJevConfidenceThreshold:
 
     def test_price_constant(self):
         assert JEV_USD_PER_MILLION_INPUT_TOKENS == 0.042
+
+
+# ── contact email + User-Agent (#243) ────────────────────────────────
+
+_EMAIL_ENV = f"{ENV_PREFIX}CONTACT_EMAIL"
+_VERSION = importlib.metadata.version("wslcb-licensing-tracker")
+_URL = "https://github.com/CannObserv/wslcb-licensing-tracker"
+
+
+class TestContactEmail:
+    def test_env_name_follows_the_prefix(self):
+        assert config.CONTACT_EMAIL_ENV == _EMAIL_ENV
+
+    @pytest.mark.parametrize(
+        "email",
+        ["code@cannabis.observer", "a.b+tag@sub.example.org", "x_y-z@example.co"],
+    )
+    def test_valid(self, email):
+        assert config.contact_email({_EMAIL_ENV: email}) == email
+
+    def test_surrounding_whitespace_is_trimmed(self):
+        assert config.contact_email({_EMAIL_ENV: "  code@cannabis.observer\n"}) == (
+            "code@cannabis.observer"
+        )
+
+    def test_unset_is_an_error_naming_the_variable(self):
+        with pytest.raises(config.ContactEmailError, match=_EMAIL_ENV):
+            config.contact_email({})
+
+    @pytest.mark.parametrize(
+        "email",
+        [
+            "",
+            "code",
+            "code@",
+            "@cannabis.observer",
+            "code@localhost",
+            "co de@cannabis.observer",
+            "code@cannabis..observer",
+            "code(x)@cannabis.observer",
+            "code@cannabis.observer)",
+            "co\\de@cannabis.observer",
+            "code@cannabis.observer\r\nX-Injected: 1",
+            "a@b@cannabis.observer",
+        ],
+    )
+    def test_malformed_is_an_error(self, email):
+        with pytest.raises(config.ContactEmailError, match=_EMAIL_ENV):
+            config.contact_email({_EMAIL_ENV: email})
+
+
+class TestUserAgent:
+    def test_identifies_the_versioned_process_and_its_contact(self):
+        ua = config.user_agent({_EMAIL_ENV: "code@cannabis.observer"})
+        assert ua == (
+            f"CannObserv-wslcb-licensing-tracker/{_VERSION} (+{_URL}; code@cannabis.observer)"
+        )
+
+    def test_strict_raises_without_a_contact(self):
+        with pytest.raises(config.ContactEmailError):
+            config.user_agent({})
+
+    def test_fallback_drops_only_the_contact_and_logs_an_error(self, caplog):
+        with caplog.at_level(logging.ERROR, logger="wslcb_licensing_tracker.config"):
+            ua = config.user_agent_or_fallback({})
+        assert ua == f"CannObserv-wslcb-licensing-tracker/{_VERSION} (+{_URL})"
+        assert _EMAIL_ENV in caplog.text
+
+    def test_fallback_is_the_full_string_when_configured(self):
+        environ = {_EMAIL_ENV: "code@cannabis.observer"}
+        assert config.user_agent_or_fallback(environ) == config.user_agent(environ)
