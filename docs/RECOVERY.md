@@ -141,8 +141,8 @@ Created on co-status, not here (CannObserv/status#30, 2026-10-10): monitor
 `co-wslcb-backup`, id `01M4KCE70FJSJKCP2WFH990CAA`, tenant `co-wslcb`, on the
 same two notifier channels as `co-usa-wa-backup` and `co-observo-backup`. A
 rebuilt host keeps the id and needs only the key, re-issued by co-status's
-operator, terminal to terminal. The scrape has a second monitor on the same
-tenant, `co-wslcb-scrape`: [`MONITORING.md`](MONITORING.md). The fields:
+operator, terminal to terminal. Three more monitors share the tenant and its
+key (scrape, classify, disk headroom): [`MONITORING.md`](MONITORING.md). The fields:
 
 | Field | Value | Why |
 |---|---|---|
