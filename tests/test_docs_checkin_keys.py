@@ -16,7 +16,9 @@ DOCS = REPO_ROOT / "docs"
 INFRA = REPO_ROOT / "infra"
 
 HEADING = "## Key rotation (#241)"
-ANCHOR = "MONITORING.md#key-rotation-241"
+# GitHub's slug: lowercase, punctuation dropped, spaces to hyphens. Derived, so
+# renaming the heading can't leave the docs' links aimed at a dead anchor.
+ANCHOR = "MONITORING.md#" + re.sub(r"[^\w\- ]", "", HEADING[3:].lower()).replace(" ", "-")
 DISK_GC_KEY = "/etc/cannobserv/disk-gc/checkin.key"
 CREDENTIAL_RE = re.compile(r"^LoadCredential=checkin-key:(\S+)$", re.MULTILINE)
 
