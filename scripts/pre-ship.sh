@@ -63,9 +63,9 @@ load_env() {
   done < "$1"
 }
 
-# Names only, never values: the vendored gate folds a hash of them into its
-# per-SHA stamp, and writes none when the list is empty, so a run that loaded
-# no env can't bless the commit for the run that does (skills#497).
+# Names only, never values: the vendored gate folds them into its tree-keyed
+# pass stamp, and records none when the list is empty, so a run that loaded
+# no env can't bless the tree for the run that does (skills#497).
 export PRE_SHIP_ENV_NAMES=""
 
 # A linked worktree has no .env (it's gitignored), so fall back to the primary
