@@ -66,6 +66,18 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _contact_email(monkeypatch):
+    """Every test has a valid contact email for the outbound User-Agent (#243).
+
+    The strict clients refuse to send without one. Tests of the missing or
+    malformed case delete or override it themselves.
+    """
+    from wslcb_licensing_tracker.config import CONTACT_EMAIL_ENV
+
+    monkeypatch.setenv(CONTACT_EMAIL_ENV, "tests@example.org")
+
+
+@pytest.fixture(autouse=True)
 def _no_configured_checkin(monkeypatch):
     """No test finds a co-status check-in configured (#196).
 

@@ -628,7 +628,9 @@ async def test_admin_single_entity_with_its_own_client(isolated, jev_on, monkeyp
             conn, origin="admin", mode="ids", ids=[eid], include_manual=True, limit=1
         )
 
-    assert built == [{"timeout": jc.TIMEOUT}]
+    from wslcb_licensing_tracker.config import user_agent
+
+    assert built == [{"timeout": jc.TIMEOUT, "headers": {"User-Agent": user_agent()}}]
     assert _ours(fake.names) == [PREFIX + "OWN CLIENT LLC"]
     assert (s.names_sent, s.batches_ok, s.error) == (1, 1, None)
     assert len(await _jev_rows(isolated, eid)) == 2

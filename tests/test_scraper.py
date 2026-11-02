@@ -516,6 +516,48 @@ class TestScrapeOutcome:
         assert status == "error"
 
 
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+class TestScrapeUserAgent:
+    """The WSLCB fetch identifies us (#243): WSLCB's WAF flagged python-httpx (#198)."""
+
+    async def test_the_fetch_sends_the_identifying_user_agent(self, pg_engine, monkeypatch):
+        import wslcb_licensing_tracker.scraper as mod
+        from wslcb_licensing_tracker.config import user_agent
+
+        built = []
+        client = _fake_client(_FakeResponse(403))
+
+        def _capture(*args, **kwargs):
+            built.append(kwargs)
+            return client(*args, **kwargs)
+
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _capture)
+        with pytest.raises(httpx.HTTPStatusError):
+            await scrape(pg_engine)
+        assert built[0]["headers"] == {"User-Agent": user_agent()}
+
+    async def test_no_contact_email_fails_before_any_request(self, pg_engine, monkeypatch):
+        import wslcb_licensing_tracker.scraper as mod
+        from wslcb_licensing_tracker.config import CONTACT_EMAIL_ENV, ContactEmailError
+
+        monkeypatch.delenv(CONTACT_EMAIL_ENV)
+        built = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient", lambda *_a, **kw: built.append(kw))
+        with pytest.raises(ContactEmailError) as caught:
+            await scrape(pg_engine)
+        assert built == []
+        assert fault_key(caught.value) == "ContactEmailError"  # a new fault, reported at once
+        async with pg_engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text("SELECT status, error_message FROM scrape_log ORDER BY id DESC LIMIT 1")
+                )
+            ).one()
+        assert row.status == "error"
+        assert CONTACT_EMAIL_ENV in row.error_message
+
+
 def _http_error(code):
     request = httpx.Request("GET", "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp")
     response = httpx.Response(code, request=request)
