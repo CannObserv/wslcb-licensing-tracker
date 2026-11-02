@@ -219,7 +219,9 @@ wslcb-licensing-tracker/
 │   ├── test_display.py          # Presentation formatting tests
 │   ├── test_models.py           # SQLAlchemy Table definition tests
 │   ├── test_app.py              # App lifespan and startup tests; every template autoescaped under Starlette 1.x (#221)
-│   ├── test_config.py           # Runtime config helper tests (get_build_id, Jev threshold)
+│   ├── test_config.py           # Runtime config helper tests (get_build_id, Jev threshold, User-Agent #243)
+│   ├── test_address_client.py   # Address client's shared pool + User-Agent (#243)
+│   ├── test_cli_user_agent.py   # `wslcb ops user-agent` (#243)
 │   ├── test_log_config.py       # Structured-logging regression tests (#162)
 │   ├── test_routes.py           # Public route tests
 │   ├── test_api_routes.py       # Versioned API route tests

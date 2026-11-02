@@ -9,7 +9,9 @@ operator's Mac fetches the page and relays it in (#201). Design:
 The relay runs at 00:40 and 06:40 Mac-local time (Pacific assumed), 10 min
 after the VM's own scrape. `scripts/relay/relay-capture.sh` does the following:
 
-1. `curl`s the page.
+1. Asks the VM for the User-Agent (`wslcb ops user-agent`, #243), then
+   `curl`s the page with it. No string, no fetch. A Mac script installed
+   before #243 still works, but sends curl's default User-Agent: reinstall it.
 2. Gzips it as `<UTC fetch time>.html.gz`.
 3. `scp`s it to the inbox as `.part`.
 4. Renames it into place and runs
