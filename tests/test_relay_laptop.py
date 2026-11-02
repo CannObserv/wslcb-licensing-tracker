@@ -20,6 +20,7 @@ SCRIPT = REPO_ROOT / "scripts" / "relay" / "relay-capture.sh"
 PLIST = REPO_ROOT / "scripts" / "relay" / "wslcb-relay.plist"
 DROPIN = REPO_ROOT / "infra" / "wslcb-task@import-relayed.service.d" / "timeout.conf"
 UNIT = "wslcb-task@import-relayed.service"
+VM_UA = "CannObserv-wslcb-licensing-tracker/9.9.9 (+https://example.org; code@example.org)"
 
 _STUB = """#!/bin/bash
 args="$*"
@@ -36,7 +37,11 @@ def _stubs(tmp_path: Path, curl_body: str) -> dict[str, str]:
         "curl": curl_body,
         "scp": "exit 0",
         # The remote command is the last argument; keep it whole for TestRemoteCommand.
-        "ssh": 'printf "%s" "${@: -1}" > "$STUB_LOG.remote"',
+        # Asked for the User-Agent, answer as the VM's `wslcb ops user-agent` would.
+        "ssh": (
+            'case "${@: -1}" in *"ops user-agent"*) echo "$VM_UA"; exit "${VM_UA_RC:-0}";; esac\n'
+            'printf "%s" "${@: -1}" > "$STUB_LOG.remote"'
+        ),
     }
     for name, body in bodies.items():
         stub = bin_dir / name
@@ -46,6 +51,7 @@ def _stubs(tmp_path: Path, curl_body: str) -> dict[str, str]:
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "STUB_LOG": str(tmp_path / "calls.log"),
         "WSLCB_RELAY_HOST": "vm.example",
+        "VM_UA": VM_UA,
         "HOME": str(tmp_path),
     }
 
@@ -77,8 +83,10 @@ class TestScript:
         env = _stubs(tmp_path, _write_output("<html>page</html>"))
         result = _run(env)
         assert result.returncode == 0, result.stderr
-        curl, scp, ssh = _calls(env)
+        ask, curl, scp, ssh = _calls(env)
+        assert ask.startswith("ssh ") and "ops user-agent --env-file" in ask
         assert curl.startswith("curl ") and "--fail" in curl
+        assert f"--user-agent {VM_UA}" in curl  # the VM's string, never curl's default
         assert "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp" in curl
         upload = re.search(r"vm\.example:wslcb-relay-inbox/(\S+)\.part$", scp)
         assert upload, scp
@@ -91,14 +99,21 @@ class TestScript:
     def test_fetch_failure_uploads_nothing(self, tmp_path):
         env = _stubs(tmp_path, "exit 22")
         assert _run(env).returncode != 0
-        assert [c.split()[0] for c in _calls(env)] == ["curl"]
+        assert [c.split()[0] for c in _calls(env)] == ["ssh", "curl"]
+
+    def test_no_user_agent_from_the_vm_means_no_fetch(self, tmp_path):
+        """A VM without a valid contact email refuses; the Mac doesn't fetch anonymously."""
+        env = _stubs(tmp_path, _write_output("<html>page</html>"))
+        env.update(VM_UA="", VM_UA_RC="1")
+        assert _run(env).returncode != 0
+        assert [c.split()[0] for c in _calls(env)] == ["ssh"]
 
     def test_empty_body_uploads_nothing(self, tmp_path):
         env = _stubs(tmp_path, _write_output(""))
         result = _run(env)
         assert result.returncode != 0
         assert "empty response" in result.stdout + result.stderr
-        assert [c.split()[0] for c in _calls(env)] == ["curl"]
+        assert [c.split()[0] for c in _calls(env)] == ["ssh", "curl"]
 
     def test_host_is_required(self, tmp_path):
         env = _stubs(tmp_path, _write_output("x"))
