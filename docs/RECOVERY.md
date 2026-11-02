@@ -54,7 +54,8 @@ A rebuilt host needs these from their owners, not from GCS:
   password, reset on the new cluster), `ADDRESS_VALIDATOR_API_KEY` (from
   CannObserv/address-validator's owner), `ENABLE_ADDRESS_VALIDATION`.
 - The backup's own three files (below) — a fresh key from the GCP owner, the
-  check-in key from co-status.
+  check-in key from co-status — and the check-in key's three other copies
+  ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)).
 - The repo-root `.env` (GitHub PATs, `TEST_DATABASE_URL`) and the deploy key.
 - A tailnet auth key (below).
 
@@ -140,8 +141,8 @@ Created on co-status, not here (CannObserv/status#30, 2026-10-10): monitor
 `co-wslcb-backup`, id `01M4KCE70FJSJKCP2WFH990CAA`, tenant `co-wslcb`, on the
 same two notifier channels as `co-usa-wa-backup` and `co-observo-backup`. A
 rebuilt host keeps the id and needs only the key, re-issued by co-status's
-operator, terminal to terminal. The scrape has a second monitor on the same
-tenant, `co-wslcb-scrape`: [`MONITORING.md`](MONITORING.md). The fields:
+operator, terminal to terminal. Three more monitors share the tenant and its
+key (scrape, classify, disk headroom): [`MONITORING.md`](MONITORING.md). The fields:
 
 | Field | Value | Why |
 |---|---|---|
@@ -233,7 +234,12 @@ sudo systemctl start wslcb-backup.service
 ```
 
 All three or none: half a configuration logs an ERROR naming what is missing
-and checks in nothing. A landed check-in shows in the journal only as httpx's
+and checks in nothing. **The key has three more copies** (scrape, classify,
+the disk sensor): restore them from this one with
+[`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)'s `install`
+lines. Until then a missing scrape or classify copy fails that unit's start,
+and an empty copy, or a missing disk-sensor one, checks in nothing. A landed
+check-in shows in the journal only as httpx's
 `"HTTP/1.1 202 Accepted"`; the proof is the monitor's fresh last check-in.
 **Then see the alarm fire** before relying on it: narrow the monitor to
 `interval_seconds` 60 / `grace_seconds` 0, wait for *"has stopped reporting"*,

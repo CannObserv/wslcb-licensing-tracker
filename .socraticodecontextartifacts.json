@@ -13,7 +13,12 @@
     {
       "name": "deployment",
       "path": "docs/DEPLOYMENT.md",
-      "description": "Server lifecycle, systemd service management, address validation workflow, backfill commands, and full ops reference. Check before touching infra, services, or env config."
+      "description": "Server lifecycle, systemd service management, backfill commands, and full ops reference. Check before touching infra, services, or env config."
+    },
+    {
+      "name": "address-validation",
+      "path": "docs/ADDRESS_VALIDATION.md",
+      "description": "Address-validator client ops: API key and flags, renewal TTL and rolling-24h USPS pacing (#195), backfill/renew/refresh commands. Check before touching address_validator.py, address_client.py, or the address timers."
     },
     {
       "name": "memory-pressure",

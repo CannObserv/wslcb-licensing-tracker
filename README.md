@@ -280,6 +280,7 @@ wslcb-licensing-tracker/
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
 │   ├── test_no_channel_urls.py  # No live Mayfly channel URL in any tracked file (#181)
 │   ├── test_docs_layout.py      # Dated docs stay in docs/specs/ + docs/plans/, not docs/superpowers/ (#176)
+│   ├── test_docs_checkin_keys.py # MONITORING.md § Key rotation names every co-wslcb check-in key copy, mode, recipe + check (#241)
 │   ├── test_infra_memory_pressure.py # infra/ memory-pressure configs, SocratiCode pin agreement + loopback recreate (#175, #180, #222)
 │   ├── test_infra_web_unit.py    # wslcb-web starts after Postgres, never bound to its lifetime (#184)
 │   ├── test_journald_config.py # journald drop-in: persistent, 512M; on the host, the flush unmasked + journal on disk (#186)
@@ -297,7 +298,8 @@ wslcb-licensing-tracker/
 │   │   └── fixtures/            # Pages rendered by tests/htmx_fixtures.py (regenerate, never hand-edit)
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 └── docs/                   # Operations and architecture documentation
-    ├── DEPLOYMENT.md        # systemd setup, service lifecycle, address validation ops
+    ├── ADDRESS_VALIDATION.md # address-validator client: key + flags, renewal TTL + pacing (#195), address commands
+    ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
@@ -479,7 +481,7 @@ Locations are validated at scrape time. When a new record references an already-
 uv run wslcb ingest backfill-addresses
 ```
 
-The daily timer runs `renew-addresses`, which also renews early from due-date peaks within the rolling 24h budget (#195; see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#renewal-ttl--pacing)).
+The daily timer runs `renew-addresses`, which also renews early from due-date peaks within the rolling 24h budget (#195; see [`docs/ADDRESS_VALIDATION.md`](docs/ADDRESS_VALIDATION.md#renewal-ttl--pacing)).
 
 To re-validate all locations (e.g., after the validation service is updated):
 
@@ -487,7 +489,7 @@ To re-validate all locations (e.g., after the validation service is updated):
 uv run wslcb ingest refresh-addresses
 ```
 
-USPS allows about 500 calls per rolling 24h, so a full refresh stops within minutes when the quota runs out and leaves the scrape hooks no budget for a day. To work through a list of locations at a sustainable pace, pass `--location-ids FILE --budget-reserve 100` and run it daily (see [DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+USPS allows about 500 calls per rolling 24h, so a full refresh stops within minutes when the quota runs out and leaves the scrape hooks no budget for a day. To work through a list of locations at a sustainable pace, pass `--location-ids FILE --budget-reserve 100` and run it daily (see [ADDRESS_VALIDATION.md](docs/ADDRESS_VALIDATION.md)).
 
 This is safe to interrupt — progress is committed in batches and each location's timestamp is updated individually.
 

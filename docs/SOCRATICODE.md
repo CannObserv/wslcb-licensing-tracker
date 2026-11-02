@@ -143,6 +143,7 @@ whatever `.socraticodecontextartifacts.json` lists — currently
 [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
 [`docs/MIGRATIONS.md`](MIGRATIONS.md) (`database-migrations`),
 [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
+[`docs/ADDRESS_VALIDATION.md`](ADDRESS_VALIDATION.md) (`address-validation`),
 [`docs/MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md) (`memory-pressure`),
 [`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md),
 [`docs/STYLE.md`](STYLE.md), `infra/`, this file, and three directories of

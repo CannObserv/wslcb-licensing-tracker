@@ -4,15 +4,17 @@
 # repo-wide figure in .skills/context-token-ratio, falling back to it for a
 # file never counted exactly or since drifted far from the size recorded here.
 14084 5984 AGENTS.md
-23324 9941 docs/DEPLOYMENT.md
-14884 5888 docs/MEMORY_PRESSURE.md
+7550 3090 docs/ADDRESS_VALIDATION.md
+16630 7234 docs/DEPLOYMENT.md
+2389 1043 docs/DISK_GC.md
+15112 5978 docs/MEMORY_PRESSURE.md
 2860 1135 docs/MIGRATIONS.md
-11833 4985 docs/MONITORING.md
+18480 7873 docs/MONITORING.md
 3581 1568 docs/RECOVERY-REHEARSALS.md
-17928 7811 docs/RECOVERY.md
-4968 2260 docs/RELAY.md
+18659 8094 docs/RECOVERY.md
+5170 2338 docs/RELAY.md
 24426 9746 docs/SCHEMA.md
-16967 6204 docs/SKILLS.md
-9527 3711 docs/SOCRATICODE.md
+19616 7191 docs/SKILLS.md
+9712 3796 docs/SOCRATICODE.md
 1668 689 docs/SOURCE_PAGE.md
 6751 2923 docs/STYLE.md
