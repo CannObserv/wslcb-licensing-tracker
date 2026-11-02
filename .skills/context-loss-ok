@@ -6,15 +6,12 @@
 AGENTS.md :: retarget :: SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this host has no swap and co-hosts `wslcb-web.service`, and a per-launch `npx socraticode@latest` install was the measured memory peak, not the indexing (#175). Never "fix" the driver back to `npx`; confirm with `mcp-driver.mjs resolve`. The plugin session is pinned too: `.claude/settings.json` *declares* `SOCRATICODE_SPEC`, but only VS Code's machine-scoped `claudeCode.environmentVariables` *delivers* it to the launch — verify with `ps`, never `claude mcp list` (#180). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) **Memory pressure**.
 AGENTS.md :: retarget :: `curating-context` owns this file's 6,000-token budget (#165). Its `PostToolUse` guard `.claude/hooks/context-budget-guard.sh` warns — never blocks — when an edit pushes `AGENTS.md` or a live `docs/*.md` further over budget; budgets live in `.skills/context-budget` and `.skills/context-doc-budget`, run history in `.skills/context-metrics.jsonl`.
 AGENTS.md :: retarget :: - [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference and migration history
-docs/DEPLOYMENT.md :: retarget :: | Service reservation — `MemoryLow=256M`, `OOMScoreAdjust=-700` | `infra/wslcb-web.service` | `sudo cp` + `daemon-reload` + restart (see above) |
 docs/SCHEMA.md :: retarget :: Detailed reference for all PostgreSQL tables, columns, constraints, and the Alembic migration chain.
 
 # Count precision dropped (check-counts.sh form 2): same claims, no number to rot.
 AGENTS.md :: tighten :: - **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json`, or uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` lines bypass the JSON formatter and journald gets mixed plain-text/JSON logs (#162). That file and `setup_logging()` share one formatter via `build_json_formatter()` — change the JSON schema in that factory only. `log_config.json` also attaches `ColorMessageFilter` to all three uvicorn loggers, stripping uvicorn's ANSI-coloured `color_message` extra at the record (#163) — keep it on the *loggers*, not the handler or the formatter's `reserved_attrs`: a filter placed on one sink is resurrected by the next one, and a logger never inherits an ancestor's filters.
 AGENTS.md :: tighten :: | `/etc/wslcb-licensing-tracker/backup.env` + two `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
 
-# #208 CR 8: the apply commands moved to MEMORY_PRESSURE.md; the stub anchor made this a two-hop pointer.
-docs/DEPLOYMENT.md :: retarget :: | Memory-pressure config change | **Not covered by the globs above** — `infra/` also holds a slice drop-in, a sysctl conf and an earlyoom default, none of them `*.service`/`*.timer`. See [Memory pressure](#memory-pressure-175) for the four apply commands. |
 
 # 2026-11-02, #240: shipping-work-python-fastapi retired for the unified shipping-work skill
 # (gregoryfoster/skills#537); the skill name in the pointer followed its target.
