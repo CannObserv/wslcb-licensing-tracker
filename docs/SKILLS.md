@@ -131,10 +131,10 @@ Finalizes work: commits, pushes, and reflects it on GitHub (closes issues, posts
 
 **The wrapper.** The skill is a whole-directory vendor symlink. The one project-local piece is the repo-root `scripts/pre-ship.sh`, which execs the vendored gate through `skills/shipping-work/`. Step 1 resolves each script on its own, so it wins for `pre-ship.sh` alone and the other five steps still find theirs in the skill (gregoryfoster/skills#301). It:
 
-- **parses** `$PROJECT_ROOT/.env` line by line, so the PostgreSQL tests see `TEST_DATABASE_URL` instead of silently skipping. It never *sources* the file: `source` executes it, and `.env` holds live PATs.
+- **parses** `$PROJECT_ROOT/.env` line by line, so the PostgreSQL tests see the test database URL instead of silently skipping. It never *sources* the file: `source` executes it, and `.env` holds live PATs.
 - falls back, in a linked worktree (no `.env`), to the primary checkout's, and warns when neither exists.
 - exports the loaded names (never values) as `PRE_SHIP_ENV_NAMES`. The vendored gate keys its pass stamp on them, so a run with no env records no pass (#235, skills#497).
-- never loads `/etc/wslcb-licensing-tracker/.env`, unlike upstream's recipe: that holds the production `DATABASE_URL` (`tests/test_pre_ship_wrapper.py`).
+- never loads `/etc/wslcb-licensing-tracker/.env`, unlike upstream's recipe: that holds the production database URL (`tests/test_pre_ship_wrapper.py`).
 
 The stamp is recorded only for a tree with no untracked, unignored file. The main checkout keeps `.skills/worktree_venv` untracked on purpose, so every gate run there is a full run.
 

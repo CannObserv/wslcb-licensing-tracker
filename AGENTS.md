@@ -85,6 +85,7 @@ Replay-extract boundary (#154): the extract *files* are derived (natural-key pat
 - Python 3.12+, `uv` at `./.venv/`. Install: `uv sync --dev`.
 - Use `datetime.now(timezone.utc)` not `datetime.utcnow()` (deprecated).
 - Module docstrings on every `.py` file.
+- Env vars: prefix `CO_WSLCB_LICENSING_TRACKER_`, read via `config.env()` (#204; enforced by `tests/test_env_prefix.py`).
 
 ### Logging
 - **Never `print()`** for operational output (CLI summary lines excepted). Use `logging`.
@@ -96,7 +97,7 @@ Replay-extract boundary (#154): the extract *files* are derived (natural-key pat
 ### Testing
 Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/ -v` must pass before committing.
 
-- No network calls, no disk DB. PostgreSQL tests use `pg_conn` / `pg_engine` fixtures (require `TEST_DATABASE_URL`).
+- No network calls, no disk DB. PostgreSQL tests use `pg_conn` / `pg_engine` fixtures (need the test DB URL).
 - Match `test_<module>.py` to the module being changed. Sample fixtures in `conftest.py`.
 - Route tests that build a bare `TestClient(app)` (no `with`) don't drive the lifespan that sets `app.state.engine`. Stamp it via the shared helper in `tests/_support.py`: `from ._support import _stamp_engine  # noqa: F401` (autouse; covers the whole module), or `with stamped_engine(mock_engine):` for a scoped stamp (#155).
 - Warnings fail the run (`filterwarnings`, #216): fix the source. Mock a sync API (`Result.scalar_one`) with `MagicMock`; an `AsyncMock` orphan fails whichever test hits GC.
@@ -147,9 +148,9 @@ scripts/build-css.sh        # manual CSS rebuild if changing templates or tailwi
 
 | File | Content |
 |---|---|
-| `/etc/wslcb-licensing-tracker/.env` | Production: `DATABASE_URL`, `ADDRESS_VALIDATOR_API_KEY`, `ENABLE_ADDRESS_VALIDATION`, scrape/classify check-in id/URL, Jev vars (#196, #207; [`MONITORING.md`](docs/MONITORING.md)) |
+| `/etc/wslcb-licensing-tracker/.env` | Production: DB URL, address-validator key + flag, scrape/classify check-in id/URL, Jev vars (#196, #207; [`MONITORING.md`](docs/MONITORING.md)) |
 | `/etc/wslcb-licensing-tracker/backup.env` + its `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
-| `.env` (repo root, gitignored) | Dev/agent: `ADMIN_DEV_EMAIL`, `TEST_DATABASE_URL`, plus GitHub PATs for the `gh` CLI |
+| `.env` (repo root, gitignored) | Dev/agent: test DB URL, admin dev email, PATs for the `gh` CLI |
 | `.env.example` (committed) | Canonical list of every env var the project consumes, with comments |
 
 ## Common Tasks

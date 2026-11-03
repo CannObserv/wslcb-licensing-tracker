@@ -44,7 +44,7 @@ anyone looked (#198).
   *different* failure at once.
 - **Silence** alarms too: a stopped timer, a masked unit, a run hung until
   its timeout.
-- Config: `WSLCB_SCRAPE_CHECKIN_BASE_URL` and `WSLCB_SCRAPE_MONITOR_ID` in
+- Config: `…_SCRAPE_CHECKIN_BASE_URL` and `…_SCRAPE_MONITOR_ID` in
   `/etc/wslcb-licensing-tracker/.env` (the template's `EnvironmentFile`); the
   key is the drop-in's `checkin-key` credential, never an env var. A manual
   `wslcb ingest scrape` has no credential and warns that it isn't checking in.

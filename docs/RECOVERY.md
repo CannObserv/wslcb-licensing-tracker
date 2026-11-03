@@ -17,7 +17,7 @@ code; where this repo departs, the reason is stated. Dated drill results go in
 | **Verified** | `pg_restore --list` finds `alembic_version`, `license_records`, `sources`, `record_sources`; `pg_restore -f /dev/null` reads it through; sha256 in metadata | md5 vs. the bucket's `md5Hash`; a local file that differs from its object is a **failure**, never an overwrite |
 | **RPO** | 24 h (scraped records since the dump replay from the archive — see *Restore*) | 24 h, plus a 10-minute settle window for files still being written |
 
-`<host>` is `hostname` (`wslcb-licensing-tracker`) unless `WSLCB_BACKUP_PREFIX`
+`<host>` is `hostname` (`wslcb-licensing-tracker`) unless `CO_WSLCB_LICENSING_TRACKER_BACKUP_PREFIX`
 says otherwise. Both phases run every night, `08:17 America/Los_Angeles` ±10 min
 (after the 06:30 PT scrape has finished), as `wslcb-backup.service`
 (`infra/`). Either failing fails the unit and sends an `alert` check-in.
@@ -50,13 +50,14 @@ cannot erase its history; retention belongs to the bucket. GCS soft-delete
 
 A rebuilt host needs these from their owners, not from GCS:
 
-- `/etc/wslcb-licensing-tracker/.env`: `DATABASE_URL` (the `wslcb` role's
-  password, reset on the new cluster), `ADDRESS_VALIDATOR_API_KEY` (from
-  CannObserv/address-validator's owner), `ENABLE_ADDRESS_VALIDATION`.
+- `/etc/wslcb-licensing-tracker/.env` (names `CO_WSLCB_LICENSING_TRACKER_*`,
+  `.env.example`): `…_DATABASE_URL` (the `wslcb` role's password, reset on the
+  new cluster), `…_ADDRESS_VALIDATOR_API_KEY` (from CannObserv/address-validator's
+  owner), `…_ENABLE_ADDRESS_VALIDATION`.
 - The backup's own three files (below) — a fresh key from the GCP owner, the
   check-in key from co-status — and the check-in key's three other copies
   ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation)).
-- The repo-root `.env` (GitHub PATs, `TEST_DATABASE_URL`) and the deploy key.
+- The repo-root `.env` (GitHub PATs, `…_TEST_DATABASE_URL`) and the deploy key.
 - A tailnet auth key (below).
 
 Code is on GitHub; `infra/` holds every unit.
@@ -189,8 +190,8 @@ sudo install -m 0400 -o root -g root co-wslcb-backup.json /etc/wslcb-licensing-t
 shred -u co-wslcb-backup.json
 sudo install -m 0400 -o root -g root /dev/null /etc/wslcb-licensing-tracker/backup-checkin.key
 sudo tee /etc/wslcb-licensing-tracker/backup.env >/dev/null <<'EOF'
-WSLCB_BACKUP_BUCKET=co-gcs-wslcb-backup
-WSLCB_ARCHIVE_BUCKET=co-gcs-wslcb-archive
+CO_WSLCB_LICENSING_TRACKER_BACKUP_BUCKET=co-gcs-wslcb-backup
+CO_WSLCB_LICENSING_TRACKER_ARCHIVE_BUCKET=co-gcs-wslcb-archive
 CO_WSLCB_LICENSING_TRACKER_CONTACT_EMAIL=code@cannabis.observer
 EOF
 sudo chmod 0644 /etc/wslcb-licensing-tracker/backup.env
@@ -227,8 +228,8 @@ reaches neither history nor argv, and through `tee` so the file keeps its mode:
 read -rsp 'check-in key: ' KEY; echo
 printf '%s' "$KEY" | sudo tee /etc/wslcb-licensing-tracker/backup-checkin.key >/dev/null; unset KEY
 sudo tee -a /etc/wslcb-licensing-tracker/backup.env >/dev/null <<'EOF'
-WSLCB_BACKUP_CHECKIN_BASE_URL=http://status:9000
-WSLCB_BACKUP_MONITOR_ID=<monitor id>
+CO_WSLCB_LICENSING_TRACKER_BACKUP_CHECKIN_BASE_URL=http://status:9000
+CO_WSLCB_LICENSING_TRACKER_BACKUP_MONITOR_ID=<monitor id>
 EOF
 sudo systemctl start wslcb-backup.service
 ```
@@ -280,7 +281,7 @@ Run as root with the key, from the checkout (`sudo -i`, then):
 ```bash
 cd /home/exedev/wslcb-licensing-tracker
 export GOOGLE_APPLICATION_CREDENTIALS=/etc/wslcb-licensing-tracker/co-wslcb-backup.json
-export WSLCB_BACKUP_BUCKET=co-gcs-wslcb-backup WSLCB_ARCHIVE_BUCKET=co-gcs-wslcb-archive
+export CO_WSLCB_LICENSING_TRACKER_BACKUP_BUCKET=co-gcs-wslcb-backup CO_WSLCB_LICENSING_TRACKER_ARCHIVE_BUCKET=co-gcs-wslcb-archive
 .venv/bin/wslcb ops restore --list                           # every host's dumps, both tiers
 ```
 
@@ -346,7 +347,7 @@ a scratch database, never `wslcb`:
 ```bash
 sudo -u postgres createdb -O wslcb wslcb_drill
 .venv/bin/wslcb ops restore --latest --prefix wslcb-licensing-tracker --into wslcb_drill --run-as postgres
-DATABASE_URL="$(sed -n 's|^DATABASE_URL=\(.*\)/wslcb$|\1/wslcb_drill|p' /etc/wslcb-licensing-tracker/.env)" \
+CO_WSLCB_LICENSING_TRACKER_DATABASE_URL="$(sed -n 's|^CO_WSLCB_LICENSING_TRACKER_DATABASE_URL=\(.*\)/wslcb$|\1/wslcb_drill|p' /etc/wslcb-licensing-tracker/.env)" \
     .venv/bin/wslcb db check
 .venv/bin/wslcb ops restore-archive --prefix wslcb-licensing-tracker --into /root/drill-data --path remediation-backups
 sudo -u postgres dropdb wslcb_drill; rm -r /root/drill-data
@@ -355,4 +356,4 @@ sudo -u postgres dropdb wslcb_drill; rm -r /root/drill-data
 plus go/no-go 1 and 2 above against `wslcb_drill`. Record the date, object,
 timings and anything that surprised you in `RECOVERY-REHEARSALS.md`. Every test
 run also rehearses a real `pg_dump` → fake bucket → `pg_restore` round trip
-(`tests/test_backup_restore_rehearsal.py`; needs `TEST_DATABASE_URL`).
+(`tests/test_backup_restore_rehearsal.py`; needs `…_TEST_DATABASE_URL`).

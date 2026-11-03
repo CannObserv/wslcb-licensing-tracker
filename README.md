@@ -85,7 +85,7 @@ wslcb-licensing-tracker/
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
 ├── diff_replay.py          # Chain replay of CO diff archives (#151; no DB, no side effects)
 ├── text_utils.py           # Pure-string text normalization (clean_entity_name, strip_duplicate_marker, …)
-├── engine.py               # Async SQLAlchemy engine factory (DATABASE_URL env var)
+├── engine.py               # Async SQLAlchemy engine factory (…_DATABASE_URL env var)
 ├── models.py               # SQLAlchemy Core Table definitions (all 20 tables)
 ├── schema.py               # Alembic-based schema init (alembic upgrade head)
 ├── db.py                   # Async location/source/provenance helpers + shared constants
@@ -123,7 +123,7 @@ wslcb-licensing-tracker/
 ├── log_config.py           # Centralized logging configuration
 ├── config.py               # Runtime config helpers (get_build_id); env vars in .env.example
 ├── seed_code_map.json      # Seed data: WSLCB numeric code → endorsement name(s)
-├── .env                    # Dev env vars: DATABASE_URL, ADMIN_DEV_EMAIL, etc. (gitignored)
+├── .env                    # Dev env vars, prefixed per .env.example (gitignored)
 ├── templates/
 │   ├── base.html           # Base layout template
 │   ├── index.html          # Dashboard with stats
@@ -230,23 +230,23 @@ wslcb-licensing-tracker/
 │   ├── test_admin_routes.py     # Admin route tests
 │   ├── test_admin_entity_routes.py # Admin classification review route tests
 │   ├── test_admin_users.py      # Admin user management route tests
-│   ├── test_admin_auth_pg.py    # Admin user CLI DB logic (require TEST_DATABASE_URL)
-│   ├── test_admin_users_pg.py   # Admin user route DB logic (require TEST_DATABASE_URL)
+│   ├── test_admin_auth_pg.py    # Admin user CLI DB logic (require the test DB)
+│   ├── test_admin_users_pg.py   # Admin user route DB logic (require the test DB)
 │   ├── test_admin_endorsements.py # Admin endorsement/substance route tests
 │   ├── test_data_migration.py   # Run-once data migration framework tests
 │   ├── test_engine.py      # Async engine factory tests
 │   ├── test_db.py            # Location/source/provenance helper tests
-│   ├── test_schema.py        # Alembic migration tests (require TEST_DATABASE_URL)
-│   ├── test_pipeline.py      # Ingestion pipeline tests (require TEST_DATABASE_URL)
-│   ├── test_queries.py       # Search, filter, stats tests (require TEST_DATABASE_URL)
-│   ├── test_link_records.py  # Record linking tests (require TEST_DATABASE_URL)
-│   ├── test_endorsements.py  # Endorsement pipeline tests (require TEST_DATABASE_URL)
-│   ├── test_endorsements_seed.py # Endorsement seeding tests (require TEST_DATABASE_URL)
+│   ├── test_schema.py        # Alembic migration tests (require the test DB)
+│   ├── test_pipeline.py      # Ingestion pipeline tests (require the test DB)
+│   ├── test_queries.py       # Search, filter, stats tests (require the test DB)
+│   ├── test_link_records.py  # Record linking tests (require the test DB)
+│   ├── test_endorsements.py  # Endorsement pipeline tests (require the test DB)
+│   ├── test_endorsements_seed.py # Endorsement seeding tests (require the test DB)
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
-│   ├── test_entities.py      # Entity normalization tests (require TEST_DATABASE_URL)
-│   ├── test_entity_classification.py # Classification resolver + Jev rollback (require TEST_DATABASE_URL)
-│   ├── test_classification_review.py # Operator actions, review queue, health (require TEST_DATABASE_URL)
-│   ├── test_integrity.py     # Integrity check tests (require TEST_DATABASE_URL)
+│   ├── test_entities.py      # Entity normalization tests (require the test DB)
+│   ├── test_entity_classification.py # Classification resolver + Jev rollback (require the test DB)
+│   ├── test_classification_review.py # Operator actions, review queue, health (require the test DB)
+│   ├── test_integrity.py     # Integrity check tests (require the test DB)
 │   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196), freshness (#197)
 │   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
 │   ├── test_backfill_diffs.py   # Diff-archive scanning, dry-run, and live ingest
@@ -274,7 +274,7 @@ wslcb-licensing-tracker/
 │   ├── test_infra_address_validation_unit.py # daily renew-addresses timer + timeout drop-in pins (#195)
 │   ├── test_infra_compress_stragglers_unit.py # weekly straggler timer in the old disk-hygiene slot; the tooling timer stays retired (#200)
 │   ├── test_jev_client.py       # Jev transport: request shape, retries, malformed answers (#207)
-│   ├── test_jev_classifier.py   # Classify-once runs, lock, failures, check-in payload (require TEST_DATABASE_URL)
+│   ├── test_jev_classifier.py   # Classify-once runs, lock, failures, check-in payload (require the test DB)
 │   ├── gcs_fakes.py             # SDK-faithful google-cloud-storage fakes (#185)
 │   ├── test_seed_code_map.py    # Structural guards for seed_code_map.json
 │   ├── test_doc_sensitive_paths.py # Guards .skills/doc-sensitive-paths + doc-sections against inert entries (#172, #173)
@@ -347,7 +347,7 @@ Create `.env` at the repo root and set your PostgreSQL connection URL:
 
 ```bash
 # .env (gitignored)
-DATABASE_URL=postgresql+asyncpg://user:password@localhost/wslcb
+CO_WSLCB_LICENSING_TRACKER_DATABASE_URL=postgresql+asyncpg://user:password@localhost/wslcb
 ```
 
 Apply the schema:
@@ -408,7 +408,7 @@ journalctl -u wslcb-web.service       # web app logs
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `ADDRESS_VALIDATOR_API_KEY` | *(none)* | API key for the address validation service |
+| `CO_WSLCB_LICENSING_TRACKER_ADDRESS_VALIDATOR_API_KEY` | *(none)* | API key for the address validation service. Every variable carries this prefix; `.env.example` lists them all (#204). |
 
 Archived HTML snapshots and other persistent data are stored in `./data/` relative to the project root.
 
@@ -611,7 +611,7 @@ uv run wslcb ops restore-archive --prefix HOST --into DIR [--path SUBPATH]
 
 ## Testing
 
-The project uses pytest with async PostgreSQL mocks and static HTML fixtures. Tests that require a live database are skipped unless `TEST_DATABASE_URL` is set. Non-PG tests run in under 2 seconds with no network calls.
+The project uses pytest with async PostgreSQL mocks and static HTML fixtures. Tests that require a live database are skipped unless `CO_WSLCB_LICENSING_TRACKER_TEST_DATABASE_URL` is set. Non-PG tests run in under 2 seconds with no network calls.
 
 ```bash
 uv run pytest tests/ -v              # coverage runs automatically
@@ -643,26 +643,26 @@ Test structure:
 | `tests/test_data_migration.py` | Run-once migration framework — idempotency, ordering |
 | `tests/test_engine.py` | Async engine factory |
 | `tests/test_db.py` | Location/source/provenance helper functions |
-| `tests/test_schema.py` | Alembic migration tests (require `TEST_DATABASE_URL`) |
-| `tests/test_pipeline.py` | Ingestion pipeline — insert, dedup, endorsements, entities (require `TEST_DATABASE_URL`) |
-| `tests/test_queries.py` | Search, filters, stats, export, entity queries (require `TEST_DATABASE_URL`) |
-| `tests/test_link_records.py` | Record linking — bulk, incremental, outcome status (require `TEST_DATABASE_URL`) |
-| `tests/test_endorsements.py` | Endorsement pipeline — processing, repair, alias system (require `TEST_DATABASE_URL`) |
-| `tests/test_endorsements_seed.py` | Endorsement seeding and code-map repair (require `TEST_DATABASE_URL`) |
+| `tests/test_schema.py` | Alembic migration tests (require the test DB) |
+| `tests/test_pipeline.py` | Ingestion pipeline — insert, dedup, endorsements, entities (require the test DB) |
+| `tests/test_queries.py` | Search, filters, stats, export, entity queries (require the test DB) |
+| `tests/test_link_records.py` | Record linking — bulk, incremental, outcome status (require the test DB) |
+| `tests/test_endorsements.py` | Endorsement pipeline — processing, repair, alias system (require the test DB) |
+| `tests/test_endorsements_seed.py` | Endorsement seeding and code-map repair (require the test DB) |
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
-| `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require `TEST_DATABASE_URL`) |
-| `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require `TEST_DATABASE_URL`) |
-| `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require `TEST_DATABASE_URL`) |
+| `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require the test DB) |
+| `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require the test DB) |
+| `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require the test DB) |
 | `tests/test_jev_client.py` | Jev transport — request shape, 429/529 retry, auth errors, malformed responses fail the batch |
-| `tests/test_jev_classifier.py` | Jev runs — classify once, modes, advisory lock, failure stops, run rows, check-in payload (require `TEST_DATABASE_URL`) |
-| `tests/test_integrity.py` | Integrity checks — all check and fix functions (require `TEST_DATABASE_URL`) |
+| `tests/test_jev_classifier.py` | Jev runs — classify once, modes, advisory lock, failure stops, run rows, check-in payload (require the test DB) |
+| `tests/test_integrity.py` | Integrity checks — all check and fix functions (require the test DB) |
 | `tests/test_scraper.py` | Scraper — content hash deduplication, redundant data cleanup, run history + freshness |
 | `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill; renewal TTLs, early renewal and a walked rolling 24h budget (#195) |
 | `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
 | `tests/test_substances.py` | Regulated substance CRUD — get, add, remove, set-endorsements |
 | `tests/test_htmx_fixtures.py` | htmx harness fixtures are byte-identical to a fresh render of the templates (#232) |
 | `tests/js/test_htmx.js` | Vendored htmx under jsdom: `/entities` OOB live search (#215); Back shows the URL's query in every control, never a cached snapshot (#231) |
-| `tests/conftest.py` | Shared fixtures: sample record dicts, pg_conn/pg_engine (skipped without TEST_DATABASE_URL) |
+| `tests/conftest.py` | Shared fixtures: sample record dicts, pg_conn/pg_engine (skipped without the test DB URL) |
 | `tests/fixtures/` | Minimal HTML files exercising each record type and section |
 
 ## Data Source
