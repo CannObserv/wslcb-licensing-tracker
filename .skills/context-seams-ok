@@ -41,14 +41,9 @@ tests/test_doc_sensitive_paths.py :: (scratch / "AGENTS.md")
 tests/test_docs_layout.py :: AGENTS.md
 .claude/hooks/context-budget-guard.sh :: CLAUDE.md is followed to its target, which is the cohort norm.
 
-# Doc-split sweeps (DEPLOYMENT.md -> MEMORY_PRESSURE.md, SCHEMA.md -> MIGRATIONS.md):
-# each of these points at a DEPLOYMENT/SCHEMA section that did not move.
-docs/MEMORY_PRESSURE.md :: (see [After changing service files](DEPLOYMENT.md#after-changing-service-files))
-docs/MONITORING.md :: Jev classification ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Entity classification)
-docs/RELAY.md :: plus the [`DEPLOYMENT.md`](DEPLOYMENT.md) copy block, which installs the
-docs/SKILLS.md :: The advice printed on a hit — which doc sections to spot-check
-docs/SOCRATICODE.md :: [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
-docs/SOCRATICODE.md :: [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
-infra/wslcb-healthcheck.service :: (see docs/DEPLOYMENT.md "Sudoers rule")
-.socraticodecontextartifacts.json :: "path": "docs/DEPLOYMENT.md",
-.socraticodecontextartifacts.json :: "path": "docs/SCHEMA.md",
+# #242 (2026-11-03): pruned #208's nine doc-split acks (17d1e85: back-references into
+# DEPLOYMENT.md / SCHEMA.md, judged for the MEMORY_PRESSURE and MIGRATIONS splits). They
+# match only on a `--file docs/DEPLOYMENT.md` or `--file docs/SCHEMA.md` sweep, so every
+# default sweep reported them as matching nothing, and an ack can't be scoped to a target.
+# On the next split of either doc, those back-references must be re-judged against what
+# that split moves: a content-matched ack from #208 would silence one the split made false.
