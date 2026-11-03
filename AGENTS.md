@@ -162,10 +162,10 @@ uv run wslcb db check [--fix]               # integrity check
 uv run wslcb db reprocess-endorsements      # [--code N] [--record-id N] [--dry-run]
 uv run wslcb db rebuild-links               # rebuilds record_links + backfills previous_location_id
 uv run wslcb db classify-entities --dry-run # Jev pass cost; no flag = send (#207)
-uv run wslcb ingest compress-stragglers     # weekly data/ straggler gzip; tooling disk GC: DEPLOYMENT.md (#200)
+uv run wslcb ingest compress-stragglers     # weekly data/ straggler gzip; tooling disk GC: DISK_GC.md (#200)
 ```
 
-See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, backfill commands, admin users.
 
 ## Skills
 
@@ -181,14 +181,14 @@ SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this ho
 
 Dated analyses go under `docs/research/`, `docs/plans/`, or `docs/specs/`, which are excluded from the live surface. Vendored superpowers skills default to `docs/superpowers/{specs,plans}/`; this project overrides that — specs → `docs/specs/`, plans → `docs/plans/` (their own "user preferences override" clause applies; `tests/test_docs_layout.py` guards it, #176).
 
-`shipping-work`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172) and `.skills/doc-sections`, the advice printed on a hit (#173). Keep both files in step.
-
 See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases.
 
 ## Reference
 
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, full ops reference
+- [`docs/ADDRESS_VALIDATION.md`](docs/ADDRESS_VALIDATION.md) — address-validator key/flags, renewal TTL + pacing (#195), address commands
 - [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md) — no swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins + loopback containers (#175, #180, #222)
+- [`docs/DISK_GC.md`](docs/DISK_GC.md) — Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
 - [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape, classify): installs + fields
 - [`docs/RELAY.md`](docs/RELAY.md) — relayed scrape while WSLCB blocks the host (#198/#201): Mac LaunchAgent install, monitoring, retirement
 - [`docs/RECOVERY.md`](docs/RECOVERY.md) — nightly GCS backup (DB + `data/` archive), restore, drills; log in [`docs/RECOVERY-REHEARSALS.md`](docs/RECOVERY-REHEARSALS.md)

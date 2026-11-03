@@ -1,18 +1,13 @@
 # context-loss-ok — judged warrants for lines a curation rewrote rather than moved
 # (curating-context Phase 6). Format: [PATH ::] WARRANT :: CONTENT. See prove-no-loss.sh --help.
-# 2026-10-23, #208 run: Memory pressure split out of DEPLOYMENT.md, Migration Framework out of
-# SCHEMA.md, three Skills paragraphs demoted to docs/SKILLS.md; every pointer below followed its target.
 
-AGENTS.md :: retarget :: SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this host has no swap and co-hosts `wslcb-web.service`, and a per-launch `npx socraticode@latest` install was the measured memory peak, not the indexing (#175). Never "fix" the driver back to `npx`; confirm with `mcp-driver.mjs resolve`. The plugin session is pinned too: `.claude/settings.json` *declares* `SOCRATICODE_SPEC`, but only VS Code's machine-scoped `claudeCode.environmentVariables` *delivers* it to the launch — verify with `ps`, never `claude mcp list` (#180). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) **Memory pressure**.
-AGENTS.md :: retarget :: `curating-context` owns this file's 6,000-token budget (#165). Its `PostToolUse` guard `.claude/hooks/context-budget-guard.sh` warns — never blocks — when an edit pushes `AGENTS.md` or a live `docs/*.md` further over budget; budgets live in `.skills/context-budget` and `.skills/context-doc-budget`, run history in `.skills/context-metrics.jsonl`.
-AGENTS.md :: retarget :: - [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference and migration history
-docs/SCHEMA.md :: retarget :: Detailed reference for all PostgreSQL tables, columns, constraints, and the Alembic migration chain.
+# 2026-11-03, #242 run: two docs indexed in AGENTS.md § Reference. Their moves landed earlier
+# and deferred these pointers here: Address Validation left DEPLOYMENT.md in #241 (c31c601;
+# DEPLOYMENT.md keeps a 2-line stub pointing on), the disk GC in #200 (DISK_GC.md). Each
+# pointer below now names the doc directly. Seven entries from #208 (17d1e85) and #240 that
+# prove-no-loss.sh reported as matching nothing (six on AGENTS.md, one scoped to
+# docs/SCHEMA.md) were pruned: each line they warranted is the one that is there now.
 
-# Count precision dropped (check-counts.sh form 2): same claims, no number to rot.
-AGENTS.md :: tighten :: - **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json`, or uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` lines bypass the JSON formatter and journald gets mixed plain-text/JSON logs (#162). That file and `setup_logging()` share one formatter via `build_json_formatter()` — change the JSON schema in that factory only. `log_config.json` also attaches `ColorMessageFilter` to all three uvicorn loggers, stripping uvicorn's ANSI-coloured `color_message` extra at the record (#163) — keep it on the *loggers*, not the handler or the formatter's `reserved_attrs`: a filter placed on one sink is resurrected by the next one, and a logger never inherits an ancestor's filters.
-AGENTS.md :: tighten :: | `/etc/wslcb-licensing-tracker/backup.env` + two `0400` keys | `wslcb-backup.service` only — never loads the app `.env` (#185, [`docs/RECOVERY.md`](docs/RECOVERY.md)) |
-
-
-# 2026-11-02, #240: shipping-work-python-fastapi retired for the unified shipping-work skill
-# (gregoryfoster/skills#537); the skill name in the pointer followed its target.
-AGENTS.md :: retarget :: `shipping-work-python-fastapi`'s Step 1.5 doc gate is vendored, not forked — tailor it by editing `.skills/doc-sensitive-paths` (segment-matched, replaces upstream's defaults; `tests/test_doc_sensitive_paths.py` keeps every entry live) (#172) and `.skills/doc-sections`, the advice printed on a hit (#173). Keep both files in step.
+AGENTS.md :: retarget :: uv run wslcb ingest compress-stragglers     # weekly data/ straggler gzip; tooling disk GC: DEPLOYMENT.md (#200)
+AGENTS.md :: retarget :: See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.
+AGENTS.md :: retarget :: - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
