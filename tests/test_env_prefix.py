@@ -307,7 +307,9 @@ class TestRelay:
 
 class TestUnits:
     @pytest.mark.parametrize(
-        "unit", sorted(p for p in INFRA.rglob("*") if p.suffix in (".service", ".conf")), ids=str
+        "unit",
+        sorted(p for p in INFRA.rglob("*") if p.suffix in (".service", ".conf")),
+        ids=lambda p: str(p.relative_to(INFRA)),
     )
     def test_environment_lines_prefixed_or_allowed(self, unit):
         names = re.findall(r"^Environment=([A-Z][A-Z0-9_]*)=", unit.read_text(), re.MULTILINE)
