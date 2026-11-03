@@ -42,7 +42,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .config import user_agent_or_fallback
+from .config import ENV_PREFIX, env, user_agent_or_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +57,11 @@ class Monitor:
     monitor_id_env: str
 
 
-BACKUP = Monitor("backup", "WSLCB_BACKUP_CHECKIN_BASE_URL", "WSLCB_BACKUP_MONITOR_ID")
-SCRAPE = Monitor("scrape", "WSLCB_SCRAPE_CHECKIN_BASE_URL", "WSLCB_SCRAPE_MONITOR_ID")
-# Prefixed, as every variable added from #204 on; the two above keep their names.
+# Backup and scrape fall back to their pre-#204 WSLCB_* names (config.env).
+BACKUP = Monitor("backup", f"{ENV_PREFIX}BACKUP_CHECKIN_BASE_URL", f"{ENV_PREFIX}BACKUP_MONITOR_ID")
+SCRAPE = Monitor("scrape", f"{ENV_PREFIX}SCRAPE_CHECKIN_BASE_URL", f"{ENV_PREFIX}SCRAPE_MONITOR_ID")
 CLASSIFY = Monitor(
-    "classify",
-    "CO_WSLCB_LICENSING_TRACKER_CLASSIFY_CHECKIN_BASE_URL",
-    "CO_WSLCB_LICENSING_TRACKER_CLASSIFY_MONITOR_ID",
+    "classify", f"{ENV_PREFIX}CLASSIFY_CHECKIN_BASE_URL", f"{ENV_PREFIX}CLASSIFY_MONITOR_ID"
 )
 
 #: Set by systemd for a unit with credentials; the key is the file named below.
@@ -178,8 +176,8 @@ def post_checkin(  # noqa: PLR0913 — the seams are keyword-only
 
 def _configured(monitor: Monitor, environ: Mapping[str, str]) -> tuple[str, str, str] | None:
     """``(base, monitor_id, key)`` when all three are present and well-formed."""
-    base = environ.get(monitor.base_url_env, "").strip()
-    monitor_id = environ.get(monitor.monitor_id_env, "").strip()
+    base = (env(monitor.base_url_env, environ=environ) or "").strip()
+    monitor_id = (env(monitor.monitor_id_env, environ=environ) or "").strip()
     api_key = _read_key(environ)
     sources = f"{monitor.base_url_env}, {monitor.monitor_id_env} and {_KEY_LABEL}"
     present = {

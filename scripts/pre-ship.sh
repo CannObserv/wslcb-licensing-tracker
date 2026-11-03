@@ -3,7 +3,7 @@
 # shipping-work gate.
 #
 # Why this exists: this repo's PostgreSQL tests read live secrets from the
-# repo-root .env (TEST_DATABASE_URL and friends). Without them loaded, ~160 PG
+# repo-root .env (the test database URL and friends). Without them loaded, ~160 PG
 # tests silently SKIP rather than fail, so the ship gate would go green on a
 # suite that never ran. Everything else — every gate below the delegate — is
 # upstream's and is deliberately NOT forked.
@@ -15,7 +15,7 @@
 #
 # DEVIATION (#235): the recipe also loads `/etc/<project>/.env`. Not here:
 # /etc/wslcb-licensing-tracker/.env is group-readable by this user and holds
-# the PRODUCTION DATABASE_URL, which a test gate must never carry.
+# the PRODUCTION database URL, which a test gate must never carry.
 set -euo pipefail
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel)

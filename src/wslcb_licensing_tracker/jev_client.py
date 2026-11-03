@@ -18,13 +18,12 @@ an error message.
 import asyncio
 import logging
 import math
-import os
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 import httpx
 
-from .config import ENV_PREFIX
+from .config import ENV_PREFIX, env
 
 logger = logging.getLogger(__name__)
 
@@ -124,17 +123,17 @@ def is_classification_enabled() -> bool:
 
     Read at call time.  Gates Jev calls only; resolution never reads it.
     """
-    return os.environ.get(_ENABLED_ENV, "").strip().lower() in ("1", "true", "yes")
+    return env(_ENABLED_ENV, "").strip().lower() in ("1", "true", "yes")
 
 
 def get_api_key() -> str:
     """Return ``…_TYPESAFE_API_KEY`` ("" when unset).  Read at call time."""
-    return os.environ.get(_API_KEY_ENV, "").strip()
+    return env(_API_KEY_ENV, "").strip()
 
 
 def get_model() -> str:
     """Return the pinned Jev model, ``…_JEV_MODEL`` or ``DEFAULT_MODEL``."""
-    return os.environ.get(_MODEL_ENV, "").strip() or DEFAULT_MODEL
+    return env(_MODEL_ENV, "").strip() or DEFAULT_MODEL
 
 
 def max_names_per_run() -> int:
@@ -142,7 +141,7 @@ def max_names_per_run() -> int:
 
     A non-integer or a value below 1 logs a WARNING and gives the default.
     """
-    raw = os.environ.get(_MAX_NAMES_ENV, "").strip()
+    raw = env(_MAX_NAMES_ENV, "").strip()
     if not raw:
         return _DEFAULT_MAX_NAMES_PER_RUN
     try:

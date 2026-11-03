@@ -24,7 +24,7 @@ The import (`wslcb ingest import-relayed`) ingests through the scrape's own path
 under the `relayed_scrape` source type ("Relayed Capture" on record pages). How
 it reads in `/health` and co-status: § Monitoring below.
 
-**VM, once:** `mkdir -p ~/wslcb-relay-inbox` (or set `WSLCB_RELAY_INBOX` in
+**VM, once:** `mkdir -p ~/wslcb-relay-inbox` (or set `CO_WSLCB_LICENSING_TRACKER_RELAY_INBOX` in
 `/etc/wslcb-licensing-tracker/.env`; keep it outside `data/`, which the backup
 mirrors), plus the [`DEPLOYMENT.md`](DEPLOYMENT.md) copy block, which installs the
 `wslcb-task@import-relayed.service.d/` drop-in.
@@ -55,8 +55,14 @@ launchctl kickstart -p gui/$(id -u)/org.cannobserv.wslcb-relay   # one run now
 tail -f ~/Library/Logs/wslcb-relay.log    # ends "relay: done: <name>"
 ```
 
+**Mac, on an update** (e.g. #204's rename), from a pulled checkout: re-run the
+`install` line, then `launchctl bootout gui/$(id -u)/org.cannobserv.wslcb-relay`
+and the `sed`, `bootstrap` and `kickstart` lines. A pre-#204 plist still works
+with the new script: its `WSLCB_RELAY_HOST` logs a `deprecated` line until
+#244.
+
 The VM's copy of each run is in `journalctl -u wslcb-task@import-relayed`. A
-run by hand (`WSLCB_RELAY_HOST=wslcb-relay ~/.local/bin/wslcb-relay-capture.sh`)
+run by hand (`CO_WSLCB_LICENSING_TRACKER_RELAY_HOST=wslcb-relay ~/.local/bin/wslcb-relay-capture.sh`)
 works the same way.
 
 **Retire** when co-status reports the scrape fault *has cleared*:

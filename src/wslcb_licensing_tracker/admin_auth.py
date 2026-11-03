@@ -1,7 +1,7 @@
 """Admin authentication middleware for the WSLCB Licensing Tracker.
 
 Leverages exe.dev proxy headers (``X-ExeDev-Email``, ``X-ExeDev-UserID``) for
-authentication.  Falls back to ``ADMIN_DEV_EMAIL`` / ``ADMIN_DEV_USERID`` env
+authentication.  Falls back to ``ADMIN_DEV_EMAIL_ENV`` / ``ADMIN_DEV_USERID_ENV`` env
 vars when the headers are absent (local development only).  Production deploys
 always have the proxy headers present.
 
@@ -14,11 +14,11 @@ Public API
 """
 
 import logging
-import os
 
 from fastapi import HTTPException, Request
 from sqlalchemy import text
 
+from .config import ADMIN_DEV_EMAIL_ENV, ADMIN_DEV_USERID_ENV, env
 from .engine import get_db
 
 logger = logging.getLogger(__name__)
@@ -38,22 +38,22 @@ class AdminRedirectException(Exception):  # noqa: N818
 def _extract_user(request: Request) -> tuple[str | None, str | None]:
     """Return ``(email, user_id)`` from proxy headers or env-var fallback.
 
-    The ``ADMIN_DEV_EMAIL`` fallback is honored only for requests that did
+    The ``ADMIN_DEV_EMAIL_ENV`` fallback is honored only for requests that did
     not transit the exe.dev proxy (no ``X-Forwarded-Proto`` header), i.e.
     direct hits on uvicorn during local development.  Unauthenticated
     requests to a public proxy carry ``X-Forwarded-*`` but no
-    ``X-ExeDev-*`` headers — a leaked ``ADMIN_DEV_EMAIL`` in the
+    ``X-ExeDev-*`` headers — a leaked ``ADMIN_DEV_EMAIL_ENV`` in the
     production environment must not turn those visitors into admins.
     """
     email = request.headers.get("X-ExeDev-Email")
     user_id = request.headers.get("X-ExeDev-UserID")
     if not email and "X-Forwarded-Proto" not in request.headers:
-        email = os.environ.get("ADMIN_DEV_EMAIL")
-        user_id = os.environ.get("ADMIN_DEV_USERID", "dev")
+        email = env(ADMIN_DEV_EMAIL_ENV)
+        user_id = env(ADMIN_DEV_USERID_ENV, "dev")
         if email:
             logger.warning(
-                "Authenticating via ADMIN_DEV_EMAIL fallback as %s "
-                "(request did not transit the exe.dev proxy)",
+                "Authenticating via %s fallback as %s (request did not transit the exe.dev proxy)",
+                ADMIN_DEV_EMAIL_ENV,
                 email,
             )
     return email, user_id

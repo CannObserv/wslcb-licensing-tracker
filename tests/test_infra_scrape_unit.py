@@ -66,7 +66,7 @@ class TestDropin:
         assert "Environment" not in service, "the key is never an environment variable"
 
     def test_config_arrives_through_the_templates_env_file(self):
-        """WSLCB_SCRAPE_CHECKIN_BASE_URL and _MONITOR_ID live in the app .env."""
+        """The scrape check-in base URL and monitor id live in the app .env."""
         service = _directives(TEMPLATE, "Service")
         assert service["EnvironmentFile"] == ["/etc/wslcb-licensing-tracker/.env"]
 

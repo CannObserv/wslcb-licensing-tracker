@@ -1,7 +1,7 @@
 """The ship-gate wrapper loads the env in a linked worktree too (#235).
 
 `scripts/pre-ship.sh` is project-local: it loads the repo-root `.env`
-(TEST_DATABASE_URL), then execs the vendored gate through the
+(the test database URL), then execs the vendored gate through the
 `skills/shipping-work` symlink. SKILL.md Step 1 resolves a repo-root
 `scripts/pre-ship.sh` for that script alone (gregoryfoster/skills#301, #240).
 A gitignored `.env` lives only in the primary checkout, so in a linked worktree

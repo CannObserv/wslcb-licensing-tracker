@@ -8,7 +8,7 @@
     {
       "name": "database-migrations",
       "path": "docs/MIGRATIONS.md",
-      "description": "Alembic chain: revision history 0001 onward, how to add and verify a migration (set DATABASE_URL; unset targets prod), and how it differs from data_migration.py. Check before writing any migration."
+      "description": "Alembic chain: revision history 0001 onward, how to add and verify a migration (set the database URL; unset targets prod), and how it differs from data_migration.py. Check before writing any migration."
     },
     {
       "name": "deployment",

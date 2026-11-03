@@ -19,7 +19,7 @@ allows, and built to be dumb in the ways that keep a backup honest:
   Retention is each bucket's lifecycle rule, so a compromised host cannot erase
   its own history.
 
-**Dumps** go to ``WSLCB_BACKUP_BUCKET`` as ``daily/<host>/<stamp>.dump``, plus a
+**Dumps** go to ``BUCKET_ENV`` as ``daily/<host>/<stamp>.dump``, plus a
 copy at ``monthly/<host>/<stamp>.dump`` on the month's first run. The tier
 leads the key so each lifecycle rule (30 days, 365 days) is a plain
 ``matchesPrefix`` that no hostname change can slip past. The longer monthly
@@ -27,7 +27,7 @@ tier departs from the cohort's flat 30 days on purpose: damage to frozen data
 has gone unnoticed for weeks here (#151/#152), and a flat window could leave
 only damaged dumps.
 
-**The archive** goes to ``WSLCB_ARCHIVE_BUCKET`` — a separate bucket with *no*
+**The archive** goes to ``ARCHIVE_BUCKET_ENV`` — a separate bucket with *no*
 lifecycle rule, since ``./data/`` holds the only copy of pages the upstream
 source keeps for 30 days. Each in-scope file (:data:`ARCHIVE_ROOTS`) becomes
 ``<host>/<path under data/>``: uploaded when absent, skipped when the bucket
@@ -60,14 +60,15 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
 from .checkin import BACKUP, CREDENTIALS_DIRECTORY_ENV, post_checkin
-from .config import user_agent_or_fallback
+from .config import ENV_PREFIX, env, user_agent_or_fallback
 from .db import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-BUCKET_ENV = "WSLCB_BACKUP_BUCKET"
-ARCHIVE_BUCKET_ENV = "WSLCB_ARCHIVE_BUCKET"
-PREFIX_ENV = "WSLCB_BACKUP_PREFIX"
+# Each falls back to its pre-#204 WSLCB_* name (config.env).
+BUCKET_ENV = f"{ENV_PREFIX}BACKUP_BUCKET"
+ARCHIVE_BUCKET_ENV = f"{ENV_PREFIX}ARCHIVE_BUCKET"
+PREFIX_ENV = f"{ENV_PREFIX}BACKUP_PREFIX"
 #: Where the GCS SDK finds its key. The unit sets it to its credential copy.
 KEY_PATH_ENV = "GOOGLE_APPLICATION_CREDENTIALS"
 DAILY, MONTHLY = "daily", "monthly"
@@ -737,15 +738,16 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
         )
         return code
 
-    for name in (BUCKET_ENV, ARCHIVE_BUCKET_ENV):
-        if not environ.get(name):
+    buckets = {name: env(name, environ=environ) for name in (BUCKET_ENV, ARCHIVE_BUCKET_ENV)}
+    for name, bucket in buckets.items():
+        if not bucket:
             # No default bucket: guessing one is how bytes land where nobody reads.
             logger.error("%s not set — nowhere to ship", name)
             return fail(2, f"{name} not set")
     if misplaced := misplaced_key(environ):
         logger.error("%s — not starting", misplaced)
         return fail(2, misplaced)
-    prefix = environ.get(PREFIX_ENV) or host
+    prefix = env(PREFIX_ENV, environ=environ) or host
 
     try:
         # Built first, so a missing or unreadable key fails before the dump.
@@ -758,8 +760,8 @@ def main(  # noqa: PLR0913 — every collaborator is injectable for the tests
         try:
             summary = run_backup(
                 database=database,
-                bucket=environ[BUCKET_ENV],
-                archive_bucket=environ[ARCHIVE_BUCKET_ENV],
+                bucket=buckets[BUCKET_ENV],
+                archive_bucket=buckets[ARCHIVE_BUCKET_ENV],
                 prefix=prefix,
                 client=client,
                 workdir=Path(work),

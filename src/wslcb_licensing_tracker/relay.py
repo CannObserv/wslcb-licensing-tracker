@@ -33,6 +33,7 @@ from typing import Literal
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from .config import ENV_PREFIX, env
 from .db import SOURCE_TYPE_RELAYED_SCRAPE
 from .engine import get_db
 from .parser import SECTION_MAP, parse_records_from_table
@@ -40,7 +41,8 @@ from .scraper import fail_log, ingest_page, start_log
 
 logger = logging.getLogger(__name__)
 
-#: Inbox location when ``WSLCB_RELAY_INBOX`` is unset. It sits outside
+RELAY_INBOX_ENV = f"{ENV_PREFIX}RELAY_INBOX"
+#: Inbox location when ``RELAY_INBOX_ENV`` is unset. It sits outside
 #: ``data/``, which the nightly backup mirrors create-only (#185).
 DEFAULT_INBOX = Path.home() / "wslcb-relay-inbox"
 #: A capture older than this when imported is refused, as superseded by a
@@ -75,8 +77,8 @@ class RelayResult:
 
 
 def inbox_dir(environ: Mapping[str, str]) -> Path:
-    """The inbox: ``WSLCB_RELAY_INBOX`` if set, else ``DEFAULT_INBOX``."""
-    value = environ.get("WSLCB_RELAY_INBOX")
+    """The inbox: ``RELAY_INBOX_ENV`` if set, else ``DEFAULT_INBOX``."""
+    value = env(RELAY_INBOX_ENV, environ=environ)
     return Path(value) if value else DEFAULT_INBOX
 
 

@@ -94,7 +94,7 @@ def client(mock_conn, mock_engine):
         yield conn
 
     # Patch queries_* functions used by the routes.
-    # app.get_current_user must also be patched: ADMIN_DEV_EMAIL in the environment
+    # app.get_current_user must also be patched: ADMIN_DEV_EMAIL_ENV in the environment
     # causes _lookup_admin() to be called from the 404 exception handler (_tpl)
     # via get_current_user, which hits the mock engine and produces a coroutine error.
     patches = (

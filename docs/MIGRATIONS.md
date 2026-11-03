@@ -35,7 +35,7 @@ generated file (autogenerate misses server defaults, CHECK constraints, and
 data backfills), and verify with `uv run alembic upgrade head` against an empty
 database. Do **not** hand-edit `0001` to carry new columns — that was the
 SQLite-era pattern and it breaks every database already past the baseline.
-Set `DATABASE_URL` for that verify run: unset, `alembic/env.py` falls back to
+Set `CO_WSLCB_LICENSING_TRACKER_DATABASE_URL` for that verify run: unset, `alembic/env.py` falls back to
 `alembic.ini`'s URL, the shared prod/dev `wslcb`.
 
 **Not to be confused with** `data_migration.py`, the run-once *data* migration

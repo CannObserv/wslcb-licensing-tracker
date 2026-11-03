@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker.app import app
+from wslcb_licensing_tracker.config import ADMIN_DEV_EMAIL_ENV
 from wslcb_licensing_tracker.display import SUBTYPE_LABELS
 
 # Autouse fixture: stamps app.state.engine for every test — routes read it
@@ -842,7 +843,7 @@ class TestEntitySubtypeAndBadges:
         assert "Rules" in body
 
     def test_public_pages_are_vendor_neutral(self, monkeypatch):
-        monkeypatch.delenv("ADMIN_DEV_EMAIL", raising=False)
+        monkeypatch.delenv(ADMIN_DEV_EMAIL_ENV, raising=False)
         pages = [
             self._list("/entities")[0].text,
             self._list("/entities", htmx=True)[0].text,
@@ -1077,7 +1078,7 @@ class TestEntityAdminPanel:
     }
 
     def _get(self, *, admin: bool, monkeypatch, jev_enabled: bool = False):
-        monkeypatch.delenv("ADMIN_DEV_EMAIL", raising=False)
+        monkeypatch.delenv(ADMIN_DEV_EMAIL_ENV, raising=False)
         env = "CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION"
         if jev_enabled:
             monkeypatch.setenv(env, "true")

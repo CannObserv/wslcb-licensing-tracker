@@ -272,21 +272,21 @@ while another run holds the lock, 502 (audited) past a 90 s deadline.
 
 ### PostgreSQL integration tests
 
-PG integration tests require `TEST_DATABASE_URL` pointing at a test database.
+PG integration tests require `CO_WSLCB_LICENSING_TRACKER_TEST_DATABASE_URL` pointing at a test database.
 
 ```bash
-TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb uv run pytest tests/ -v
+CO_WSLCB_LICENSING_TRACKER_TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb uv run pytest tests/ -v
 ```
 
-Without `TEST_DATABASE_URL` the PG test suite is **skipped** (not failed) — safe for local dev without a DB.
+Without it the PG test suite is **skipped** (not failed) — safe for local dev without a DB.
 
-**In CI**, set both env vars to make missing `TEST_DATABASE_URL` a hard failure that aborts the session:
+**In CI**, set `…_REQUIRE_PG_TESTS=1` as well to make a missing `…_TEST_DATABASE_URL` a hard failure that aborts the session:
 
 ```bash
-REQUIRE_PG_TESTS=1 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb uv run pytest tests/ -v
+CO_WSLCB_LICENSING_TRACKER_REQUIRE_PG_TESTS=1 CO_WSLCB_LICENSING_TRACKER_TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/testdb uv run pytest tests/ -v
 ```
 
-With `REQUIRE_PG_TESTS=1`, if `TEST_DATABASE_URL` is missing, `pytest_sessionstart` calls `pytest.exit(returncode=1)` before any collection or test execution — catching all skip paths including `@pytest.mark.skipif` and standalone connection fixtures.
+With `…_REQUIRE_PG_TESTS=1`, if `…_TEST_DATABASE_URL` is missing, `pytest_sessionstart` calls `pytest.exit(returncode=1)` before any collection or test execution — catching all skip paths including `@pytest.mark.skipif` and standalone connection fixtures.
 
 ## Caching
 
@@ -306,8 +306,9 @@ Worker count has no effect on data freshness — safe to scale workers freely.
 - `.venv/` keeps the dev group on purpose (#224): the test gate and pre-commit run from it, and `--no-dev` wouldn't stick anyway, because `uv run` reinstalls default groups. Audit it with `uv audit --frozen` (dev included), not `--no-dev`.
 - `node_modules/` holds jsdom, for `npm test` only; `wslcb-web` never loads it. After a `package-lock.json` change, run `npm ci`, then `npm audit` (#229).
 - All persistent data in `./data/` (gitignored).
+- Every env var is prefixed `CO_WSLCB_LICENSING_TRACKER_` (#204), and `.env.example` is the canonical list. `…_<name>` below abbreviates it. Until #244, each old name (`DATABASE_URL`, `WSLCB_BACKUP_BUCKET`, …; `config.LEGACY_ENV_NAMES`) still works and logs one `deprecated` WARNING. The suite promotes old test-var names itself, so either spelling gives 0 skipped.
 
-### BUILD_ID
+### `…_BUILD_ID`
 
 Set automatically by `wslcb-web.service` at startup — `ExecStartPre` writes the short git SHA to `/run/wslcb-build-id`. Used for static asset cache-busting (`?v=<build_id>`) and shown in `/api/v1/health` response and page footer. Falls back to `"dev"` if unset.
 

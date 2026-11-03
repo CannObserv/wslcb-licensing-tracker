@@ -9,6 +9,7 @@ from test_backup import FakePg
 from test_restore import BUCKET, HOST, T0, _dump
 
 from wslcb_licensing_tracker.cli import main
+from wslcb_licensing_tracker.config import ENV_PREFIX
 
 
 @pytest.fixture
@@ -25,8 +26,8 @@ def client(dumps):
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch, client):
-    monkeypatch.setenv("WSLCB_BACKUP_BUCKET", BUCKET)
-    monkeypatch.setenv("WSLCB_ARCHIVE_BUCKET", "co-gcs-wslcb-archive")
+    monkeypatch.setenv(f"{ENV_PREFIX}BACKUP_BUCKET", BUCKET)
+    monkeypatch.setenv(f"{ENV_PREFIX}ARCHIVE_BUCKET", "co-gcs-wslcb-archive")
     monkeypatch.setattr("wslcb_licensing_tracker.restore.make_client", lambda: client)
     monkeypatch.setattr("wslcb_licensing_tracker.cli.subprocess.run", FakePg())
 
@@ -46,6 +47,21 @@ class TestRestore:
         assert result.exit_code == 0, result.output
         assert key in result.output
         assert f"source_host={HOST}" in result.output
+
+    def test_bucket_from_the_legacy_name(self, dumps, monkeypatch):
+        """A shell still exporting WSLCB_BACKUP_BUCKET keeps restoring (#204 window)."""
+        monkeypatch.delenv(f"{ENV_PREFIX}BACKUP_BUCKET")
+        monkeypatch.setenv("WSLCB_BACKUP_BUCKET", BUCKET)
+        key = _dump(dumps, "daily", HOST, T0)
+        result = CliRunner().invoke(main, ["ops", "restore", "--list"])
+        assert result.exit_code == 0, result.output
+        assert key in result.output
+
+    def test_bucket_is_required(self, monkeypatch):
+        monkeypatch.delenv(f"{ENV_PREFIX}BACKUP_BUCKET")
+        result = CliRunner().invoke(main, ["ops", "restore", "--list"])
+        assert result.exit_code == 2
+        assert "--bucket" in result.output
 
     def test_latest_requires_prefix(self):
         """Never this host's by default: say whose."""

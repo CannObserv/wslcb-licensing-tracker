@@ -93,7 +93,7 @@ Fixed hex values (not Tailwind classes) — visually distinct from brand accent.
 - **JavaScript:** No large inline `<script>` blocks in templates. Extract logic to
   `static/js/*.js`. Keep only small data-injection snippets inline (e.g., `const DATA = {{ data | tojson }}`).
 - **Static assets:** All `/static/` responses have `Cache-Control: public, max-age=31536000`.
-  Cache-bust via `?v={{ build_id }}` query param (set from `BUILD_ID` env var at startup).
+  Cache-bust via `?v={{ build_id }}` query param (set from the `CO_WSLCB_LICENSING_TRACKER_BUILD_ID` env var at startup).
 
 ## Responsiveness Rules
 

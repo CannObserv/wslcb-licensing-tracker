@@ -6,12 +6,13 @@ caller.
 """
 
 import logging
-import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+
+from .config import DATABASE_URL_ENV, env
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +20,11 @@ _DEFAULT_DATABASE_URL = "postgresql+asyncpg://wslcb:wslcb@localhost/wslcb"
 
 
 def get_database_url() -> str:
-    """Return DATABASE_URL from environment, with a localhost default."""
-    return os.environ.get("DATABASE_URL", _DEFAULT_DATABASE_URL)
+    """Return ``DATABASE_URL_ENV`` (legacy ``DATABASE_URL``), else the localhost default.
+
+    The default is the prod/dev ``wslcb``: the CLI on the prod host runs unset.
+    """
+    return env(DATABASE_URL_ENV, _DEFAULT_DATABASE_URL)  # set but empty is not the default
 
 
 def create_engine_from_env(
@@ -29,17 +33,19 @@ def create_engine_from_env(
     max_overflow: int = 10,
     echo: bool = False,
 ) -> AsyncEngine:
-    """Create an AsyncEngine using DATABASE_URL from the environment.
+    """Create an AsyncEngine from ``get_database_url()``.
 
     Call once at application startup; store on ``app.state.engine``.
     """
     url = get_database_url()
-    logger.debug("creating async engine: %s", url)
     try:
-        return create_async_engine(url, pool_size=pool_size, max_overflow=max_overflow, echo=echo)
+        engine = create_async_engine(url, pool_size=pool_size, max_overflow=max_overflow, echo=echo)
     except ArgumentError as exc:
-        logger.critical("invalid DATABASE_URL %r: %s", url, exc)
+        # Never the URL or the message, which quotes it: it carries the password.
+        logger.critical("invalid %s: %s", DATABASE_URL_ENV, type(exc).__name__)
         raise
+    logger.debug("created async engine: %s", engine.url)  # str(URL) masks the password
+    return engine
 
 
 @asynccontextmanager

@@ -5,8 +5,8 @@ The timer and the `wslcb-task@*-addresses` units are installed from
 
 External API at `https://address-validator.exe.xyz:8000`.
 
-- API key: `ADDRESS_VALIDATOR_API_KEY` in `/etc/wslcb-licensing-tracker/.env` (owned `root:exedev`, mode `640`)
-- `ENABLE_ADDRESS_VALIDATION=true` enables DPV validation; otherwise only standardization runs
+- API key: `CO_WSLCB_LICENSING_TRACKER_ADDRESS_VALIDATOR_API_KEY` in `/etc/wslcb-licensing-tracker/.env` (owned `root:exedev`, mode `640`)
+- `CO_WSLCB_LICENSING_TRACKER_ENABLE_ADDRESS_VALIDATION=true` enables DPV validation; otherwise only standardization runs
 - Services load env via `EnvironmentFile=/etc/wslcb-licensing-tracker/.env`
 
 ## Renewal TTL + pacing
@@ -113,7 +113,7 @@ For a backlog, add `--budget-reserve N`: ids run in file order up to
 uv run wslcb ingest backfill-addresses
 
 # The daily run (#195). One-off runs need the unit's environment (a bare shell
-# has no DATABASE_URL or API key), so run them as transient units: same user,
+# has no database URL or API key), so run them as transient units: same user,
 # directory and env file as wslcb-task@, and a journal to check.
 renew() {  # renew <unit-name> [renew-addresses flags]
   local unit=$1; shift

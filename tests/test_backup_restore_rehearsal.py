@@ -6,7 +6,7 @@ of the migrated schema passes the backup's own verification, survives the
 and schema version — and whether a truncated real archive is refused. Ported
 from watcher's ``tests/ops/test_backup_restore_rehearsal.py``.
 
-Needs ``TEST_DATABASE_URL`` (skips without it, like every PG test here) and a
+Needs ``TEST_DATABASE_URL_ENV`` (skips without it, like every PG test here) and a
 role that may CREATE DATABASE, for the scratch restore target. That target's
 lifecycle — named, dropped past autovacuum, swept when leaked — is
 ``scratch_db``'s (#202).

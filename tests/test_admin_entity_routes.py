@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from wslcb_licensing_tracker import admin_entity_routes as routes
 from wslcb_licensing_tracker.app import app
-from wslcb_licensing_tracker.config import ENV_PREFIX
+from wslcb_licensing_tracker.config import ADMIN_DEV_EMAIL_ENV, ENV_PREFIX
 from wslcb_licensing_tracker.jev_classifier import RunSummary
 
 # Autouse: stamps app.state.engine (#155). Imported for its pytest side effect.
@@ -363,7 +363,7 @@ def test_jev_busy_503_with_retry_after(client, conn, monkeypatch):
     + [("post", "/admin/entities/7/jev")],
 )
 def test_requires_admin(conn, monkeypatch, method, path):
-    monkeypatch.delenv("ADMIN_DEV_EMAIL", raising=False)
+    monkeypatch.delenv(ADMIN_DEV_EMAIL_ENV, raising=False)
     c = TestClient(app, raise_server_exceptions=True)
     resp = getattr(c, method)(path, follow_redirects=False)
     assert resp.status_code == 302

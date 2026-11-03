@@ -6,7 +6,7 @@ DB-facing orchestration over the transport client in address_client.py
 Pipeline
 --------
 1. **Preferred**: :func:`process_location` picks the best single endpoint based
-   on config — ``/validate`` when ENABLE_ADDRESS_VALIDATION is on (covers both
+   on config — ``/validate`` when ``ENABLE_ADDRESS_VALIDATION_ENV`` is on (covers both
    standardization and validation in one call), ``/standardize`` when off.
 2. **Direct**: :func:`standardize_location` and :func:`validate_location` call
    their respective endpoints — retained for callers that need a specific path.
@@ -184,7 +184,7 @@ async def standardize_location(
 ) -> bool:
     """Standardize and update a single location row via POST /api/v2/standardize.
 
-    Always runs regardless of the ENABLE_ADDRESS_VALIDATION flag.
+    Always runs regardless of the ``ENABLE_ADDRESS_VALIDATION_ENV`` flag.
 
     On success writes std_address_line_1/2, std_city, std_region,
     std_postal_code, std_country, std_address_string (all uppercased; #188),
@@ -430,7 +430,7 @@ async def validate_location(
 ) -> bool:
     """Optionally validate a location row via POST /api/v2/validate.
 
-    Gated by ENABLE_ADDRESS_VALIDATION env var. No-op (returns False) when
+    Gated by ``ENABLE_ADDRESS_VALIDATION_ENV`` env var. No-op (returns False) when
     the flag is off. Writes as described in :func:`_validate_and_write`.
 
     Does NOT commit — the caller is responsible for committing.
@@ -489,7 +489,7 @@ async def process_location(
 ) -> bool:
     """Smart dispatcher: standardize and/or validate a location in one API call.
 
-    When ENABLE_ADDRESS_VALIDATION is on, calls ``/validate`` which returns a
+    When ``ENABLE_ADDRESS_VALIDATION_ENV`` is on, calls ``/validate`` which returns a
     superset of ``/standardize`` and writes as described in
     :func:`_validate_and_write`: a confirmed result overlays std_* and
     address_validated_at, any other answer stamps only status and

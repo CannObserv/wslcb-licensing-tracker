@@ -5,7 +5,7 @@ path helpers for HTML fixtures.  All fixtures are designed for speed —
 no network calls, no disk I/O for the database.
 
 PostgreSQL tests use the pg_engine / pg_conn fixtures defined below,
-which require TEST_DATABASE_URL to be set in the environment.
+which require ``config.TEST_DATABASE_URL_ENV`` to be set in the environment.
 """
 
 import os
@@ -16,7 +16,16 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+
+from wslcb_licensing_tracker.config import (
+    DATABASE_URL_ENV,
+    REQUIRE_PG_TESTS_ENV,
+    TEST_DATABASE_URL_ENV,
+)
+
+from ._env import promote_legacy_env_names
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -48,14 +57,15 @@ _PG_SESSION_TABLES = [
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Abort the session immediately if REQUIRE_PG_TESTS=1 but TEST_DATABASE_URL is unset.
+    """Abort the session immediately if PG tests are required but have no database.
 
     Catches all PG test skip paths (fixture-based, @pytest.mark.skipif, standalone
     connection fixtures) before any collection or test execution occurs.
     """
-    if os.environ.get("REQUIRE_PG_TESTS") and not os.environ.get("TEST_DATABASE_URL"):
+    promote_legacy_env_names()
+    if os.environ.get(REQUIRE_PG_TESTS_ENV) and not os.environ.get(TEST_DATABASE_URL_ENV):
         pytest.exit(
-            "TEST_DATABASE_URL is not set but REQUIRE_PG_TESTS=1 — "
+            f"{TEST_DATABASE_URL_ENV} is not set but {REQUIRE_PG_TESTS_ENV}=1 — "
             "PostgreSQL integration tests are required in this environment",
             returncode=1,
         )
@@ -75,6 +85,18 @@ def _contact_email(monkeypatch):
     from wslcb_licensing_tracker.config import CONTACT_EMAIL_ENV
 
     monkeypatch.setenv(CONTACT_EMAIL_ENV, "tests@example.org")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_deprecation_warnings(monkeypatch):
+    """Each test starts with no legacy env name warned about (#204).
+
+    ``config.env()`` warns once per name per process; without this, a test that
+    feeds a legacy name would use up the warning another test asserts.
+    """
+    from wslcb_licensing_tracker import config
+
+    monkeypatch.setattr(config, "_DEPRECATION_WARNED", set())
 
 
 @pytest.fixture(autouse=True)
@@ -245,27 +267,39 @@ def discontinued_code_name():
 
 @pytest.fixture(scope="session")
 def pg_url() -> str | None:
-    """PostgreSQL connection URL from TEST_DATABASE_URL env var."""
-    return os.environ.get("TEST_DATABASE_URL")
+    """PostgreSQL connection URL from ``TEST_DATABASE_URL_ENV``."""
+    return os.environ.get(TEST_DATABASE_URL_ENV)
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
     """Session-scoped async engine with Alembic migrations applied.
 
-    Skips PG tests when TEST_DATABASE_URL is not set. In CI, set
-    REQUIRE_PG_TESTS=1 to turn missing TEST_DATABASE_URL into a hard
-    failure (enforced by pytest_sessionstart before this fixture runs).
+    Skips PG tests when ``TEST_DATABASE_URL_ENV`` is not set. In CI, set
+    ``REQUIRE_PG_TESTS_ENV=1`` to turn that into a hard failure (enforced by
+    pytest_sessionstart before this fixture runs).
+
+    The engine reads the prefixed ``DATABASE_URL_ENV``, so that is the name
+    set here. Setting only the legacy name would lose to a prefixed one in
+    the shell, and the truncation below would then run against that
+    database. The engine's URL is checked before anything runs (#204).
     """
     if not pg_url:
-        pytest.skip("TEST_DATABASE_URL not set — skipping PostgreSQL tests")
+        pytest.skip(f"{TEST_DATABASE_URL_ENV} not set — skipping PostgreSQL tests")
 
     from wslcb_licensing_tracker.engine import create_engine_from_env
     from wslcb_licensing_tracker.schema import init_db
 
-    original = os.environ.get("DATABASE_URL")
-    os.environ["DATABASE_URL"] = pg_url
+    original = os.environ.get(DATABASE_URL_ENV)
+    os.environ[DATABASE_URL_ENV] = pg_url
     engine = create_engine_from_env()
+    if engine.url.render_as_string(hide_password=False) != make_url(pg_url).render_as_string(
+        hide_password=False
+    ):
+        await engine.dispose()
+        pytest.exit(
+            "pg_engine: the engine is not the test database — refusing to truncate", returncode=1
+        )
 
     try:
         await init_db(engine)
@@ -301,9 +335,9 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
         yield engine
     finally:
         if original is None:
-            os.environ.pop("DATABASE_URL", None)
+            os.environ.pop(DATABASE_URL_ENV, None)
         else:
-            os.environ["DATABASE_URL"] = original
+            os.environ[DATABASE_URL_ENV] = original
         await engine.dispose()
 
 

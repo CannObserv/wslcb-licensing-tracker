@@ -1,6 +1,6 @@
 """Tests for PostgreSQL database helpers (db.py).
 
-Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
+Requires ``config.TEST_DATABASE_URL_ENV`` pointing at a running PostgreSQL instance.
 """
 
 from datetime import UTC, datetime

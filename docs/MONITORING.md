@@ -44,7 +44,7 @@ anyone looked (#198).
   *different* failure at once.
 - **Silence** alarms too: a stopped timer, a masked unit, a run hung until
   its timeout.
-- Config: `WSLCB_SCRAPE_CHECKIN_BASE_URL` and `WSLCB_SCRAPE_MONITOR_ID` in
+- Config: `…_SCRAPE_CHECKIN_BASE_URL` and `…_SCRAPE_MONITOR_ID` in
   `/etc/wslcb-licensing-tracker/.env` (the template's `EnvironmentFile`); the
   key is the drop-in's `checkin-key` credential, never an env var. A manual
   `wslcb ingest scrape` has no credential and warns that it isn't checking in.
@@ -92,7 +92,7 @@ reads as `rejected with HTTP 401`.
 sudo install -m 0400 -o root -g root /etc/wslcb-licensing-tracker/backup-checkin.key \
      /etc/wslcb-licensing-tracker/scrape-checkin.key
 # The leading \n: a file whose last line has no newline would fuse with the first.
-printf '\nWSLCB_SCRAPE_CHECKIN_BASE_URL=http://status:9000\nWSLCB_SCRAPE_MONITOR_ID=<id>\n' \
+printf '\nCO_WSLCB_LICENSING_TRACKER_SCRAPE_CHECKIN_BASE_URL=http://status:9000\nCO_WSLCB_LICENSING_TRACKER_SCRAPE_MONITOR_ID=<id>\n' \
   | sudo tee -a /etc/wslcb-licensing-tracker/.env >/dev/null
 sudo systemctl start wslcb-task@scrape.service   # optional: check in now, not at the next firing
 ```

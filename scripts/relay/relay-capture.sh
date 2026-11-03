@@ -8,20 +8,47 @@
 # Exits non-zero when the fetch, the upload, or the import fails. Written for
 # macOS's BSD userland; launchd runs it via wslcb-relay.plist.
 #
-#   WSLCB_RELAY_HOST   ssh destination of the VM (required), e.g. wslcb-licensing-tracker.exe.xyz
-#   WSLCB_RELAY_INBOX  inbox path on the VM, relative to its home (default wslcb-relay-inbox)
-#   WSLCB_RELAY_URL    page to fetch (default: the WSLCB report)
-#   WSLCB_RELAY_CHECKOUT  the tracker checkout on the VM, relative to its home
-#                      (default wslcb-licensing-tracker)
+# Each variable is CO_WSLCB_LICENSING_TRACKER_<name> (#204):
+#   RELAY_HOST      ssh destination of the VM (required), e.g. wslcb-licensing-tracker.exe.xyz
+#   RELAY_INBOX     inbox path on the VM, relative to its home (default wslcb-relay-inbox)
+#   RELAY_URL       page to fetch (default: the WSLCB report)
+#   RELAY_CHECKOUT  the tracker checkout on the VM, relative to its home
+#                   (default wslcb-licensing-tracker)
+# The pre-#204 WSLCB_<name> still works, with a deprecation line in the log.
 set -euo pipefail
 
-HOST="${WSLCB_RELAY_HOST:?set WSLCB_RELAY_HOST to the ssh destination of the VM}"
-INBOX="${WSLCB_RELAY_INBOX:-wslcb-relay-inbox}"
-URL="${WSLCB_RELAY_URL:-https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp}"
-UNIT="wslcb-task@import-relayed.service"
-CHECKOUT="${WSLCB_RELAY_CHECKOUT:-wslcb-licensing-tracker}"
-
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) relay: $*"; }
+
+PREFIX=CO_WSLCB_LICENSING_TRACKER_
+# env_or_legacy NAME [DEFAULT]: $PREFIX<NAME> if set, else the legacy WSLCB_<NAME>,
+# else DEFAULT. A set legacy name logs a deprecation line, as config.env() does.
+env_or_legacy() {
+  local new="$PREFIX$1" old="WSLCB_$1"
+  if [ -n "${!old+x}" ]; then
+    if [ -n "${!new+x}" ]; then
+      log "WARNING: $old is deprecated and ignored: $new is set (#204)" >&2
+    else
+      log "WARNING: $old is deprecated (#204); rename it to $new" >&2
+    fi
+  fi
+  if [ -n "${!new+x}" ]; then
+    printf '%s' "${!new}"
+  elif [ -n "${!old+x}" ]; then
+    printf '%s' "${!old}"
+  else
+    printf '%s' "${2-}"
+  fi
+}
+
+HOST=$(env_or_legacy RELAY_HOST)
+if [ -z "$HOST" ]; then
+  log "set ${PREFIX}RELAY_HOST to the ssh destination of the VM" >&2
+  exit 1
+fi
+INBOX=$(env_or_legacy RELAY_INBOX wslcb-relay-inbox)
+URL=$(env_or_legacy RELAY_URL https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp)
+UNIT="wslcb-task@import-relayed.service"
+CHECKOUT=$(env_or_legacy RELAY_CHECKOUT wslcb-licensing-tracker)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

@@ -27,7 +27,7 @@ service wslcb-web.service
 restarter wslcb-healthcheck.timer
 health curl -sf http://localhost:8000/api/v1/health
 
-# wslcb_test is the pytest database (TEST_DATABASE_URL).
+# wslcb_test is the pytest database (CO_WSLCB_LICENSING_TRACKER_TEST_DATABASE_URL).
 datastore postgres postgresql@16-main wslcb wslcb_test
 
 # The nightly GCS backup (#185, docs/RECOVERY.md) stands in for the recovery

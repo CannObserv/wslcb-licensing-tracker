@@ -5,6 +5,7 @@ import os
 import pytest
 import pytest_asyncio
 
+from wslcb_licensing_tracker.config import TEST_DATABASE_URL_ENV
 from wslcb_licensing_tracker.integrity import (
     check_broken_fks,
     check_endorsement_anomalies,
@@ -17,8 +18,8 @@ from wslcb_licensing_tracker.integrity import (
 )
 
 _needs_db = pytest.mark.skipif(
-    not os.environ.get("TEST_DATABASE_URL"),
-    reason="requires TEST_DATABASE_URL",
+    not os.environ.get(TEST_DATABASE_URL_ENV),
+    reason=f"requires {TEST_DATABASE_URL_ENV}",
 )
 
 
@@ -99,7 +100,7 @@ async def test_fix_orphaned_locations_removes_orphan(conn):
     from sqlalchemy import text
 
     # Guard: this test commits data — confirm we're targeting the test database.
-    assert "wslcb_test" in os.environ.get("TEST_DATABASE_URL", ""), (
+    assert "wslcb_test" in os.environ.get(TEST_DATABASE_URL_ENV, ""), (
         "Must run against wslcb_test database"
     )
     # SAVEPOINT lets us roll back the INSERT if fix_orphaned_locations raises,
