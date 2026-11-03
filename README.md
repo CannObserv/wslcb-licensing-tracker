@@ -300,11 +300,13 @@ wslcb-licensing-tracker/
 └── docs/                   # Operations and architecture documentation
     ├── ADDRESS_VALIDATION.md # address-validator client: key + flags, renewal TTL + pacing (#195), address commands
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
+    ├── DISK_GC.md           # Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
     ├── RELAY.md             # Relayed scrape during the WSLCB block: VM + Mac install, monitoring (#201)
     ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
+    ├── RECOVERY-REHEARSALS.md # Dated backup drills and what each proved (#185)
     ├── SCHEMA.md            # Full table/column reference
     ├── SKILLS.md            # AI agent skill inventory and trigger phrases
     ├── SOCRATICODE.md       # Code-exploration tool table, per-tool notes, graph health, index scope
