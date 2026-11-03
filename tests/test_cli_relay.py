@@ -7,6 +7,7 @@ from cli_helpers import mock_async_engine, mock_get_db
 from click.testing import CliRunner
 
 from wslcb_licensing_tracker.cli import main
+from wslcb_licensing_tracker.config import ENV_PREFIX
 from wslcb_licensing_tracker.relay import RelayResult
 
 _CLI = "wslcb_licensing_tracker.cli"
@@ -83,7 +84,7 @@ class TestCmdImportRelayed:
     def test_inbox_comes_from_the_environment(self, imp, backfill, checkin, *_):
         imp.return_value = []
         result = CliRunner().invoke(
-            main, ["ingest", "import-relayed"], env={"WSLCB_RELAY_INBOX": "/srv/inbox"}
+            main, ["ingest", "import-relayed"], env={f"{ENV_PREFIX}RELAY_INBOX": "/srv/inbox"}
         )
         assert result.exit_code == 0, result.output
         assert str(imp.call_args.args[1]) == "/srv/inbox"

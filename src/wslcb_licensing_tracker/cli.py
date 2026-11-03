@@ -37,7 +37,7 @@ Usage::
     wslcb admin list-users             # list admin users
     wslcb admin remove-user EMAIL      # remove admin user
     wslcb ops backup                   # nightly dump + data archive to GCS (#185; the timer's job)
-    wslcb ops restore --list           # dumps in WSLCB_BACKUP_BUCKET (see docs/RECOVERY.md)
+    wslcb ops restore --list           # dumps in the backup bucket (docs/RECOVERY.md)
     wslcb ops restore-archive --prefix HOST --into DIR  # data/ files back from the archive
 
 Uses PostgreSQL via SQLAlchemy async engine (Phase 6 migration, #94).
@@ -66,7 +66,7 @@ from .admin_audit import log_action
 from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
 from .checkin import CLASSIFY, SCRAPE, post_checkin
-from .config import CONTACT_EMAIL_ENV, ContactEmailError, user_agent
+from .config import CONTACT_EMAIL_ENV, ENV_PREFIX, ContactEmailError, env, user_agent
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_data_stragglers, compress_files
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
@@ -237,7 +237,7 @@ async def _scrape_history(engine: AsyncEngine) -> ScrapeHealth | None:
 def import_relayed(rate_limit: float) -> None:
     """Import operator-relayed captures of the WSLCB page from the relay inbox.
 
-    The inbox is ``WSLCB_RELAY_INBOX`` (default ``~/wslcb-relay-inbox``).
+    The inbox is ``CO_WSLCB_LICENSING_TRACKER_RELAY_INBOX`` (default ``~/wslcb-relay-inbox``).
     Exits 1 if any capture was rejected or failed. Never checks in to co-status: that
     monitor reports whether the server itself can reach WSLCB (#201).
     """
@@ -973,6 +973,13 @@ def user_agent_cmd(env_file: Path | None) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
+def _required(ctx: click.Context, param: click.Parameter, value: str | None) -> str:
+    """Refuse an option whose env-var default is unset, as ``required=True`` would."""
+    if not value:
+        raise click.MissingParameter(ctx=ctx, param=param)
+    return value
+
+
 def _restore():  # noqa: ANN202 — returns the module
     """The restore module, imported on use.
 
@@ -991,8 +998,8 @@ def _restore():  # noqa: ANN202 — returns the module
 def backup(database: str) -> None:
     """Dump the database and mirror data/ to GCS, then check in (#185).
 
-    The nightly wslcb-backup.service job. Reads WSLCB_BACKUP_BUCKET and
-    WSLCB_ARCHIVE_BUCKET; exits non-zero unless everything in scope shipped.
+    The nightly wslcb-backup.service job. Reads the backup and archive
+    buckets (.env.example); exits non-zero unless everything in scope shipped.
     """
     from .backup import main as run_backup_job  # noqa: PLC0415 — see _restore()
 
@@ -1017,7 +1024,12 @@ def backup(database: str) -> None:
     help="Fetch and verify only, into a private directory.",
 )
 @click.option("--run-as", metavar="USER", help="OS user pg_restore runs as (peer auth).")
-@click.option("--bucket", envvar="WSLCB_BACKUP_BUCKET", required=True, help="Dump bucket.")
+@click.option(
+    "--bucket",
+    default=lambda: env(f"{ENV_PREFIX}BACKUP_BUCKET"),
+    callback=_required,
+    help=f"Dump bucket (default: ${ENV_PREFIX}BACKUP_BUCKET).",
+)
 def restore_cmd(  # noqa: PLR0913 — one click option each
     list_: bool,
     latest: bool,
@@ -1095,7 +1107,12 @@ def restore_cmd(  # noqa: PLR0913 — one click option each
     help="A private directory to write data/-relative paths under.",
 )
 @click.option("--path", "subtree", default="", help="Only files under this data/-relative path.")
-@click.option("--bucket", envvar="WSLCB_ARCHIVE_BUCKET", required=True, help="Archive bucket.")
+@click.option(
+    "--bucket",
+    default=lambda: env(f"{ENV_PREFIX}ARCHIVE_BUCKET"),
+    callback=_required,
+    help=f"Archive bucket (default: ${ENV_PREFIX}ARCHIVE_BUCKET).",
+)
 def restore_archive(prefix: str, into: Path, subtree: str, bucket: str) -> None:
     """Bring data/ files back from the archive bucket, md5-checked (#185)."""
     restore = _restore()

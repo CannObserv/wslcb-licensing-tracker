@@ -13,7 +13,6 @@ and the queries_* modules.
 
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +21,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .config import DATA_DIR_ENV, env
 from .models import locations, record_sources, sources
 from .text_utils import _normalize_raw_address
 
@@ -91,8 +91,9 @@ SOURCE_TYPE_ROWS = [
 
 WSLCB_SOURCE_URL = "https://licensinginfo.lcb.wa.gov/EntireStateWeb.asp"
 
-# All persistent data (HTML snapshots etc.) lives under DATA_DIR.
-DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
+# All persistent data (HTML snapshots etc.) lives under DATA_DIR: DATA_DIR_ENV
+# when set, else <repo>/data.
+DATA_DIR = Path(env(DATA_DIR_ENV) or Path(__file__).resolve().parents[2] / "data")
 
 # Glob patterns for uncompressed archive files, relative to DATA_DIR.
 # Shared by cli.py's compress-snapshots/compress-diffs commands and

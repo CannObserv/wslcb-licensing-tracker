@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from wslcb_licensing_tracker.checkin import BACKUP, SCRAPE, post_checkin
+from wslcb_licensing_tracker.config import ENV_PREFIX
 
 BASE = "http://status:9000"
 MONITOR = "01K5ZQ8M3N4P5Q6R7S8T9V0W1X"
@@ -23,9 +24,9 @@ def _environ(tmp_path, *, base=BASE, monitor=MONITOR, key="sekrit"):
     (creds / "checkin-key").write_text(key)
     env = {"CREDENTIALS_DIRECTORY": str(creds)}
     if base is not None:
-        env["WSLCB_BACKUP_CHECKIN_BASE_URL"] = base
+        env[f"{ENV_PREFIX}BACKUP_CHECKIN_BASE_URL"] = base
     if monitor is not None:
-        env["WSLCB_BACKUP_MONITOR_ID"] = monitor
+        env[f"{ENV_PREFIX}BACKUP_MONITOR_ID"] = monitor
     return env
 
 
@@ -46,7 +47,10 @@ class _Recorder:
 
 def _scrape_env(tmp_path):
     env = _environ(tmp_path, base=None, monitor=None)
-    return env | {"WSLCB_SCRAPE_CHECKIN_BASE_URL": BASE, "WSLCB_SCRAPE_MONITOR_ID": MONITOR}
+    return env | {
+        f"{ENV_PREFIX}SCRAPE_CHECKIN_BASE_URL": BASE,
+        f"{ENV_PREFIX}SCRAPE_MONITOR_ID": MONITOR,
+    }
 
 
 class TestPostCheckin:
@@ -88,8 +92,8 @@ class TestPostCheckin:
         """Without a credentials directory there is no key, whatever env says."""
         post = _Recorder()
         env = {
-            "WSLCB_BACKUP_CHECKIN_BASE_URL": BASE,
-            "WSLCB_BACKUP_MONITOR_ID": MONITOR,
+            f"{ENV_PREFIX}BACKUP_CHECKIN_BASE_URL": BASE,
+            f"{ENV_PREFIX}BACKUP_MONITOR_ID": MONITOR,
             "WSLCB_BACKUP_CHECKIN_KEY": "from-env",
         }
         assert post_checkin("ok", {}, monitor=BACKUP, environ=env, post=post) is False
@@ -214,7 +218,10 @@ class TestMonitors:
         post = _Recorder(202)
         env = _environ(tmp_path)  # the backup's variables only
         assert post_checkin("ok", {}, monitor=SCRAPE, environ=env, post=post) is False
-        env |= {"WSLCB_SCRAPE_CHECKIN_BASE_URL": BASE, "WSLCB_SCRAPE_MONITOR_ID": "01SCRAPE"}
+        env |= {
+            f"{ENV_PREFIX}SCRAPE_CHECKIN_BASE_URL": BASE,
+            f"{ENV_PREFIX}SCRAPE_MONITOR_ID": "01SCRAPE",
+        }
         assert post_checkin("ok", {}, monitor=SCRAPE, environ=env, post=post) is True
         assert post.calls[0][0] == f"{BASE}/api/v1/monitors/01SCRAPE/checkin"
 
@@ -224,7 +231,7 @@ class TestMonitors:
             post_checkin("ok", {}, monitor=SCRAPE, environ={}, post=post)
         assert "scrape check-in not configured" in caplog.text
         assert "a stopped scrape will not be noticed" in caplog.text
-        assert "WSLCB_SCRAPE_MONITOR_ID" in caplog.text
+        assert f"{ENV_PREFIX}SCRAPE_MONITOR_ID" in caplog.text
 
     def test_metadata_is_sent_when_given(self, tmp_path):
         """``metadata.fault`` is the one key co-status reads: a new value is a new fault."""
@@ -251,15 +258,31 @@ def test_no_test_finds_a_configured_checkin():
 
 
 def test_classify_monitor_uses_prefixed_names():
-    """New variables take the #204 prefix; BACKUP and SCRAPE keep theirs until #204."""
+    """Every monitor's variables carry the #204 prefix; BACKUP and SCRAPE keep a legacy fallback."""
     from wslcb_licensing_tracker.checkin import CLASSIFY
-    from wslcb_licensing_tracker.config import ENV_PREFIX
+    from wslcb_licensing_tracker.config import ENV_PREFIX, LEGACY_ENV_NAMES
 
     assert CLASSIFY.label == "classify"
     assert CLASSIFY.base_url_env == f"{ENV_PREFIX}CLASSIFY_CHECKIN_BASE_URL"
     assert CLASSIFY.monitor_id_env == f"{ENV_PREFIX}CLASSIFY_MONITOR_ID"
-    assert not BACKUP.base_url_env.startswith(ENV_PREFIX)
-    assert not SCRAPE.base_url_env.startswith(ENV_PREFIX)
+    for monitor in (BACKUP, SCRAPE):
+        assert (
+            LEGACY_ENV_NAMES[monitor.base_url_env]
+            == f"WSLCB_{monitor.label.upper()}_CHECKIN_BASE_URL"
+        )
+        assert (
+            LEGACY_ENV_NAMES[monitor.monitor_id_env] == f"WSLCB_{monitor.label.upper()}_MONITOR_ID"
+        )
+    assert CLASSIFY.base_url_env not in LEGACY_ENV_NAMES
+
+
+def test_legacy_monitor_names_still_check_in(tmp_path):
+    """A backup.env not yet renamed keeps checking in (#204 fallback window)."""
+    env = _environ(tmp_path, base=None, monitor=None)
+    env |= {"WSLCB_BACKUP_CHECKIN_BASE_URL": BASE, "WSLCB_BACKUP_MONITOR_ID": MONITOR}
+    post = _Recorder(202)
+    assert post_checkin("ok", {}, monitor=BACKUP, environ=env, post=post) is True
+    assert post.calls[0][0] == f"{BASE}/api/v1/monitors/{MONITOR}/checkin"
 
 
 # ── User-Agent (#243) ────────────────────────────────────────────────

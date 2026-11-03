@@ -1,12 +1,12 @@
 """Alembic migration environment — async SQLAlchemy + asyncpg."""
 
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from wslcb_licensing_tracker.config import DATABASE_URL_ENV, env
 from wslcb_licensing_tracker.models import metadata
 
 config = context.config
@@ -20,10 +20,16 @@ target_metadata = metadata
 
 
 def get_url() -> str:
-    """Return DATABASE_URL from environment (falls back to alembic.ini value)."""
-    return os.environ.get(
-        "DATABASE_URL",
-        config.get_main_option("sqlalchemy.url", "postgresql+asyncpg://wslcb:wslcb@localhost/wslcb"),
+    """The URL to migrate: ``DATABASE_URL_ENV``, then legacy ``DATABASE_URL``, then the ini.
+
+    The ini's URL is the shared prod/dev ``wslcb``: unset, this migrates prod
+    (``tests/test_alembic_env.py`` pins the order, #204).
+    """
+    url = env(DATABASE_URL_ENV)
+    if url is not None:  # set but empty fails to connect; it never means "use prod"
+        return url
+    return config.get_main_option(
+        "sqlalchemy.url", "postgresql+asyncpg://wslcb:wslcb@localhost/wslcb"
     )
 
 

@@ -11,11 +11,10 @@ Split from address_validator.py (#141).
 import asyncio
 import logging
 import math
-import os
 
 import httpx
 
-from .config import user_agent
+from .config import ADDRESS_VALIDATOR_API_KEY_ENV, ENABLE_ADDRESS_VALIDATION_ENV, env, user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -108,21 +107,21 @@ async def close_shared_client() -> None:
 
 
 def get_api_key() -> str:
-    """Return ADDRESS_VALIDATOR_API_KEY from the environment ("" when unset).
+    """Return ``ADDRESS_VALIDATOR_API_KEY_ENV`` from the environment ("" when unset).
 
     Read at call time (not cached) so tests and runtime overrides take
     effect immediately.
     """
-    return os.environ.get("ADDRESS_VALIDATOR_API_KEY", "")
+    return env(ADDRESS_VALIDATOR_API_KEY_ENV) or ""
 
 
 def is_validation_enabled() -> bool:
-    """Return True if ENABLE_ADDRESS_VALIDATION is set to a truthy value.
+    """Return True if ``ENABLE_ADDRESS_VALIDATION_ENV`` is set to a truthy value.
 
     Checks the environment variable at call time (not cached) so that tests
     and runtime overrides take effect immediately.
     """
-    return os.environ.get("ENABLE_ADDRESS_VALIDATION", "").lower() in ("1", "true", "yes")
+    return (env(ENABLE_ADDRESS_VALIDATION_ENV) or "").lower() in ("1", "true", "yes")
 
 
 def _parse_retry_after(response: httpx.Response) -> float:

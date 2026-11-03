@@ -12,12 +12,13 @@ import pytest
 from sqlalchemy import text
 
 from wslcb_licensing_tracker.backfill_diffs import backfill_diffs, diff_section_dirs
+from wslcb_licensing_tracker.config import TEST_DATABASE_URL_ENV
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 _needs_db = pytest.mark.skipif(
-    not os.environ.get("TEST_DATABASE_URL"),
-    reason="requires TEST_DATABASE_URL",
+    not os.environ.get(TEST_DATABASE_URL_ENV),
+    reason=f"requires {TEST_DATABASE_URL_ENV}",
 )
 
 

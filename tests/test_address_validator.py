@@ -46,6 +46,7 @@ from wslcb_licensing_tracker.address_validator import (
     validate_location,
     validations_used,
 )
+from wslcb_licensing_tracker.config import ADDRESS_VALIDATOR_API_KEY_ENV
 from wslcb_licensing_tracker.db import get_or_create_location
 from wslcb_licensing_tracker.models import license_records, locations
 
@@ -644,7 +645,7 @@ class TestStandardizeHTTP:
         """standardize() must post to /api/v2/standardize, not /api/v1/."""
         mock_response = httpx.Response(200, json={"address_line_1": "123 MAIN ST", "warnings": []})
         with (
-            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: "key"}),
             patch(
                 "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=mock_response,
@@ -656,7 +657,7 @@ class TestStandardizeHTTP:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_without_api_key(self):
-        with patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": ""}):
+        with patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: ""}):
             result = await standardize("123 MAIN ST")
         assert result is None
 
@@ -665,7 +666,7 @@ class TestStandardizeHTTP:
         expected = {"address_line_1": "123 MAIN ST", "city": "SEATTLE", "warnings": []}
         mock_response = httpx.Response(200, json=expected)
         with (
-            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: "key"}),
             patch(
                 "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=mock_response,
@@ -681,7 +682,7 @@ class TestValidateHTTP:
         """validate() must post to /api/v2/validate, not /api/v1/."""
         mock_response = httpx.Response(200, json={"address_line_1": "123 MAIN ST", "warnings": []})
         with (
-            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: "key"}),
             patch(
                 "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=mock_response,
@@ -693,7 +694,7 @@ class TestValidateHTTP:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_without_api_key(self):
-        with patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": ""}):
+        with patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: ""}):
             result = await validate("123 MAIN ST")
         assert result is None
 
@@ -701,7 +702,7 @@ class TestValidateHTTP:
     async def test_non_200_log_names_ref_not_address(self, caplog):
         # Addresses are PII: logs carry the caller's ref, never the address (#183).
         with (
-            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: "key"}),
             patch(
                 "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=httpx.Response(422),
@@ -719,7 +720,7 @@ class TestValidateHTTP:
     async def test_api_warning_log_names_ref_not_address(self, caplog):
         body = {"address_line_1": "", "warnings": ["Missing secondary unit"]}
         with (
-            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: "key"}),
             patch(
                 "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=httpx.Response(200, json=body),
@@ -734,7 +735,7 @@ class TestValidateHTTP:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_returns_none_when_post_returns_none(self):
         with (
-            patch.dict(os.environ, {"ADDRESS_VALIDATOR_API_KEY": "key"}),
+            patch.dict(os.environ, {ADDRESS_VALIDATOR_API_KEY_ENV: "key"}),
             patch(
                 "wslcb_licensing_tracker.address_client._post_with_retry",
                 return_value=None,

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from wslcb_licensing_tracker.config import ENV_PREFIX
 from wslcb_licensing_tracker.relay import DEFAULT_INBOX, parse_capture_name
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -50,7 +51,7 @@ def _stubs(tmp_path: Path, curl_body: str) -> dict[str, str]:
     return {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "STUB_LOG": str(tmp_path / "calls.log"),
-        "WSLCB_RELAY_HOST": "vm.example",
+        f"{ENV_PREFIX}RELAY_HOST": "vm.example",
         "VM_UA": VM_UA,
         "HOME": str(tmp_path),
     }
@@ -117,13 +118,40 @@ class TestScript:
 
     def test_host_is_required(self, tmp_path):
         env = _stubs(tmp_path, _write_output("x"))
-        del env["WSLCB_RELAY_HOST"]
-        assert _run(env).returncode != 0
+        del env[f"{ENV_PREFIX}RELAY_HOST"]
+        result = _run(env)
+        assert result.returncode != 0
+        assert f"{ENV_PREFIX}RELAY_HOST" in result.stderr
         assert _calls(env) == []
+
+    def test_legacy_names_still_work_with_a_deprecation_line(self, tmp_path):
+        """The installed plist sets WSLCB_RELAY_HOST until it is reinstalled (#204)."""
+        env = _stubs(tmp_path, _write_output("<html>page</html>"))
+        env["WSLCB_RELAY_HOST"] = env.pop(f"{ENV_PREFIX}RELAY_HOST")
+        env["WSLCB_RELAY_INBOX"] = "old-inbox"
+        result = _run(env)
+        assert result.returncode == 0, result.stderr
+        assert "vm.example:old-inbox/" in _calls(env)[2]
+        assert "WSLCB_RELAY_HOST is deprecated" in result.stderr
+        assert f"rename it to {ENV_PREFIX}RELAY_HOST" in result.stderr
+        assert "vm.example" not in result.stderr.split("deprecated", 1)[1].splitlines()[0]
+
+    def test_new_name_wins_and_flags_the_leftover(self, tmp_path):
+        env = _stubs(tmp_path, _write_output("<html>page</html>"))
+        env["WSLCB_RELAY_HOST"] = "old.example"
+        result = _run(env)
+        assert result.returncode == 0, result.stderr
+        assert all("old.example" not in c for c in _calls(env))
+        assert "WSLCB_RELAY_HOST is deprecated and ignored" in result.stderr
+
+    def test_new_names_log_no_deprecation(self, tmp_path):
+        result = _run(_stubs(tmp_path, _write_output("<html>page</html>")))
+        assert result.returncode == 0, result.stderr
+        assert "deprecated" not in result.stdout + result.stderr
 
     def test_default_inbox_matches_the_vm_default(self):
         """The script's home-relative default is the importer's DEFAULT_INBOX."""
-        assert re.search(r'INBOX="\$\{WSLCB_RELAY_INBOX:-(\S+)\}"', SCRIPT.read_text())[1] == (
+        assert re.search(r"INBOX=\$\(env_or_legacy RELAY_INBOX (\S+)\)", SCRIPT.read_text())[1] == (
             DEFAULT_INBOX.name
         )
 
@@ -201,7 +229,7 @@ class TestPlist:
             "/bin/bash",
             "@HOME@/.local/bin/wslcb-relay-capture.sh",
         ]
-        assert plist["EnvironmentVariables"] == {"WSLCB_RELAY_HOST": "@HOST@"}
+        assert plist["EnvironmentVariables"] == {f"{ENV_PREFIX}RELAY_HOST": "@HOST@"}
 
     def test_logs_somewhere_the_operator_can_read(self, plist):
         assert plist["StandardOutPath"] == plist["StandardErrorPath"]

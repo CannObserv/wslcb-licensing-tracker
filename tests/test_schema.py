@@ -1,6 +1,6 @@
 """Tests for PostgreSQL schema initialization.
 
-Requires TEST_DATABASE_URL env var pointing at a running PostgreSQL instance.
+Requires ``config.TEST_DATABASE_URL_ENV`` pointing at a running PostgreSQL instance.
 init_db is also exercised by the pg_engine fixture itself, which calls it
 to migrate the test database. Also pins the entity-classification constraints,
 defaults and cascades from migration 0009 (#206), and 0010's type/subtype

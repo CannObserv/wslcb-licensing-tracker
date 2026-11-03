@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from gcs_fakes import FakeBucket, FakeClient, b64_md5
 
+from wslcb_licensing_tracker.config import ENV_PREFIX
+
 BUCKET = "co-gcs-wslcb-backup"
 ARCHIVE = "co-gcs-wslcb-archive"
 HOST = "wslcb-licensing-tracker"
@@ -564,8 +566,8 @@ class TestMain:
         (creds / "gcs").write_text("{}")
         (creds / "checkin-key").write_text("")
         return {
-            "WSLCB_BACKUP_BUCKET": BUCKET,
-            "WSLCB_ARCHIVE_BUCKET": ARCHIVE,
+            f"{ENV_PREFIX}BACKUP_BUCKET": BUCKET,
+            f"{ENV_PREFIX}ARCHIVE_BUCKET": ARCHIVE,
             "CREDENTIALS_DIRECTORY": str(creds),
             "GOOGLE_APPLICATION_CREDENTIALS": str(creds / "gcs"),
         }
@@ -636,7 +638,14 @@ class TestMain:
         assert self._main(env, client, data_dir) == 1
         assert checkins[0][2] == {"fault": "archive"}
 
-    @pytest.mark.parametrize("name", ["WSLCB_BACKUP_BUCKET", "WSLCB_ARCHIVE_BUCKET"])
+    def test_legacy_bucket_names_still_ship(self, env, client, data_dir, checkins):
+        """A backup.env not yet renamed keeps shipping (#204 fallback window)."""
+        env["WSLCB_BACKUP_BUCKET"] = env.pop(f"{ENV_PREFIX}BACKUP_BUCKET")
+        env["WSLCB_ARCHIVE_BUCKET"] = env.pop(f"{ENV_PREFIX}ARCHIVE_BUCKET")
+        assert self._main(env, client, data_dir) == 0
+        assert checkins[0][1]["object"].startswith(f"gs://{BUCKET}/daily/")
+
+    @pytest.mark.parametrize("name", [f"{ENV_PREFIX}BACKUP_BUCKET", f"{ENV_PREFIX}ARCHIVE_BUCKET"])
     def test_missing_bucket_config_exits_2(self, env, client, data_dir, checkins, name):
         """No default bucket: guessing one is how bytes land where nobody reads."""
         del env[name]

@@ -14,6 +14,7 @@ from wslcb_licensing_tracker.backfill_snapshots import (
     _repair_change_of_location,
     backfill_from_snapshots,
 )
+from wslcb_licensing_tracker.config import TEST_DATABASE_URL_ENV
 from wslcb_licensing_tracker.db import (
     SOURCE_TYPE_CO_ARCHIVE,
     WSLCB_SOURCE_URL,
@@ -26,8 +27,8 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 SNAPSHOT_FIXTURE = FIXTURES_DIR / "snapshot_two_records.html"
 
 _needs_db = pytest.mark.skipif(
-    not os.environ.get("TEST_DATABASE_URL"),
-    reason="requires TEST_DATABASE_URL",
+    not os.environ.get(TEST_DATABASE_URL_ENV),
+    reason=f"requires {TEST_DATABASE_URL_ENV}",
 )
 
 _SCRAPED_AT = datetime(2025, 6, 10, 12, 0, 0, tzinfo=UTC)

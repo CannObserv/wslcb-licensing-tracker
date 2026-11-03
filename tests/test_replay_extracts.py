@@ -12,14 +12,15 @@ import pytest
 from sqlalchemy import text
 
 from wslcb_licensing_tracker.backfill_diffs import backfill_diffs
+from wslcb_licensing_tracker.config import TEST_DATABASE_URL_ENV
 from wslcb_licensing_tracker.replay_extracts import (
     extract_rel_path,
     generate_replay_extracts,
 )
 
 _needs_db = pytest.mark.skipif(
-    not os.environ.get("TEST_DATABASE_URL"),
-    reason="requires TEST_DATABASE_URL",
+    not os.environ.get(TEST_DATABASE_URL_ENV),
+    reason=f"requires {TEST_DATABASE_URL_ENV}",
 )
 
 

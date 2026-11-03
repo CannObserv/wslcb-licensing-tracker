@@ -18,7 +18,7 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>WSLCB_RELAY_HOST</key>
+    <key>CO_WSLCB_LICENSING_TRACKER_RELAY_HOST</key>
     <string>@HOST@</string>
   </dict>
   <key>StartCalendarInterval</key>

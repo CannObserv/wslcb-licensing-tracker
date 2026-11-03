@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import text
 
 from wslcb_licensing_tracker import relay
+from wslcb_licensing_tracker.config import ENV_PREFIX, TEST_DATABASE_URL_ENV
 from wslcb_licensing_tracker.relay import (
     RelayRejectedError,
     capture_name,
@@ -23,8 +24,8 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 NOW = datetime(2026, 10, 20, 14, 0, tzinfo=UTC)
 
 _needs_db = pytest.mark.skipif(
-    not os.environ.get("TEST_DATABASE_URL"),
-    reason="requires TEST_DATABASE_URL",
+    not os.environ.get(TEST_DATABASE_URL_ENV),
+    reason=f"requires {TEST_DATABASE_URL_ENV}",
 )
 
 
@@ -58,7 +59,7 @@ class TestInboxDir:
         assert inbox_dir({}) == Path.home() / "wslcb-relay-inbox"
 
     def test_env_override(self, tmp_path):
-        assert inbox_dir({"WSLCB_RELAY_INBOX": str(tmp_path)}) == tmp_path
+        assert inbox_dir({f"{ENV_PREFIX}RELAY_INBOX": str(tmp_path)}) == tmp_path
 
 
 class TestValidateReport:
