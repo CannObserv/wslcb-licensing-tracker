@@ -142,6 +142,12 @@ apt-cache policy nodejs | sed -n 1,5p   # Candidate 26.x-1nodesource1; its versi
 sudo apt-get install nodejs         # bundles npm and npx
 ```
 
+That install is for a host without Ubuntu's `npm`. Over it, NodeSource's
+`nodejs` conflicts `npm` away but leaves its ~285 orphans; #239's swap purges
+the measured set (`prune-plan.sh --take-orphans`) in the same transaction, with
+`APT::Get::AutomaticRemove=false`. Never `--autoremove`: it also takes
+unrelated orphans.
+
 - Don't run NodeSource's `setup_26.x`: it pins `nodejs` and `nsolid` at 600
   with no catch-all, which the probe reports as `unscoped:deb.nodesource.com`.
   `tests/test_patching_hosts_knob.py` holds the key's fingerprint, the source
