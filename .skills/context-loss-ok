@@ -14,7 +14,7 @@ AGENTS.md :: retarget :: uv run wslcb ingest compress-stragglers     # weekly da
 AGENTS.md :: retarget :: See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.
 AGENTS.md :: retarget :: - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
 
-# 2026-11-03, #242 seam pass: twelve provenance headings lost their issue numbers
+# 2026-11-03, #242 seam pass: twelve provenance headings, and MEMORY_PRESSURE.md's title, lost their issue numbers
 # (check-seams class 3b: `#\d{2,}` in a permanent anchor slug). `rename` on each heading,
 # and on the body line that now carries its issue ref; `retarget` on each link that
 # followed its anchor (#key-rotation-241 -> #key-rotation, and the rest).
@@ -22,6 +22,9 @@ docs/DEPLOYMENT.md :: rename :: [`MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md).
 docs/DEPLOYMENT.md :: rename :: ## OS security updates (#184)
 docs/DEPLOYMENT.md :: rename :: ## Journal (#186)
 docs/DEPLOYMENT.md :: rename :: Persistent since 2026-10-28, capped at 512M. The Feb-2026 exeuntu image masks
+docs/MEMORY_PRESSURE.md :: rename :: # Memory pressure (#175)
+docs/MEMORY_PRESSURE.md :: rename :: This VM has **7.2 GiB and no swap**, and the production service shares it with
+docs/DEPLOYMENT.md :: rename :: ## Memory pressure (#175)
 docs/MEMORY_PRESSURE.md :: rename :: ## The journal is off tmpfs (#186)
 docs/MEMORY_PRESSURE.md :: retarget :: ([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal-186)). If `/run/log/journal`
 docs/MEMORY_PRESSURE.md :: rename :: ## SocratiCode's containers: loopback only, telemetry off (#222)

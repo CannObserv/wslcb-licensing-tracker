@@ -1,6 +1,6 @@
-# Memory pressure (#175)
+# Memory pressure
 
-This VM has **7.2 GiB and no swap**, and the production service shares it with
+This VM has **7.2 GiB and no swap** (#175), and the production service shares it with
 interactive agent sessions. That combination has a specific failure mode, seen
 on a sibling host on 2026-09-16: nothing gets OOM-killed. exe.dev session
 processes inherit `oom_score_adj` **-1000** from exe.dev's sshd
