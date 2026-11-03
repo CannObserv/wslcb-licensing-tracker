@@ -97,9 +97,11 @@ window, a UTC `quiet` range per timer firing (derived from `infra/*.timer` by
 `tests/test_patching_hosts_knob.py`, #223), the in-flight gate, the restarter
 and the Postgres databases; see [`SKILLS.md`](SKILLS.md#patching-hosts). Its
 `backup` line makes a fresh `wslcb-backup.service` run (#185) the recovery
-point for `wslcb` (#237), in place of a second `pg_dump`. Its one third-party origin is Tailscale
-(`origin pkgs.tailscale.com follow`, its own held step; pins in
-`infra/preferences.d-tailscale`, [`RECOVERY.md`](RECOVERY.md#tailnet), #220).
+point for `wslcb` (#237), in place of a second `pg_dump`. Its two third-party
+origins are followed, each in its own held step and scoped by pins: Tailscale
+(`origin pkgs.tailscale.com follow`, `infra/preferences.d-tailscale`,
+[`RECOVERY.md`](RECOVERY.md#tailnet), #220) and NodeSource
+(`origin deb.nodesource.com follow`, [Node.js](#nodejs) below, #239).
 apt's needrestart hook (`/etc/apt/apt.conf.d/99needrestart`)
 runs `/usr/lib/needrestart/apt-pinvoke -m u … || true`, which calls needrestart;
 Ubuntu turns that into *automatic* restarts unless `$nrconf{restart}` is set.
@@ -123,6 +125,41 @@ sudo needrestart -m u -b -r l   # must print "Disabling Ubuntu mode, explicit re
   `wslcb-healthcheck.timer` stopped across the Postgres one.
 - `tests/test_needrestart_config.py` evaluates the file as Perl, and on the
   host pins the installed copy and the live `conf.d` chain.
+
+### Node.js
+
+Node runs SocratiCode's MCP server and the JS test harness (`npm run test:js`),
+never a service: no `infra/` unit runs it, and the web process loads none. It
+comes from NodeSource's `node_26.x` apt repo (Node 26, end of life 2029-04-30),
+which replaced universe's end-of-life `nodejs` 18 and Ubuntu's `npm` (#239).
+
+```bash
+sudo install -m 644 infra/nodesource-repo.gpg.asc /etc/apt/keyrings/nodesource.asc
+sudo install -m 644 infra/sources.list.d-nodesource.sources /etc/apt/sources.list.d/nodesource.sources
+sudo install -m 644 infra/preferences.d-nodesource /etc/apt/preferences.d/nodesource
+sudo apt-get update
+apt-cache policy nodejs | head -3   # Candidate 26.x-1nodesource1, at 600
+sudo apt-get install nodejs         # bundles npm and npx
+```
+
+- Don't run NodeSource's `setup_26.x`: it pins `nodejs` and `nsolid` at 600
+  with no catch-all, which the probe reports as `unscoped:deb.nodesource.com`.
+  `tests/test_patching_hosts_knob.py` holds the key's fingerprint, the source
+  line and the pins.
+- **After every `nodejs` step**, the bundled npm must still find SocratiCode's
+  pinned tree, `~/.npm/_npx/<sha512(spec)[:16]>`. A changed key re-installs it
+  at the next session launch, #175's memory peak. npm 9.2.0 and 11.20.0 derive
+  it identically. `--no` refuses an install, so this exits non-zero rather than
+  installing. On a miss it still leaves an empty `_npx/<key>` dir; `rmdir` it.
+
+  ```bash
+  SPEC=$(node -p 'require("./.claude/settings.json").env.SOCRATICODE_SPEC')
+  (cd ~ && npm exec --no --package="$SPEC" -- true) && echo pinned tree found
+  ```
+
+- Running SocratiCode servers keep the old binary until their session restarts.
+- Rollback: remove the three files, `apt-get update`, then reinstall universe's
+  `nodejs npm` (end of life, the reason for #239).
 
 ## Logging
 

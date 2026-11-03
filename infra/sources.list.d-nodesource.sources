@@ -1,0 +1,9 @@
+# Node.js 26 (Active LTS, end of life 2029-04-30) for SocratiCode and the JS
+# test harness (#239). Signed by infra/nodesource-repo.gpg.asc; scoped by
+# infra/preferences.d-nodesource. Install: docs/DEPLOYMENT.md § Node.js.
+Types: deb
+URIs: https://deb.nodesource.com/node_26.x
+Suites: nodistro
+Components: main
+Architectures: amd64
+Signed-By: /etc/apt/keyrings/nodesource.asc

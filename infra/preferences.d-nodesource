@@ -1,0 +1,12 @@
+# Scope the deb.nodesource.com apt origin to nodejs (#239; the patching-hosts
+# skill's policy.md "Two lanes"). The knob declares it `origin
+# deb.nodesource.com follow`. NodeSource's own setup script pins nodejs and
+# nsolid at 600 with no catch-all, which the probe reports as unscoped: these
+# pins replace it, so don't run that script. Install: docs/DEPLOYMENT.md § Node.js.
+Package: *
+Pin: origin deb.nodesource.com
+Pin-Priority: 100
+
+Package: nodejs
+Pin: origin deb.nodesource.com
+Pin-Priority: 600
