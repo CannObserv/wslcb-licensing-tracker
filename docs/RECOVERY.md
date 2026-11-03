@@ -55,7 +55,7 @@ A rebuilt host needs these from their owners, not from GCS:
   CannObserv/address-validator's owner), `ENABLE_ADDRESS_VALIDATION`.
 - The backup's own three files (below) — a fresh key from the GCP owner, the
   check-in key from co-status — and the check-in key's three other copies
-  ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)).
+  ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation)).
 - The repo-root `.env` (GitHub PATs, `TEST_DATABASE_URL`) and the deploy key.
 - A tailnet auth key (below).
 
@@ -236,7 +236,7 @@ sudo systemctl start wslcb-backup.service
 All three or none: half a configuration logs an ERROR naming what is missing
 and checks in nothing. **The key has three more copies** (scrape, classify,
 the disk sensor): restore them from this one with
-[`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)'s `install`
+[`MONITORING.md` § Key rotation](MONITORING.md#key-rotation)'s `install`
 lines. Until then a missing scrape or classify copy fails that unit's start,
 and an empty copy, or a missing disk-sensor one, checks in nothing. A landed
 check-in shows in the journal only as httpx's

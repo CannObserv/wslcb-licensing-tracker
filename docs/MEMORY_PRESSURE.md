@@ -80,12 +80,12 @@ this rollout. Re-measure
 if either the service's footprint or the earlyoom config changes — the two are
 coupled, and changing one alone silently re-arms the bug.
 
-## The journal is off tmpfs (#186)
+## The journal is off tmpfs
 
 Until #186, the journal lived in `/run/log/journal`. `/run` is tmpfs, so on a
 host with no swap the journal held RAM: up to its 147.6M runtime cap before it
 rotated. It's on disk now, capped at 512M
-([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal-186)). If `/run/log/journal`
+([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal)). If `/run/log/journal`
 grows again, the flush has been re-masked.
 
 ## Verifying earlyoom actually took the config
@@ -192,7 +192,7 @@ the running session's server against both. It fails on any disagreement.
 against a *floating* session spec, so once `SOCRATICODE_SPEC` is a literal it
 stays silent, even for a literal that differs from the driver's.
 
-## SocratiCode's containers: loopback only, telemetry off (#222)
+## SocratiCode's containers: loopback only, telemetry off
 
 Docker publishes a container's ports ahead of the host firewall, and this host
 is on the tailnet, so a port published on every interface reaches every peer.
@@ -201,7 +201,7 @@ Qdrant's API has no authentication. SocratiCode starts an existing
 bindings it was created with. Only when no container of that name exists does
 it create one, and then it publishes on every interface (`-p 16333:6333`, with
 no host IP and no setting to add one), with Qdrant's anonymous telemetry on.
-Both containers were therefore recreated by hand on 2026-10-26: published on
+Both containers were therefore recreated by hand on 2026-10-26 (#222): published on
 `127.0.0.1` only, Qdrant with `QDRANT__TELEMETRY_DISABLED=true`. That survives
 SocratiCode restarts and upgrades, `docker restart` and reboots
 (`unless-stopped`). It is lost only if a container is removed.

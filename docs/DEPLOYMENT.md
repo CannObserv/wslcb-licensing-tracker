@@ -82,13 +82,13 @@ That's ordering only (#184; `tests/test_infra_web_unit.py`):
 - There's never a `Requires=`, `BindsTo=` or `PartOf=`, because a Postgres
   restart must not stop the app.
 
-## Memory pressure (#175)
+## Memory pressure
 
 No swap, a co-hosted prod service, and earlyoom: the budget, the configs in
 `infra/`, how to verify them, and the SocratiCode pins are in
-[`MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md).
+[`MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md) (#175).
 
-## OS security updates (#184)
+## OS security updates
 
 The exeuntu image masks the apt timers, so patching is a scheduled monthly run
 under the vendored `patching-hosts` skill (#192; first run by hand in #184,
@@ -133,9 +133,9 @@ journalctl -u wslcb-web.service -f
 journalctl -u 'wslcb-task@scrape.service' -f
 ```
 
-## Journal (#186)
+## Journal
 
-Persistent since 2026-10-28, capped at 512M. The Feb-2026 exeuntu image masks
+Persistent since 2026-10-28 (#186), capped at 512M. The Feb-2026 exeuntu image masks
 `systemd-journal-flush.service`, so journald stayed in `/run` despite the
 image's `Storage=persistent`, and the #184 and #220 reboots each lost a boot.
 The fix is the **unmask**: systemd ignores drop-ins on a masked unit, and

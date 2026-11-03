@@ -19,7 +19,7 @@ This host's `/etc/cannobserv/disk-gc/disk-gc.conf` (root, 0644), from the templa
 | `npx_spec_files` | `/home/exedev/wslcb-licensing-tracker/.claude/settings.json` | keeps the pinned SocratiCode tree; the GC reads VS Code's machine setting (`claudeCode.environmentVariables`, the one that delivers the pin, #180) itself |
 | `worktree_repos` | `/home/exedev/wslcb-licensing-tracker` | covers `.worktrees/` and `.claude/worktrees/` |
 | `alert_at_percent` / `clear_at_percent` | 80 / 75 | baseline after a GC run plus a staged editor build and a worktree; patching-hosts refuses a step that would cross 80 |
-| `monitor_id` | `co-wslcb-disk-headroom`'s id | tenant `co-wslcb`; `checkin.key` (root, 0600) is the tenant key, one of four copies: rotate and restore it with the others ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)) |
+| `monitor_id` | `co-wslcb-disk-headroom`'s id | tenant `co-wslcb`; `checkin.key` (root, 0600) is the tenant key, one of four copies: rotate and restore it with the others ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation)) |
 
 The GC runs daily at 05:15 UTC (+≤30 min, no catch-up), the sensor every 10 minutes.
 VERSION 3's `vscode-servers` keeps every server build newer than the newest live one,

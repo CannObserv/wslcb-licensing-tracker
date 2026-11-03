@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS = REPO_ROOT / "docs"
 INFRA = REPO_ROOT / "infra"
 
-HEADING = "## Key rotation (#241)"
+HEADING = "## Key rotation"
 # GitHub's slug: lowercase, punctuation dropped, spaces to hyphens. Derived, so
 # renaming the heading can't leave the docs' links aimed at a dead anchor.
 ANCHOR = "MONITORING.md#" + re.sub(r"[^\w\- ]", "", HEADING[3:].lower()).replace(" ", "-")
@@ -25,8 +25,10 @@ CREDENTIAL_RE = re.compile(r"^LoadCredential=checkin-key:(\S+)$", re.MULTILINE)
 
 def _section() -> str:
     text = (DOCS / "MONITORING.md").read_text(encoding="utf-8")
-    assert HEADING in text, f"docs/MONITORING.md has no '{HEADING}' section"
-    body = text.split(HEADING, 1)[1]
+    # The whole line: a substring would pass on a renamed heading that kept this
+    # as its prefix, while the docs' links followed the old slug.
+    assert HEADING in text.splitlines(), f"docs/MONITORING.md has no '{HEADING}' section"
+    body = text.split(HEADING + "\n", 1)[1]
     return body.split("\n## ", 1)[0]
 
 
@@ -72,4 +74,4 @@ def test_every_copy_is_in_the_recipe_and_the_check():
 def test_rebuild_and_gc_docs_point_at_the_section():
     for doc in ("RECOVERY.md", "DISK_GC.md"):
         text = (DOCS / doc).read_text(encoding="utf-8")
-        assert ANCHOR in text, f"docs/{doc} doesn't link {ANCHOR}"
+        assert ANCHOR + ")" in text, f"docs/{doc} doesn't link {ANCHOR}"

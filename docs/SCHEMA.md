@@ -108,8 +108,8 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — shadow columns storing the as-parsed values from the source *before* name cleaning (uppercase, punctuation stripping); going forward, `insert_record()` saves the raw values here, then writes cleaned values to the primary columns; for existing records, these were backfilled with the already-cleaned values (originals lost)
 - `merge_duplicate_entities()` merges entities whose names differ only by case into the lowest id, moving its links. It ran once, through `backfill_entities()` in data migration `0005_backfill_entities` (`data_migration.py`), not at every startup
 
-### `entity_classifications` (per-source classification answers, #206)
-- Append-only: one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
+### `entity_classifications` (per-source classification answers)
+- Append-only (#206): one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
 - `entity_id` — FK to `entities(id)`, `ON DELETE CASCADE`
 - `entity_type` — `person`, `organization` or `not_a_name` (CHECK `ck_ec_entity_type`); `not_a_name` is stored as an answer and never resolved onto `entities`
 - `entity_subtype` — set iff `organization`, one of the seven (CHECKs `ck_ec_subtype`, `ck_ec_subtype_matches_type` #212)
@@ -119,13 +119,13 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `ignored_at` — set by `wslcb db ignore-jev` (Jev rows) or a cleared manual override; an ignored row never takes part in resolution
 - A source's *current* answer is its latest (`max(id)`) non-ignored row. Indexes `idx_ec_entity_source (entity_id, source, id)`, `idx_ec_source_model (source, model)`
 
-### `entity_review_flags` (operator review flags, #206)
-- `entity_id` (FK `ON DELETE CASCADE`), `flagged_by`, `reason`, `created_at`, `resolved_at`, `resolved_by`, `resolution`
+### `entity_review_flags` (operator review flags)
+- Since #206. `entity_id` (FK `ON DELETE CASCADE`), `flagged_by`, `reason`, `created_at`, `resolved_at`, `resolved_by`, `resolution`
 - Open = `resolved_at IS NULL` (partial index `idx_erf_open`). An open flag protects a noise-named entity from the `reclassify-entities` purge
 - Operator input: `merge_duplicate_entities()` moves them to the surviving entity; deleting an entity (noise purge) deletes them with it
 
-### `classification_runs` (Jev run records, #206)
-- One row per Jev classification run: `origin` (`post_scrape`, `post_import`, `cli`, `admin`; CHECK `ck_classification_runs_origin`), `model`, `started_at`, `finished_at`, `names_sent`, `batches_ok`, `batches_failed`, `input_tokens` (BIGINT), `error`
+### `classification_runs` (Jev run records)
+- One row per Jev classification run (#206): `origin` (`post_scrape`, `post_import`, `cli`, `admin`; CHECK `ck_classification_runs_origin`), `model`, `started_at`, `finished_at`, `names_sent`, `batches_ok`, `batches_failed`, `input_tokens` (BIGINT), `error`
 - Indexed on `started_at`. Written from #207 on
 
 ### `record_entities` (junction table)

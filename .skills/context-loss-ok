@@ -13,3 +13,36 @@
 AGENTS.md :: retarget :: uv run wslcb ingest compress-stragglers     # weekly data/ straggler gzip; tooling disk GC: DEPLOYMENT.md (#200)
 AGENTS.md :: retarget :: See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.
 AGENTS.md :: retarget :: - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, address validation, full ops reference
+
+# 2026-11-03, #242 seam pass: twelve provenance headings lost their issue numbers
+# (check-seams class 3b: `#\d{2,}` in a permanent anchor slug). `rename` on each heading,
+# and on the body line that now carries its issue ref; `retarget` on each link that
+# followed its anchor (#key-rotation-241 -> #key-rotation, and the rest).
+docs/DEPLOYMENT.md :: rename :: [`MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md).
+docs/DEPLOYMENT.md :: rename :: ## OS security updates (#184)
+docs/DEPLOYMENT.md :: rename :: ## Journal (#186)
+docs/DEPLOYMENT.md :: rename :: Persistent since 2026-10-28, capped at 512M. The Feb-2026 exeuntu image masks
+docs/MEMORY_PRESSURE.md :: rename :: ## The journal is off tmpfs (#186)
+docs/MEMORY_PRESSURE.md :: retarget :: ([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal-186)). If `/run/log/journal`
+docs/MEMORY_PRESSURE.md :: rename :: ## SocratiCode's containers: loopback only, telemetry off (#222)
+docs/MEMORY_PRESSURE.md :: rename :: Both containers were therefore recreated by hand on 2026-10-26: published on
+docs/MONITORING.md :: retarget :: | `wslcb-entity-classification.timer` | `co-wslcb-classify` | [below](#entity-classification-check-in-207) |
+docs/MONITORING.md :: retarget :: together ([§ Key rotation](#key-rotation-241)).
+docs/MONITORING.md :: rename :: ## Scrape check-in (#196)
+docs/MONITORING.md :: rename :: Each scrape checks in to co-status, as the backup does ([`RECOVERY.md`](RECOVERY.md)
+docs/MONITORING.md :: rename :: ## Entity classification check-in (#207)
+docs/MONITORING.md :: rename :: look like nothing happening. One monitor, `co-wslcb-classify`.
+docs/MONITORING.md :: retarget :: credential, and must not get one ([§ Relayed scrape](#relayed-scrape-201)).
+docs/MONITORING.md :: rename :: ## Relayed scrape (#201)
+docs/MONITORING.md :: rename :: `wslcb-task@import-relayed` never checks in. `co-wslcb-scrape` keeps reporting
+docs/MONITORING.md :: rename :: ## Key rotation (#241)
+docs/MONITORING.md :: rename :: unable to check in.
+docs/RECOVERY.md :: retarget :: ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)).
+docs/RECOVERY.md :: retarget :: [`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)'s `install`
+docs/DISK_GC.md :: retarget :: | `monitor_id` | `co-wslcb-disk-headroom`'s id | tenant `co-wslcb`; `checkin.key` (root, 0600) is the tenant key, one of four copies: rotate and restore it with the others ([`MONITORING.md` § Key rotation](MONITORING.md#key-rotation-241)) |
+docs/SCHEMA.md :: rename :: ### `entity_classifications` (per-source classification answers, #206)
+docs/SCHEMA.md :: rename :: - Append-only: one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
+docs/SCHEMA.md :: rename :: ### `entity_review_flags` (operator review flags, #206)
+docs/SCHEMA.md :: rename :: - `entity_id` (FK `ON DELETE CASCADE`), `flagged_by`, `reason`, `created_at`, `resolved_at`, `resolved_by`, `resolution`
+docs/SCHEMA.md :: rename :: ### `classification_runs` (Jev run records, #206)
+docs/SCHEMA.md :: rename :: - One row per Jev classification run: `origin` (`post_scrape`, `post_import`, `cli`, `admin`; CHECK `ck_classification_runs_origin`), `model`, `started_at`, `finished_at`, `names_sent`, `batches_ok`, `batches_failed`, `input_tokens` (BIGINT), `error`
