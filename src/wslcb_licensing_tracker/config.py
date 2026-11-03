@@ -12,6 +12,7 @@ import os
 import re
 from collections.abc import Mapping
 from functools import cache
+from typing import overload
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,10 @@ LEGACY_ENV_NAMES: Mapping[str, str] = {
 _DEPRECATION_WARNED: set[str] = set()
 
 
+@overload
+def env(name: str, default: str, *, environ: Mapping[str, str] = ...) -> str: ...
+@overload
+def env(name: str, default: None = None, *, environ: Mapping[str, str] = ...) -> str | None: ...
 def env(
     name: str, default: str | None = None, *, environ: Mapping[str, str] = os.environ
 ) -> str | None:
