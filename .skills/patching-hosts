@@ -51,8 +51,9 @@ hold tailscale tailscale
 # pins in /etc/apt/preferences.d/nodesource (infra/preferences.d-nodesource).
 # Its own held step: each update brings a new bundled npm, and a changed
 # ~/.npm/_npx key would re-install SocratiCode at the next session launch
-# (#175's memory peak), so the step's check is `npm exec --no` resolving the
-# pinned tree (docs/DEPLOYMENT.md § Node.js).
+# (#175's memory peak). The run checks it by hand after the step, with
+# `npm exec --no` (docs/DEPLOYMENT.md § Node.js): the skill runs no per-step
+# check, and a `health` line runs at every probe.
 origin deb.nodesource.com follow
 hold nodejs nodejs
 
