@@ -95,6 +95,7 @@ class TestPostCheckin:
             f"{ENV_PREFIX}BACKUP_CHECKIN_BASE_URL": BASE,
             f"{ENV_PREFIX}BACKUP_MONITOR_ID": MONITOR,
             "WSLCB_BACKUP_CHECKIN_KEY": "from-env",
+            f"{ENV_PREFIX}BACKUP_CHECKIN_KEY": "from-env",  # the name a #204 rename would guess
         }
         assert post_checkin("ok", {}, monitor=BACKUP, environ=env, post=post) is False
         assert post.calls == []
