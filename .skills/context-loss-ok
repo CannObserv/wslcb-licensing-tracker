@@ -3,10 +3,12 @@
 
 # 2026-11-03, #242 run: two docs indexed in AGENTS.md § Reference. Their moves landed earlier
 # and deferred these pointers here: Address Validation left DEPLOYMENT.md in #241 (c31c601;
-# DEPLOYMENT.md keeps a 2-line stub pointing on), the disk GC in #200 (DISK_GC.md). Each
-# pointer below now names the doc directly. Seven entries from #208 (17d1e85) and #240 that
-# prove-no-loss.sh reported as matching nothing (six on AGENTS.md, one scoped to
-# docs/SCHEMA.md) were pruned: each line they warranted is the one that is there now.
+# DEPLOYMENT.md keeps a 2-line stub pointing on), the disk GC in #200 (DISK_GC.md). The
+# stragglers comment now names DISK_GC.md; the two DEPLOYMENT.md pointers drop the claim,
+# since ADDRESS_VALIDATION.md has its own index line. Seven entries from #208 (17d1e85) and
+# #240 that prove-no-loss.sh reported as matching nothing (six on AGENTS.md, one scoped to
+# docs/SCHEMA.md) were pruned: each names a line an earlier run already rewrote, so no base
+# from here on contains it.
 
 AGENTS.md :: retarget :: uv run wslcb ingest compress-stragglers     # weekly data/ straggler gzip; tooling disk GC: DEPLOYMENT.md (#200)
 AGENTS.md :: retarget :: See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full ops reference: server lifecycle, address validation, backfill commands, admin users.
