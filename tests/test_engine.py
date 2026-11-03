@@ -4,13 +4,16 @@ Requires ``config.TEST_DATABASE_URL_ENV`` pointing at a running PostgreSQL insta
 Tests are skipped automatically when the env var is absent.
 """
 
+import logging
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from wslcb_licensing_tracker.config import DATABASE_URL_ENV
-from wslcb_licensing_tracker.engine import get_database_url, get_db
+from wslcb_licensing_tracker.engine import create_engine_from_env, get_database_url, get_db
 
 PROD = "postgresql+asyncpg://wslcb:wslcb@localhost/wslcb"
 
@@ -48,6 +51,20 @@ def test_get_database_url_set_but_empty_is_not_the_default(clean):
     """No-prod guard (#204): an empty value must not become the prod default."""
     clean.setenv(DATABASE_URL_ENV, "")
     assert get_database_url() == ""
+
+
+def test_engine_logs_never_carry_the_password(clean, caplog):
+    clean.setenv(DATABASE_URL_ENV, "postgresql+asyncpg://u:s3cret@host/db")
+    with caplog.at_level(logging.DEBUG, logger="wslcb_licensing_tracker.engine"):
+        create_engine_from_env()
+    clean.setenv(DATABASE_URL_ENV, "not a url s3cret")
+    with (
+        caplog.at_level(logging.DEBUG, logger="wslcb_licensing_tracker.engine"),
+        pytest.raises(ArgumentError),
+    ):
+        create_engine_from_env()
+    assert caplog.records
+    assert "s3cret" not in caplog.text
 
 
 def test_pg_engine_targets_the_test_database(pg_engine, pg_url):

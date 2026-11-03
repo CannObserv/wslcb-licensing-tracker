@@ -38,12 +38,14 @@ def create_engine_from_env(
     Call once at application startup; store on ``app.state.engine``.
     """
     url = get_database_url()
-    logger.debug("creating async engine: %s", url)
     try:
-        return create_async_engine(url, pool_size=pool_size, max_overflow=max_overflow, echo=echo)
+        engine = create_async_engine(url, pool_size=pool_size, max_overflow=max_overflow, echo=echo)
     except ArgumentError as exc:
-        logger.critical("invalid %s %r: %s", DATABASE_URL_ENV, url, exc)
+        # Never the URL or the message, which quotes it: it carries the password.
+        logger.critical("invalid %s: %s", DATABASE_URL_ENV, type(exc).__name__)
         raise
+    logger.debug("created async engine: %s", engine.url)  # str(URL) masks the password
+    return engine
 
 
 @asynccontextmanager
