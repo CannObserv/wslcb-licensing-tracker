@@ -164,8 +164,10 @@ unrelated orphans.
   ```
 
 - Running SocratiCode servers keep the old binary until their session restarts.
-- Rollback: remove the three files, `apt-get update`, then reinstall universe's
-  `nodejs npm` (end of life, the reason for #239).
+- Rollback: remove the three files, `apt-get update`, then
+  `sudo apt-get install --allow-downgrades nodejs=18.19.1+dfsg-6ubuntu5 npm`.
+  apt never downgrades on its own. That's universe's end-of-life 18, the reason
+  for #239.
 
 ## Logging
 
