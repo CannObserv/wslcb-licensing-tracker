@@ -8,11 +8,11 @@ module, `checkin.py`, one `Monitor` per job; all on tenant `co-wslcb`.
 |---|---|---|
 | `wslcb-backup.service` | `co-wslcb-backup` | [`RECOVERY.md`](RECOVERY.md) § The co-status monitor |
 | `wslcb-task@scrape.service` | `co-wslcb-scrape` | below |
-| `wslcb-entity-classification.timer` | `co-wslcb-classify` | [below](#entity-classification-check-in-207) |
+| `wslcb-entity-classification.timer` | `co-wslcb-classify` | [below](#entity-classification-check-in) |
 | `cannobserv-disk-headroom.timer` | `co-wslcb-disk-headroom` | [`DISK_GC.md`](DISK_GC.md): the cohort GC's own sensor, not `checkin.py` (#200) |
 
 All four check in with one tenant key, in four copies: rotate or restore them
-together ([§ Key rotation](#key-rotation-241)).
+together ([§ Key rotation](#key-rotation)).
 
 **A rejected check-in** logs `<job> check-in rejected with HTTP <code>`, with
 what the code means at co-status and co-status's own response body (one line,
@@ -27,9 +27,9 @@ is retried, and none changes the job's exit status (#199):
 
 A 5xx or a transport error is retried once, then logged as `check-in failed`.
 
-## Scrape check-in (#196)
+## Scrape check-in
 
-Each scrape checks in to co-status, as the backup does ([`RECOVERY.md`](RECOVERY.md)
+Each scrape checks in to co-status (#196), as the backup does ([`RECOVERY.md`](RECOVERY.md)
 § The co-status monitor; same module, `checkin.py`). Nothing else notices a
 failed scrape: from 2026-10-13 a WSLCB block 403'd every run for a day before
 anyone looked (#198).
@@ -117,11 +117,11 @@ with a 503 when stale, for an external uptime check; never point
 null (`/health` still 200, "scrape freshness unknown") and `/health/ingest`
 503s "Scrape freshness unavailable" with `db: ok`.
 
-## Entity classification check-in (#207)
+## Entity classification check-in
 
 Jev classification ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Entity classification)
 must not stop unnoticed: a missing key, a vendor outage or a dead timer all
-look like nothing happening. One monitor, `co-wslcb-classify`.
+look like nothing happening. One monitor, `co-wslcb-classify` (#207).
 
 - **The weekly timer is the only `ok` sender.**
   `wslcb-entity-classification.timer` runs `wslcb classify-entities` in its
@@ -146,7 +146,7 @@ look like nothing happening. One monitor, `co-wslcb-classify`.
   unit's own `checkin-key`. That works because check-in keys are
   tenant-scoped (CannObserv/status#46, from `_load_owned`).
 - **The relay import never checks in.** `wslcb-task@import-relayed` has no
-  credential, and must not get one ([§ Relayed scrape](#relayed-scrape-201)).
+  credential, and must not get one ([§ Relayed scrape](#relayed-scrape)).
   Its failures show in the journal and in `classification_runs`. The weekly
   run catches its backlog.
 - **While WSLCB blocks the host (#198)** the scrape raises before its hook, so
@@ -212,20 +212,20 @@ sudo systemctl start 'wslcb-task@classify-entities.service'   # optional: check 
 alert finds the scrape's key but no base URL or monitor id, and logs
 `classify check-in half-configured` (an ERROR) instead of alerting.
 
-## Relayed scrape (#201)
+## Relayed scrape
 
-`wslcb-task@import-relayed` never checks in. `co-wslcb-scrape` keeps reporting
+`wslcb-task@import-relayed` (#201) never checks in. `co-wslcb-scrape` keeps reporting
 the server's own fault until WSLCB lifts its block (#198). `/health` counts a
 relay's success as fresh data, but never as a server attempt. Details:
 [`RELAY.md`](RELAY.md) § Monitoring.
 
-## Key rotation (#241)
+## Key rotation
 
 Tenant `co-wslcb` has one check-in key, `co-wslcb-checkin` (keys are
 tenant-scoped, status#46). This host holds four root-owned copies of it, one
 per unit, each loaded as `LoadCredential=checkin-key:`. Keep them
 byte-identical: a rotation or a rebuild that misses one leaves its monitor
-unable to check in.
+unable to check in (#241).
 
 | Copy | Mode | Loaded by | If the file is missing |
 |---|---|---|---|

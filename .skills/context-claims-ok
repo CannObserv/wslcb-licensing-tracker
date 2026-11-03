@@ -1,0 +1,12 @@
+# context-claims-ok — judged warrants for atoms (backticked spans, issue refs, link
+# targets, URLs) a curation legitimately dropped (curating-context Phase 6,
+# prove-no-loss.sh --claims). Format: [PATH ::] WARRANT :: ATOM, the atom matched whole.
+
+# 2026-11-03, #242: anchor slugs retired with the provenance headings they named; each
+# link now targets the renamed heading's slug.
+docs/MEMORY_PRESSURE.md :: retarget :: DEPLOYMENT.md#journal-186
+docs/MONITORING.md :: retarget :: #entity-classification-check-in-207
+docs/MONITORING.md :: retarget :: #key-rotation-241
+docs/MONITORING.md :: retarget :: #relayed-scrape-201
+docs/RECOVERY.md :: retarget :: MONITORING.md#key-rotation-241
+docs/DISK_GC.md :: retarget :: MONITORING.md#key-rotation-241

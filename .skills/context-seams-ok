@@ -28,27 +28,20 @@ docs/SOCRATICODE.md :: the `AGENTS.md` block is on its degraded variant |
 # and names AGENTS.md as the file whose budget it owns: the subject, not a pointer.
 docs/SKILLS.md :: `curating-context` owns `AGENTS.md`'s 6,000-token budget (#165).
 
-# Source back-references swept because body lines left AGENTS.md. Each names the
-# policy file generically or a section that did not move (Frozen vs. Derived,
-# the diff-ingestion bullet in Architecture, the docs-dir override line).
-.claude/hooks/context-budget-guard.sh :: AGENTS.md
-.claude/hooks/skills-submodule-update.sh :: exit-2 of AGENTS.md's gate
-.claude/hooks/socraticode-health.sh :: AGENTS.md
-.socraticodecontextartifacts.json :: Code exploration reference: the full SocratiCode tool table
-src/wslcb_licensing_tracker/backup.py :: The frozen tables (AGENTS.md)
-src/wslcb_licensing_tracker/parser.py :: a bug; see AGENTS.md.
-tests/test_doc_sensitive_paths.py :: (scratch / "AGENTS.md")
-tests/test_docs_layout.py :: AGENTS.md
-.claude/hooks/context-budget-guard.sh :: CLAUDE.md is followed to its target, which is the cohort norm.
+# Source mentions of AGENTS.md that are about policy files in general — vendored hooks,
+# and a test whose fixture writes a scratch AGENTS.md. Groups (#321): scoped to the
+# AGENTS.md sweep, never expire, and decline any line that names content that moved.
+# #242 replaced #208's line acks for these: source is swept only when a body line leaves
+# AGENTS.md, so on every other sweep (the weekly cadence included) line acks read stale.
+# #208's acks for backup.py (Frozen), parser.py (the diff bullet), tests/test_docs_layout.py
+# (the docs override) and .socraticodecontextartifacts.json (Code Exploration Policy) were
+# pruned: each names a specific AGENTS.md section, so re-judge it when a body line next leaves.
+@mentions AGENTS.md .claude/hooks :: vendored hooks (curating-context, managing-skills, init-socraticode) name the policy file generically
+@mentions AGENTS.md tests/test_doc_sensitive_paths.py :: the doc-gate test writes a scratch AGENTS.md as its sensitive-path fixture
 
-# Doc-split sweeps (DEPLOYMENT.md -> MEMORY_PRESSURE.md, SCHEMA.md -> MIGRATIONS.md):
-# each of these points at a DEPLOYMENT/SCHEMA section that did not move.
-docs/MEMORY_PRESSURE.md :: (see [After changing service files](DEPLOYMENT.md#after-changing-service-files))
-docs/MONITORING.md :: Jev classification ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Entity classification)
-docs/RELAY.md :: plus the [`DEPLOYMENT.md`](DEPLOYMENT.md) copy block, which installs the
-docs/SKILLS.md :: The advice printed on a hit — which doc sections to spot-check
-docs/SOCRATICODE.md :: [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
-docs/SOCRATICODE.md :: [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
-infra/wslcb-healthcheck.service :: (see docs/DEPLOYMENT.md "Sudoers rule")
-.socraticodecontextartifacts.json :: "path": "docs/DEPLOYMENT.md",
-.socraticodecontextartifacts.json :: "path": "docs/SCHEMA.md",
+# #242 (2026-11-03): pruned #208's nine doc-split acks (17d1e85: back-references into
+# DEPLOYMENT.md / SCHEMA.md, judged for the MEMORY_PRESSURE and MIGRATIONS splits). They
+# match only on a `--file docs/DEPLOYMENT.md` or `--file docs/SCHEMA.md` sweep, so every
+# default sweep reported them as matching nothing, and an ack can't be scoped to a target.
+# On the next split of either doc, those back-references must be re-judged against what
+# that split moves: a content-matched ack from #208 would silence one the split made false.
