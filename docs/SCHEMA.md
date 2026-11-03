@@ -120,7 +120,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - A source's *current* answer is its latest (`max(id)`) non-ignored row. Indexes `idx_ec_entity_source (entity_id, source, id)`, `idx_ec_source_model (source, model)`
 
 ### `entity_review_flags` (operator review flags)
-- Since #206. `entity_id` (FK `ON DELETE CASCADE`), `flagged_by`, `reason`, `created_at`, `resolved_at`, `resolved_by`, `resolution`
+- Columns (#206): `entity_id` (FK `ON DELETE CASCADE`), `flagged_by`, `reason`, `created_at`, `resolved_at`, `resolved_by`, `resolution`
 - Open = `resolved_at IS NULL` (partial index `idx_erf_open`). An open flag protects a noise-named entity from the `reclassify-entities` purge
 - Operator input: `merge_duplicate_entities()` moves them to the surviving entity; deleting an entity (noise purge) deletes them with it
 
