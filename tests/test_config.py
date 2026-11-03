@@ -53,10 +53,6 @@ class TestEnv:
     NEW = f"{ENV_PREFIX}DATABASE_URL"
     OLD = "DATABASE_URL"
 
-    @pytest.fixture(autouse=True)
-    def _fresh_warnings(self, monkeypatch):
-        monkeypatch.setattr(config, "_DEPRECATION_WARNED", set())
-
     def _deprecations(self, caplog) -> list[logging.LogRecord]:
         return [r for r in caplog.records if "deprecated" in r.getMessage()]
 

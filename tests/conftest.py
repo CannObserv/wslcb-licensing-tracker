@@ -88,6 +88,18 @@ def _contact_email(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _fresh_deprecation_warnings(monkeypatch):
+    """Each test starts with no legacy env name warned about (#204).
+
+    ``config.env()`` warns once per name per process; without this, a test that
+    feeds a legacy name would use up the warning another test asserts.
+    """
+    from wslcb_licensing_tracker import config
+
+    monkeypatch.setattr(config, "_DEPRECATION_WARNED", set())
+
+
+@pytest.fixture(autouse=True)
 def _no_configured_checkin(monkeypatch):
     """No test finds a co-status check-in configured (#196).
 
