@@ -157,6 +157,7 @@ unrelated orphans.
   at the next session launch, #175's memory peak. npm 9.2.0 and 11.20.0 derive
   it identically. `--no` refuses an install, so this exits non-zero rather than
   installing. On a miss it still leaves an empty `_npx/<key>` dir; `rmdir` it.
+  From the repo root:
 
   ```bash
   SPEC=$(node -p 'require("./.claude/settings.json").env.SOCRATICODE_SPEC')
