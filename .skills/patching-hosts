@@ -46,6 +46,17 @@ backup wslcb-backup.service postgresql@16-main:wslcb
 origin pkgs.tailscale.com follow
 hold tailscale tailscale
 
+# NodeSource's node_26.x replaced universe's end-of-life nodejs 18 (#239). It
+# runs SocratiCode and the JS test harness; no service runs node. Scoped by
+# pins in /etc/apt/preferences.d/nodesource (infra/preferences.d-nodesource).
+# Its own held step: each update brings a new bundled npm, and a changed
+# ~/.npm/_npx key would re-install SocratiCode at the next session launch
+# (#175's memory peak). The run checks it by hand after the step, with
+# `npm exec --no` (docs/DEPLOYMENT.md § Node.js): the skill runs no per-step
+# check, and a `health` line runs at every probe.
+origin deb.nodesource.com follow
+hold nodejs nodejs
+
 # fwupd (the image ships it, masks its units and deletes its motd conffile, so
 # unattended-upgrade skipped it and exited 1) was purged with its 53 orphaned
 # dependencies on 2026-10-08 (#193). The masks stay. Savepoint, kept until the

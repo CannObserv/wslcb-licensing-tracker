@@ -163,6 +163,10 @@ Code's machine setting, which it reads itself. Its report lists the tree as `pin
 <spec>`. If the configured file is missing or unreadable, or the machine setting
 exists but won't parse, it keeps every npx tree and warns. (`~/.socraticode/pin` is outside `_npx`, so the GC never touches it.)
 
+That key is npm's derivation, not the GC's: every `nodejs` update brings a new
+bundled npm, so [`DEPLOYMENT.md`](DEPLOYMENT.md#nodejs) checks the pinned tree
+still resolves after each one (#239).
+
 After a re-pin, the old version's tree goes on the GC's next daily run once nothing
 uses it (`/proc`) and no entry in it is newer than `grace_minutes` (60). There is no
 age gate: #217's 30 days retired with this repo's own tier.

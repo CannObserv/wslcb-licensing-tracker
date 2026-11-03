@@ -160,16 +160,29 @@ def test_tailscale_origin_is_followed_in_its_own_step(knob: dict) -> None:
     tailnet drop (check-ins reach ``status`` over MagicDNS) is approved alone.
     """
     origins = {o["origin"]: o["policy"] for o in knob["origin"]}
-    assert origins == {"pkgs.tailscale.com": "follow"}
+    assert origins["pkgs.tailscale.com"] == "follow"
     holds = {h["step"]: h["globs"] for h in knob["hold"]}
     assert holds.get("tailscale") == ["tailscale"]
+
+
+def test_nodesource_origin_is_followed_in_its_own_step(knob: dict) -> None:
+    """Node 26 comes from NodeSource, not universe's end-of-life 18 (#239).
+
+    policy.md "Two lanes" names it by site (its ``o=`` is ``. nodistro``). Its
+    own step: each update brings a new bundled npm, and the ``_npx`` key check
+    (a changed key re-installs SocratiCode, #175's memory peak) follows it.
+    """
+    origins = {o["origin"]: o["policy"] for o in knob["origin"]}
+    assert origins == {"pkgs.tailscale.com": "follow", "deb.nodesource.com": "follow"}
+    holds = {h["step"]: h["globs"] for h in knob["hold"]}
+    assert holds.get("nodejs") == ["nodejs"]
 
 
 TAILSCALE_PINS = REPO_ROOT / "infra" / "preferences.d-tailscale"
 
 
 def _pin_stanzas(text: str) -> list[dict[str, str]]:
-    """apt_preferences(5) stanzas: blank-line separated, `#` lines are comments."""
+    """apt_preferences(5) or deb822 sources(5) stanzas: blank-line separated, `#` comments."""
     stanzas = []
     for block in text.split("\n\n"):
         fields = dict(
@@ -194,6 +207,56 @@ def test_tailscale_pins_scope_the_followed_origin() -> None:
     assert by_package["*"] < 500
     assert by_package["tailscale tailscale-archive-keyring"] > 500
     assert len(by_package) == 2
+
+
+NODESOURCE_PINS = REPO_ROOT / "infra" / "preferences.d-nodesource"
+NODESOURCE_SOURCE = REPO_ROOT / "infra" / "sources.list.d-nodesource.sources"
+NODESOURCE_KEY = REPO_ROOT / "infra" / "nodesource-repo.gpg.asc"
+# NodeSource's repo key ("NSolid <nsolid-gpg@nodesource.com>"); InRelease's
+# signature verified against it 2026-11-03 (#239).
+NODESOURCE_FPR = "6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+
+
+def test_nodesource_pins_scope_the_followed_origin() -> None:
+    """NodeSource's own setup script pins nodejs and nsolid at 600 with no catch-all.
+
+    That leaves the origin unscoped and lets nsolid in. These pins take
+    nodejs alone; everything else the site serves stays below Ubuntu's (#239).
+    """
+    stanzas = _pin_stanzas(NODESOURCE_PINS.read_text())
+    assert all(s["Pin"] == "origin deb.nodesource.com" for s in stanzas)
+    by_package = {s["Package"]: int(s["Pin-Priority"]) for s in stanzas}
+    assert by_package["*"] < 500
+    assert by_package["nodejs"] > 500
+    assert len(by_package) == 2
+
+
+def test_nodesource_source_is_the_node_26_line() -> None:
+    """The decided major (2026-11-02): 26, Active LTS until 2029-04-30 (#239)."""
+    (source,) = _pin_stanzas(NODESOURCE_SOURCE.read_text())
+    assert source["Types"] == "deb"
+    assert source["URIs"] == "https://deb.nodesource.com/node_26.x"
+    assert source["Suites"] == "nodistro"
+    assert source["Components"] == "main"
+    assert source["Signed-By"] == "/etc/apt/keyrings/nodesource.asc"
+
+
+def test_nodesource_key_is_the_verified_one(tmp_path: Path) -> None:
+    """The committed key is the one InRelease was verified against (#239).
+
+    A throwaway GNUPGHOME: ``--show-keys`` would otherwise create ``~/.gnupg``.
+    """
+    gpg = shutil.which("gpg")
+    assert gpg
+    out = subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
+        [gpg, "--show-keys", "--with-colons", str(NODESOURCE_KEY)],
+        env={"GNUPGHOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    primary = [line.split(":")[9] for line in out.splitlines() if line.startswith("fpr:")][0]
+    assert primary == NODESOURCE_FPR
 
 
 # The quiet set derived from the timers (#223). A range starts before the
