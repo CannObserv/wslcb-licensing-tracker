@@ -138,7 +138,7 @@ sudo install -m 644 infra/nodesource-repo.gpg.asc /etc/apt/keyrings/nodesource.a
 sudo install -m 644 infra/sources.list.d-nodesource.sources /etc/apt/sources.list.d/nodesource.sources
 sudo install -m 644 infra/preferences.d-nodesource /etc/apt/preferences.d/nodesource
 sudo apt-get update
-apt-cache policy nodejs | head -3   # Candidate 26.x-1nodesource1, at 600
+apt-cache policy nodejs | sed -n 1,5p   # Candidate 26.x-1nodesource1; its version row says 600
 sudo apt-get install nodejs         # bundles npm and npx
 ```
 
