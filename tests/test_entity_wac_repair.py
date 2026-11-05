@@ -268,8 +268,13 @@ class TestScopeAndSafety:
     async def test_lookalikes_and_pure_annotations_untouched(self, pg_conn):
         look = await _entity(pg_conn, "T211 WACHAREE BOWERS", regex=("person", None))
         pure = await _entity(pg_conn, "PER WAC 314-07-035", regex=("person", None))
+        suffix_only = await _entity(pg_conn, "LLC PER WAC 314-07-035")
 
         report = await strip_wac_suffixes(pg_conn)
+
+        # Strips to the noise name "LLC": left for reclassify-entities, not renamed.
+        assert await _name(pg_conn, suffix_only) == "LLC PER WAC 314-07-035"
+        assert {"id": suffix_only, "name": "LLC PER WAC 314-07-035"} in report["skipped_noise"]
 
         assert await _name(pg_conn, look) == "T211 WACHAREE BOWERS"
         assert await _name(pg_conn, pure) == "PER WAC 314-07-035"
