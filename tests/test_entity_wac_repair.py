@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from wslcb_licensing_tracker.entities import REGEX_MODEL
 from wslcb_licensing_tracker.entity_classification import record_manual
 from wslcb_licensing_tracker.entity_wac_repair import strip_wac_suffixes
 from wslcb_licensing_tracker.models import (
@@ -38,7 +39,7 @@ async def _entity(conn, name: str, *, regex=("organization", "business"), jev=No
             source="regex",
             entity_type=regex[0],
             entity_subtype=regex[1],
-            model="regex-1",
+            model=REGEX_MODEL,
         )
     )
     if jev:
