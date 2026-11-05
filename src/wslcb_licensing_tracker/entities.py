@@ -709,8 +709,9 @@ async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int)
     Re-links ``record_entities`` rows (a record already linked to the
     canonical entity keeps the lower position), moves the duplicate's manual
     classification rows and review flags, then deletes it; its regex/Jev rows
-    cascade away.  Does not re-resolve the canonical entity or re-compact
-    positions: the caller does (``resolve_entities``, ``renumber_link_positions``).
+    cascade away.  Does not re-resolve the canonical entity (``resolve_entities``).
+    A conflict leaves a gap in that record's positions; ``renumber_link_positions``
+    closes it (``merge_duplicate_entities`` does not call it).
     """
     dirty_links = (
         await conn.execute(
