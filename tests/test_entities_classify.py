@@ -266,9 +266,30 @@ def test_extract_entity_names_skips_business_markers_and_noise():
         "MURGASH, MARK JOHN; ADDITIONAL NAMES ON FILE; murgash, mark john; TRUSTEE"
     )
     assert extract_entity_names(applicants) == [
-        "BP WEST COAST PRODUCTS, LLC PER WAC 314.07",
+        "BP WEST COAST PRODUCTS, LLC",
         "MURGASH, MARK JOHN",
     ]
+
+
+def test_extract_entity_names_strips_wac_annotations():
+    """#211: an appended WAC citation is dropped from the entity name, in every prod shape."""
+    applicants = (
+        "PNWRM, LLC; BP WEST COAST PRODUCTS, LLC PER WAC; 314.07.035; "
+        "7-ELEVEN, INC., (PER WAC 314-07-035); W BY W INTERNATIONAL BLVD I, LLC ON LIC PER; "
+        "WAC 314-07-035; DOUBLECHECK LLC (PER 314-07-035); WACHAREE BOWERS"
+    )
+    assert extract_entity_names(applicants) == [
+        "BP WEST COAST PRODUCTS, LLC",
+        "7-ELEVEN, INC.",
+        "W BY W INTERNATIONAL BLVD I, LLC",
+        "DOUBLECHECK LLC",
+        "WACHAREE BOWERS",
+    ]
+
+
+def test_extract_entity_names_dedupes_after_wac_strip():
+    applicants = "BIZ; TUKWILA HOTEL GROUP, LLC PER WAC 314-07-03; TUKWILA HOTEL GROUP, LLC"
+    assert extract_entity_names(applicants) == ["TUKWILA HOTEL GROUP, LLC"]
 
 
 def test_extract_entity_names_without_semicolon():

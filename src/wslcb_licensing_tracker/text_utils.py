@@ -35,6 +35,28 @@ _DUPLICATE_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# WSLCB annotation citing WAC 314-… appended to an applicant name (#211):
+# ``7-ELEVEN, INC. PER WAC 314-07-035``, ``… (PER WAC 314-07-035)``,
+# ``…, ON LICENSE PER WAC …``, ``… (WAC 314-07-035)``, ``… (PER 314-07-035)``.
+# The citation is often truncated (``PER WAC 314.07``, ``PER WAC 0314-07-``) or
+# split off into the next applicant part (``… PER WAC; 314-07-035``,
+# ``… ON LIC PER; WAC 314-07-035``).  Anchored at the end of the name.  A bare
+# ``PER`` or ``WAC`` token never matches alone: ``PER`` needs ``WAC``/``314``
+# after it or ``ON LIC`` before it, and ``WAC`` needs ``PER`` before it or
+# ``314`` after it — so ``HANSEN, PER`` and ``WAC FARMS, LLC`` survive.
+_WAC_LEAD_IN = r"(?:(?:ON\s+)?LIC(?:ENSED?)?\s+)?(?:AS\s+)?"
+_WAC_CITE = r"[\s\d.\-()]*"
+_WAC_ANNOTATION_RE = re.compile(
+    r"[\s,]*\(?\s*(?<![A-Z0-9'])"
+    r"(?:"
+    rf"{_WAC_LEAD_IN}PER\s+WAC(?![A-Z]){_WAC_CITE}"
+    rf"|{_WAC_LEAD_IN}PER\s+0?314(?!\d){_WAC_CITE}"
+    rf"|WAC\s*0?314(?!\d){_WAC_CITE}"
+    r"|ON\s+LIC(?:ENSE)?\s+PER"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
 # ---------------------------------------------------------------------------
 # Functions
 # ---------------------------------------------------------------------------
@@ -86,6 +108,26 @@ def strip_duplicate_marker(name: str) -> str:
     """
     stripped = _DUPLICATE_MARKER_RE.sub("", name)
     return re.sub(r" {2,}", " ", stripped).strip()
+
+
+def strip_wac_annotation(name: str) -> str:
+    """Remove an appended WSLCB ``PER WAC 314-…`` annotation from an applicant name (#211).
+
+    ::
+
+        7-ELEVEN, INC. PER WAC 314-07-035          -> 7-ELEVEN, INC.
+        7-ELEVEN, INC., (PER WAC 314-07-035)       -> 7-ELEVEN, INC.,
+        GOMAD LLC, ON LICENSE PER WAC 314-07-035   -> GOMAD LLC
+        BP WEST COAST PRODUCTS LLC PER WAC 314 07  -> BP WEST COAST PRODUCTS LLC
+        W BY W INTERNATIONAL BLVD I, LLC ON LIC PER -> W BY W INTERNATIONAL BLVD I, LLC
+        PER WAC 314-07-035                         -> (empty)
+
+    Only a trailing annotation is removed; ``WACHAREE BOWERS`` and
+    ``WAC FARMS, LLC`` are unchanged.  Leftover trailing punctuation is the
+    caller's to clean (``clean_entity_name()``).  Used when extracting entity
+    names only: the stored ``applicants`` string keeps the annotation.
+    """
+    return _WAC_ANNOTATION_RE.sub("", name).rstrip()
 
 
 def clean_applicants_string(applicants: str | None) -> str | None:

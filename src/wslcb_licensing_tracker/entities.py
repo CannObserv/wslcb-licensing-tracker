@@ -32,13 +32,13 @@ from .models import (
     record_enrichments,
     record_entities,
 )
-from .text_utils import clean_entity_name, strip_duplicate_marker
+from .text_utils import clean_entity_name, strip_duplicate_marker, strip_wac_annotation
 
 logger = logging.getLogger(__name__)
 
 # Enrichment version written by reprocess_entities.
 # Bump this integer when entity processing logic changes.
-_ENTITY_REPROCESS_VERSION = 4
+_ENTITY_REPROCESS_VERSION = 5  # 5: WAC annotations stripped at extraction (#211)
 
 # Version of the regex classifier rules (``_CATEGORY_CHECKS`` + ``REGEX_SUBTYPE``),
 # stored as ``entity_classifications.model`` on regex rows (#206).  Bump it only
@@ -64,7 +64,8 @@ ADDITIONAL_NAMES_MARKERS: frozenset[str] = frozenset(
 # annotations, and fragments of a business name split on a stray ';'.  Census of
 # production on 2026-10-22; see docs/research/person-vs-org-classification.md.
 # Real names that merely carry an appended citation
-# (``7-ELEVEN, INC. PER WAC 314-07-035``) are *not* noise and are left as-is.
+# (``7-ELEVEN, INC. PER WAC 314-07-035``) are *not* noise: extraction strips the
+# citation (``text_utils.strip_wac_annotation``, #211) before this filter runs.
 
 # Exact fragments observed in production.
 _NOISE_EXACT: frozenset[str] = frozenset(
@@ -537,6 +538,8 @@ def extract_entity_names(
 
     The first element (the business name) is skipped, as are
     ``ADDITIONAL_NAMES_MARKERS`` and non-name strings (``is_noise_name``).
+    An appended ``PER WAC 314-…`` annotation is dropped from each name
+    (``strip_wac_annotation``, #211); a part that is only an annotation is skipped.
     *record_id* / *role* only label the debug log lines.
     """
     if not applicants_str or ";" not in applicants_str:
@@ -545,7 +548,7 @@ def extract_entity_names(
     names: list[str] = []
     seen: set[str] = set()
     for raw in applicants_str.split(";")[1:]:
-        clean = clean_entity_name(strip_duplicate_marker(raw.strip()))
+        clean = clean_entity_name(strip_wac_annotation(strip_duplicate_marker(raw.strip())))
         if not clean or clean in seen:
             continue
         seen.add(clean)
@@ -689,70 +692,7 @@ async def merge_duplicate_entities(conn: AsyncConnection) -> int:
 
     merged = 0
     for dirty_id, dirty_name, canon_id in dup_rows:
-        # Fetch links for the duplicate entity
-        dirty_links = (
-            await conn.execute(
-                select(
-                    record_entities.c.record_id,
-                    record_entities.c.role,
-                    record_entities.c.position,
-                ).where(record_entities.c.entity_id == dirty_id)
-            )
-        ).fetchall()
-
-        for link in dirty_links:
-            rid, role, pos = link[0], link[1], link[2]
-            # Check if canonical already has a link for this (record, role)
-            existing = (
-                await conn.execute(
-                    select(record_entities.c.position).where(
-                        (record_entities.c.record_id == rid)
-                        & (record_entities.c.entity_id == canon_id)
-                        & (record_entities.c.role == role)
-                    )
-                )
-            ).scalar_one_or_none()
-
-            if existing is not None:
-                # Conflict — keep lower position on canonical
-                if pos < existing:
-                    await conn.execute(
-                        update(record_entities)
-                        .where(
-                            (record_entities.c.record_id == rid)
-                            & (record_entities.c.entity_id == canon_id)
-                            & (record_entities.c.role == role)
-                        )
-                        .values(position=pos)
-                    )
-            else:
-                await conn.execute(
-                    update(record_entities)
-                    .where(
-                        (record_entities.c.record_id == rid)
-                        & (record_entities.c.entity_id == dirty_id)
-                        & (record_entities.c.role == role)
-                    )
-                    .values(entity_id=canon_id)
-                )
-
-        # Operator input survives the merge (#206); regex/Jev rows cascade away.
-        await conn.execute(
-            update(entity_classifications)
-            .where(
-                (entity_classifications.c.entity_id == dirty_id)
-                & (entity_classifications.c.source == "manual")
-            )
-            .values(entity_id=canon_id)
-        )
-        await conn.execute(
-            update(entity_review_flags)
-            .where(entity_review_flags.c.entity_id == dirty_id)
-            .values(entity_id=canon_id)
-        )
-        # Delete remaining dirty links (conflict cases) and the entity itself
-        await conn.execute(delete(record_entities).where(record_entities.c.entity_id == dirty_id))
-        await conn.execute(delete(entities).where(entities.c.id == dirty_id))
+        await merge_entity_into(conn, dirty_id, canon_id)
         logger.info("Merged entity %d %r → %d", dirty_id, dirty_name, canon_id)
         merged += 1
 
@@ -761,6 +701,79 @@ async def merge_duplicate_entities(conn: AsyncConnection) -> int:
         logger.info("Merged %d duplicate entities", merged)
 
     return merged
+
+
+async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int) -> None:
+    """Fold entity *dirty_id* into *canon_id* and delete it (#206 semantics).
+
+    Re-links ``record_entities`` rows (a record already linked to the
+    canonical entity keeps the lower position), moves the duplicate's manual
+    classification rows and review flags, then deletes it; its regex/Jev rows
+    cascade away.  Does not re-resolve the canonical entity or re-compact
+    positions: the caller does (``resolve_entities``, ``renumber_link_positions``).
+    """
+    dirty_links = (
+        await conn.execute(
+            select(
+                record_entities.c.record_id,
+                record_entities.c.role,
+                record_entities.c.position,
+            ).where(record_entities.c.entity_id == dirty_id)
+        )
+    ).fetchall()
+
+    for rid, role, pos in dirty_links:
+        # Check if canonical already has a link for this (record, role)
+        existing = (
+            await conn.execute(
+                select(record_entities.c.position).where(
+                    (record_entities.c.record_id == rid)
+                    & (record_entities.c.entity_id == canon_id)
+                    & (record_entities.c.role == role)
+                )
+            )
+        ).scalar_one_or_none()
+
+        if existing is not None:
+            # Conflict — keep lower position on canonical
+            if pos < existing:
+                await conn.execute(
+                    update(record_entities)
+                    .where(
+                        (record_entities.c.record_id == rid)
+                        & (record_entities.c.entity_id == canon_id)
+                        & (record_entities.c.role == role)
+                    )
+                    .values(position=pos)
+                )
+        else:
+            await conn.execute(
+                update(record_entities)
+                .where(
+                    (record_entities.c.record_id == rid)
+                    & (record_entities.c.entity_id == dirty_id)
+                    & (record_entities.c.role == role)
+                )
+                .values(entity_id=canon_id)
+            )
+
+    # Operator input survives the merge (#206); regex/Jev rows cascade away.
+    await conn.execute(
+        update(entity_classifications)
+        .where(
+            (entity_classifications.c.entity_id == dirty_id)
+            & (entity_classifications.c.source == "manual")
+        )
+        .values(entity_id=canon_id)
+    )
+    await conn.execute(
+        update(entity_review_flags)
+        .where(entity_review_flags.c.entity_id == dirty_id)
+        .values(entity_id=canon_id)
+    )
+    # Delete remaining dirty links (conflict cases) and the entity itself
+    await conn.execute(delete(record_entities).where(record_entities.c.entity_id == dirty_id))
+    await conn.execute(delete(entities).where(entities.c.id == dirty_id))
 
 
 async def reprocess_entities(
@@ -916,7 +929,7 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
     purge = sorted((noise - protected) | confirmed)
     purge_set = set(purge)
 
-    regex_rows = _plan_regex_rows(
+    regex_rows = plan_regex_rows(
         [(eid, name) for eid, name in rows if eid not in purge_set], await current_answers(conn)
     )
     for i in range(0, len(regex_rows), 1000):
@@ -992,7 +1005,7 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
     }
 
 
-def _plan_regex_rows(
+def plan_regex_rows(
     rows: list[tuple[int, str]], answers: dict[int, dict[str, SourceAnswer]]
 ) -> list[dict]:
     """Return regex rows to insert for ``(id, name)`` pairs whose current regex answer is stale."""
@@ -1028,7 +1041,12 @@ async def _purge_entities(conn: AsyncConnection, entity_ids: list[int]) -> None:
     ).fetchall()
     await conn.execute(delete(record_entities).where(record_entities.c.entity_id.in_(entity_ids)))
     await conn.execute(delete(entities).where(entities.c.id.in_(entity_ids)))
-    for record_id, role in affected:
+    await renumber_link_positions(conn, [tuple(r) for r in affected])
+
+
+async def renumber_link_positions(conn: AsyncConnection, pairs: list[tuple[int, str]]) -> None:
+    """Re-compact ``record_entities.position`` to 0..n-1 for each ``(record_id, role)``."""
+    for record_id, role in pairs:
         await conn.execute(
             text("""
                 UPDATE record_entities re SET position = r.rn - 1
