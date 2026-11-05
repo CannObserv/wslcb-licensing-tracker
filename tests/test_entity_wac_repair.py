@@ -315,3 +315,47 @@ class TestScopeAndSafety:
         assert first["unmatched_records"] == []
         assert first["records_checked"] >= 1
         assert second["renamed"] == [] and second["merged"] == []
+
+
+class TestVerification:
+    async def test_previous_applicant_links_renamed_and_verified(
+        self, pg_conn, standard_new_application
+    ):
+        """CR 1: most prod links (49 of 61) are previous_applicant."""
+        eid = await _entity(pg_conn, "T211 PREV LLC PER WAC")
+        rec = dict(
+            standard_new_application,
+            license_number="t211_p1",
+            previous_applicants="PREV BIZ; T211 PREV LLC PER WAC; 314-07-035",
+        )
+        rid = (await insert_record(pg_conn, rec))[0]
+        await _link(pg_conn, rid, eid, 0, role="previous_applicant")
+
+        report = await strip_wac_suffixes(pg_conn)
+
+        assert await _name(pg_conn, eid) == "T211 PREV LLC"
+        assert report["records_checked"] == 1
+        assert report["unmatched_records"] == []
+
+    async def test_mismatch_between_links_and_applicants_is_reported(
+        self, pg_conn, standard_new_application
+    ):
+        """CR 2: the check that gates the CLI commit detects a real mismatch."""
+        eid = await _entity(pg_conn, "T211 MIS LLC PER WAC 314-07-035")
+        stray = await _entity(pg_conn, "T211 STRAY PERSON", regex=("person", None))
+        rid = await _record(
+            pg_conn, standard_new_application, "t211_x1", "BIZ; T211 MIS LLC PER WAC 314-07-035"
+        )
+        await _link(pg_conn, rid, eid, 0)
+        await _link(pg_conn, rid, stray, 1)
+
+        report = await strip_wac_suffixes(pg_conn, dry_run=True)
+
+        assert report["unmatched_records"] == [
+            {
+                "record_id": rid,
+                "role": "applicant",
+                "expected": ["T211 MIS LLC"],
+                "linked": ["T211 MIS LLC", "T211 STRAY PERSON"],
+            }
+        ]
