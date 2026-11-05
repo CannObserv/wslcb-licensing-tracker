@@ -339,6 +339,7 @@ uv run wslcb db rebuild-links
 uv run wslcb db reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
 uv run wslcb db reprocess-entities [--record-id 12345] [--dry-run]
 uv run wslcb db reclassify-entities [--dry-run]   # regex rows + re-resolve classifications; drop non-name entities (#203, #206)
+uv run wslcb db strip-wac-suffixes [--dry-run]    # one-off: rename/merge entities named '… PER WAC 314-…' (#211); commits only if verified
 uv run wslcb db ignore-jev [--model ID] [--undo] [--dry-run]  # reversible Jev rollback: entities fall back to manual/regex (#206)
 
 # Backfill

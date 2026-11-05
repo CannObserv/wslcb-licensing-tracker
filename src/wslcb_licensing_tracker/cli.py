@@ -74,6 +74,7 @@ from .engine import create_engine_from_env, get_db
 from .entities import reclassify_entities as run_reclassify_entities
 from .entities import reprocess_entities as run_reprocess_entities
 from .entity_classification import set_jev_ignored as run_set_jev_ignored
+from .entity_wac_repair import strip_wac_suffixes as run_strip_wac_suffixes
 from .integrity import print_report
 from .integrity import run_all_checks as run_integrity_checks
 from .jev_classifier import (
@@ -677,6 +678,59 @@ def reclassify_entities(dry_run: bool) -> None:
         f"{kept} {r['protected_noise_skipped']:,} noise-named entities with a manual decision "
         f"or open flag (protected); {r['confirmed_noise']:,} operator-confirmed non-names removed."
     )
+
+
+@db.command("strip-wac-suffixes")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+def strip_wac_suffixes(dry_run: bool) -> None:
+    """Rename or merge entities whose names carry an appended PER WAC 314-... annotation (#211).
+
+    One-off repair for entities created before ingest stripped the annotation.
+    Merges keep manual rows and review flags (#206). An apply commits only if
+    every affected record re-extracts to its links and no suffixed name is
+    left; otherwise it rolls back and exits 1. Back up entities,
+    record_entities and entity_classifications first.
+    """
+
+    async def _run(engine: AsyncEngine) -> dict:
+        async with get_db(engine) as conn:
+            result = await run_strip_wac_suffixes(conn, dry_run=dry_run)
+            if not dry_run and not result["unmatched_records"] and not result["remaining"]:
+                await conn.commit()
+            return result
+
+    r = _run_with_engine(_run)
+    rename, merge = (
+        ("[dry-run] Would rename", "[dry-run] Would merge") if dry_run else ("Renamed", "Merged")
+    )
+    click.echo(f"{rename} {len(r['renamed']):,} entit(ies) in place:")
+    for x in r["renamed"]:
+        click.echo(f"    {x['id']:>7} {x['old']} -> {x['new']}")
+    click.echo(f"{merge} {len(r['merged']):,} entit(ies) into a clean twin:")
+    for x in r["merged"]:
+        click.echo(f"    {x['id']:>7} {x['name']} -> {x['into']} {x['into_name']}")
+    click.echo(
+        f"{r['links']:,} record link(s); {r['regex_rows_written']:,} regex row(s); "
+        f"{r['resolved_changes']:,} resolved change(s)."
+    )
+    if r["skipped_noise"]:
+        click.echo(f"Left {len(r['skipped_noise']):,} annotation-only name(s) to reclassify:")
+        for x in r["skipped_noise"]:
+            click.echo(f"    {x['id']:>7} {x['name']}")
+    click.echo(
+        f"Verify: {r['records_checked']:,} record(s) checked, "
+        f"{len(r['unmatched_records']):,} unmatched; "
+        f"{r['remaining']:,} suffixed name(s) remaining."
+    )
+    for u in r["unmatched_records"]:
+        click.echo(
+            f"    record {u['record_id']} {u['role']}: expected {u['expected']}, "
+            f"linked {u['linked']}"
+        )
+    if r["unmatched_records"] or r["remaining"]:
+        if not dry_run:
+            click.echo("Verification failed: rolled back, nothing written.")
+        sys.exit(1)
 
 
 @db.command("ignore-jev")
