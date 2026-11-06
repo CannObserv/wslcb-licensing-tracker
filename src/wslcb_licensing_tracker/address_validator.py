@@ -132,8 +132,10 @@ VALIDATION_LOCK_KEY = 0x75737073  # "usps"
 # backoff — instead of spending the whole batch against a provider that is down.
 # Once every provider's daily quota is out, the 429 carries a Retry-After past
 # MAX_RETRY_AFTER and the batch stops on the first one (QuotaExhaustedError; #187).
-# USPS's quota alone running out shows up as retry-later answers instead, since
-# Google answers in its place: MAX_CONSECUTIVE_RETRY_LATER covers that.
+# address-validator's own USPS cap (USPS_DAILY_LIMIT) running out does not
+# trip either breaker: calls past it come back as plain Google answers, with no
+# retry hint (#245 body; 11-06 journal), so only DAILY_VALIDATION_LIMIT staying
+# under it guards that. MAX_CONSECUTIVE_RETRY_LATER covers USPS failing.
 MAX_CONSECUTIVE_NO_ANSWER = 10
 
 # _validate_batch stops after this many consecutive retry-later answers. One
