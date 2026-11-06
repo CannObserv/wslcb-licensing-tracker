@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-10-31-1"
+VERSION="2026-11-03-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -171,6 +171,26 @@ link already dangles); a directory at skills/<old> and a skills/<new>
 that is not the vendor's link are reported, never rewritten. Nothing is
 committed — the report prints the git add that stages it. Advisory in
 every mode; --check-only says what it would repoint.
+
+Warns when the root ruff config (.ruff.toml, then ruff.toml, then
+pyproject.toml's [tool.ruff]) does not exclude skills-vendor/, which ruff
+would otherwise lint and format with this repo's ruff, so a refresh can
+turn a local run red over code this repo must not edit (#336). Advisory in
+every mode; silent without skills-vendor/ or a ruff config.
+
+Warns when .skills/refresh-skip-hooks names a hook id that is neither an
+id nor an alias in .pre-commit-config.yaml (#572). pre-commit ignores a
+SKIP id it does not know, so the refresh hook's commit would run that
+hook after all. Also says when the hook cannot use the knob at all: a
+word that is not an id (a comma, a mid-line #), no ids, or a path that is
+not a readable file. Advisory in every mode; silent without the knob.
+
+Warns when .skills/merge_mode is pr and the refresh hook is installed,
+but nothing gives gh a token: the repo .env sets no GH_TOKEN and gh has
+no stored login (#576). Without one the hook refuses its pull request
+before refreshing, every day. This shell's own GH_TOKEN is not counted,
+since a SessionStart hook does not see it. Also warns when gh is not on
+PATH. Advisory in every mode.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -538,6 +558,286 @@ check_unpushed() {
 }
 
 check_unpushed
+
+# #336 — vendored code read by the consumer's ruff. Every tool that walks the
+# tree from the root reads skills-vendor/, which this repo must not edit. With
+# ruff that bites on a refresh, not on the day of vendoring: the bump lands and
+# the next local `ruff check .` goes red with no local change behind it. CI
+# checks out without submodules and never sees it. init-project-fastapi
+# scaffolds the exclude; a repo that adopted skills through managing-skills
+# later has nothing that tells it, and this check is the one channel that
+# reaches a consumer which has already vendored.
+#
+# Reads the config ruff itself would read at the root: .ruff.toml, then
+# ruff.toml (both top-level keys), then pyproject.toml's [tool.ruff] table. An
+# exclude in [tool.ruff.lint] does not count, because `ruff format` still reads
+# the vendor then [measured, ruff 0.16.6], and nor does the same exclude as a
+# dotted lint. or format. key. Any other mention of skills-vendor in that
+# table counts as covered, comments included: that is the documented way to
+# lint the vendor on purpose, and an over-eager match costs a missed warning,
+# never a wrong one. Not a TOML parser, deliberately, like frontmatter_value
+# below: a table header line and a substring are all the question needs.
+#
+# Silent without skills-vendor/ or a ruff config. Advisory in every mode,
+# --check-only included, and never on REG_GAPS: a lint gap is not the diff
+# under review, and not damage the CI probe gates on. ty and pytest want the
+# same exclude; neither is read here (ty is non-gating where it is scaffolded,
+# and pytest's config can live in several files), so the message names them.
+check_vendor_lint_exclude() {
+  [ -d skills-vendor ] || return 0
+  local cfg table where verdict
+  if [ -f .ruff.toml ]; then
+    cfg=".ruff.toml" table="" where="the top level of .ruff.toml"
+  elif [ -f ruff.toml ]; then
+    cfg="ruff.toml" table="" where="the top level of ruff.toml"
+  elif [ -f pyproject.toml ]; then
+    cfg="pyproject.toml" table="tool.ruff" where="[tool.ruff] in pyproject.toml"
+  else
+    return 0
+  fi
+  # none: pyproject.toml has no ruff table, so ruff is not configured here.
+  # extend: uncovered, and the table already has an extend-exclude, so the fix
+  # is an append: a second extend-exclude line is a duplicate TOML key, which
+  # ruff refuses for the whole file (CR 1806).
+  #
+  # A table header is a whole line of bare dotted keys in [ ] or [[ ]], then at
+  # most a comment (CR 1814). A line inside a multi-line array can start with
+  # "[" too; read as a header, it left the table and the exclude after it went
+  # unseen, a wrong warning. A quoted-key header is not recognised, which can
+  # only keep the previous table open: a missed warning at worst. A dotted key
+  # in the table (lint.exclude, format.exclude) sets a sub-table, which counts
+  # no more than its [tool.ruff.lint] header form does; its multi-line array
+  # value runs to the line holding the closing bracket.
+  verdict="$(awk -v want="$table" '
+    BEGIN { cur = ""; seen = (want == ""); hit = 0; ext = 0; dotted = 0 }
+    /^[[:space:]]*\[\[?[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*([[:space:]]*\.[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*)*[[:space:]]*\]\]?[[:space:]]*(#.*)?$/ {
+      cur = $0
+      sub(/^[[:space:]]*\[+[[:space:]]*/, "", cur)
+      sub(/[[:space:]]*\].*$/, "", cur)
+      gsub(/[[:space:]]*\.[[:space:]]*/, ".", cur)
+      if (want != "" && (cur == want || index(cur, want ".") == 1)) seen = 1
+      dotted = 0
+      next
+    }
+    cur != want { next }
+    dotted { if ($0 ~ /\]/) dotted = 0; next }
+    /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*\.[^=]*=/ {
+      dotted = ($0 ~ /=[[:space:]]*\[/ && $0 !~ /\]/)
+      next
+    }
+    /^[[:space:]]*extend-exclude[[:space:]]*=/ { ext = 1 }
+    /skills-vendor/ { hit = 1 }
+    END { print (!seen ? "none" : (hit ? "covered" : (ext ? "extend" : "uncovered"))) }
+  ' "$cfg" 2>/dev/null || true)"
+  case "$verdict" in uncovered|extend) ;; *) return 0 ;; esac
+
+  echo "doctor: $cfg configures ruff without excluding skills-vendor/, so 'ruff" >&2
+  echo "doctor:   check .' and 'ruff format --check .' read vendored code this repo" >&2
+  echo "doctor:   must not edit, with this repo's ruff. A refresh can turn them red" >&2
+  if [ "$verdict" = "extend" ]; then
+    echo "doctor:   with no local change (#336). Append \"skills-vendor/\" to the" >&2
+    echo "doctor:   existing extend-exclude array in $where; a second" >&2
+    echo "doctor:   extend-exclude line is a duplicate key, which ruff refuses." >&2
+  else
+    echo "doctor:   with no local change (#336). Add to $where:" >&2
+    echo "doctor:     extend-exclude = [\"skills-vendor/\"]" >&2
+  fi
+  echo "doctor:   ty and pytest want the same: managing-skills'" >&2
+  echo "doctor:   references/excluding-vendored-code.md." >&2
+  return 0
+}
+
+check_vendor_lint_exclude
+
+# ------------------------------------------------- refresh-skip-hooks (#572)
+# .skills/refresh-skip-hooks names pre-commit hook ids the refresh hook skips
+# on its own commit and pushes, through SKIP. pre-commit ignores a SKIP id it
+# does not know, so a hook renamed in .pre-commit-config.yaml quietly falls
+# back into the refresh's commit, and a suite that outlasts the hook's 120 s
+# timeout gets it killed again — with nothing said anywhere. So each id is
+# looked for among the config's `id:` and `alias:` values (SKIP matches
+# either). A line scan, not a YAML parser, like check_vendor_lint_exclude: a
+# flow-style hook (`- {id: x}`) reads as absent, which costs a wrong warning
+# the operator can see, never a missed one. A word the hook refuses (a comma,
+# or a `#` after an id) is named as malformed rather than looked up (CR 1816):
+# reported as an undefined id, it sent the operator to rename a comment's
+# words, and the hook itself says so only on a run that commits or pushes.
+# Past a mid-line `#` the rest of the line is the comment the operator meant.
+#
+# Silent without the knob. Advisory in every mode, --check-only included, and
+# never on REG_GAPS: a stale id is wiring, not damage the CI probe gates on.
+check_refresh_skip_hooks() {
+  local knob=.skills/refresh-skip-hooks cfg=.pre-commit-config.yaml
+  local line words word known missing="" malformed="" why=""
+  local -a ids=()
+  [ -e "$knob" ] || [ -L "$knob" ] || return 0
+  # Every way the hook finds the knob unusable is said here too (CR 1826):
+  # the hook says it only in a run that commits or pushes, so a doctor silent
+  # on an empty or misplaced knob left it unseen until a refresh was killed.
+  if ! { [ -f "$knob" ] && [ -r "$knob" ]; }; then
+    why="it is present but not a readable file"
+  else
+    while IFS= read -r line || [ -n "$line" ]; do
+      line=${line%$'\r'}
+      read -r -a words <<<"$line" || true
+      [ "${#words[@]}" -gt 0 ] || continue
+      case ${words[0]} in \#*) continue ;; esac
+      for word in "${words[@]}"; do
+        case $word in
+          *,*) malformed="$malformed $word"; continue ;;
+          \#*) malformed="$malformed $word"; break ;;
+        esac
+        ids+=("$word")
+      done
+    done <"$knob"
+    if [ -n "$malformed" ]; then
+      why="not hook ids:$malformed. An id holds no comma, and a comment takes its own line"
+    elif [ "${#ids[@]}" -eq 0 ]; then
+      why="it names no hook id"
+    fi
+  fi
+  if [ -n "$why" ]; then
+    echo "doctor: $knob is unusable — $why." >&2
+    echo "doctor:   Until it is fixed the refresh hook skips nothing, so its commit" >&2
+    echo "doctor:   runs every pre-commit hook (#572)." >&2
+  fi
+  # Guarded, not expanded empty: "${ids[@]}" of an empty array is an
+  # unbound variable under bash 3.2's set -u.
+  [ "${#ids[@]}" -gt 0 ] || return 0
+  if [ ! -f "$cfg" ]; then
+    echo "doctor: $knob names pre-commit hooks to skip on the refresh hook's" >&2
+    echo "doctor:   commit, but there is no $cfg here, so nothing reads them." >&2
+    echo "doctor:   Delete the knob, or check that pre-commit runs this repo's hooks." >&2
+    return 0
+  fi
+  known="$(awk '
+    {
+      line = $0
+      if (!sub(/^[[:space:]]*(-[[:space:]]+)?(id|alias)[[:space:]]*:[[:space:]]*/, "", line)) next
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^".*"$/ || line ~ /^\047.*\047$/) line = substr(line, 2, length(line) - 2)
+      if (line != "") print line
+    }
+  ' "$cfg" 2>/dev/null || true)"
+  for word in "${ids[@]}"; do
+    # A newline-fenced pattern, not `printf | grep -q` (CR 1819): under
+    # pipefail that pipeline reads as missing whenever grep exits before
+    # printf has written everything, and it forked once per id. Quoted, so
+    # an id's own glob characters match only themselves.
+    case $'\n'"$known"$'\n' in
+      *$'\n'"$word"$'\n'*) ;;
+      *) missing="$missing $word" ;;
+    esac
+  done
+  [ -n "$missing" ] || return 0
+  echo "doctor: $knob names hook id(s) $cfg does not define:" >&2
+  echo "doctor:  $missing" >&2
+  echo "doctor:   pre-commit ignores a SKIP id it does not know, so the refresh" >&2
+  echo "doctor:   hook's commit runs that hook after all, and a run that outlasts" >&2
+  echo "doctor:   the hook's 120 s timeout is killed (#572). Use each hook's id or" >&2
+  echo "doctor:   alias as $cfg spells it." >&2
+  return 0
+}
+
+check_refresh_skip_hooks
+
+# ------------------------------------------- merge_mode pr's gh token (#576)
+# Under .skills/merge_mode `pr` the refresh hook opens its bump's pull request
+# with gh, so it needs a token. Looking in the hook's own order, it finds one
+# in its environment, then the repo .env's GH_TOKEN, then gh's stored login. With
+# none it refuses before refreshing, once a day, on stderr — and until #576
+# nothing else said so: the cohort's consumers sat on the default branch's
+# pointer for days with every check reading healthy.
+#
+# The doctor cannot see the hook's environment. It usually runs in an agent
+# shell that has GH_TOKEN exported per command, and a SessionStart hook
+# inherits only what Claude Code itself was started with. So this shell's
+# GH_TOKEN and GITHUB_TOKEN are NOT counted. The .env is read as the hook reads
+# it (env_value, held to load_env's grammar), and gh's login is asked with both
+# names unset. A consumer whose token lives only in the launcher's environment
+# gets a warning it can ignore. Counting this shell's export would be the other
+# mistake, and that one is silent.
+#
+# Silent unless the hook is installed and the knob reads `pr`. A knob the hook
+# finds unusable is the hook's to name. Advisory in every mode, --check-only
+# included, and never on REG_GAPS: a missing token is setup, not damage.
+
+# env_value <file> <name> — <name>'s value in a .env file, parsed as data and
+# never sourced: load_env's grammar (shipping-work's pre-ship.sh header), the
+# last assignment winning. The refresh hook's _env_value, which a test holds
+# this to.
+env_value() {
+  local file="$1" want="$2" line key val found=""
+  if ! { [ -f "$file" ] && [ -r "$file" ]; }; then
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in '' | \#*) continue ;; esac
+    line=${line#export }
+    case $line in *=*) ;; *) continue ;; esac
+    key=${line%%=*} val=${line#*=}
+    key=${key%"${key##*[![:space:]]}"}
+    [ "$key" = "$want" ] || continue
+    case $val in
+      \"*\") val=${val#\"} val=${val%\"} ;;
+      \'*\') val=${val#\'} val=${val%\'} ;;
+    esac
+    found=$val
+  done <"$file" 2>/dev/null || true
+  printf '%s' "$found"
+}
+
+check_pr_mode_gh_token() {
+  local wt primary knob line words word="" count=0 env_file=".env"
+  [ -e .claude/hooks/skills-submodule-update.sh ] || return 0
+  wt="$(git worktree list --porcelain 2>/dev/null || true)"
+  primary=${wt%%$'\n'*}
+  primary=${primary#worktree }
+  [ -n "$primary" ] || return 0
+  # Read from the primary checkout, as the hook reads it. merge_mode's grammar
+  # (docs/KNOBS.md): one word, blank lines and whole-line comments ignored.
+  # Only an exact `pr` speaks here; anything else the hook reads as direct or
+  # names as unusable itself.
+  knob="$primary/.skills/merge_mode"
+  if ! { [ -f "$knob" ] && [ -r "$knob" ]; }; then
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    read -r -a words <<<"$line" || true
+    [ "${#words[@]}" -gt 0 ] || continue
+    case ${words[0]} in \#*) continue ;; esac
+    word=${words[0]}
+    count=$((count + ${#words[@]}))
+  done <"$knob" 2>/dev/null || true
+  if [ "$count" -ne 1 ] || [ "$word" != "pr" ]; then
+    return 0
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "doctor: .skills/merge_mode is pr, so the refresh hook opens its bump's" >&2
+    echo "doctor:   pull request with gh, and gh is not on this shell's PATH. Without" >&2
+    echo "doctor:   it the hook refuses before refreshing, every day (#576)." >&2
+    return 0
+  fi
+  [ -r "$env_file" ] || env_file="$primary/.env"
+  [ -z "$(env_value "$env_file" GH_TOKEN)" ] || return 0
+  if env -u GH_TOKEN -u GITHUB_TOKEN GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
+    gh auth token >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "doctor: .skills/merge_mode is pr, but the refresh hook may have no token" >&2
+  echo "doctor:   for gh: $env_file sets no GH_TOKEN, and gh has no stored login." >&2
+  echo "doctor:   This shell's own GH_TOKEN does not count: a SessionStart hook sees" >&2
+  echo "doctor:   one only when Claude Code itself was started with it. Without a" >&2
+  echo "doctor:   token the hook refuses before refreshing, every day (#576). Put" >&2
+  echo "doctor:   GH_TOKEN in $env_file, or run gh auth login." >&2
+  return 0
+}
+
+check_pr_mode_gh_token
 
 # frontmatter_value <file> <key> — the value of the first `<key>:` line inside
 # the file's YAML frontmatter, surrounding double quotes stripped; empty when
