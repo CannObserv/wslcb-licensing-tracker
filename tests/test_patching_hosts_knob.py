@@ -2,7 +2,7 @@
 
 The patching-hosts skill reads this knob before every patch run. A malformed
 line is never skipped: it makes the host report-only, so a typo in a `quiet`
-or `datastore` line would silently turn the monthly run into a report. Running
+or `datastore` line would silently turn the weekly run into a report. Running
 the skill's own `read-knob.sh` here catches that at commit time, not in the
 window.
 
@@ -61,12 +61,14 @@ def knob() -> dict:
 def test_knob_has_no_findings(today: str | None) -> None:
     """No malformed line, on any date.
 
-    A passed review-by date is an `expired-exception` finding: the probe's to
+    A passed review-by date is an `expired-exception` finding, and a dated
+    `window` whose day has passed a `past-window` one (#248): the probe's to
     report at patch time, not a gate on unrelated commits.
     """
     knob = _read_knob(today)
     assert knob["knob"]["present"]
-    assert [f for f in knob["findings"] if f["kind"] != "expired-exception"] == []
+    dated = {"expired-exception", "past-window"}
+    assert [f for f in knob["findings"] if f["kind"] not in dated] == []
 
 
 def test_expired_exceptions_are_still_reported() -> None:
@@ -81,6 +83,12 @@ def test_host_is_not_report_only(knob: dict) -> None:
     assert knob["class"]["value"] == "production"
     assert knob["posture"]["value"] == "scheduled"
     assert knob["window"], "no window: apply.sh refuses every step"
+
+
+def test_cadence_is_stated_weekly(knob: dict) -> None:
+    """Weekly is the default, but stated: four Tuesday windows passed unrun (#248)."""
+    assert knob["cadence"]["value"] == "weekly"
+    assert knob["cadence"]["line"] is not None, "cadence is the default, not stated"
 
 
 def test_datastore_names_every_cluster_database(knob: dict) -> None:
