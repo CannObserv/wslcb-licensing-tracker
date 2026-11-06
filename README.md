@@ -84,7 +84,7 @@ wslcb-licensing-tracker/
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance, classification_badge)
 ├── parser.py               # Pure HTML/diff parsing (no DB, no side effects)
 ├── diff_replay.py          # Chain replay of CO diff archives (#151; no DB, no side effects)
-├── text_utils.py           # Pure-string text normalization (clean_entity_name, strip_duplicate_marker, …)
+├── text_utils.py           # Pure-string text normalization (clean_entity_name, strip_duplicate_marker, strip_wac_annotation, …)
 ├── engine.py               # Async SQLAlchemy engine factory (…_DATABASE_URL env var)
 ├── models.py               # SQLAlchemy Core Table definitions (all 20 tables)
 ├── schema.py               # Alembic-based schema init (alembic upgrade head)
@@ -101,6 +101,7 @@ wslcb-licensing-tracker/
 ├── endorsements_admin.py   # Async admin helpers for endorsement management
 ├── entities.py             # Async entity normalization + regex classifier
 ├── entity_classification.py # Classification resolver (manual > Jev > regex), manual rows, Jev rollback (#206)
+├── entity_wac_repair.py    # One-off rename/merge of WAC-suffixed entities: `db strip-wac-suffixes` (#211)
 ├── jev_client.py           # HTTP transport for TypeSafe Jev classification (#207)
 ├── jev_classifier.py       # Jev orchestration: candidates, batches, run rows, check-in payload (#207)
 ├── classification_review.py # Audited operator actions, review queue, health/spend queries (#208)
@@ -245,6 +246,7 @@ wslcb-licensing-tracker/
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
 │   ├── test_entities.py      # Entity normalization tests (require the test DB)
 │   ├── test_entity_classification.py # Classification resolver + Jev rollback (require the test DB)
+│   ├── test_entity_wac_repair.py # WAC-suffix rename/merge + verification (require the test DB)
 │   ├── test_classification_review.py # Operator actions, review queue, health (require the test DB)
 │   ├── test_integrity.py     # Integrity check tests (require the test DB)
 │   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196), freshness (#197)
@@ -628,7 +630,7 @@ Test structure:
 | File | Scope |
 |---|---|
 | `tests/test_parser.py` | Pure HTML parsing functions — all record types, edge cases |
-| `tests/test_text_utils.py` | Pure-string normalization — clean_entity_name, strip_duplicate_marker, clean_applicants_string |
+| `tests/test_text_utils.py` | Pure-string normalization — clean_entity_name, strip_duplicate_marker, strip_wac_annotation, clean_applicants_string |
 | `tests/test_display.py` | Presentation formatting — outcome statuses, provenance summaries |
 | `tests/test_models.py` | SQLAlchemy Table definition smoke tests |
 | `tests/test_app.py` | App lifespan and startup |
@@ -652,6 +654,7 @@ Test structure:
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
 | `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require the test DB) |
 | `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require the test DB) |
+| `tests/test_entity_wac_repair.py` | `strip-wac-suffixes` — rename, twin/group merge, regex refresh, link renumbering, noise skip, dry-run, idempotence, mismatch report (require the test DB) |
 | `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require the test DB) |
 | `tests/test_jev_client.py` | Jev transport — request shape, 429/529 retry, auth errors, malformed responses fail the batch |
 | `tests/test_jev_classifier.py` | Jev runs — classify once, modes, advisory lock, failure stops, run rows, check-in payload (require the test DB) |

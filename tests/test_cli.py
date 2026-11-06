@@ -319,6 +319,97 @@ class TestDbGroup:
         assert "1 operator-confirmed" in result.output
 
 
+class TestStripWacSuffixes:
+    """wslcb db strip-wac-suffixes (#211)."""
+
+    RESULT = {
+        "examined": 1000,
+        "renamed": [{"id": 27107, "old": "HTLV LLC PER WAC 314-07-035", "new": "HTLV LLC"}],
+        "merged": [
+            {
+                "id": 24619,
+                "name": "7-ELEVEN, INC. PER WAC 314-07-035",
+                "into": 29097,
+                "into_name": "7-ELEVEN, INC.",
+            }
+        ],
+        "skipped_noise": [{"id": 5, "name": "PER WAC 314-07-035"}],
+        "links": 3,
+        "regex_rows_written": 1,
+        "resolved_changes": 2,
+        "records_checked": 3,
+        "unmatched_records": [],
+        "remaining": 0,
+    }
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_strip_wac_suffixes", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_dry_run_reports_every_action(self, mock_engine, mock_run, mock_gdb):
+        mock_engine.return_value = mock_async_engine()
+        mock_run.return_value = self.RESULT
+        result = CliRunner().invoke(main, ["db", "strip-wac-suffixes", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert mock_run.await_args.kwargs["dry_run"] is True
+        out = result.output
+        assert "[dry-run] Would rename 1" in out
+        assert "27107 HTLV LLC PER WAC 314-07-035 -> HTLV LLC" in out
+        assert "Would merge 1" in out
+        assert "24619 7-ELEVEN, INC. PER WAC 314-07-035 -> 29097 7-ELEVEN, INC." in out
+        assert "PER WAC 314-07-035" in out
+        assert "3 record(s) checked, 0 unmatched; 0 suffixed name(s) remaining" in out
+
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_strip_wac_suffixes", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_unmatched_records_fail_the_command(self, mock_engine, mock_run, mock_gdb):
+        mock_engine.return_value = mock_async_engine()
+        mock_run.return_value = dict(
+            self.RESULT,
+            unmatched_records=[
+                {"record_id": 9, "role": "applicant", "expected": ["A"], "linked": ["B"]}
+            ],
+        )
+        result = CliRunner().invoke(main, ["db", "strip-wac-suffixes", "--dry-run"])
+        assert result.exit_code == 1
+        assert "record 9 applicant" in result.output
+
+    @pytest.mark.parametrize(
+        ("overrides", "committed", "code"),
+        [
+            ({}, True, 0),
+            ({"remaining": 1}, False, 1),
+            (
+                {
+                    "unmatched_records": [
+                        {"record_id": 9, "role": "applicant", "expected": [], "linked": ["B"]}
+                    ]
+                },
+                False,
+                1,
+            ),
+        ],
+    )
+    @patch("wslcb_licensing_tracker.cli.run_strip_wac_suffixes", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_apply_commits_only_when_verified(
+        self, mock_engine, mock_run, overrides, committed, code
+    ):
+        mock_engine.return_value = mock_async_engine()
+        mock_run.return_value = dict(self.RESULT, **overrides)
+        conn = AsyncMock()
+
+        @asynccontextmanager
+        async def _db(*_a, **_kw):
+            yield conn
+
+        with patch("wslcb_licensing_tracker.cli.get_db", side_effect=_db):
+            result = CliRunner().invoke(main, ["db", "strip-wac-suffixes"])
+        assert result.exit_code == code, result.output
+        assert mock_run.await_args.kwargs["dry_run"] is False
+        assert conn.commit.await_count == (1 if committed else 0)
+
+
 class TestIgnoreJev:
     """wslcb db ignore-jev (#206)."""
 

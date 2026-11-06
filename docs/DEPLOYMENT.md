@@ -263,8 +263,9 @@ half-configured). That is expected: the weekly timer is the dead-man.
 **Operator review (#208).** Admins get `/admin/entities/review` (flags, low
 confidence, `not_a_name`; a separate *Subtype unknown* tab), a panel on each
 entity page, and a dashboard section (health, spend, queue counts). Every
-action is audited. **Not a name** means the next `reclassify-entities`
-deletes the entity with all its rows; only the audit log remains.
+action is audited. **Not a name** (queue cards and the entity page) means
+the next `reclassify-entities` deletes the entity with all its rows; only the
+audit log remains. Until then, *Clear manual override* undoes it.
 **Re-classify with Jev** is one paid call: 409 while the flag is off, 503
 while another run holds the lock, 502 (audited) past a 90 s deadline.
 
@@ -339,6 +340,7 @@ uv run wslcb db rebuild-links
 uv run wslcb db reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
 uv run wslcb db reprocess-entities [--record-id 12345] [--dry-run]
 uv run wslcb db reclassify-entities [--dry-run]   # regex rows + re-resolve classifications; drop non-name entities (#203, #206)
+uv run wslcb db strip-wac-suffixes [--dry-run]    # one-off: rename/merge entities named '… PER WAC 314-…' (#211); commits only if verified
 uv run wslcb db ignore-jev [--model ID] [--undo] [--dry-run]  # reversible Jev rollback: entities fall back to manual/regex (#206)
 
 # Backfill
