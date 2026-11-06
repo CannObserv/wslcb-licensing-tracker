@@ -689,7 +689,7 @@ def strip_wac_suffixes(dry_run: bool) -> None:
     Merges keep manual rows and review flags (#206). An apply commits only if
     every affected record re-extracts to its links and no suffixed name is
     left; otherwise it rolls back and exits 1. Back up entities,
-    record_entities and entity_classifications first.
+    record_entities, entity_classifications and entity_review_flags first.
     """
 
     async def _run(engine: AsyncEngine) -> dict:
