@@ -60,8 +60,10 @@ ISO_ALPHA2_LEN = 2
 # (#183). A USPS "no delivery-point determination" ('unavailable' with a
 # provider) *is* an answer and waits a full TTL like any other (#187). An answer
 # carrying the retry hint is not final, so it writes nothing either (#191).
-# Since #195 this is the TTL for *active* locations only; see _ttl_days.
-VALIDATION_TTL_DAYS = 180
+# Since #195 this is the TTL for *active* locations only; see _ttl_days. Two
+# years since #245: the daily limit is sized to a $25/month USPS bill, and at
+# 730 days the active rows alone (~46.6K) cost ~64 calls a day.
+VALIDATION_TTL_DAYS = 730
 
 # Renewal policy by row (#195; decided 2026-10-24 as B + D). A location with no
 # licence record (as location or previous location) dated in the last
@@ -70,42 +72,52 @@ VALIDATION_TTL_DAYS = 180
 # 'confirmed*' — renews on NO_DETERMINATION_TTL_DAYS whatever its activity (D):
 # USPS's answer is deterministic per address, and each such call also spends a
 # Google call. The two long TTLs are equal today but are separate decisions.
+# Six years since #245: an inactive row's renewal buys almost nothing, since
+# a location that turns active again takes the active TTL at selection time
+# and is due at once if it is older than that. At 1,460 days the September
+# 2026 inactive cohort (~20.6K) came due in 2030 into a queue already at the
+# limit, because locations grow ~11K a year; 2,190 holds to mid-2032 (#245).
 ACTIVITY_WINDOW_DAYS = 365
-INACTIVE_TTL_DAYS = 365
-NO_DETERMINATION_TTL_DAYS = 365
+INACTIVE_TTL_DAYS = 2190
+NO_DETERMINATION_TTL_DAYS = 2190
 
 # Upper bound on /validate calls in any rolling 24h across all automatic runs
 # (the post-scrape and post-import hooks and the daily timer share it, as does a
-# budgeted refresh). Kept under the upstream USPS quota of 500/day, which rolls
-# over 24h, so we never 429 into the Google fallback (160/day). #150, #189/#190.
+# budgeted refresh). address-validator allows USPS 140 per rolling 24h
+# (USPS_DAILY_LIMIT, 2026-11-05: 140 x 31 = 4,340 calls bills $22.50 a month;
+# #245). Calls past it go to Google (160/day) and come back as ordinary
+# answers, often without a DPV code, so no breaker sees them: only staying
+# under 140 keeps our answers USPS ones. 120 leaves ~20 for other clients.
+# #150, #189/#190, #245.
 # attempted_at is stamped on every *answered* call, so counting rows attempted
 # in the last 24h counts answered calls (validations_used). Unanswered calls
 # leave no stamp and are invisible to this count; during an outage
 # MAX_CONSECUTIVE_NO_ANSWER is what bounds them (#183). Retry-later answers
 # (#191) are invisible too; MAX_CONSECUTIVE_RETRY_LATER bounds those.
-DAILY_VALIDATION_LIMIT = 450
+DAILY_VALIDATION_LIMIT = 120
 VALIDATION_WINDOW = timedelta(hours=24)
 
 # The daily renewal run (`renew-addresses`, #195 C) spends what the rolling 24h
 # leaves after RENEWAL_RESERVE, which stays for the post-scrape and
 # post-import hooks: new locations ran p50 28, p95 60, max 125 a day over the
 # 120 days to 2026-10-27, and a day over the reserve waits at most until the
-# next daily run, which takes never-attempted rows first. Past the due rows it
+# next daily run, which takes never-attempted rows first (#245: 40 of 120). Past the due rows it
 # renews early only the rows beyond its fill rate on their due day, so a due-day
 # peak is spread into the days before it instead of re-forming one TTL later.
 # The floor keeps it off recent attempts: over address-validator's 30-day
 # cache (a re-ask inside it returns the cached answer and spends our count for
 # nothing), and under the ~43-day age the September 2026 bulk had on 10-27.
-RENEWAL_RESERVE = 90
+RENEWAL_RESERVE = 40
 EARLY_RENEWAL_FLOOR_DAYS = 35
 
 # Known no-determination rows go on to Google after USPS (#189 canary), which
 # allows 160/day and 5/min. At most NO_DETERMINATION_DAILY_LIMIT run in any
-# rolling 24h (a quarter of Google's day), at least GOOGLE_SPACING_SECONDS
-# apart (#195 D). The 24h count sees only answered rows whose status is still
-# a no-determination one: a USPS-confirmed row that now gets 'undetermined'
-# keeps its status (#187) and its Google call goes unpredicted.
-NO_DETERMINATION_DAILY_LIMIT = 40
+# rolling 24h, at least GOOGLE_SPACING_SECONDS apart (#195 D). Each spends a
+# USPS call too; ~2.2K such rows at their 2,190-day TTL need ~1 a day (#245).
+# The 24h count sees only answered rows whose status is still a
+# no-determination one: a USPS-confirmed row that now gets 'undetermined' keeps
+# its status (#187) and its Google call goes unpredicted.
+NO_DETERMINATION_DAILY_LIMIT = 10
 GOOGLE_SPACING_SECONDS = 13.0
 
 # Every run that spends the budget computes it from the same rolling count, so
