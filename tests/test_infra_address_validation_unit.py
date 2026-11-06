@@ -20,8 +20,8 @@ DROPIN = DROPIN_DIR / "timeout.conf"
 DEPLOYMENT = REPO_ROOT / "docs" / "DEPLOYMENT.md"
 
 #: A full run: at most 80 rows at ~1 req/s plus answer latency, and up to 10
-#: unplaced rows spaced 13 s apart (#245). Under #195's 360 + 40, measured hook
-#: backfills took 7-10 min; the budget keeps that margin.
+#: unplaced rows spaced 13 s apart (#245). Under #195 a run was up to 360 + 40
+#: rows; hook backfills of that size measured 7-10 min.
 RUN_BUDGET_SECONDS = 3600
 
 
