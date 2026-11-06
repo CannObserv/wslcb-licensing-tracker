@@ -1151,12 +1151,19 @@ class TestEntityAdminPanel:
             "resolved": {**self._DETAIL["resolved"], "entity_type": "not_a_name"},
             "current": {**self._DETAIL["current"], "manual": manual},
         }
-        monkeypatch.setattr(self, "_DETAIL", detail)
+        monkeypatch.setattr(self, "_DETAIL", {**detail, "open_flags": []})
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
         assert resp.status_code == 200
         assert 'action="/admin/entities/7/not-a-name"' not in resp.text
         assert "Marked not a name" in resp.text
         assert "reclassify-entities" in resp.text
+        assert "holds the purge" not in resp.text
+
+        # An open flag keeps the entity out of the purge (confirmed_noise_ids).
+        monkeypatch.setattr(self, "_DETAIL", detail)
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        assert "Marked not a name" in resp.text
+        assert "An open flag holds the purge" in resp.text
 
     def test_jev_button_only_when_enabled(self, monkeypatch):
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch, jev_enabled=True)
