@@ -98,12 +98,13 @@ DAILY_VALIDATION_LIMIT = 120
 VALIDATION_WINDOW = timedelta(hours=24)
 
 # The daily renewal run (`renew-addresses`, #195 C) spends what the rolling 24h
-# leaves after RENEWAL_RESERVE, which stays for the post-scrape and
-# post-import hooks: new locations ran p50 28, p95 60, max 125 a day over the
-# 120 days to 2026-10-27, and a day over the reserve waits at most until the
-# next daily run, which takes never-attempted rows first (#245: 40 of 120). Past the due rows it
-# renews early only the rows beyond its fill rate on their due day, so a due-day
-# peak is spread into the days before it instead of re-forming one TTL later.
+# leaves after RENEWAL_RESERVE (40 of 120 since #245), which stays for the
+# post-scrape and post-import hooks: new locations ran p50 28, p95 60, max 125
+# a day over the 120 days to 2026-10-27, and a day over the reserve waits at
+# most until the next daily run, which takes never-attempted rows first. Past
+# the due rows it renews early only the rows beyond its fill rate on their due
+# day, so a due-day peak is spread into the days before it instead of
+# re-forming one TTL later.
 # The floor keeps it off recent attempts: over address-validator's 30-day
 # cache (a re-ask inside it returns the cached answer and spends our count for
 # nothing), and under the ~43-day age the September 2026 bulk had on 10-27.
