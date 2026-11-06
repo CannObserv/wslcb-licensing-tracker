@@ -13,13 +13,37 @@ External API at `https://address-validator.exe.xyz:8000`.
 
 Validated addresses are not frozen forever (#150). Each location renews on a TTL
 counted from `address_validation_attempted_at`, set per row at selection time
-(#195, constants in `address_validator.py`):
+(#195, constants in `address_validator.py`; lengthened for the USPS budget, #245):
 
 | Row | TTL |
 |---|---|
-| Active: a licence record dated in the last 365 days names it as location or previous location | `VALIDATION_TTL_DAYS` = 180 |
-| Inactive | `INACTIVE_TTL_DAYS` = 365 |
-| USPS couldn't place it (`undetermined`/`unavailable`, or `confirmed*` with no DPV), active or not | `NO_DETERMINATION_TTL_DAYS` = 365 |
+| Active: a licence record dated in the last 365 days names it as location or previous location | `VALIDATION_TTL_DAYS` = 730 |
+| Inactive | `INACTIVE_TTL_DAYS` = 2,190 |
+| USPS couldn't place it (`undetermined`/`unavailable`, or `confirmed*` with no DPV), active or not | `NO_DETERMINATION_TTL_DAYS` = 2,190 |
+
+A location that turns active again takes the active TTL at once, so the long
+inactive TTL costs little freshness where it matters.
+
+### USPS budget (#245)
+
+USPS bills address-validator's calls by the month, at one tier for the whole
+month, rounding up to the next thousand: $10 flat up to 2,000 calls, then $4.50
+per 1,000 up to 10,000. This tracker makes almost all of them. The operator's
+cap (2026-11-05, CannObserv/address-validator#404) is **$25 a month**.
+
+- address-validator allows USPS **140 per rolling 24h** (`USPS_DAILY_LIMIT`):
+  140 × 31 = 4,340 calls, which bills $22.50. That guard is what bounds the bill.
+- Calls past it go to Google (160/day) and come back as ordinary answers,
+  often without a DPV code. No breaker sees them, and a never-confirmed row
+  that Google confirms without DPV then waits the 2,190-day TTL. Staying under
+  140 is what keeps the answers from USPS.
+- `DAILY_VALIDATION_LIMIT` = 120 leaves ~20 a day for other clients. At most
+  3,720 tracker calls fit in a month.
+- Projection (#245, from the 10-27 snapshot, ~30 new locations a day): 80/day
+  from Dec 2026 to Aug 2028 while C spreads the September 2026 active cohort
+  (due 2028-09), then 80–102/day. Nothing is more than a few days overdue
+  until the cap binds in mid-2032, when the inactive cohort comes due into a
+  location count ~11K a year larger. Next lever: a longer active TTL.
 
 Three kinds of run spend the budget:
 
@@ -27,9 +51,9 @@ Three kinds of run spend the budget:
   every relay import that succeeds. New locations first, newest first; then due
   rows, earliest due first. Manual `backfill-addresses` runs the same selection.
 - **Daily run** (`renew-addresses`, the timer, 2:00 AM Pacific; #195): the same
-  rows, then **early renewals** up to `450 − used in 24h − RENEWAL_RESERVE` (90,
+  rows, then **early renewals** up to `120 − used in 24h − RENEWAL_RESERVE` (40,
   kept for the hooks). Early rows come from due days holding more than that fill
-  rate (360): the excess rows, earliest due first, never one attempted under
+  rate (80): the excess rows, earliest due first, never one attempted under
   `EARLY_RENEWAL_FLOOR_DAYS` (35) ago, which is over address-validator's 30-day
   cache. Peaks such as the September 2026 bulk's renewals spread into the days
   before them and don't re-form one TTL later.
@@ -78,11 +102,11 @@ Outages come back as HTTP errors, never as a 200 status. Among never-attempted
 rows the newest location goes first, so a fresh scrape's locations don't queue
 behind old rows that keep getting no answer.
 
-**Pacing + daily ceiling** keep us inside upstream limits (USPS 500 per rolling
-24h; a 429 falls over to Google at 160/day):
+**Pacing + daily ceiling** keep us inside upstream limits (USPS 140 per rolling
+24h, then Google at 160/day; see the budget above):
 
 - `--rate-limit` defaults to **1.0** (1 req/s).
-- `DAILY_VALIDATION_LIMIT = 450` caps answered `/validate` calls (rows with
+- `DAILY_VALIDATION_LIMIT = 120` caps answered `/validate` calls (rows with
   `attempted_at` in the last 24h) across the hooks, the daily run and any
   refresh run.
 - One validating run at a time: the hooks, the daily run and a budgeted
@@ -95,15 +119,15 @@ behind old rows that keep getting no answer.
   the run skips its remaining ones: each would spend a USPS call that leaves
   no stamp, and placeable rows between them reset the retry-later breaker.
   The hooks and the daily run also select at most
-  `NO_DETERMINATION_DAILY_LIMIT` (40) per rolling 24h; a refresh runs the ids
-  it is given (#195).
+  `NO_DETERMINATION_DAILY_LIMIT` (10) per rolling 24h; a refresh runs the ids
+  it is given (#195, #245).
 - Unanswered calls leave no stamp, so the ceiling can't see them. Instead a batch
   stops after `MAX_CONSECUTIVE_NO_ANSWER` (10) unanswered rows in a row, logging
   `Stopping: … (provider outage?)`; the rest wait for the next run (#183).
 
 To renew outside the TTL, use `refresh-addresses --location-ids F` (uncapped).
 For a backlog, add `--budget-reserve N`: ids run in file order up to
-`450 − used in 24h − N`, keeping N for the scrape hooks (#189/#190).
+`120 − used in 24h − N`, keeping N for the scrape hooks (#189/#190).
 
 ## Common address commands
 

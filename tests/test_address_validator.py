@@ -2176,7 +2176,9 @@ class TestBackfillTTL:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_default_daily_limit_is_constant(self):
-        assert DAILY_VALIDATION_LIMIT == 450
+        # address-validator allows USPS 140 per rolling 24h (#245, $25/month);
+        # ~20 of those are other clients'.
+        assert DAILY_VALIDATION_LIMIT == 120
 
 
 # ---------------------------------------------------------------------------
@@ -2393,8 +2395,8 @@ async def _seed(  # noqa: PLR0913 — a row is its tag, count, stamp and status
 
 
 class TestRenewalTTLByActivity:
-    """B: 180 days for a location with a licence record in the last 12 months
-    (as location or previous location), 365 for the rest."""
+    """B: VALIDATION_TTL_DAYS for a location with a licence record in the last
+    12 months (as location or previous location), INACTIVE_TTL_DAYS for the rest."""
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_active_location_renews_at_the_active_ttl(self, pg_engine):
@@ -2640,6 +2642,9 @@ class TestNoDeterminationPacing:
                 patch(f"{mod}.is_validation_enabled", return_value=True),
                 patch(f"{mod}.get_api_key", return_value="test-key"),
                 patch(f"{mod}.validations_used", return_value=0),
+                # Unplaced rows other tests left due outrank this one; under the
+                # cap of 10 (#245) they would keep it out of the selection.
+                patch(f"{mod}.NO_DETERMINATION_DAILY_LIMIT", 100_000),
                 patch(f"{mod}._validate_batch", side_effect=fake_batch),
             ):
                 await backfill_addresses(conn, rate_limit=0, daily_limit=100_000)
@@ -2722,14 +2727,15 @@ class TestRunBudget:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_defaults(self):
-        assert RENEWAL_RESERVE == 90
+        # #245: sized to the $25/month USPS budget; see the projection on #245.
+        assert RENEWAL_RESERVE == 40
         assert EARLY_RENEWAL_FLOOR_DAYS == 35
-        assert NO_DETERMINATION_DAILY_LIMIT == 40
+        assert NO_DETERMINATION_DAILY_LIMIT == 10
         assert GOOGLE_SPACING_SECONDS == 13
         assert (VALIDATION_TTL_DAYS, INACTIVE_TTL_DAYS, NO_DETERMINATION_TTL_DAYS) == (
-            180,
-            365,
-            365,
+            730,
+            2190,
+            2190,
         )
         assert ACTIVITY_WINDOW_DAYS == 365
 
@@ -2842,10 +2848,9 @@ class TestRollingDayWalk:
                             [
                                 {
                                     "raw_address": f"{i} WALK WAY, SEATTLE, WA 98101",
-                                    # inactive: due a year on, well before the walk
-                                    "address_validation_attempted_at": datetime(
-                                        2030, 1, 1, tzinfo=UTC
-                                    ),
+                                    # due under any TTL well before the walk
+                                    "address_validation_attempted_at": self.START
+                                    - timedelta(days=STALE_DAYS),
                                 }
                                 for i in range(1500)
                             ]

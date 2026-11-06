@@ -187,7 +187,7 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases
 ## Reference
 
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — systemd services, server lifecycle, full ops reference
-- [`docs/ADDRESS_VALIDATION.md`](docs/ADDRESS_VALIDATION.md) — address-validator key/flags, renewal TTL + pacing (#195), address commands
+- [`docs/ADDRESS_VALIDATION.md`](docs/ADDRESS_VALIDATION.md) — address-validator key/flags, renewal TTL, pacing + USPS budget (#195, #245), address commands
 - [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md) — no swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins + loopback containers (#175, #180, #222)
 - [`docs/DISK_GC.md`](docs/DISK_GC.md) — Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
 - [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape, classify): installs + fields
