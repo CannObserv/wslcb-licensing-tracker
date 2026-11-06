@@ -493,7 +493,7 @@ To re-validate all locations (e.g., after the validation service is updated):
 uv run wslcb ingest refresh-addresses
 ```
 
-USPS allows about 500 calls per rolling 24h, so a full refresh stops within minutes when the quota runs out and leaves the scrape hooks no budget for a day. To work through a list of locations at a sustainable pace, pass `--location-ids FILE --budget-reserve 100` and run it daily (see [ADDRESS_VALIDATION.md](docs/ADDRESS_VALIDATION.md)).
+address-validator allows USPS 140 calls per rolling 24h (a $25/month budget, #245), so a full refresh runs past it within minutes, gets Google answers instead, and leaves the scrape hooks no budget for a day. To work through a list of locations at a sustainable pace, pass `--location-ids FILE --budget-reserve 40` and run it daily (see [ADDRESS_VALIDATION.md](docs/ADDRESS_VALIDATION.md)).
 
 This is safe to interrupt — progress is committed in batches and each location's timestamp is updated individually.
 

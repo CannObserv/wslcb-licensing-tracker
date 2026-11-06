@@ -19,8 +19,9 @@ DROPIN_DIR = REPO_ROOT / "infra" / "wslcb-task@renew-addresses.service.d"
 DROPIN = DROPIN_DIR / "timeout.conf"
 DEPLOYMENT = REPO_ROOT / "docs" / "DEPLOYMENT.md"
 
-#: A full run: 360 rows at ~1 req/s plus answer latency, and up to 40 unplaced
-#: rows spaced 13 s apart (~9 min). Measured hook backfills take 7-10 min.
+#: A full run: at most 80 rows at ~1 req/s plus answer latency, and up to 10
+#: unplaced rows spaced 13 s apart (#245). Under #195's 360 + 40, measured hook
+#: backfills took 7-10 min; the budget keeps that margin.
 RUN_BUDGET_SECONDS = 3600
 
 
