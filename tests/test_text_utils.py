@@ -143,6 +143,9 @@ class TestCleanApplicantsString:
 
 # Every suffix shape on prod on 2026-11-05 (37 entities), with its cleaned result.
 WAC_SUFFIXED = [
+    # doubled annotation: stripped to a fixed point (CR 9)
+    ("X LLC PER WAC 314-07-035 (PER WAC 314-07-035)", "X LLC"),
+    ("X LLC (WAC 314-07-035) PER WAC 314", "X LLC"),
     # bare " PER WAC <cite>"
     ("7-ELEVEN, INC. PER WAC 314-07-035", "7-ELEVEN, INC."),
     ("HTLV SEATTLE TRS LLC PER WAC 314-07-035", "HTLV SEATTLE TRS LLC"),

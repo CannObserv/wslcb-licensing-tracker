@@ -124,10 +124,13 @@ def strip_wac_annotation(name: str) -> str:
 
     Only a trailing annotation is removed; ``WACHAREE BOWERS`` and
     ``WAC FARMS, LLC`` are unchanged.  Leftover trailing punctuation is the
-    caller's to clean (``clean_entity_name()``).  Used when extracting entity
-    names only: the stored ``applicants`` string keeps the annotation.
+    caller's to clean (``clean_entity_name()``).  A repeated annotation is
+    stripped to a fixed point.  Used when extracting entity names only: the
+    stored ``applicants`` string keeps the annotation.
     """
-    return _WAC_ANNOTATION_RE.sub("", name).rstrip()
+    while (stripped := _WAC_ANNOTATION_RE.sub("", name).rstrip()) != name:
+        name = stripped
+    return name
 
 
 def clean_applicants_string(applicants: str | None) -> str | None:
