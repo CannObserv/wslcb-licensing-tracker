@@ -1,4 +1,4 @@
-"""Guard: locked and installed deps stay at or above their advisory fixes (#221, #224, #229).
+"""Guard: locked and installed deps stay at or above their advisory fixes (#221, #224, #229, #250).
 
 ``uv audit --frozen --no-dev`` at bff24d3 reported 44 advisories across seven
 packages. These tests fail if ``uv.lock`` or an installed tree goes back below
@@ -15,6 +15,11 @@ hook env; pytest and pygments run in the gate.
 
 ``npm audit`` flagged ws and form-data under jsdom, the only devDependency (#229).
 They run only in ``node --test tests/js/``, so only ``package-lock.json`` is checked.
+
+pyasn1 comes in through google-cloud-storage, via google-auth's pyasn1-modules
+(#250). Its four advisories are CPU DoS on crafted ASN.1. Only google-auth's
+pure-Python ``rsa`` signer imports it, and ``rsa`` is not installed, so nothing
+loads it today; the floor keeps it fixed if that changes.
 """
 
 import json
@@ -36,6 +41,7 @@ FIXED = {
     "lxml": "6.1.0",
     "soupsieve": "2.9.0",
     "mako": "1.4.2",
+    "pyasn1": "0.6.5",  # #250
 }
 
 # Same, for the dev group (#224, #229). filelock's fixes exist only in 4.x.
