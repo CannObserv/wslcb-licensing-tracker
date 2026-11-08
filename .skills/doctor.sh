@@ -790,16 +790,42 @@ env_value() {
 }
 
 check_pr_mode_gh_token() {
-  local wt primary knob line words word="" count=0 env_file=".env"
+  local wt block entry dirs primary knob line words word="" count=0 env_file=".env"
+  # git without an inherited GIT_DIR or GIT_WORK_TREE, as the hook's reader
+  # resolves the primary (CR 1895): GIT_DIR beats -C, so asked for a
+  # submodule's work tree git named the entry itself.
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE git)
   [ -e .claude/hooks/skills-submodule-update.sh ] || return 0
-  wt="$(git worktree list --porcelain 2>/dev/null || true)"
-  primary=${wt%%$'\n'*}
-  primary=${primary#worktree }
-  [ -n "$primary" ] || return 0
-  # Read from the primary checkout, as the hook reads it. merge_mode's grammar
-  # (docs/KNOBS.md): one word, blank lines and whole-line comments ignored.
-  # Only an exact `pr` speaks here; anything else the hook reads as direct or
-  # names as unusable itself.
+  # Read from the primary checkout, resolved as the hook's _read_merge_mode
+  # resolves it (CR 1893): the first `git worktree list` block, whose entry
+  # is a git dir for a bare primary (`repo.git`, whose knob can only be this
+  # checkout's) and in a submodule (`<super>/.git/modules/<n>`, asked for its
+  # work tree). A `--separate-git-dir` primary's store names no work tree;
+  # from that primary it is this checkout (CR 1892). A primary that cannot
+  # be resolved is silent here, not a note: the hook then reads the knob as
+  # unusable and says so itself on every run, which is the one place that
+  # failure is stated, as for any other unusable knob.
+  wt="$("${g[@]}" worktree list --porcelain 2>/dev/null)" || return 0
+  block=${wt%%$'\n\n'*}
+  entry=${block%%$'\n'*}
+  entry=${entry#worktree }
+  case $'\n'"$block"$'\n' in
+    *$'\n'bare$'\n'*)
+      primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)" || return 0
+      ;;
+    *)
+      if ! primary="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
+        dirs="$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
+        if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ]; then
+          return 0
+        fi
+        primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)" || return 0
+      fi
+      ;;
+  esac
+  # merge_mode's grammar (docs/KNOBS.md): one word, blank lines and
+  # whole-line comments ignored. Only an exact `pr` speaks here; anything
+  # else the hook reads as direct or names as unusable itself.
   knob="$primary/.skills/merge_mode"
   if ! { [ -f "$knob" ] && [ -r "$knob" ]; }; then
     return 0
@@ -822,7 +848,11 @@ check_pr_mode_gh_token() {
     echo "doctor:   it the hook refuses before refreshing, every day (#576)." >&2
     return 0
   fi
-  [ -r "$env_file" ] || env_file="$primary/.env"
+  # The primary's .env from a linked worktree, as the hook falls back; from
+  # the primary itself that is the same file, named as `.env`.
+  if [ ! -r "$env_file" ] && ! [ "$primary" -ef . ]; then
+    env_file="$primary/.env"
+  fi
   [ -z "$(env_value "$env_file" GH_TOKEN)" ] || return 0
   if env -u GH_TOKEN -u GITHUB_TOKEN GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
     gh auth token >/dev/null 2>&1; then
