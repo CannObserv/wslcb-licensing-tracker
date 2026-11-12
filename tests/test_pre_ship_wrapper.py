@@ -166,7 +166,7 @@ def test_a_missing_delegate_is_a_tooling_failure(checkouts) -> None:
 
 
 def test_the_wrapper_never_loads_the_production_env() -> None:
-    """`/etc/wslcb-licensing-tracker/.env` holds prod DATABASE_URL (#235).
+    """`/etc/wslcb-licensing-tracker/.env` holds the prod `…_DATABASE_URL` (#235).
 
     The vendored recipe loads `/etc/<project>/.env` first. Here that file is
     group-readable by the gate's user, so porting that line would hand the
