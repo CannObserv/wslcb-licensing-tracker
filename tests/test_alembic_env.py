@@ -66,7 +66,10 @@ def test_unset_falls_back_to_the_ini(clean):
 
 
 def test_set_but_empty_never_means_prod(clean):
-    """An empty value fails to connect; falling through to the ini would migrate prod."""
+    """An empty value fails to connect; falling through to the ini would migrate prod.
+
+    The leftover pre-#204 name must not rescue it either (#244).
+    """
     clean.setenv(DATABASE_URL_ENV, "")
     clean.setenv("DATABASE_URL", TEST)
     assert _migrated_url(clean) == ""
