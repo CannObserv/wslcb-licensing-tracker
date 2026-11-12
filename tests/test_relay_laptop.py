@@ -124,25 +124,24 @@ class TestScript:
         assert f"{ENV_PREFIX}RELAY_HOST" in result.stderr
         assert _calls(env) == []
 
-    def test_legacy_names_still_work_with_a_deprecation_line(self, tmp_path):
-        """The installed plist sets WSLCB_RELAY_HOST until it is reinstalled (#204)."""
+    def test_legacy_names_are_not_read(self, tmp_path):
+        """#244: a pre-#204 plist (WSLCB_RELAY_HOST only) stops, naming the new variable."""
         env = _stubs(tmp_path, _write_output("<html>page</html>"))
         env["WSLCB_RELAY_HOST"] = env.pop(f"{ENV_PREFIX}RELAY_HOST")
+        result = _run(env)
+        assert result.returncode != 0
+        assert f"{ENV_PREFIX}RELAY_HOST" in result.stderr
+        assert "deprecated" not in result.stdout + result.stderr
+        assert _calls(env) == []
+
+    def test_a_leftover_legacy_name_is_ignored_silently(self, tmp_path):
+        env = _stubs(tmp_path, _write_output("<html>page</html>"))
+        env["WSLCB_RELAY_HOST"] = "old.example"
         env["WSLCB_RELAY_INBOX"] = "old-inbox"
         result = _run(env)
         assert result.returncode == 0, result.stderr
-        assert "vm.example:old-inbox/" in _calls(env)[2]
-        assert "WSLCB_RELAY_HOST is deprecated" in result.stderr
-        assert f"rename it to {ENV_PREFIX}RELAY_HOST" in result.stderr
-        assert "vm.example" not in result.stderr.split("deprecated", 1)[1].splitlines()[0]
-
-    def test_new_name_wins_and_flags_the_leftover(self, tmp_path):
-        env = _stubs(tmp_path, _write_output("<html>page</html>"))
-        env["WSLCB_RELAY_HOST"] = "old.example"
-        result = _run(env)
-        assert result.returncode == 0, result.stderr
-        assert all("old.example" not in c for c in _calls(env))
-        assert "WSLCB_RELAY_HOST is deprecated and ignored" in result.stderr
+        assert all("old.example" not in c and "old-inbox" not in c for c in _calls(env))
+        assert "deprecated" not in result.stdout + result.stderr
 
     def test_new_names_log_no_deprecation(self, tmp_path):
         result = _run(_stubs(tmp_path, _write_output("<html>page</html>")))
@@ -151,7 +150,7 @@ class TestScript:
 
     def test_default_inbox_matches_the_vm_default(self):
         """The script's home-relative default is the importer's DEFAULT_INBOX."""
-        assert re.search(r"INBOX=\$\(env_or_legacy RELAY_INBOX (\S+)\)", SCRIPT.read_text())[1] == (
+        assert re.search(r"INBOX=\$\(prefixed_env RELAY_INBOX (\S+)\)", SCRIPT.read_text())[1] == (
             DEFAULT_INBOX.name
         )
 

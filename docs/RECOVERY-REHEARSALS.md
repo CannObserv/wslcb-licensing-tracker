@@ -5,7 +5,7 @@ Dated record of backup drills and what each proved. The procedure is
 
 ## Every test run
 
-`tests/test_backup_restore_rehearsal.py`, against `TEST_DATABASE_URL`:
+`tests/test_backup_restore_rehearsal.py`, against `CO_WSLCB_LICENSING_TRACKER_TEST_DATABASE_URL`:
 
 - **Round trip** — a real `pg_dump` of the migrated test database passes the
   backup's own verification, ships to a fake bucket, comes back by

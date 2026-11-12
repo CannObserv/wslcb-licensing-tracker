@@ -57,9 +57,11 @@ tail -f ~/Library/Logs/wslcb-relay.log    # ends "relay: done: <name>"
 
 **Mac, on an update** (e.g. #204's rename), from a pulled checkout: re-run the
 `install` line, then `launchctl bootout gui/$(id -u)/org.cannobserv.wslcb-relay`
-and the `sed`, `bootstrap` and `kickstart` lines. A pre-#204 plist still works
-with the new script: its `WSLCB_RELAY_HOST` logs a `deprecated` line until
-#244.
+and the `sed`, `bootstrap` and `kickstart` lines. Since #244 a pre-#204 plist
+**stops working**: the script no longer reads `WSLCB_RELAY_HOST` and exits
+asking for `CO_WSLCB_LICENSING_TRACKER_RELAY_HOST`, so reinstall the plist with
+the script. An installed pre-#244 script under a #204 plist keeps working (its
+leftover legacy branch never fires), so reinstalling it is optional.
 
 The VM's copy of each run is in `journalctl -u wslcb-task@import-relayed`. A
 run by hand (`CO_WSLCB_LICENSING_TRACKER_RELAY_HOST=wslcb-relay ~/.local/bin/wslcb-relay-capture.sh`)

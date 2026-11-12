@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from wslcb_licensing_tracker.config import ENV_PREFIX, LEGACY_ENV_NAMES
+from wslcb_licensing_tracker.config import ENV_PREFIX
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "src" / "wslcb_licensing_tracker"
@@ -184,8 +184,8 @@ def _check_read(how: str, names: list[str]) -> list[str]:
     for name in names:
         if not _ok(name):
             problems.append(f"{name} lacks {ENV_PREFIX}")
-        elif how == "raw" and name in LEGACY_ENV_NAMES:
-            problems.append(f"read {name} with config.env (legacy fallback)")
+        elif how == "raw" and name.startswith(ENV_PREFIX):
+            problems.append(f"read {name} with config.env, the single reader")
     return problems
 
 
@@ -248,6 +248,15 @@ class TestSource:
         problems, _ = _scan()
         assert len(problems) == 3
 
+    def test_the_scan_catches_a_raw_read_of_a_prefixed_name(self, tmp_path, monkeypatch):
+        """``config.env`` stays the single reader once the #204 fallback is gone (#244)."""
+        bad = tmp_path / "bad.py"
+        bad.write_text(f'import os\nos.environ.get("{ENV_PREFIX}DATA_DIR")\n')
+        monkeypatch.setattr(f"{__name__}._files", lambda: [bad])
+        problems, _ = _scan()
+        assert len(problems) == 1
+        assert "single reader" in problems[0]
+
     def test_the_scan_refuses_what_it_cant_resolve(self, tmp_path, monkeypatch):
         bad = tmp_path / "bad.py"
         bad.write_text('import os\ndef f(n):\n    return os.environ.get("X_" + n)\n')
@@ -266,39 +275,21 @@ class TestEnvExample:
         assert len(names) > 20
         assert [n for n in names if not _ok(n)] == []
 
-    def test_every_renamed_variable_is_documented(self):
-        assert set(LEGACY_ENV_NAMES) - set(self._names()) == set()
-
     def test_exceptions_are_documented(self):
         text = ENV_EXAMPLE.read_text()
         assert [n for n in ALLOWED if n not in text] == []
 
 
-class TestLegacyMap:
-    def test_new_names_prefixed_and_legacy_names_not(self):
-        assert LEGACY_ENV_NAMES
-        for new, old in LEGACY_ENV_NAMES.items():
-            assert new.startswith(ENV_PREFIX)
-            assert not old.startswith(ENV_PREFIX)
-
-    def test_each_legacy_name_is_the_suffix_or_its_wslcb_form(self):
-        """``DATABASE_URL`` → ``…_DATABASE_URL``; ``WSLCB_X`` drops the redundant ``WSLCB_``."""
-        for new, old in LEGACY_ENV_NAMES.items():
-            suffix = new.removeprefix(ENV_PREFIX)
-            assert old in (suffix, f"WSLCB_{suffix}")
-
-
 class TestRelay:
-    def test_script_expands_no_legacy_name_directly(self):
-        """Legacy names reach the script only through its fallback helper."""
+    def test_script_reads_no_legacy_name(self):
+        """The pre-#204 ``WSLCB_<name>`` is gone from the script (#244)."""
         text = RELAY_SCRIPT.read_text()
         assert re.findall(r"\$\{?WSLCB_[A-Z_]+", text) == []
 
     def test_script_reads_each_relay_variable_by_suffix(self):
         text = RELAY_SCRIPT.read_text()
         for suffix in ("RELAY_HOST", "RELAY_INBOX", "RELAY_URL", "RELAY_CHECKOUT"):
-            assert f"{ENV_PREFIX}{suffix}" in LEGACY_ENV_NAMES
-            assert re.search(rf"env_or_legacy {suffix}\b", text), suffix
+            assert re.search(rf"prefixed_env {suffix}\b", text), suffix
 
     def test_plist_sets_only_prefixed_names(self):
         names = plistlib.loads(RELAY_PLIST.read_bytes())["EnvironmentVariables"]
@@ -319,25 +310,3 @@ class TestUnits:
         text = (INFRA / "wslcb-web.service").read_text()
         (pre,) = re.findall(r"^ExecStartPre=.*$", text, re.MULTILINE)
         assert re.findall(r"echo ([A-Z][A-Z0-9_]*)=", pre) == [f"{ENV_PREFIX}BUILD_ID"]
-
-
-class TestSuitePromotion:
-    """The suite runs the same under either spelling of its own variables (#204)."""
-
-    def test_legacy_names_move_onto_the_prefixed_ones(self):
-        from ._env import promote_legacy_env_names
-
-        environ = {"TEST_DATABASE_URL": "t", "REQUIRE_PG_TESTS": "1", "UNRELATED": "u"}
-        promote_legacy_env_names(environ)
-        assert environ == {
-            f"{ENV_PREFIX}TEST_DATABASE_URL": "t",
-            f"{ENV_PREFIX}REQUIRE_PG_TESTS": "1",
-            "UNRELATED": "u",
-        }
-
-    def test_a_prefixed_name_already_set_wins(self):
-        from ._env import promote_legacy_env_names
-
-        environ = {f"{ENV_PREFIX}DATABASE_URL": "new", "DATABASE_URL": "prod"}
-        promote_legacy_env_names(environ)
-        assert environ == {f"{ENV_PREFIX}DATABASE_URL": "new"}

@@ -258,32 +258,25 @@ def test_no_test_finds_a_configured_checkin():
         assert name not in os.environ, name
 
 
-def test_classify_monitor_uses_prefixed_names():
-    """Every monitor's variables carry the #204 prefix; BACKUP and SCRAPE keep a legacy fallback."""
+def test_every_monitor_uses_prefixed_names():
+    """Every monitor's variables carry the #204 prefix."""
     from wslcb_licensing_tracker.checkin import CLASSIFY
-    from wslcb_licensing_tracker.config import ENV_PREFIX, LEGACY_ENV_NAMES
+    from wslcb_licensing_tracker.config import ENV_PREFIX
 
     assert CLASSIFY.label == "classify"
-    assert CLASSIFY.base_url_env == f"{ENV_PREFIX}CLASSIFY_CHECKIN_BASE_URL"
-    assert CLASSIFY.monitor_id_env == f"{ENV_PREFIX}CLASSIFY_MONITOR_ID"
-    for monitor in (BACKUP, SCRAPE):
-        assert (
-            LEGACY_ENV_NAMES[monitor.base_url_env]
-            == f"WSLCB_{monitor.label.upper()}_CHECKIN_BASE_URL"
-        )
-        assert (
-            LEGACY_ENV_NAMES[monitor.monitor_id_env] == f"WSLCB_{monitor.label.upper()}_MONITOR_ID"
-        )
-    assert CLASSIFY.base_url_env not in LEGACY_ENV_NAMES
+    for monitor in (BACKUP, SCRAPE, CLASSIFY):
+        label = monitor.label.upper()
+        assert monitor.base_url_env == f"{ENV_PREFIX}{label}_CHECKIN_BASE_URL"
+        assert monitor.monitor_id_env == f"{ENV_PREFIX}{label}_MONITOR_ID"
 
 
-def test_legacy_monitor_names_still_check_in(tmp_path):
-    """A backup.env not yet renamed keeps checking in (#204 fallback window)."""
+def test_legacy_monitor_names_no_longer_check_in(tmp_path):
+    """#244: a backup.env still on the pre-#204 names is unconfigured, not a fallback."""
     env = _environ(tmp_path, base=None, monitor=None)
     env |= {"WSLCB_BACKUP_CHECKIN_BASE_URL": BASE, "WSLCB_BACKUP_MONITOR_ID": MONITOR}
     post = _Recorder(202)
-    assert post_checkin("ok", {}, monitor=BACKUP, environ=env, post=post) is True
-    assert post.calls[0][0] == f"{BASE}/api/v1/monitors/{MONITOR}/checkin"
+    assert post_checkin("ok", {}, monitor=BACKUP, environ=env, post=post) is False
+    assert post.calls == []
 
 
 # ── User-Agent (#243) ────────────────────────────────────────────────

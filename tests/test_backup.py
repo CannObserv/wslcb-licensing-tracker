@@ -638,12 +638,14 @@ class TestMain:
         assert self._main(env, client, data_dir) == 1
         assert checkins[0][2] == {"fault": "archive"}
 
-    def test_legacy_bucket_names_still_ship(self, env, client, data_dir, checkins):
-        """A backup.env not yet renamed keeps shipping (#204 fallback window)."""
+    def test_legacy_bucket_names_are_not_read(self, env, client, data_dir, checkins):
+        """#244: a backup.env still on the pre-#204 names is a setup alert, not a ship."""
         env["WSLCB_BACKUP_BUCKET"] = env.pop(f"{ENV_PREFIX}BACKUP_BUCKET")
         env["WSLCB_ARCHIVE_BUCKET"] = env.pop(f"{ENV_PREFIX}ARCHIVE_BUCKET")
-        assert self._main(env, client, data_dir) == 0
-        assert checkins[0][1]["object"].startswith(f"gs://{BUCKET}/daily/")
+        assert self._main(env, client, data_dir) == 2
+        assert checkins[0][0] == "alert"
+        assert f"{ENV_PREFIX}BACKUP_BUCKET" in checkins[0][1]["error"]
+        assert checkins[0][2] == {"fault": "setup"}
 
     @pytest.mark.parametrize("name", [f"{ENV_PREFIX}BACKUP_BUCKET", f"{ENV_PREFIX}ARCHIVE_BUCKET"])
     def test_missing_bucket_config_exits_2(self, env, client, data_dir, checkins, name):

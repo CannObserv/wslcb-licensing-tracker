@@ -307,7 +307,7 @@ Worker count has no effect on data freshness — safe to scale workers freely.
 - `.venv/` keeps the dev group on purpose (#224): the test gate and pre-commit run from it, and `--no-dev` wouldn't stick anyway, because `uv run` reinstalls default groups. Audit it with `uv audit --frozen` (dev included), not `--no-dev`.
 - `node_modules/` holds jsdom, for `npm test` only; `wslcb-web` never loads it. After a `package-lock.json` change, run `npm ci`, then `npm audit` (#229).
 - All persistent data in `./data/` (gitignored).
-- Every env var is prefixed `CO_WSLCB_LICENSING_TRACKER_` (#204), and `.env.example` is the canonical list. `…_<name>` below abbreviates it. Until #244, each old name (`DATABASE_URL`, `WSLCB_BACKUP_BUCKET`, …; `config.LEGACY_ENV_NAMES`) still works and logs one `deprecated` WARNING. The suite promotes old test-var names itself, so either spelling gives 0 skipped.
+- Every env var is prefixed `CO_WSLCB_LICENSING_TRACKER_` (#204), and `.env.example` is the canonical list. `…_<name>` below abbreviates it. The pre-#204 names (`DATABASE_URL`, `WSLCB_BACKUP_BUCKET`, …) are no longer read (#244): set alone, they leave the variable unset — `alembic` and the CLI then target the localhost `wslcb` default.
 
 ### `…_BUILD_ID`
 

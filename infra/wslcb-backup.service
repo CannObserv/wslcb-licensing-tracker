@@ -33,9 +33,10 @@ LoadCredential=checkin-key:/etc/wslcb-licensing-tracker/backup-checkin.key
 # read - the job refuses that (exit 2) rather than fail "Permission denied".
 Environment=GOOGLE_APPLICATION_CREDENTIALS=%d/gcs
 
-# WSLCB_BACKUP_BUCKET, WSLCB_ARCHIVE_BUCKET, and the check-in's base URL and
-# monitor id - no secret. NOT /etc/wslcb-licensing-tracker/.env: that carries
-# DATABASE_URL and the address-validator key, neither of which this unit needs.
+# CO_WSLCB_LICENSING_TRACKER_BACKUP_BUCKET, ..._ARCHIVE_BUCKET, and the check-in's
+# base URL and monitor id - no secret. NOT /etc/wslcb-licensing-tracker/.env: that
+# carries ..._DATABASE_URL and the address-validator key, neither of which this
+# unit needs.
 # No leading '-': a backup unit without its configuration must fail loudly.
 EnvironmentFile=/etc/wslcb-licensing-tracker/backup.env
 
