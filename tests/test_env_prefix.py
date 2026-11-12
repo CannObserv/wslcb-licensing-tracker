@@ -279,6 +279,29 @@ class TestEnvExample:
         text = ENV_EXAMPLE.read_text()
         assert [n for n in ALLOWED if n not in text] == []
 
+    def _undocumented(self) -> list[str]:
+        """Prefixed names read by ``src/``, alembic or the relay script, but not listed."""
+        _, seen = _scan()
+        relay = re.findall(r"\$\(prefixed_env (\w+)", RELAY_SCRIPT.read_text())
+        read = {n for n in seen if n.startswith(ENV_PREFIX)} | {f"{ENV_PREFIX}{s}" for s in relay}
+        return sorted(read - set(self._names()))
+
+    def test_every_read_name_is_documented(self):
+        """``.env.example`` stays the canonical list (#244 replaces the legacy-map check)."""
+        assert self._undocumented() == []
+
+    def test_the_documented_check_catches_a_missing_name(self, tmp_path, monkeypatch):
+        trimmed = tmp_path / ".env.example"
+        trimmed.write_text(
+            "".join(
+                ln
+                for ln in ENV_EXAMPLE.read_text().splitlines(keepends=True)
+                if not ln.lstrip("#").startswith(f"{ENV_PREFIX}RELAY_HOST=")
+            )
+        )
+        monkeypatch.setattr(f"{__name__}.ENV_EXAMPLE", trimmed)
+        assert self._undocumented() == [f"{ENV_PREFIX}RELAY_HOST"]
+
 
 class TestRelay:
     def test_script_reads_no_legacy_name(self):
