@@ -20,10 +20,10 @@ target_metadata = metadata
 
 
 def get_url() -> str:
-    """The URL to migrate: ``DATABASE_URL_ENV``, then legacy ``DATABASE_URL``, then the ini.
+    """The URL to migrate: ``DATABASE_URL_ENV``, else the ini.
 
     The ini's URL is the shared prod/dev ``wslcb``: unset, this migrates prod
-    (``tests/test_alembic_env.py`` pins the order, #204).
+    (``tests/test_alembic_env.py`` pins the order, #204, #244).
     """
     url = env(DATABASE_URL_ENV)
     if url is not None:  # set but empty fails to connect; it never means "use prod"

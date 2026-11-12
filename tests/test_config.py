@@ -10,7 +10,6 @@ from wslcb_licensing_tracker.config import (
     BUILD_ID_ENV,
     ENV_PREFIX,
     JEV_USD_PER_MILLION_INPUT_TOKENS,
-    LEGACY_ENV_NAMES,
     env,
     get_build_id,
     jev_confidence_threshold,
@@ -48,62 +47,48 @@ class TestGetBuildId:
 
 
 class TestEnv:
-    """``config.env()``: the prefixed name, then the legacy one, with a one-time WARNING (#204)."""
+    """``config.env()`` reads only the prefixed name; the #204 fallback is gone (#244)."""
 
     NEW = f"{ENV_PREFIX}DATABASE_URL"
     OLD = "DATABASE_URL"
 
-    def _deprecations(self, caplog) -> list[logging.LogRecord]:
-        return [r for r in caplog.records if "deprecated" in r.getMessage()]
+    def test_new_name(self):
+        assert env(self.NEW, environ={self.NEW: "n"}) == "n"
 
-    def test_new_name(self, caplog):
-        with caplog.at_level(logging.WARNING):
-            assert env(self.NEW, environ={self.NEW: "n"}) == "n"
-        assert self._deprecations(caplog) == []
-
-    def test_legacy_name_falls_back_and_warns_once(self, caplog):
-        with caplog.at_level(logging.WARNING):
-            assert env(self.NEW, environ={self.OLD: "o"}) == "o"
-            assert env(self.NEW, environ={self.OLD: "o"}) == "o"
-        (record,) = self._deprecations(caplog)
-        assert record.levelno == logging.WARNING
-        assert self.OLD in record.getMessage()
-        assert self.NEW in record.getMessage()
-
-    def test_never_logs_the_value(self, caplog):
+    def test_a_legacy_only_env_gives_the_default_and_no_warning(self, caplog):
         with caplog.at_level(logging.DEBUG):
-            env(self.NEW, environ={self.OLD: "s3cret"})
-            env(self.NEW, environ={self.NEW: "s3cret", self.OLD: "other"})
-        assert "s3cret" not in caplog.text
-        assert "other" not in caplog.text
+            assert env(self.NEW, environ={self.OLD: "o"}) is None
+            assert env(self.NEW, "d", environ={self.OLD: "o"}) == "d"
+        assert caplog.records == []
 
-    def test_new_wins_over_legacy_and_flags_the_leftover(self, caplog):
-        with caplog.at_level(logging.WARNING):
+    def test_a_wslcb_legacy_name_is_ignored_too(self, caplog):
+        name = f"{ENV_PREFIX}BACKUP_BUCKET"
+        with caplog.at_level(logging.DEBUG):
+            assert env(name, environ={"WSLCB_BACKUP_BUCKET": "b"}) is None
+        assert caplog.records == []
+
+    def test_a_leftover_legacy_name_beside_the_new_one_is_silent(self, caplog):
+        with caplog.at_level(logging.DEBUG):
             assert env(self.NEW, environ={self.NEW: "n", self.OLD: "o"}) == "n"
-        (record,) = self._deprecations(caplog)
-        assert "ignor" in record.getMessage()
+        assert caplog.records == []
 
-    def test_a_present_but_empty_new_name_does_not_fall_back(self):
-        assert env(self.NEW, environ={self.NEW: "", self.OLD: "o"}) == ""
+    def test_a_present_but_empty_new_name_is_returned_as_is(self):
+        assert env(self.NEW, environ={self.NEW: ""}) == ""
+        assert env(self.NEW, "d", environ={self.NEW: ""}) == ""
 
-    def test_default_when_neither_is_set(self):
+    def test_default_when_unset(self):
         assert env(self.NEW, environ={}) is None
         assert env(self.NEW, "d", environ={}) == "d"
-
-    def test_a_name_with_no_legacy_reads_plainly(self):
-        name = f"{ENV_PREFIX}CONTACT_EMAIL"
-        assert name not in LEGACY_ENV_NAMES
-        assert env(name, environ={name: "x"}) == "x"
-        assert env(name, environ={"CONTACT_EMAIL": "x"}) is None
 
     def test_reads_os_environ_by_default(self, monkeypatch):
         monkeypatch.delenv(self.NEW, raising=False)
         monkeypatch.setenv(self.OLD, "from-os")
-        assert env(self.NEW) == "from-os"
+        assert env(self.NEW) is None
+        monkeypatch.setenv(self.NEW, "new")
+        assert env(self.NEW) == "new"
 
-    def test_wslcb_names_drop_the_redundant_wslcb(self):
-        assert LEGACY_ENV_NAMES[f"{ENV_PREFIX}BACKUP_BUCKET"] == "WSLCB_BACKUP_BUCKET"
-        assert LEGACY_ENV_NAMES[f"{ENV_PREFIX}RELAY_INBOX"] == "WSLCB_RELAY_INBOX"
+    def test_no_legacy_map_or_warned_set_remains(self):
+        assert [n for n in dir(config) if "LEGACY" in n.upper() or "DEPRECAT" in n.upper()] == []
 
 
 class TestJevConfidenceThreshold:

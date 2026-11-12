@@ -189,7 +189,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - One row per scrape run with status, record counts, timestamps, error messages
 - `status` values: `'running'`, `'success'`, `'error'`, `'unchanged'` (page content identical to last scrape)
 - `content_hash` — SHA-256 hex digest of the fetched HTML; used to detect unchanged pages and skip redundant parsing/ingestion
-- `snapshot_path` stores the path to the archived HTML snapshot, relative to `DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed or scrape was `unchanged`
+- `snapshot_path` stores the path to the archived HTML snapshot, relative to `CO_WSLCB_LICENSING_TRACKER_DATA_DIR` (e.g., `wslcb/licensinginfo/2025/2025_07_09/2025_07_09-licensinginfo.lcb.wa.gov-v1.html`); `NULL` if archiving failed or scrape was `unchanged`
 - `origin` — `'server'` (the VM's own fetch; default) or `'relay'` (an operator capture imported by `wslcb ingest import-relayed`, #201); CHECK constraint `ck_scrape_log_origin` (Alembic `0008`)
 - `captured_at` — a relay's off-host fetch time; `NULL` for server runs. `scrape_health()` dates freshness by `coalesce(captured_at, finished_at, started_at)` and counts errors from `origin = 'server'` rows only ([`RELAY.md`](RELAY.md) § Monitoring)
 

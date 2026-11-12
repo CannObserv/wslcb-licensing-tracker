@@ -25,8 +25,6 @@ from wslcb_licensing_tracker.config import (
     TEST_DATABASE_URL_ENV,
 )
 
-from ._env import promote_legacy_env_names
-
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
@@ -62,7 +60,6 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     Catches all PG test skip paths (fixture-based, @pytest.mark.skipif, standalone
     connection fixtures) before any collection or test execution occurs.
     """
-    promote_legacy_env_names()
     if os.environ.get(REQUIRE_PG_TESTS_ENV) and not os.environ.get(TEST_DATABASE_URL_ENV):
         pytest.exit(
             f"{TEST_DATABASE_URL_ENV} is not set but {REQUIRE_PG_TESTS_ENV}=1 — "
@@ -85,18 +82,6 @@ def _contact_email(monkeypatch):
     from wslcb_licensing_tracker.config import CONTACT_EMAIL_ENV
 
     monkeypatch.setenv(CONTACT_EMAIL_ENV, "tests@example.org")
-
-
-@pytest.fixture(autouse=True)
-def _fresh_deprecation_warnings(monkeypatch):
-    """Each test starts with no legacy env name warned about (#204).
-
-    ``config.env()`` warns once per name per process; without this, a test that
-    feeds a legacy name would use up the warning another test asserts.
-    """
-    from wslcb_licensing_tracker import config
-
-    monkeypatch.setattr(config, "_DEPRECATION_WARNED", set())
 
 
 @pytest.fixture(autouse=True)
@@ -279,10 +264,9 @@ async def pg_engine(pg_url) -> AsyncGenerator[AsyncEngine, None]:
     ``REQUIRE_PG_TESTS_ENV=1`` to turn that into a hard failure (enforced by
     pytest_sessionstart before this fixture runs).
 
-    The engine reads the prefixed ``DATABASE_URL_ENV``, so that is the name
-    set here. Setting only the legacy name would lose to a prefixed one in
-    the shell, and the truncation below would then run against that
-    database. The engine's URL is checked before anything runs (#204).
+    The engine reads ``DATABASE_URL_ENV``, so that is the name set here. The
+    engine's URL is checked before anything runs, so the truncation below
+    can never reach a non-test database (#204).
     """
     if not pg_url:
         pytest.skip(f"{TEST_DATABASE_URL_ENV} not set — skipping PostgreSQL tests")

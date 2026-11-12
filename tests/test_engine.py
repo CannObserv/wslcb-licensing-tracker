@@ -35,16 +35,17 @@ def test_get_database_url_from_env(clean):
     assert get_database_url() == "postgresql+asyncpg://user:pw@host/db"
 
 
-def test_get_database_url_new_name_beats_legacy(clean):
-    """No-prod guard (#204): a legacy prod URL can't override the new name."""
+def test_get_database_url_ignores_a_leftover_legacy_name(clean):
+    """No-prod guard (#204): a stray old ``DATABASE_URL`` can't override the new name."""
     clean.setenv(DATABASE_URL_ENV, "postgresql+asyncpg://user:pw@host/db_test")
     clean.setenv("DATABASE_URL", PROD)
     assert get_database_url().endswith("/db_test")
 
 
-def test_get_database_url_legacy_fallback(clean):
+def test_get_database_url_legacy_only_is_the_default(clean):
+    """#244: the pre-#204 ``DATABASE_URL`` alone is no longer read."""
     clean.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@host/legacy")
-    assert get_database_url().endswith("/legacy")
+    assert get_database_url() == PROD
 
 
 def test_get_database_url_set_but_empty_is_not_the_default(clean):

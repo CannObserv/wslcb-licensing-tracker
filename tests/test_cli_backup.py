@@ -48,14 +48,13 @@ class TestRestore:
         assert key in result.output
         assert f"source_host={HOST}" in result.output
 
-    def test_bucket_from_the_legacy_name(self, dumps, monkeypatch):
-        """A shell still exporting WSLCB_BACKUP_BUCKET keeps restoring (#204 window)."""
+    def test_the_legacy_bucket_name_is_not_read(self, monkeypatch):
+        """#244: a shell exporting only WSLCB_BACKUP_BUCKET has no bucket."""
         monkeypatch.delenv(f"{ENV_PREFIX}BACKUP_BUCKET")
         monkeypatch.setenv("WSLCB_BACKUP_BUCKET", BUCKET)
-        key = _dump(dumps, "daily", HOST, T0)
         result = CliRunner().invoke(main, ["ops", "restore", "--list"])
-        assert result.exit_code == 0, result.output
-        assert key in result.output
+        assert result.exit_code == 2
+        assert "--bucket" in result.output
 
     def test_bucket_is_required(self, monkeypatch):
         monkeypatch.delenv(f"{ENV_PREFIX}BACKUP_BUCKET")

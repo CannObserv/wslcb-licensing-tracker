@@ -20,7 +20,7 @@ _DEFAULT_DATABASE_URL = "postgresql+asyncpg://wslcb:wslcb@localhost/wslcb"
 
 
 def get_database_url() -> str:
-    """Return ``DATABASE_URL_ENV`` (legacy ``DATABASE_URL``), else the localhost default.
+    """Return ``DATABASE_URL_ENV``, else the localhost default.
 
     The default is the prod/dev ``wslcb``: the CLI on the prod host runs unset.
     """

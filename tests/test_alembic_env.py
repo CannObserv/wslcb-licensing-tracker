@@ -2,9 +2,10 @@
 
 Unset, alembic falls back to ``alembic.ini``'s URL, which is the shared
 prod/dev ``wslcb``. Prod's ``uv run alembic upgrade head`` relies on that.
-Once the variable is set, under either name, it has to win: a renamed env
-file that alembic didn't read would fall through to prod without a word.
-The order is new name, then legacy name, then the ini.
+Once the prefixed variable is set, it has to win: an env file that alembic
+didn't read would fall through to prod without a word. The order is the
+prefixed name, then the ini; the pre-#204 ``DATABASE_URL`` is no longer read
+(#244), so set alone it means the ini.
 
 env.py runs against a stubbed ``alembic.context`` in offline mode, and the
 URL it would migrate is what ``context.configure`` receives.
@@ -43,7 +44,7 @@ def clean(monkeypatch):
     return monkeypatch
 
 
-def test_new_name_wins_over_a_legacy_prod_url(clean):
+def test_new_name_wins_over_a_leftover_legacy_prod_url(clean):
     clean.setenv(DATABASE_URL_ENV, TEST)
     clean.setenv("DATABASE_URL", PROD)
     assert _migrated_url(clean).endswith("/wslcb_test")
@@ -54,9 +55,10 @@ def test_new_name_alone(clean):
     assert _migrated_url(clean) == TEST.replace("+asyncpg", "")
 
 
-def test_legacy_name_still_honoured_in_the_window(clean):
+def test_legacy_name_alone_is_ignored(clean):
+    """#244: only the prefixed name is read, so the old one alone means the ini."""
     clean.setenv("DATABASE_URL", TEST)
-    assert _migrated_url(clean).endswith("/wslcb_test")
+    assert _migrated_url(clean) == INI_URL.replace("+asyncpg", "")
 
 
 def test_unset_falls_back_to_the_ini(clean):
@@ -64,7 +66,10 @@ def test_unset_falls_back_to_the_ini(clean):
 
 
 def test_set_but_empty_never_means_prod(clean):
-    """An empty value fails to connect; falling through to the ini would migrate prod."""
+    """An empty value fails to connect; falling through to the ini would migrate prod.
+
+    The leftover pre-#204 name must not rescue it either (#244).
+    """
     clean.setenv(DATABASE_URL_ENV, "")
     clean.setenv("DATABASE_URL", TEST)
     assert _migrated_url(clean) == ""
