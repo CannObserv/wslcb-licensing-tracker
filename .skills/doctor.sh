@@ -789,40 +789,98 @@ env_value() {
   printf '%s' "$found"
 }
 
-check_pr_mode_gh_token() {
-  local wt block entry dirs primary knob line words word="" count=0 env_file=".env"
-  # git without an inherited GIT_DIR or GIT_WORK_TREE, as the hook's reader
-  # resolves the primary (CR 1895): GIT_DIR beats -C, so asked for a
-  # submodule's work tree git named the entry itself.
-  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE git)
-  [ -e .claude/hooks/skills-submodule-update.sh ] || return 0
-  # Read from the primary checkout, resolved as the hook's _read_merge_mode
-  # resolves it (CR 1893): the first `git worktree list` block, whose entry
-  # is a git dir for a bare primary (`repo.git`, whose knob can only be this
-  # checkout's) and in a submodule (`<super>/.git/modules/<n>`, asked for its
-  # work tree). A `--separate-git-dir` primary's store names no work tree;
-  # from that primary it is this checkout (CR 1892). A primary that cannot
-  # be resolved is silent here, not a note: the hook then reads the knob as
-  # unusable and says so itself on every run, which is the one place that
-  # failure is stated, as for any other unusable knob.
-  wt="$("${g[@]}" worktree list --porcelain 2>/dev/null)" || return 0
+# >>> resolve_primary: one body in nine readers (#612), held byte-identical
+# by tests/structural/test_primary_checkout_copies.py. Change every copy.
+#
+# resolve_primary <dir>: the primary checkout of the repository at <dir>,
+# where its untracked .skills/ knobs live. Prints nothing.
+#   0: RP_TREE is the primary's work tree. For a bare primary RP_BARE is 1
+#      and RP_TREE is <dir>'s own top level, empty when <dir> has none.
+#   1: RP_ERR says what failed and what to run; RP_REASON is git's own
+#      stderr, whole, which a caller that refuses aloud prints above it.
+# Git is asked without an inherited GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR:
+# git exports GIT_DIR to every hook, and each of them beats -C (CR 1895).
+#   1. From the primary itself (its git dir is the common dir), its own top
+#      level, asked first: a --separate-git-dir store whose path ends in
+#      /.git is listed as the directory above it, a work tree to git.
+#   2. Else the first `git worktree list --porcelain` block. Its `bare` line
+#      counts once git confirms it (the shared core.bare, read from here, as
+#      a store git refuses for its owner still has; else the entry's own
+#      answer): below git 2.25 a --separate-git-dir store is listed bare too.
+#      Where that store is this checkout's git dir, this is the primary.
+#   3. Any other entry is asked for its work tree (a submodule's through
+#      core.worktree). That failing is a refusal, never a fallback (CR 1858).
+# An empty top level is none: inside a git dir git 2.17 prints nothing, at
+# exit 0, where later git refuses.
+resolve_primary() {
+  local dir=$1 dirs wt block entry gd ver
+  local -a g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$dir")
+  RP_TREE="" RP_BARE=0 RP_ERR="" RP_REASON=""
+  dirs=$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null) || dirs=""
+  if [ -n "$dirs" ] && [ "${dirs%%$'\n'*}" = "${dirs#*$'\n'}" ] &&
+    RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
+    return 0
+  fi
+  RP_TREE=""
+  if ! wt=$("${g[@]}" worktree list --porcelain 2>/dev/null); then
+    RP_REASON=$("${g[@]}" worktree list --porcelain 2>&1 >/dev/null) || true
+    RP_REASON=${RP_REASON:-git printed no reason}
+    RP_ERR="git worktree list failed in '$dir', so the primary checkout is unknown"
+    return 1
+  fi
   block=${wt%%$'\n\n'*}
   entry=${block%%$'\n'*}
   entry=${entry#worktree }
   case $'\n'"$block"$'\n' in
     *$'\n'bare$'\n'*)
-      primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)" || return 0
-      ;;
-    *)
-      if ! primary="$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null)"; then
-        dirs="$("${g[@]}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
-        if [ -z "$dirs" ] || [ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ]; then
-          return 0
-        fi
-        primary="$("${g[@]}" rev-parse --show-toplevel 2>/dev/null)" || return 0
+      if [ "$("${g[@]}" config --bool core.bare 2>/dev/null)" = true ] ||
+        [ "$("${g[@]}" -C "$entry" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+        RP_BARE=1
+        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) || RP_TREE=""
+        return 0
       fi
+      gd=$("${g[@]}" rev-parse --git-dir 2>/dev/null) &&
+        gd=$(CDPATH='' cd -- "$dir" && CDPATH='' cd -- "$gd" && pwd -P) || gd=""
+      if [ -n "$gd" ] && [ "$gd" = "$(CDPATH='' cd -- "$entry" 2>/dev/null && pwd -P)" ] &&
+        RP_TREE=$("${g[@]}" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
+        return 0
+      fi
+      RP_TREE=""
       ;;
   esac
+  if RP_TREE=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>/dev/null) && [ -n "$RP_TREE" ]; then
+    return 0
+  fi
+  RP_TREE=""
+  RP_REASON=$("${g[@]}" -C "$entry" rev-parse --show-toplevel 2>&1 >/dev/null) || true
+  RP_REASON=${RP_REASON:-git printed no reason}
+  RP_ERR="could not resolve the primary checkout's work tree from $entry"
+  if [ "$("${g[@]}" -C "$entry" rev-parse --is-inside-git-dir 2>/dev/null)" = true ]; then
+    RP_ERR="$RP_ERR; it is a git dir with no work tree, as a primary whose .git is a file makes it (git init --separate-git-dir), and"
+    if [ "${dirs%%$'\n'*}" = --path-format=absolute ]; then
+      ver=$(git --version 2>/dev/null) || ver=""
+      ver=${ver#git version }
+      RP_ERR="$RP_ERR git ${ver:-(unknown version)} predates 2.31, which this layout needs to tell its primary from a linked worktree: upgrade git (from a linked worktree, then run from the primary checkout)"
+    else
+      RP_ERR="$RP_ERR only that primary knows its work tree, so run this from the primary checkout"
+    fi
+  fi
+  return 1
+}
+# <<< resolve_primary
+
+check_pr_mode_gh_token() {
+  local primary knob line words word="" count=0 env_file=".env"
+  [ -e .claude/hooks/skills-submodule-update.sh ] || return 0
+  # Read from the primary checkout, resolved by the block above as the
+  # hook's _read_merge_mode resolves it (CR 1893, #612). A bare primary's
+  # knob is this checkout's. A primary that cannot be resolved is silent
+  # here, not a note: the hook then reads the knob as unusable and says so
+  # itself on every run, which is the one place that failure is stated, as
+  # for any other unusable knob.
+  resolve_primary . || return 0
+  primary=$RP_TREE
+  [ "$RP_BARE" = 0 ] || [ -n "$primary" ] || return 0
   # merge_mode's grammar (docs/KNOBS.md): one word, blank lines and
   # whole-line comments ignored. Only an exact `pr` speaks here; anything
   # else the hook reads as direct or names as unusable itself.
