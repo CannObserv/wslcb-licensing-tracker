@@ -125,6 +125,9 @@ sudo needrestart -m u -b -r l   # must print "Disabling Ubuntu mode, explicit re
   `wslcb-healthcheck.timer` stopped across the Postgres one.
 - `tests/test_needrestart_config.py` evaluates the file as Perl, and on the
   host pins the installed copy and the live `conf.d` chain.
+- **After a run,** `systemd-analyze get-log-target` reads `journal-or-kmsg`
+  ([PID 1's log target](#pid-1s-log-target)); `systemd`'s re-exec keeps it
+  (measured on CannObserv/provisioner#67). `console` is a finding.
 
 ### Node.js
 
@@ -216,6 +219,29 @@ sudo systemctl start systemd-journal-flush.service
 - **Re-mask:** only a rebuild from the Feb-2026 image; dpkg never writes masks
   to `/etc/systemd/system`. The host test and the probe (`journal:volatile`)
   both catch it.
+
+### PID 1's log target
+
+Installed 2026-11-18 (#254). The image's `system.conf.d/container-overrides.conf`
+sets `LogTarget=console`, which the first `daemon-reload` after boot applies:
+until the next boot, systemd's own `Started` / `Finished` / `Failed with
+result` lines never reach `journalctl -u`. `infra/system.conf.d/zz-cannobserv-log-target.conf`
+sorts after it and sets only `LogTarget=journal-or-kmsg`. It is
+CannObserv/provisioner#62's, byte for byte at `d2bdd36` (the `#62` in its
+comment is provisioner's issue, not ours): re-copy, never edit.
+`tests/test_log_target_config.py` pins hash, setting, sort order, installed copy.
+
+```bash
+sudo install -o root -g root -m 0644 infra/system.conf.d/zz-cannobserv-log-target.conf /etc/systemd/system.conf.d/
+sudo systemctl daemon-reload            # outside the knob's quiet ranges
+systemd-analyze get-log-target          # journal-or-kmsg
+sudo systemd-run --unit=log-target-check --quiet true && sudo journalctl -u log-target-check   # Started + Deactivated
+# revert: sudo rm /etc/systemd/system.conf.d/zz-cannobserv-log-target.conf && sudo systemctl daemon-reload
+```
+
+Still `console`? A runtime `set-log-target` survives reloads until boot
+(CannObserv/usa-wa#520): `sudo journalctl _PID=1 | grep 'Setting log target'`;
+`sudo systemd-analyze set-log-target journal-or-kmsg` clears it.
 
 ## Address Validation
 
