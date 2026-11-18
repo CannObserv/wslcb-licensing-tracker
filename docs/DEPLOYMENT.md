@@ -240,8 +240,10 @@ sudo systemd-run --unit=log-target-check --quiet true && sudo journalctl -u log-
 ```
 
 Still `console`? A runtime `set-log-target` survives reloads until boot
-(CannObserv/usa-wa#520): `sudo journalctl _PID=1 | grep 'Setting log target'`;
-`sudo systemd-analyze set-log-target journal-or-kmsg` clears it.
+(CannObserv/usa-wa#520): `sudo journalctl _PID=1 | grep 'Setting log target'`.
+`sudo kill -s RTMIN+26 1` restores the configured target (systemd(1)); reload
+again. Never `set-log-target` here: it is itself an override, so the file is
+then ignored until boot.
 
 ## Address Validation
 
