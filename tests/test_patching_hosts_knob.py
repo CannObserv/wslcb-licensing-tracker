@@ -111,7 +111,9 @@ def test_a_prune_stage_line_past_its_date_stays_green(
     between the soak's end and the next stage; it must still be reported.
     """
     config = tmp_path / "patching-hosts"
-    line = f"exception {stage}:nginx 2026-12-20 synthetic prune line\n"
+    # A name the real knob never declares: a second line for one of its own
+    # components is a `repeated` finding, not the case under test.
+    line = f"exception {stage}:knob-test-fixture 2026-12-20 synthetic prune line\n"
     config.write_text(KNOB.read_text() + line)
     knob = _read_knob(FAR_FUTURE, config)
     added = max(e["line"] for e in knob["exception"])
