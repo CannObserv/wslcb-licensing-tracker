@@ -12,14 +12,6 @@ cadence weekly
 
 window Tue 15:15-23:30             # 08:15-16:30 PDT / 07:15-15:30 PST
 
-# One-off windows for the overdue run (#255), outside every quiet range below.
-# The first was set when the operator approved (ends before the 07:25 range);
-# the second is the coordinator's; the third is the fallback. Remove all three
-# after the run: a dated line whose day has passed is a `past-window` finding.
-window 2026-11-20 04:30-07:20 overdue since 2026-11-17 (#255), operator-attended
-window 2026-11-20 17:00-23:30 overdue since 2026-11-17 (#255)
-window 2026-11-21 17:00-23:30 overdue since 2026-11-17 (#255), fallback
-
 # One range per infra/*.timer firing: from 5 min before its PDT start to 30 min
 # after its PST start plus jitter (RandomizedDelaySec: 5 min, the backup's 10).
 # 30 min outlasts every run with room to spare: a scrape takes 7-10 min, a
