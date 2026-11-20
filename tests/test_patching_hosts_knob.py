@@ -34,11 +34,11 @@ pytestmark = pytest.mark.skipif(
 FAR_FUTURE = "2099-12-31"
 
 
-def _read_knob(today: str | None = None) -> dict:
+def _read_knob(today: str | None = None, config: Path = KNOB) -> dict:
     """The knob as the vendored reader resolves it for this host, on `today`."""
     bash = shutil.which("bash")
     assert bash
-    argv = [bash, str(READ_KNOB), "--config", str(KNOB), "--host", HOST]
+    argv = [bash, str(READ_KNOB), "--config", str(config), "--host", HOST]
     if today:
         argv += ["--today", today]
     result = subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
@@ -61,20 +61,65 @@ def knob() -> dict:
 def test_knob_has_no_findings(today: str | None) -> None:
     """No malformed line, on any date.
 
-    A passed review-by date is an `expired-exception` finding, and a dated
-    `window` whose day has passed a `past-window` one (#248): the probe's to
-    report at patch time, not a gate on unrelated commits.
+    A passed review-by date is an `expired-exception` finding (`soak-ended` on
+    a prune stage's line, #257), and a dated `window` whose day has passed a
+    `past-window` one (#248): the probe's to report at patch time, not a gate
+    on unrelated commits.
     """
     knob = _read_knob(today)
     assert knob["knob"]["present"]
-    dated = {"expired-exception", "past-window"}
-    assert [f for f in knob["findings"] if f["kind"] not in dated] == []
+    assert _undated_findings(knob) == []
 
 
 def test_expired_exceptions_are_still_reported() -> None:
     knob = _read_knob(FAR_FUTURE)
-    expired = {f["line"] for f in knob["findings"] if f["kind"] == "expired-exception"}
-    assert expired == {e["line"] for e in knob["exception"]}
+    assert _expired_lines(knob) == {e["line"] for e in knob["exception"]}
+    assert knob["report_only"] is False
+
+
+# Findings a passed date raises: the probe's to report at patch time.
+EXPIRED = {"expired-exception", "soak-ended"}
+DATED = EXPIRED | {"past-window"}
+
+
+def _undated_findings(knob: dict) -> list[dict]:
+    """Findings that gate a commit: everything a passed date doesn't explain."""
+    return [f for f in knob["findings"] if f["kind"] not in DATED]
+
+
+def _expired_lines(knob: dict) -> set[int]:
+    """The exception lines the reader reports as past their review-by date."""
+    return {f["line"] for f in knob["findings"] if f["kind"] in EXPIRED}
+
+
+@pytest.mark.parametrize(
+    ("stage", "kind"),
+    [
+        ("disabled", "soak-ended"),
+        ("removed", "soak-ended"),
+        ("purged", "expired-exception"),
+        ("keep", "expired-exception"),
+    ],
+)
+def test_a_prune_stage_line_past_its_date_stays_green(
+    tmp_path: Path, stage: str, kind: str
+) -> None:
+    """A passed `disabled:`/`removed:` date is `soak-ended`, the next stage's prompt (#257).
+
+    pruning.md: the knob calls it `soak-ended`, not `expired-exception`. Like
+    an expired exception it's dated, so it mustn't turn every commit red
+    between the soak's end and the next stage; it must still be reported.
+    """
+    config = tmp_path / "patching-hosts"
+    line = f"exception {stage}:nginx 2026-12-20 synthetic prune line\n"
+    config.write_text(KNOB.read_text() + line)
+    knob = _read_knob(FAR_FUTURE, config)
+    added = max(e["line"] for e in knob["exception"])
+    assert {"kind": kind, "line": added} in [
+        {"kind": f["kind"], "line": f["line"]} for f in knob["findings"]
+    ]
+    assert _undated_findings(knob) == []
+    assert _expired_lines(knob) == {e["line"] for e in knob["exception"]}
     assert knob["report_only"] is False
 
 
