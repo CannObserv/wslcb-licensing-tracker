@@ -125,9 +125,11 @@ sudo needrestart -m u -b -r l   # must print "Disabling Ubuntu mode, explicit re
   `wslcb-healthcheck.timer` stopped across the Postgres one.
 - `tests/test_needrestart_config.py` evaluates the file as Perl, and on the
   host pins the installed copy and the live `conf.d` chain.
-- **After a run,** `systemd-analyze get-log-target` reads `journal-or-kmsg`
-  ([PID 1's log target](#pid-1s-log-target)); `systemd`'s re-exec keeps it
-  (measured on CannObserv/provisioner#67). `console` is a finding.
+- **After a run,** `systemd-analyze get-log-target` reads `journal` right
+  after a boot (exe-init's argv) and `journal-or-kmsg` after any reload or
+  re-exec ([PID 1's log target](#pid-1s-log-target)); `systemd`'s re-exec
+  keeps it (measured on CannObserv/provisioner#67). Both are expected.
+  `console` is a finding.
 
 ### Node.js
 
@@ -230,11 +232,15 @@ sorts after it and sets only `LogTarget=journal-or-kmsg`. It is
 CannObserv/provisioner#62's, byte for byte at `d2bdd36` (the `#62` in its
 comment is provisioner's issue, not ours): re-copy, never edit.
 `tests/test_log_target_config.py` pins hash, setting, sort order, installed copy.
+From boot until the first reload it reads `journal`: exe-init starts PID 1 with
+`--log-target=syslog` (`/proc/1/cmdline`), which systemd reads as `journal` and
+which beats `system.conf.d` until a reload applies the file (measured on #255).
+Both keep PID 1's lines in the journal; only `console` loses them.
 
 ```bash
 sudo install -o root -g root -m 0644 infra/system.conf.d/zz-cannobserv-log-target.conf /etc/systemd/system.conf.d/
 sudo systemctl daemon-reload            # outside the knob's quiet ranges
-systemd-analyze get-log-target          # journal-or-kmsg
+systemd-analyze get-log-target          # journal-or-kmsg after a reload; journal from boot until one
 sudo systemd-run --unit=log-target-check --quiet true && sudo journalctl -u log-target-check   # Started + Deactivated
 # revert: sudo rm /etc/systemd/system.conf.d/zz-cannobserv-log-target.conf && sudo systemctl daemon-reload
 ```
