@@ -67,6 +67,13 @@ hold nodejs nodejs
 # still ship it?
 exception purged:fwupd 2027-04-08 purged with its orphans; the image still ships it, masked, and its deleted motd conffile would block unattended-upgrade if fwupd were reinstalled (#193)
 
+# nginx (the image installs it, disabled; never started here, its logs empty
+# since 2026-02, nothing here names it; the app is the exe.dev proxy to
+# uvicorn :8000) was masked 2026-11-20. Drift from the image while it ships
+# it. A 30-day soak, then savepoint and purge (pruning.md); record:
+# /var/backups/patching-hosts-prune-nginx.
+exception disabled:nginx 2026-12-20 shipped by the exe.dev image and never used here; masked 2026-11-20, purged after the soak by way of a savepoint (#257)
+
 # The timers' services run `python -m wslcb_licensing_tracker.cli <task>`,
 # which the restarter scan can't follow. None starts or restarts a service:
 # src/ calls no systemctl. Their only subprocess is pg_dump (backup). Tests
