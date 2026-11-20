@@ -20,6 +20,11 @@ pyasn1 comes in through google-cloud-storage, via google-auth's pyasn1-modules
 (#250). Its four advisories are CPU DoS on crafted ASN.1. Only google-auth's
 pure-Python ``rsa`` signer imports it, and ``rsa`` is not installed, so nothing
 loads it today; the floor keeps it fixed if that changes.
+
+#256 raised soupsieve to 4.0.0 (three selector advisories; the last is fixed only
+in 4.x) and added opentelemetry-api 1.45.2 (quadratic ``traceparent`` parsing).
+Neither is reachable: ``src/`` never calls bs4's ``.select()``, and FastAPI parses
+``traceparent`` only once a TracerProvider is configured, which nothing here does.
 """
 
 import json
@@ -39,9 +44,10 @@ FIXED = {
     "anyio": "4.14.2",
     "idna": "3.15",
     "lxml": "6.1.0",
-    "soupsieve": "2.9.0",
+    "soupsieve": "4.0.0",  # #256
     "mako": "1.4.2",
     "pyasn1": "0.6.5",  # #250
+    "opentelemetry-api": "1.45.2",  # #256
 }
 
 # Same, for the dev group (#224, #229). filelock's fixes exist only in 4.x.
