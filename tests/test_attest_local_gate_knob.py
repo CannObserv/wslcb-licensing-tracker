@@ -101,6 +101,8 @@ def test_worktree_venv_knob_is_ignored() -> None:
     """Unignored, the main checkout's copy makes every attesting `push.sh` refuse."""
     rel = VENV_KNOB.relative_to(REPO_ROOT).as_posix()
     result = _git("check-ignore", "--no-index", "-q", rel)
+    if result.returncode == 128:
+        pytest.skip(f"not a git checkout: {result.stderr.strip()}")
     assert result.returncode == 0, f"{rel} is not ignored ({result.returncode}): {result.stderr}"
 
 
