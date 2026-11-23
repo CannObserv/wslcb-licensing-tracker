@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .db import get_or_create_location, link_record_source
 from .endorsements import process_record
-from .entities import ADDITIONAL_NAMES_MARKERS, parse_and_link_entities
+from .entities import ADDITIONAL_NAMES_MARKERS, entity_source, parse_and_link_entities
 from .link_records import link_new_record
 from .models import license_records, record_enrichments
 from .text_utils import clean_applicants_string, clean_entity_name
@@ -209,13 +209,15 @@ async def _enrich_new_record(
     except Exception:
         logger.exception("Endorsement enrichment failed for record %d", record_id)
 
-    # Entity linking
+    # Entity linking: read through entity_source, as reprocess does (#266)
     try:
         async with conn.begin_nested():
-            applicants = record.get("applicants", "")
+            raw = record.get("applicants", "")
+            applicants = entity_source(clean_applicants_string(raw), raw)
             if applicants:
                 await parse_and_link_entities(conn, record_id, applicants)
-            prev_applicants = record.get("previous_applicants", "")
+            raw_prev = record.get("previous_applicants", "")
+            prev_applicants = entity_source(clean_applicants_string(raw_prev), raw_prev)
             if prev_applicants:
                 await parse_and_link_entities(
                     conn,

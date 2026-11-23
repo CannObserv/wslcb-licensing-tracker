@@ -371,3 +371,47 @@ async def test_pg_ingest_batch(pg_engine, standard_new_application):
                 license_records.delete().where(license_records.c.license_number.like("BATCH%"))
             )
             await conn.commit()
+
+
+class TestIngestEntityLinksReproducible:
+    """#266: every link ingest writes is reproduced by ``reprocess_entities``."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_ingest_then_reprocess_identical(self, pg_conn, standard_new_application):
+        from wslcb_licensing_tracker.entities import reprocess_entities
+        from wslcb_licensing_tracker.models import entities, record_entities
+
+        rec = dict(
+            standard_new_application,
+            license_number="t266_ingest",
+            business_name="T266 7 CLOUDS SMOKE SHOP LLC",
+            applicants=(
+                "T266 7 CLOUDS SMOKE SHOP LLC; T266 7 CLOUDS SMOKE SHOP LLC; "
+                "T266 AMITOJPREET SINGH; T266 SURINDER KAUR"
+            ),
+            previous_applicants="T266 PREV LLC; T266 PREV PERSON; T266 PREV LLC",
+        )
+        r = await ingest_record(pg_conn, rec, IngestOptions(link_outcomes=False))
+        assert r.is_new is True
+
+        async def _links():
+            rows = await pg_conn.execute(
+                select(record_entities.c.role, entities.c.name, record_entities.c.position)
+                .join(entities, entities.c.id == record_entities.c.entity_id)
+                .where(record_entities.c.record_id == r.record_id)
+                .order_by(record_entities.c.role, record_entities.c.position)
+            )
+            return [tuple(row) for row in rows]
+
+        ingested = await _links()
+        assert ingested == [
+            ("applicant", "T266 7 CLOUDS SMOKE SHOP LLC", 0),
+            ("applicant", "T266 AMITOJPREET SINGH", 1),
+            ("applicant", "T266 SURINDER KAUR", 2),
+            ("previous_applicant", "T266 PREV PERSON", 0),
+            ("previous_applicant", "T266 PREV LLC", 1),
+        ]
+
+        await reprocess_entities(pg_conn, record_id=r.record_id)
+
+        assert await _links() == ingested

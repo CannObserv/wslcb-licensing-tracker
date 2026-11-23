@@ -28,6 +28,7 @@ from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .entities import (
+    entity_source,
     extract_entity_names,
     is_noise_name,
     merge_entity_into,
@@ -41,8 +42,11 @@ from .text_utils import clean_entity_name, strip_wac_annotation
 logger = logging.getLogger(__name__)
 
 _ROLE_COLUMNS = {
-    "applicant": license_records.c.applicants,
-    "previous_applicant": license_records.c.previous_applicants,
+    "applicant": (license_records.c.applicants, license_records.c.raw_applicants),
+    "previous_applicant": (
+        license_records.c.previous_applicants,
+        license_records.c.raw_previous_applicants,
+    ),
 }
 
 
@@ -210,10 +214,12 @@ async def _unmatched_records(conn: AsyncConnection, pairs: list[tuple[int, str]]
     """Return the ``(record, role)`` pairs whose links differ from a fresh extraction."""
     out: list[dict] = []
     for record_id, role in pairs:
-        source = (
-            await conn.execute(select(_ROLE_COLUMNS[role]).where(license_records.c.id == record_id))
-        ).scalar_one()
-        expected = extract_entity_names(source)
+        stored, raw = (
+            await conn.execute(
+                select(*_ROLE_COLUMNS[role]).where(license_records.c.id == record_id)
+            )
+        ).one()
+        expected = extract_entity_names(entity_source(stored, raw))
         rows = (
             await conn.execute(
                 select(entities.c.name, record_entities.c.position)

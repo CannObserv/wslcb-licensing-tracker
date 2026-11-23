@@ -5,12 +5,16 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from wslcb_licensing_tracker.entities import (
+    backfill_entities,
+    entity_source,
+    extract_entity_names,
     get_entity_by_id,
     get_or_create_entity,
     get_record_entities,
     merge_duplicate_entities,
     parse_and_link_entities,
     reclassify_entities,
+    reprocess_entities,
 )
 from wslcb_licensing_tracker.models import (
     entities,
@@ -19,6 +23,7 @@ from wslcb_licensing_tracker.models import (
     record_entities,
 )
 from wslcb_licensing_tracker.pipeline import insert_record
+from wslcb_licensing_tracker.text_utils import clean_applicants_string
 
 
 class TestGetOrCreateEntity:
@@ -408,8 +413,6 @@ class TestReclassifyThroughResolver:
     async def test_reprocess_entities_leaves_classification_untouched(
         self, pg_conn, standard_new_application
     ):
-        from wslcb_licensing_tracker.entities import reprocess_entities
-
         standard_new_application["license_number"] = "entity_reprocess_206"
         standard_new_application["applicants"] = "ACME LLC; T206 REPROCESS PERSON"
         record_id = (await insert_record(pg_conn, standard_new_application))[0]
@@ -498,3 +501,92 @@ class TestProvenanceFields:
         assert by_name["T209 SMITH FAMILY TRUST"]["classification_source"] == "regex"
         assert by_name["T209 JOHN DOE"]["entity_subtype"] is None
         assert by_name["T209 JOHN DOE"]["classification_source"] == "regex"
+
+
+class TestEntitySource:
+    """#266: a later repeat of element 0 is a listed applicant; extraction keeps it."""
+
+    def test_raw_used_when_it_cleans_to_stored(self):
+        raw = "ROOTS RUN DEEP; MARK ALBRECHT; Roots Run Deep"
+        stored = clean_applicants_string(raw)
+        assert stored == "ROOTS RUN DEEP; MARK ALBRECHT"
+        assert entity_source(stored, raw) == raw
+        assert extract_entity_names(entity_source(stored, raw)) == [
+            "MARK ALBRECHT",
+            "ROOTS RUN DEEP",
+        ]
+
+    def test_sole_proprietor_repeat_is_linked(self):
+        raw = "PEREZ GARCIA, GONZALO; PEREZ GARCIA, GONZALO"
+        stored = clean_applicants_string(raw)
+        assert extract_entity_names(stored) == []
+        assert extract_entity_names(entity_source(stored, raw)) == ["PEREZ GARCIA, GONZALO"]
+
+    def test_stored_used_when_raw_disagrees(self):
+        """A repaired stored string (#151/#152) never falls back to its bad raw parse."""
+        assert entity_source("BIZ; JOHN DOE", "BIZ; JOHN DOE BUSINESS LOCATION: 1 MAIN") == (
+            "BIZ; JOHN DOE"
+        )
+
+    @pytest.mark.parametrize("raw", [None, ""])
+    def test_stored_used_when_raw_empty(self, raw):
+        assert entity_source("BIZ; JOHN DOE", raw) == "BIZ; JOHN DOE"
+
+    @pytest.mark.parametrize("stored", [None, ""])
+    def test_empty_stays_empty(self, stored):
+        assert entity_source(stored, stored) == ""
+
+
+async def _link_names(conn, record_id: int) -> list[tuple[str, str, int]]:
+    rows = (
+        await conn.execute(
+            select(record_entities.c.role, entities.c.name, record_entities.c.position)
+            .join(entities, entities.c.id == record_entities.c.entity_id)
+            .where(record_entities.c.record_id == record_id)
+            .order_by(record_entities.c.role, record_entities.c.position)
+        )
+    ).fetchall()
+    return [tuple(r) for r in rows]
+
+
+class TestRepeatSurvivesReprocess:
+    """#266: links ingest makes from a repeated element 0 are reproduced by reprocess."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_reprocess_reproduces_repeat_links(self, pg_conn, standard_new_application):
+        rec = dict(
+            standard_new_application,
+            license_number="t266_reprocess",
+            applicants="T266 ROOTS RUN DEEP; T266 MARK ALBRECHT; T266 Roots Run Deep",
+            previous_applicants="T266 OLD BIZ LLC; T266 OLD BIZ LLC; T266 JANE OLD",
+        )
+        record_id = (await insert_record(pg_conn, rec))[0]
+        await parse_and_link_entities(pg_conn, record_id, rec["applicants"], delete_existing=True)
+        await parse_and_link_entities(
+            pg_conn,
+            record_id,
+            rec["previous_applicants"],
+            role="previous_applicant",
+            delete_existing=True,
+        )
+        before = await _link_names(pg_conn, record_id)
+        assert ("applicant", "T266 ROOTS RUN DEEP", 1) in before
+        assert ("previous_applicant", "T266 OLD BIZ LLC", 0) in before
+
+        await reprocess_entities(pg_conn, record_id=record_id)
+
+        assert await _link_names(pg_conn, record_id) == before
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_backfill_links_repeat(self, pg_conn, standard_new_application):
+        """A sole proprietor's stored string has no ';' but the raw one does."""
+        rec = dict(
+            standard_new_application,
+            license_number="t266_backfill",
+            applicants="T266 SOLE, PROPRIETOR; T266 SOLE, PROPRIETOR",
+        )
+        record_id = (await insert_record(pg_conn, rec))[0]
+
+        await backfill_entities(pg_conn)
+
+        assert await _link_names(pg_conn, record_id) == [("applicant", "T266 SOLE, PROPRIETOR", 0)]
