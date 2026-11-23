@@ -290,6 +290,7 @@ wslcb-licensing-tracker/
 │   ├── test_needrestart_config.py # needrestart drop-in lists restarts, never performs them (#184)
 │   ├── test_patching_hosts_knob.py # .skills/patching-hosts reads clean under the vendored reader; review dates never gate; backup line names what the unit dumps and the vendored backup_covers accepts it; Tailscale and NodeSource origins/pins, NodeSource's source line and key; a quiet range covers every timer firing, and each is a restarter or excepted as none (#192, #193, #220, #223, #237, #238, #239)
 │   ├── test_pre_ship_wrapper.py # scripts/pre-ship.sh: linked worktree loads the primary's .env, exports names only, warns when none, skips non-identifier keys, exit 2 without the delegate, never loads /etc's (#235, #240)
+│   ├── test_attest_local_gate_knob.py # .skills/attest-local-gate is a tracked `on` the vendored reader accepts; .skills/worktree_venv stays untracked and ignored, or every attesting push.sh refuses (#260)
 │   ├── test_certifi_bundle.py   # certifi ≥ 2026.10.19 in lock + venv, no emSign ECC Root CA - G3 (#220)
 │   ├── test_dependency_floors.py # starlette, python-multipart, anyio, idna, lxml, soupsieve, mako (#221), pyasn1 (#250), opentelemetry-api (#256) + dev: virtualenv, filelock, pytest, pygments (#224, #229) ≥ advisory fix in lock + venv; npm: ws, form-data (#229) in package-lock.json
 │   ├── test_pytest_basetemp.py  # pytest keeps one basetemp, only for a failed run (#200)
