@@ -1,0 +1,120 @@
+"""Drift guard: the committed `.skills/` knobs that change how work ships (#260).
+
+`.skills/attest-local-gate` turns on shipping-work's local-gate attestation
+(gregoryfoster/skills#688): `push.sh` refuses a dirty or failing tree, then
+posts `gate/local` = `success` on the SHA it pushed. The vendored reader takes
+it from the commit being shipped, never the work tree, and anything but one
+word (`on` or `off`) in a regular file is exit 2 before the push. So this
+module asks the vendored `attest_read_knob` itself, against a scratch commit
+of the file, rather than re-deriving its grammar.
+
+`.skills/worktree_venv` holds `none`: the main checkout is prod's
+`WorkingDirectory=`, so a worktree must never share its `.venv` (any `uv run`
+there would repoint prod's editable install at unmerged code). It is committed
+because the attestation's clean rule counts untracked files, and an untracked
+knob made every main-checkout `push.sh` refuse. `worktree-create.sh` reads it
+from the primary checkout, so tracked and untracked behave the same there.
+"""
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ATTEST_KNOB = REPO_ROOT / ".skills" / "attest-local-gate"
+VENV_KNOB = REPO_ROOT / ".skills" / "worktree_venv"
+ATTEST_GATE = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "_attest-gate.sh"
+
+
+def _git(*args: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
+    """Run git with an env scrubbed of GIT_* (a hook's GIT_DIR would redirect it)."""
+    git = shutil.which("git")
+    assert git
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
+        [git, *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _settings(path: Path) -> list[str]:
+    """The knob's words: blank lines and whole-line `#` comments dropped."""
+    words: list[str] = []
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            words.extend(stripped.split())
+    return words
+
+
+@pytest.fixture(scope="module")
+def tracked_modes() -> dict[str, str]:
+    """Index mode of each tracked `.skills/` path, keyed by repo-relative path."""
+    result = _git("ls-files", "-s", "--", ".skills")
+    if result.returncode != 0:
+        pytest.skip(f"not a git checkout: {result.stderr.strip()}")
+    modes = {}
+    for line in result.stdout.splitlines():
+        meta, path = line.split("\t", 1)
+        modes[path] = meta.split()[0]
+    return modes
+
+
+@pytest.mark.parametrize("knob", [ATTEST_KNOB, VENV_KNOB], ids=lambda p: p.name)
+def test_knob_is_a_tracked_regular_file(knob: Path, tracked_modes: dict[str, str]) -> None:
+    """Untracked, the attest knob attests nothing and the venv knob blocks every push."""
+    rel = knob.relative_to(REPO_ROOT).as_posix()
+    assert rel in tracked_modes, f"{rel} is not tracked"
+    assert tracked_modes[rel] in {"100644", "100755"}, (
+        f"{rel} is mode {tracked_modes[rel]}; the readers take only a regular file"
+    )
+    assert not knob.is_symlink()
+
+
+def test_attest_knob_is_on() -> None:
+    """One word, `on`: `off` or a typo would silently stop attesting."""
+    assert _settings(ATTEST_KNOB) == ["on"]
+
+
+def test_worktree_venv_knob_is_none() -> None:
+    """`none`: anything else makes worktree-create.sh link prod's `.venv`."""
+    assert _settings(VENV_KNOB) == ["none"]
+
+
+@pytest.mark.skipif(not ATTEST_GATE.is_file(), reason="skills-vendor submodule not checked out")
+def test_vendored_reader_says_on(tmp_path: Path) -> None:
+    """The vendored `attest_read_knob` reads the committed file as `on` (exit 0).
+
+    It reads HEAD, so the file is committed to a scratch repository first. Exit
+    3 is `off`; exit 2 is an unusable knob, which refuses every push.
+    """
+    knob = tmp_path / ".skills" / "attest-local-gate"
+    knob.parent.mkdir()
+    shutil.copyfile(ATTEST_KNOB, knob)
+    for args in (
+        ("init", "-q"),
+        ("add", ".skills/attest-local-gate"),
+        ("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "knob"),
+    ):
+        step = _git(*args, cwd=tmp_path)
+        assert step.returncode == 0, step.stderr
+
+    bash = shutil.which("bash")
+    assert bash
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    result = subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
+        [bash, "-c", '. "$1"; rc=0; attest_read_knob || rc=$?; exit $rc', "_", str(ATTEST_GATE)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"

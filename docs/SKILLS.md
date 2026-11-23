@@ -136,7 +136,15 @@ Finalizes work: commits, pushes, and reflects it on GitHub (closes issues, posts
 - exports the loaded names (never values) as `PRE_SHIP_ENV_NAMES`. The vendored gate keys its pass stamp on them, so a run with no env records no pass (#235, skills#497).
 - never loads `/etc/wslcb-licensing-tracker/.env`, unlike upstream's recipe: that holds the production database URL (`tests/test_pre_ship_wrapper.py`).
 
-The stamp is recorded only for a tree with no untracked, unignored file. The main checkout keeps `.skills/worktree_venv` untracked on purpose, so every gate run there is a full run.
+The stamp is recorded only for a tree with no untracked, unignored file. A clean main checkout records passes too, since `.skills/worktree_venv` is committed (#260): a push after a passing gate on the same tree reuses that pass instead of re-running.
+
+**The attestation** (#260, gregoryfoster/skills#688). `.skills/attest-local-gate` is committed as `on`. `push.sh` then refuses to push unless the tree is clean *and* the gate passes on it, and after the push it posts the commit status `gate/local` = `success` on the pushed SHA and reads it back (vendored `references/attestation.md`).
+
+- **Stricter clean rule.** Untracked files, submodule edits, and skip-worktree or assume-unchanged paths all count, whatever git's config hides. Anything left over means exit 1, "Nothing was pushed": commit or delete it, then push again. Expect the full gate at the push when Step 1 ran on uncommitted work.
+- **Token.** `gh` posts the status, and this host has no stored `gh` login, so export `GH_TOKEN` (parsed from `.env`, never sourced) in the same command as `push.sh`. The fine-grained repo PAT carries **Commit statuses: Read and write**. Without a token the push still lands, but prints `ATTESTATION NOT POSTED`. Rerunning `push.sh` retries the write. **Never post the status by hand.**
+- **Trust, not proof.** Anyone with push access can post `gate/local`, so never make it a required status. This repo has no push or PR CI to read it (public: nothing billed; `.github/workflows/` is `context-cadence.yml` alone). It serves as a pre-push guard and as a per-SHA record that the gate passed. Adding CI that reads it is a separate decision.
+
+`tests/test_committed_knobs.py` keeps both knobs tracked regular files (`on`, `none`), and asks the vendored `attest_read_knob` itself to read the committed word.
 
 **The doc gate** (`shipping-work` Step 1.5, script `doc-check.sh`) is vendored, not forked. Tailor it with two repo-root files. Each replaces upstream's defaults rather than extending them. Keep them in step: tailoring only one makes every hit end with a `Note: this project tailors …` line (gregoryfoster/skills#284).
 
@@ -168,6 +176,8 @@ Red/Green TDD: write a failing test, then implement to pass it. Covers anti-patt
 ## using-git-worktrees
 
 Creates isolated git worktrees for feature work, with smart directory selection and safety verification to avoid contaminating the main workspace.
+
+`.skills/worktree_venv` is committed as `none` (#260). The main checkout is prod's `WorkingDirectory=`, so a worktree never links its `.venv`. Run `uv sync --dev` inside the worktree instead.
 
 **Trigger:** Starting feature work that needs isolation, or before executing implementation plans.
 
