@@ -470,7 +470,7 @@ measured case, so it is left out.
 ### 7. #246 (Q7): after this design's foundation, designed alongside
 
 **Answer.** #246's *design* can proceed now; it depends only on the model
-chosen here. Its *implementation* goes after follow-ups 2 and 5 below.
+chosen here. Its *implementation* goes after follow-ups 2 and 5 below (#262 and #265).
 
 **The measured reason.** #246's split parts link to existing people only
 through the **licence-scoped middle-name rule** or an operator nickname link,
@@ -587,20 +587,21 @@ shipped.
 - The evidence is weak (same city only): it is 1 of the 4 period-class pairs
   with no licence or co-applicant in common.
 
-## Follow-ups (ordered; to be filed after acceptance)
+## Follow-ups (ordered)
 
-| # | Issue | Answers | Depends on | Size |
-|---|---|---|---|---|
-| 1 | **Durable not-a-name.** Tombstones in `reclassify`; extraction skips them; `protected_ids` widened; audit details carry the name; backfill `IL` / `IL IL` from the #214 backup. | Q5 | none | S |
-| 2 | **Alias schema and the format-key rule.** Migration for `entity_aliases`, `entity_alias_dismissals` and `entities.link_key`; cycle-safe write API; resolution; `wslcb db relink-entities` (`--dry-run`); relink on ingest and on type change; tombstones excluded; `merge_entity_into` re-points alias rows before it deletes; AGENTS.md Derived table and SCHEMA.md. | Q1, Q2, Q3, Q6 | none | M |
-| 3 | **Read paths.** Entity page union and redirect; `/entities` hides variants and counts the union; record chips. | Q1 | 2 | M |
-| 4 | **Admin UI.** Links panel, Links review tab, suggestion generators, audit actions. | Q4 | 2, 3 | M |
-| 5 | **Licence-scoped middle-name rule.** Lands after 2–3 so its 4,908 rows arrive on proven plumbing. | Q2, Q3 | 2, 3 | S |
-| 6 | **Jev spend.** `classify-entities` skips global variants. | Q6 | 2 | XS (optional) |
-| #246 | Couple splitting. Design now; implement after 2 and 5. | Q7 | 2, 5 | — |
+The operator accepted the design on 2026-11-23, filed 1–5 and deferred 6.
 
-The operator's decision on each is recorded on #247 when it is filed. 1 and 2
-can run in parallel.
+| # | Issue | Answers | Depends on | Size | Decision |
+|---|---|---|---|---|---|
+| 1 | **Durable not-a-name.** Tombstones in `reclassify`; extraction skips them; `protected_ids` widened; audit details carry the name; backfill `IL` / `IL IL` from the #214 backup. | Q5 | none | S | filed: #261 |
+| 2 | **Alias schema and the format-key rule.** Migration for `entity_aliases`, `entity_alias_dismissals` and `entities.link_key`; cycle-safe write API; resolution; `wslcb db relink-entities` (`--dry-run`); relink on ingest and on type change; tombstones excluded; `merge_entity_into` re-points alias rows before it deletes; AGENTS.md Derived table and SCHEMA.md. | Q1, Q2, Q3, Q6 | none | M | filed: #262 |
+| 3 | **Read paths.** Entity page union and redirect; `/entities` hides variants and counts the union; record chips. | Q1 | #262 | M | filed: #263 |
+| 4 | **Admin UI.** Links panel, Links review tab, suggestion generators, audit actions. | Q4 | #262, #263 | M | filed: #264 |
+| 5 | **Licence-scoped middle-name rule.** Lands after 2–3 so its 4,908 rows arrive on proven plumbing. | Q2, Q3 | #262, #263 | S | filed: #265 |
+| 6 | **Jev spend.** `classify-entities` skips global variants. | Q6 | #262 | XS (optional) | deferred, not filed |
+| #246 | Couple splitting. Design now; implement after #262 and #265. | Q7 | #262, #265 | — | existing issue |
+
+#261 and #262 can run in parallel.
 
 **Rule kept from #206:** destructive `merge_entity_into` stays only for
 merges extraction itself reproduces, where the cleaned string becomes
