@@ -1,4 +1,4 @@
-"""Drift guard: the committed `.skills/` knobs that change how work ships (#260).
+"""Drift guard: the `.skills/` knobs the local-gate attestation depends on (#260).
 
 `.skills/attest-local-gate` turns on shipping-work's local-gate attestation
 (gregoryfoster/skills#688): `push.sh` refuses a dirty or failing tree, then
@@ -8,12 +8,11 @@ word (`on` or `off`) in a regular file is exit 2 before the push. So this
 module asks the vendored `attest_read_knob` itself, against a scratch commit
 of the file, rather than re-deriving its grammar.
 
-`.skills/worktree_venv` holds `none`: the main checkout is prod's
-`WorkingDirectory=`, so a worktree must never share its `.venv` (any `uv run`
-there would repoint prod's editable install at unmerged code). It is committed
-because the attestation's clean rule counts untracked files, and an untracked
-knob made every main-checkout `push.sh` refuse. `worktree-create.sh` reads it
-from the primary checkout, so tracked and untracked behave the same there.
+`.skills/worktree_venv` stays untracked, as using-git-worktrees recommends for
+a machine-local knob (here `none`: the main checkout is prod's
+`WorkingDirectory=`). But the attestation's clean rule counts untracked files,
+so an unignored copy made every main-checkout `push.sh` refuse. It must be
+ignored, not committed.
 """
 
 import os
@@ -67,15 +66,14 @@ def tracked_modes() -> dict[str, str]:
     return modes
 
 
-@pytest.mark.parametrize("knob", [ATTEST_KNOB, VENV_KNOB], ids=lambda p: p.name)
-def test_knob_is_a_tracked_regular_file(knob: Path, tracked_modes: dict[str, str]) -> None:
-    """Untracked, the attest knob attests nothing and the venv knob blocks every push."""
-    rel = knob.relative_to(REPO_ROOT).as_posix()
+def test_attest_knob_is_a_tracked_regular_file(tracked_modes: dict[str, str]) -> None:
+    """Read from the commit: untracked, or not a regular file, it attests nothing."""
+    rel = ATTEST_KNOB.relative_to(REPO_ROOT).as_posix()
     assert rel in tracked_modes, f"{rel} is not tracked"
     assert tracked_modes[rel] in {"100644", "100755"}, (
-        f"{rel} is mode {tracked_modes[rel]}; the readers take only a regular file"
+        f"{rel} is mode {tracked_modes[rel]}; the reader takes only a regular file"
     )
-    assert not knob.is_symlink()
+    assert not ATTEST_KNOB.is_symlink()
 
 
 def test_attest_knob_is_on() -> None:
@@ -83,9 +81,16 @@ def test_attest_knob_is_on() -> None:
     assert _settings(ATTEST_KNOB) == ["on"]
 
 
-def test_worktree_venv_knob_is_none() -> None:
-    """`none`: anything else makes worktree-create.sh link prod's `.venv`."""
-    assert _settings(VENV_KNOB) == ["none"]
+def test_worktree_venv_knob_is_untracked(tracked_modes: dict[str, str]) -> None:
+    """Machine-local: committing it would impose this host's `none` on every clone."""
+    assert VENV_KNOB.relative_to(REPO_ROOT).as_posix() not in tracked_modes
+
+
+def test_worktree_venv_knob_is_ignored() -> None:
+    """Unignored, the main checkout's copy makes every attesting `push.sh` refuse."""
+    rel = VENV_KNOB.relative_to(REPO_ROOT).as_posix()
+    result = _git("check-ignore", "--no-index", "-q", rel)
+    assert result.returncode == 0, f"{rel} is not ignored ({result.returncode}): {result.stderr}"
 
 
 @pytest.mark.skipif(not ATTEST_GATE.is_file(), reason="skills-vendor submodule not checked out")

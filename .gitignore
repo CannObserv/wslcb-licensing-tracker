@@ -14,3 +14,7 @@ htmlcov/
 .worktrees/
 scripts/bin/
 node_modules/
+# Machine-local using-git-worktrees knob (`none` on this host: the main checkout
+# is prod's WorkingDirectory=). Untracked per the skill, and ignored so the
+# shipping-work attestation's clean rule doesn't refuse every push (#260).
+.skills/worktree_venv
