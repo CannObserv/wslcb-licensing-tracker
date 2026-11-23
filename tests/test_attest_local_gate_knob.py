@@ -28,15 +28,19 @@ VENV_KNOB = REPO_ROOT / ".skills" / "worktree_venv"
 ATTEST_GATE = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "_attest-gate.sh"
 
 
+def _clean_env() -> dict[str, str]:
+    """The environment minus GIT_* (a hook's GIT_DIR would redirect git)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def _git(*args: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
-    """Run git with an env scrubbed of GIT_* (a hook's GIT_DIR would redirect it)."""
+    """Run git under `_clean_env()`."""
     git = shutil.which("git")
     assert git
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
         [git, *args],
         cwd=cwd,
-        env=env,
+        env=_clean_env(),
         capture_output=True,
         text=True,
         check=False,
@@ -113,11 +117,10 @@ def test_vendored_reader_says_on(tmp_path: Path) -> None:
 
     bash = shutil.which("bash")
     assert bash
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     result = subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
         [bash, "-c", '. "$1"; rc=0; attest_read_knob || rc=$?; exit $rc', "_", str(ATTEST_GATE)],
         cwd=tmp_path,
-        env=env,
+        env=_clean_env(),
         capture_output=True,
         text=True,
         check=False,
