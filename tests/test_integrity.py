@@ -182,3 +182,19 @@ async def test_no_entities_ignores_records_with_only_non_name_parts(
     )
     await insert_record(pg_conn, real)
     assert (await check_unenriched_records(pg_conn))["no_entities"] == before + 1
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_no_entities_counts_sole_proprietor_repeat(pg_conn, standard_new_application):
+    """#266: stored ``X`` (no ';') whose raw ``X; X`` yields a link is an unlinked candidate."""
+    from wslcb_licensing_tracker.pipeline import insert_record
+
+    before = (await check_unenriched_records(pg_conn))["no_entities"]
+    sole = dict(
+        standard_new_application,
+        license_number="integ_266_sole",
+        applicants="T266 SOLE, OWNER; T266 SOLE, OWNER",
+    )
+    await insert_record(pg_conn, sole)
+    assert (await check_unenriched_records(pg_conn))["no_entities"] == before + 1

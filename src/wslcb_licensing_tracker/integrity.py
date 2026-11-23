@@ -10,7 +10,7 @@ import logging
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .entities import extract_entity_names
+from .entities import entity_source, extract_entity_names
 from .models import locations as locations_table
 
 logger = logging.getLogger(__name__)
@@ -61,17 +61,20 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
     no_endorsements = result.scalar_one()
 
     # Candidates are filtered in Python: a record whose applicant parts are all
-    # markers / non-name strings (#203) correctly has no entity links.
+    # markers / non-name strings (#203) correctly has no entity links.  The raw
+    # column is read too: a sole proprietor's ``X; X`` is stored as ``X`` (#266).
     result = await conn.execute(
         text("""
-        SELECT lr.applicants FROM license_records lr
-        WHERE lr.applicants LIKE '%;%'
+        SELECT lr.applicants, lr.raw_applicants FROM license_records lr
+        WHERE (lr.applicants LIKE '%;%' OR lr.raw_applicants LIKE '%;%')
           AND NOT EXISTS (
               SELECT 1 FROM record_entities re WHERE re.record_id = lr.id
           )
     """)
     )
-    no_entities = sum(1 for (applicants,) in result if extract_entity_names(applicants))
+    no_entities = sum(
+        1 for stored, raw in result if extract_entity_names(entity_source(stored, raw))
+    )
 
     result = await conn.execute(
         text("""

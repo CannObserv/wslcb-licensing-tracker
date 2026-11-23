@@ -32,7 +32,12 @@ from .models import (
     record_enrichments,
     record_entities,
 )
-from .text_utils import clean_entity_name, strip_duplicate_marker, strip_wac_annotation
+from .text_utils import (
+    clean_applicants_string,
+    clean_entity_name,
+    strip_duplicate_marker,
+    strip_wac_annotation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -559,6 +564,24 @@ def extract_entity_names(
     return names
 
 
+def entity_source(stored: str | None, raw: str | None) -> str:
+    """Return the applicants string entity extraction reads for one column (#266).
+
+    *stored* is ``applicants`` / ``previous_applicants``; *raw* is its frozen
+    ``raw_*`` shadow.  The stored string is ``clean_applicants_string(raw)``,
+    whose de-duplication also drops a later repeat of element 0.  That repeat
+    is a listed applicant (the legal entity sharing the trade name, or a sole
+    proprietor), so extraction reads *raw* whenever it still cleans to
+    *stored*.  A stored string that disagrees with its raw parse (a #151/#152
+    repair, or older cleaning) is read as stored.  Every caller that links or
+    checks entity links goes through here, so ingest and reprocess agree.
+    """
+    stored = stored or ""
+    if raw and clean_applicants_string(raw) == stored:
+        return raw
+    return stored
+
+
 async def parse_and_link_entities(
     conn: AsyncConnection,
     record_id: int,
@@ -787,10 +810,10 @@ async def reprocess_entities(
 
     Treats ``record_entities`` as derived data: existing rows for each
     targeted ``(record_id, role)`` pair are deleted and rebuilt from
-    ``license_records.applicants`` / ``previous_applicants`` using the
-    current entity-normalization logic.  The ``record_enrichments``
-    version stamp is updated to ``_ENTITY_REPROCESS_VERSION`` for every
-    processed record.
+    ``license_records.applicants`` / ``previous_applicants`` (read through
+    ``entity_source``, #266) using the current entity-normalization logic.
+    The ``record_enrichments`` version stamp is updated to
+    ``_ENTITY_REPROCESS_VERSION`` for every processed record.
 
     Parameters
     ----------
@@ -806,18 +829,15 @@ async def reprocess_entities(
     dict
         ``{"records_processed": int, "entities_linked": int}``
     """
+    stmt = select(
+        license_records.c.id,
+        license_records.c.applicants,
+        license_records.c.previous_applicants,
+        license_records.c.raw_applicants,
+        license_records.c.raw_previous_applicants,
+    )
     if record_id is not None:
-        stmt = select(
-            license_records.c.id,
-            license_records.c.applicants,
-            license_records.c.previous_applicants,
-        ).where(license_records.c.id == record_id)
-    else:
-        stmt = select(
-            license_records.c.id,
-            license_records.c.applicants,
-            license_records.c.previous_applicants,
-        )
+        stmt = stmt.where(license_records.c.id == record_id)
 
     rows = (await conn.execute(stmt)).fetchall()
 
@@ -827,8 +847,8 @@ async def reprocess_entities(
 
     for row in rows:
         rid = row[0]
-        applicants = row[1] or ""
-        previous_applicants = row[2] or ""
+        applicants = entity_source(row[1], row[3])
+        previous_applicants = entity_source(row[2], row[4])
 
         if dry_run:
             records_processed += 1
@@ -1105,6 +1125,8 @@ async def backfill_entities(conn: AsyncConnection) -> int:
             license_records.c.id,
             license_records.c.applicants,
             license_records.c.previous_applicants,
+            license_records.c.raw_applicants,
+            license_records.c.raw_previous_applicants,
         )
         .outerjoin(
             record_entities,
@@ -1114,13 +1136,16 @@ async def backfill_entities(conn: AsyncConnection) -> int:
         .where(
             (license_records.c.applicants.contains(";"))
             | (license_records.c.previous_applicants.contains(";"))
+            | (license_records.c.raw_applicants.contains(";"))
+            | (license_records.c.raw_previous_applicants.contains(";"))
         )
     )
 
     rows = (await conn.execute(stmt)).fetchall()
     processed = 0
     for row in rows:
-        r_id, r_applicants, r_prev = row[0], row[1] or "", row[2] or ""
+        r_id = row[0]
+        r_applicants, r_prev = entity_source(row[1], row[3]), entity_source(row[2], row[4])
         await parse_and_link_entities(conn, r_id, r_applicants, "applicant")
         if r_prev:
             await parse_and_link_entities(conn, r_id, r_prev, "previous_applicant")

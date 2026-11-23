@@ -365,3 +365,22 @@ class TestVerification:
                 "linked": ["T211 MIS LLC", "T211 STRAY PERSON"],
             }
         ]
+
+
+class TestVerificationReadsRaw:
+    async def test_element_zero_repeat_is_not_a_mismatch(self, pg_conn, standard_new_application):
+        """#266: verification extracts from the same source as ingest and reprocess."""
+        eid = await _entity(pg_conn, "T266 WAC LLC PER WAC 314-07-035")
+        repeat = await _entity(pg_conn, "T266 REPEAT LLC")
+        rid = await _record(
+            pg_conn,
+            standard_new_application,
+            "t266_w1",
+            "T266 REPEAT LLC; T266 WAC LLC PER WAC 314-07-035; T266 REPEAT LLC",
+        )
+        await _link(pg_conn, rid, eid, 0)
+        await _link(pg_conn, rid, repeat, 1)
+
+        report = await strip_wac_suffixes(pg_conn, dry_run=True)
+
+        assert report["unmatched_records"] == []
