@@ -28,19 +28,26 @@ VENV_KNOB = REPO_ROOT / ".skills" / "worktree_venv"
 ATTEST_GATE = REPO_ROOT / "skills" / "shipping-work" / "scripts" / "_attest-gate.sh"
 
 
-def _clean_env() -> dict[str, str]:
-    """The environment minus GIT_* (a hook's GIT_DIR would redirect git)."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+def _clean_env(*, isolated: bool = False) -> dict[str, str]:
+    """The environment minus GIT_* (a hook's GIT_DIR would redirect git).
+
+    `isolated` also drops the user's and the system's git config, so a scratch
+    repository's commit can't trip on `commit.gpgsign` or a global hooks path.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    if isolated:
+        env |= {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    return env
 
 
-def _git(*args: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
+def _git(*args: str, cwd: Path = REPO_ROOT, isolated: bool = False) -> subprocess.CompletedProcess:
     """Run git under `_clean_env()`."""
     git = shutil.which("git")
     assert git
     return subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
         [git, *args],
         cwd=cwd,
-        env=_clean_env(),
+        env=_clean_env(isolated=isolated),
         capture_output=True,
         text=True,
         check=False,
@@ -101,8 +108,9 @@ def test_worktree_venv_knob_is_ignored() -> None:
 def test_vendored_reader_says_on(tmp_path: Path) -> None:
     """The vendored `attest_read_knob` reads the committed file as `on` (exit 0).
 
-    It reads HEAD, so the file is committed to a scratch repository first. Exit
-    3 is `off`; exit 2 is an unusable knob, which refuses every push.
+    It reads HEAD, so the file is committed to a scratch repository first,
+    isolated from the user's git config. Exit 3 is `off`; exit 2 is an unusable
+    knob, which refuses every push.
     """
     knob = tmp_path / ".skills" / "attest-local-gate"
     knob.parent.mkdir()
@@ -112,7 +120,7 @@ def test_vendored_reader_says_on(tmp_path: Path) -> None:
         ("add", ".skills/attest-local-gate"),
         ("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "knob"),
     ):
-        step = _git(*args, cwd=tmp_path)
+        step = _git(*args, cwd=tmp_path, isolated=True)
         assert step.returncode == 0, step.stderr
 
     bash = shutil.which("bash")
@@ -120,7 +128,7 @@ def test_vendored_reader_says_on(tmp_path: Path) -> None:
     result = subprocess.run(  # noqa: S603 - fixed argv, repo-owned paths
         [bash, "-c", '. "$1"; rc=0; attest_read_knob || rc=$?; exit $rc', "_", str(ATTEST_GATE)],
         cwd=tmp_path,
-        env=_clean_env(),
+        env=_clean_env(isolated=True),
         capture_output=True,
         text=True,
         check=False,
