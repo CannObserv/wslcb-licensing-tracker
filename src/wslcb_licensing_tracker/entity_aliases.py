@@ -254,6 +254,7 @@ def find_cycle(
 SYSTEM_FLAGGER = "system:entity-aliases"
 TYPE_DISAGREE_REASON = "members disagree on type"
 _CHUNK = 5000
+_STREAM_BATCH = 10_000
 
 _ea = entity_aliases
 _ead = entity_alias_dismissals
@@ -611,20 +612,33 @@ async def refresh_parties(conn: AsyncConnection, entity_ids: Collection[int] | N
         license_records.c.license_number,
     ).join(license_records, license_records.c.id == re_.c.record_id)
     if entity_ids is None:
-        links = (await conn.execute(stmt)).fetchall()
+        # Every link: one fetch of all alias rows, then the links streamed in
+        # batches through a server-side cursor; only changed links are kept,
+        # so peak memory stays near one batch (#263 CR 1).
+        by_variant = _index(
+            _alias_row(r) for r in (await conn.execute(select(*_ROW_COLS))).fetchall()
+        )
+        updates = []
+        streamed = await conn.stream(stmt.execution_options(yield_per=_STREAM_BATCH))
+        async for batch in streamed.partitions(_STREAM_BATCH):
+            updates += [
+                {"_r": r.record_id, "_e": r.entity_id, "_ro": r.role, "_p": p}
+                for r in batch
+                if (p := _resolve_indexed(r.entity_id, r.license_number, by_variant)) != r.party_id
+            ]
     else:
         affected = await reverse_closure(conn, entity_ids)
         links = []
         for chunk in _chunks(sorted(affected)):
             links += (await conn.execute(stmt.where(re_.c.entity_id.in_(chunk)))).fetchall()
-    if not links:
-        return 0
-    parties = await eff_many(conn, [(r.entity_id, r.license_number) for r in links])
-    updates = [
-        {"_r": r.record_id, "_e": r.entity_id, "_ro": r.role, "_p": p}
-        for r in links
-        if (p := parties[(r.entity_id, r.license_number)]) != r.party_id
-    ]
+        if not links:
+            return 0
+        parties = await eff_many(conn, [(r.entity_id, r.license_number) for r in links])
+        updates = [
+            {"_r": r.record_id, "_e": r.entity_id, "_ro": r.role, "_p": p}
+            for r in links
+            if (p := parties[(r.entity_id, r.license_number)]) != r.party_id
+        ]
     if updates:
         upd = (
             update(re_)
