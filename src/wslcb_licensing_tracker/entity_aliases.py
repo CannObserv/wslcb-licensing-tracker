@@ -775,3 +775,103 @@ async def in_manual_alias(conn: AsyncConnection, entity_id: int) -> bool:
         & or_(_ea.c.variant_id == entity_id, _ea.c.canonical_id == entity_id)
     )
     return (await conn.execute(stmt.limit(1))).first() is not None
+
+
+# ── database: hooks for destructive entity paths ─────────────────────
+
+
+async def repoint_alias_rows(conn: AsyncConnection, dirty_id: int, canon_id: int) -> set[int]:
+    """Move *dirty_id*'s operator rows to *canon_id* before *dirty_id* is deleted.
+
+    Manual rows are re-pointed; one that would become a self-link, or
+    duplicate a manual row *canon_id* already has in that scope, is dropped.
+    Dismissals are re-pointed (re-ordered a < b) or dropped the same way.
+    *dirty_id*'s rule rows are left to cascade: they are derived.  Returns the
+    ids whose groups the caller should relink once *dirty_id* is gone.
+    """
+    touched = {canon_id}
+    rows = (
+        await conn.execute(
+            select(_ea.c.id, *_ROW_COLS).where(
+                or_(_ea.c.variant_id == dirty_id, _ea.c.canonical_id == dirty_id)
+            )
+        )
+    ).fetchall()
+    for r in rows:
+        touched |= {r.variant_id, r.canonical_id}
+        if r.source != "manual":
+            continue
+        v = canon_id if r.variant_id == dirty_id else r.variant_id
+        c = canon_id if r.canonical_id == dirty_id else r.canonical_id
+        scope = (
+            _ea.c.scope_license.is_(None)
+            if r.scope_license is None
+            else _ea.c.scope_license == r.scope_license
+        )
+        clash = (
+            await conn.execute(
+                select(_ea.c.id).where(
+                    (_ea.c.variant_id == v)
+                    & (_ea.c.source == "manual")
+                    & scope
+                    & (_ea.c.id != r.id)
+                )
+            )
+        ).first()
+        if v == c or clash is not None:
+            await conn.execute(delete(_ea).where(_ea.c.id == r.id))
+        else:
+            await conn.execute(
+                update(_ea).where(_ea.c.id == r.id).values(variant_id=v, canonical_id=c)
+            )
+
+    dis = (
+        await conn.execute(
+            select(_ead.c.id, _ead.c.entity_id_a, _ead.c.entity_id_b, _ead.c.scope_license).where(
+                or_(_ead.c.entity_id_a == dirty_id, _ead.c.entity_id_b == dirty_id)
+            )
+        )
+    ).fetchall()
+    for rid, a, b, scope_license in dis:
+        other = b if a == dirty_id else a
+        touched.add(other)
+        if other == canon_id:
+            await conn.execute(delete(_ead).where(_ead.c.id == rid))
+            continue
+        lo, hi = sorted((other, canon_id))
+        scope = (
+            _ead.c.scope_license.is_(None)
+            if scope_license is None
+            else _ead.c.scope_license == scope_license
+        )
+        clash = (
+            await conn.execute(
+                select(_ead.c.id).where(
+                    (_ead.c.entity_id_a == lo) & (_ead.c.entity_id_b == hi) & scope
+                )
+            )
+        ).first()
+        if clash is not None:
+            await conn.execute(delete(_ead).where(_ead.c.id == rid))
+        else:
+            await conn.execute(
+                update(_ead).where(_ead.c.id == rid).values(entity_id_a=lo, entity_id_b=hi)
+            )
+    touched.discard(dirty_id)
+    return touched
+
+
+async def key_mates(conn: AsyncConnection, entity_ids: Collection[int]) -> set[int]:
+    """Entities sharing a stored ``link_key`` with any of *entity_ids*, those excluded.
+
+    Call before deleting *entity_ids*; relink the result afterwards so their
+    groups re-elect.
+    """
+    ids = list(entity_ids)
+    if not ids:
+        return set()
+    keys = select(entities.c.link_key).where(
+        entities.c.id.in_(ids) & entities.c.link_key.is_not(None)
+    )
+    stmt = select(entities.c.id).where(entities.c.link_key.in_(keys) & ~entities.c.id.in_(ids))
+    return set((await conn.execute(stmt)).scalars())

@@ -7,9 +7,13 @@ the hooks.
 """
 
 import pytest
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 
-from wslcb_licensing_tracker.entities import get_or_create_entity
+from wslcb_licensing_tracker.entities import (
+    _purge_entities,
+    get_or_create_entity,
+    merge_entity_into,
+)
 from wslcb_licensing_tracker.entity_aliases import (
     AliasError,
     AliasRow,
@@ -25,13 +29,15 @@ from wslcb_licensing_tracker.entity_aliases import (
     resolve,
     undismiss_pair,
 )
-from wslcb_licensing_tracker.entity_classification import protected_ids
+from wslcb_licensing_tracker.entity_classification import clear_manual, protected_ids, record_manual
 from wslcb_licensing_tracker.models import (
     entities,
+    entity_alias_dismissals,
     entity_aliases,
     entity_classifications,
     entity_review_flags,
 )
+from wslcb_licensing_tracker.pipeline import IngestOptions, ingest_record
 
 # ── link_key (spec §2) ───────────────────────────────────────────────
 
@@ -518,3 +524,135 @@ async def test_worked_case_pendergraft(pg_conn):
     assert set(got.values()) == {tyler_david}
     outside = await eff_many(pg_conn, [(ty, "999999"), (comma_ty, "999999")])
     assert outside == {(ty, "999999"): ty, (comma_ty, "999999"): ty_p}
+
+
+# ── PG: hooks (plan step 5) ──────────────────────────────────────────
+
+
+@PG
+async def test_ingest_links_a_new_spelling_into_its_group(pg_conn, standard_new_application):
+    natural = await _ent(pg_conn, "ALPHA ZQINGEST")
+    record = standard_new_application | {
+        "applicants": "ACME CANNABIS CO; ZQINGEST, ALPHA",
+        "license_number": "ZQ0001",
+    }
+    result = await ingest_record(pg_conn, record, IngestOptions(link_outcomes=False))
+    comma = (
+        await pg_conn.execute(select(entities.c.id).where(entities.c.name == "ZQINGEST, ALPHA"))
+    ).scalar_one()
+    assert result.is_new
+    assert await _rows(pg_conn, natural, comma) == {_fk(comma, natural)}
+
+
+@PG
+async def test_type_change_relinks_in_the_same_transaction(pg_conn):
+    a = await _ent(pg_conn, "ZQFLIP, BETA")
+    b = await _ent(pg_conn, "BETA ZQFLIP")
+    await relink(pg_conn, [a, b])
+    await record_manual(
+        pg_conn, a, entity_type="organization", entity_subtype="business", created_by="t@x"
+    )
+    assert await _rows(pg_conn, a, b) == set()
+    await clear_manual(pg_conn, a)
+    assert await _rows(pg_conn, a, b) == {_fk(a, b)}
+
+
+@PG
+async def test_type_flip_on_a_manual_member_opens_a_flag(pg_conn):
+    a = await _ent(pg_conn, "ZQMFLIP GAMMA")
+    b = await _ent(pg_conn, "ZQMFLIP DELTA")
+    await add_manual_alias(pg_conn, a, b, created_by="t@x")
+    await record_manual(
+        pg_conn, a, entity_type="organization", entity_subtype="trust", created_by="t@x"
+    )
+    reasons = (
+        (
+            await pg_conn.execute(
+                select(entity_review_flags.c.reason).where(entity_review_flags.c.entity_id == b)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert reasons == ["members disagree on type"]
+    assert (a, b, None, "manual", None) in await _rows(pg_conn, a)
+
+
+@PG
+async def test_not_a_name_mark_drops_rule_rows_and_is_refused_on_manual_members(pg_conn):
+    a = await _ent(pg_conn, "ZQNAN, EPSILON")
+    b = await _ent(pg_conn, "EPSILON ZQNAN")
+    await relink(pg_conn, [a, b])
+    await record_manual(pg_conn, a, entity_type="not_a_name", entity_subtype=None, created_by="t@x")
+    assert await _rows(pg_conn, a, b) == set()
+
+    c = await _ent(pg_conn, "ZQNAN ZETA")
+    d = await _ent(pg_conn, "ZQNAN ETA")
+    await add_manual_alias(pg_conn, c, d, created_by="t@x")
+    with pytest.raises(ValueError, match="unlink"):
+        await record_manual(
+            pg_conn, d, entity_type="not_a_name", entity_subtype=None, created_by="t@x"
+        )
+
+
+@PG
+async def test_merge_repoints_operator_rows_and_relinks(pg_conn):
+    dirty = await _ent(pg_conn, "ZQMERGE THETA DUP")
+    canon = await _ent(pg_conn, "ZQMERGE THETA")
+    other = await _ent(pg_conn, "ZQMERGE IOTA")
+    third = await _ent(pg_conn, "ZQMERGE KAPPA")
+    await add_manual_alias(pg_conn, dirty, other, scope_license="L1", created_by="t@x")
+    await add_manual_alias(pg_conn, third, dirty, created_by="t@x")
+    await dismiss_pair(pg_conn, dirty, third, scope_license="L2", dismissed_by="t@x")
+    await dismiss_pair(pg_conn, dirty, canon, dismissed_by="t@x")
+
+    await merge_entity_into(pg_conn, dirty, canon)
+
+    assert await _rows(pg_conn, canon, other, third) == {
+        (canon, other, "L1", "manual", None),
+        (third, canon, None, "manual", None),
+    }
+    pairs = (
+        await pg_conn.execute(
+            select(
+                entity_alias_dismissals.c.entity_id_a,
+                entity_alias_dismissals.c.entity_id_b,
+                entity_alias_dismissals.c.scope_license,
+            ).where(
+                entity_alias_dismissals.c.entity_id_a.in_([canon, third])
+                | entity_alias_dismissals.c.entity_id_b.in_([canon, third])
+            )
+        )
+    ).fetchall()
+    assert {tuple(p) for p in pairs} == {(*sorted((canon, third)), "L2")}
+
+
+@PG
+async def test_purge_re_elects_the_group_canonical(pg_conn):
+    comma = await _ent(pg_conn, "ZQPURGE, LAMBDA")
+    natural = await _ent(pg_conn, "LAMBDA ZQPURGE")
+    dotted = await _ent(pg_conn, "LAMBDA. ZQPURGE")
+    await relink(pg_conn, [comma, natural, dotted])
+    assert await _rows(pg_conn, natural) == {_fk(comma, natural), _fk(dotted, natural)}
+    await _purge_entities(pg_conn, [natural])
+    assert await _rows(pg_conn, comma, dotted) == {_fk(comma, dotted)}
+
+
+@PG
+async def test_relink_never_deletes_classification_rows(pg_conn):
+    a = await _ent(pg_conn, "ZQJEV, MU")
+    b = await _ent(pg_conn, "MU ZQJEV")
+    await pg_conn.execute(
+        insert(entity_classifications).values(
+            entity_id=a, source="jev", entity_type="person", confidence=0.99, model="jev-test"
+        )
+    )
+    before = (
+        await pg_conn.execute(select(func.count()).select_from(entity_classifications))
+    ).scalar_one()
+    await relink(pg_conn, [a, b])
+    await relink(pg_conn)
+    after = (
+        await pg_conn.execute(select(func.count()).select_from(entity_classifications))
+    ).scalar_one()
+    assert before == after

@@ -8,7 +8,8 @@ row.  A source's current answer is its latest non-ignored row.
 
 Also holds the operator-input helpers (manual rows, protected / confirmed-noise
 sets) and the reversible Jev rollback.  Must not import ``entities.py``, which
-imports this module.
+imports this module.  ``entity_aliases`` imports it too, so its relink hooks
+are imported at call time (#262).
 """
 
 import logging
@@ -210,7 +211,22 @@ async def resolve_entities(
         ]
         for i in range(0, len(params), _CHUNK):
             await conn.execute(stmt, params[i : i + _CHUNK])
+    type_changed = [c.entity_id for c in changes if c.old[0] != c.new[0]]
+    if type_changed:
+        await _on_type_change(conn, type_changed)
     return ResolveResult(examined=len(rows), changes=changes)
+
+
+async def _on_type_change(conn: AsyncConnection, entity_ids: list[int]) -> None:
+    """Relink the alias groups of *entity_ids* and flag manual rows now across types (#262).
+
+    Runs in the caller's transaction, so a rule row never crosses types.
+    """
+    # entity_aliases imports this module (tombstone_ids); import at call time.
+    from .entity_aliases import flag_type_disagreements, relink  # noqa: PLC0415
+
+    await relink(conn, entity_ids)
+    await flag_type_disagreements(conn, entity_ids)
 
 
 def _validate_manual(entity_type: str, entity_subtype: str | None) -> None:
@@ -247,11 +263,20 @@ async def record_manual(  # noqa: PLR0913
 ) -> int:
     """Store an operator's classification for *entity_id*, re-resolve it, and return the row id.
 
-    Raises ``ValueError`` for a bad type/subtype combination and
+    Raises ``ValueError`` for a bad type/subtype combination, or for
+    ``not_a_name`` while the entity is in a manual alias row (#262), and
     ``LookupError`` when the entity does not exist; nothing is written then.
+    The entity's alias groups are relinked in the same transaction.
     """
     _validate_manual(entity_type, entity_subtype)
     await _require_entity(conn, entity_id)
+    from .entity_aliases import in_manual_alias, relink  # noqa: PLC0415 — see _on_type_change
+
+    if entity_type == NOT_A_NAME and await in_manual_alias(conn, entity_id):
+        msg = (
+            f"entity {entity_id} is in an operator alias link; unlink it before marking not-a-name"
+        )
+        raise ValueError(msg)
     row_id = (
         await conn.execute(
             insert(entity_classifications)
@@ -267,6 +292,8 @@ async def record_manual(  # noqa: PLR0913
         )
     ).scalar_one()
     await resolve_entities(conn, [entity_id])
+    # A not-a-name mark leaves the resolved type alone; relink drops its rule rows.
+    await relink(conn, [entity_id])
     logger.info(
         "Manual classification for entity %d: %s/%s by %s",
         entity_id,
@@ -292,7 +319,10 @@ async def clear_manual(conn: AsyncConnection, entity_id: int) -> int:
         .values(ignored_at=func.now())
     )
     if result.rowcount:
+        from .entity_aliases import relink  # noqa: PLC0415 — see _on_type_change
+
         await resolve_entities(conn, [entity_id])
+        await relink(conn, [entity_id])
         logger.info("Cleared %d manual classification(s) for entity %d", result.rowcount, entity_id)
     return result.rowcount
 

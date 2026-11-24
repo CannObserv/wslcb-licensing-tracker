@@ -107,8 +107,8 @@ async def test_alembic_baseline_creates_all_tables(pg_engine):
         table_names = {row[0] for row in result}
 
     count = len(table_names)
-    # 23 app tables + 1 alembic_version
-    assert count == 24
+    # 25 app tables + 1 alembic_version
+    assert count == 26
 
     EXPECTED_TABLES = {
         "locations",
@@ -134,6 +134,8 @@ async def test_alembic_baseline_creates_all_tables(pg_engine):
         "entity_classifications",
         "entity_review_flags",
         "classification_runs",
+        "entity_aliases",
+        "entity_alias_dismissals",
         "alembic_version",
     }
     assert table_names == EXPECTED_TABLES
