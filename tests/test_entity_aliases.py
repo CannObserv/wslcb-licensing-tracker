@@ -697,3 +697,27 @@ async def test_merge_drops_a_repointed_row_that_would_close_a_cycle(pg_conn):
     await merge_entity_into(pg_conn, dirty, canon)
 
     assert await _rows(pg_conn, canon, x) == {(x, canon, None, "manual", None)}
+
+
+@PG
+async def test_manual_link_against_a_rule_row_wins_and_regroups(pg_conn):
+    """CR 3: rule A → B exists; operator B → A on L1 is accepted and A becomes the canonical."""
+    a = await _ent(pg_conn, "ZQWIN, OMICRON")
+    b = await _ent(pg_conn, "OMICRON ZQWIN")
+    await relink(pg_conn, [a, b])
+    assert await _rows(pg_conn, a, b) == {_fk(a, b)}
+
+    await add_manual_alias(pg_conn, b, a, scope_license="L1", created_by="t@x")
+
+    assert await _rows(pg_conn, a, b) == {_fk(b, a), (b, a, "L1", "manual", None)}
+    got = await eff_many(pg_conn, [(b, "L1"), (b, "L2"), (a, "L1"), (a, None)])
+    assert set(got.values()) == {a}
+
+
+@PG
+async def test_manual_cycle_among_manual_rows_is_still_refused(pg_conn):
+    a = await _ent(pg_conn, "ZQSTILL PI")
+    b = await _ent(pg_conn, "ZQSTILL RHO")
+    await add_manual_alias(pg_conn, a, b, created_by="t@x")
+    with pytest.raises(AliasError, match="cycle"):
+        await add_manual_alias(pg_conn, b, a, created_by="t@x")

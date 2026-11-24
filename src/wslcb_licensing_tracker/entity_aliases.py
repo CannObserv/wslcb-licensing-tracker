@@ -432,14 +432,23 @@ def _plan_format_key(
     # everywhere else, and on its licence resolution follows the chain.
     manual_variants = {r.variant for r in manual if r.scope is None}
     by_variant = _index(plan.other_rows + plan.outside)  # grows as rows are accepted
+
+    def manual_into(ids: set[int]) -> set[int]:
+        return {r.variant for r in manual if r.canonical in ids and r.variant in ids}
+
     desired: dict[int, int] = {}
     for (kind, _key), members in sorted(groups.items()):
         ids = {m.id for m in members}
         currents = [plan.existing[i] for i in ids if plan.existing.get(i) in ids]
+        current = max(set(currents), key=currents.count) if currents else None
+        if current in manual_into(ids):
+            # An operator pointed the current canonical at another member, in
+            # some scope: re-elect, so that member (a manual target) can lead.
+            current = None
         canon = elect_canonical(
             kind,
             members,
-            current=max(set(currents), key=currents.count) if currents else None,
+            current=current,
             manual_targets=manual_targets & ids,
             manual_variants=manual_variants & ids,
         )
@@ -671,7 +680,10 @@ async def add_manual_alias(  # noqa: PLR0913
     if same is not None:
         msg = f"entity {variant_id} is already linked to {same} in this scope; unlink it first"
         raise AliasError(msg)
-    rows = [_alias_row(r) for r in (await conn.execute(select(*_ROW_COLS))).fetchall()]
+    # Format-key rows are left out: the relink below replans them in this
+    # transaction, and the planner skips any rule row that would loop with a
+    # manual one, so the operator's link wins (spec §1 Writes).
+    rows = [_alias_row(r) for r in (await conn.execute(select(*_ROW_COLS).where(~_FK))).fetchall()]
     path = find_cycle(variant_id, canonical_id, scope_license, rows)
     if path is not None:
         msg = f"linking {variant_id} → {canonical_id} would close a cycle: {_describe(path)}"
