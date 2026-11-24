@@ -120,3 +120,36 @@ async def test_reprocess_stamps_empty_license_type_like_ingest(pg_conn, standard
     assert (await _versions(pg_conn, r.record_id))[STEP_ENDORSEMENTS] == str(
         STEP_VERSIONS[STEP_ENDORSEMENTS]
     )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_endorsement_backfill_stamps_current_version(pg_conn, standard_new_application):
+    """Data migration 0004's backfill runs current logic, so it stamps the current version."""
+    from wslcb_licensing_tracker.endorsements_seed import backfill
+    from wslcb_licensing_tracker.pipeline import insert_record
+
+    standard_new_application["license_number"] = "ENR267_BF_END"
+    record_id, is_new = await insert_record(pg_conn, standard_new_application)
+    assert is_new is True
+    assert await _versions(pg_conn, record_id) == {}
+
+    await backfill(pg_conn)
+
+    assert (await _versions(pg_conn, record_id))[STEP_ENDORSEMENTS] == str(
+        STEP_VERSIONS[STEP_ENDORSEMENTS]
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_entity_backfill_stamps_current_version(pg_conn, standard_new_application):
+    """Data migration 0005's backfill_entities runs current logic, so it stamps too."""
+    from wslcb_licensing_tracker.entities import backfill_entities
+    from wslcb_licensing_tracker.pipeline import insert_record
+
+    standard_new_application["license_number"] = "ENR267_BF_ENT"
+    record_id, is_new = await insert_record(pg_conn, standard_new_application)
+    assert is_new is True
+
+    await backfill_entities(pg_conn)
+
+    assert (await _versions(pg_conn, record_id))[STEP_ENTITIES] == str(STEP_VERSIONS[STEP_ENTITIES])

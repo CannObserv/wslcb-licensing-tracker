@@ -160,7 +160,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `step` — `'endorsements'`, `'entities'`, `'outcome_link'`; `'address'` is retired (SQLite-era rows)
 - `completed_at` — TIMESTAMPTZ of when the step finished
 - `version` — the step's logic version; a stamp below the current one is *behind* (`wslcb db check` counts them)
-- Written only by `enrichment.stamp_enrichment()` (ingest and reprocess); versions, bump rule and history: `enrichment.py` (#267)
+- Written only by `enrichment.stamp_enrichment()` (ingest, reprocess, backfills, admin unalias); versions, bump rule, history: `enrichment.py` (#267)
 
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, resolved_endorsements, application_type, license_number, previous_business_name, previous_applicants, previous_business_location

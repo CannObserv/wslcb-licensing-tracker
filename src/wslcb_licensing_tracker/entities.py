@@ -1133,6 +1133,7 @@ async def backfill_entities(conn: AsyncConnection) -> int:
         await parse_and_link_entities(conn, r_id, r_applicants, "applicant")
         if r_prev:
             await parse_and_link_entities(conn, r_id, r_prev, "previous_applicant")
+        await stamp_enrichment(conn, r_id, STEP_ENTITIES)
         processed += 1
 
     if processed:
