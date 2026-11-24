@@ -16,7 +16,12 @@ from wslcb_licensing_tracker.entities import get_or_create_entity
 from wslcb_licensing_tracker.entity_classification import resolve_entities
 from wslcb_licensing_tracker.models import entity_classifications, scrape_log
 from wslcb_licensing_tracker.pipeline import insert_record
-from wslcb_licensing_tracker.queries_entity import get_entities, get_entity_records
+from wslcb_licensing_tracker.queries_entity import (
+    get_entities,
+    get_entity_records,
+    get_party_members,
+    global_party,
+)
 from wslcb_licensing_tracker.queries_export import export_records, export_records_cursor
 from wslcb_licensing_tracker.queries_hydrate import enrich_record
 from wslcb_licensing_tracker.queries_search import (
@@ -299,3 +304,85 @@ class TestGetEntities:
         # A losing Jev answer still reports its confidence.
         assert rows[acme]["classification_source"] == "regex"
         assert rows[acme]["jev_confidence"] == pytest.approx(0.4)
+
+
+# ── #263: alias read paths (party_id) ───────────────────────────────
+
+
+async def _rec(conn, base, licence, *names, day=10):
+    """Insert a record on *licence* listing *names*, link them; return the record id."""
+    from wslcb_licensing_tracker.entities import parse_and_link_entities
+
+    rec = base | {
+        "license_number": licence,
+        "applicants": "; ".join(["T263 BIZ LLC", *names]),
+        "record_date": f"2025-07-{day:02d}",
+    }
+    rid = (await insert_record(conn, rec))[0]
+    await parse_and_link_entities(conn, rid, rec["applicants"], delete_existing=True)
+    return rid
+
+
+async def _id(conn, name):
+    return await get_or_create_entity(conn, name)
+
+
+async def _relink(conn):
+    from wslcb_licensing_tracker.entity_aliases import relink
+
+    await relink(conn)
+
+
+class TestEntityPartyPages:
+    """Entity page union, members, redirect target (#263, spec §4)."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_canonical_page_is_the_union(self, pg_conn, standard_new_application):
+        r1 = await _rec(pg_conn, standard_new_application, "T263A", "T263 WIDGETS, LLC", day=1)
+        r2 = await _rec(
+            pg_conn, standard_new_application, "T263B", "T263 WIDGETS LLC (FRANCHISOR)", day=2
+        )
+        r3 = await _rec(pg_conn, standard_new_application, "T263C", "T263 WIDGETS,LLC", day=3)
+        canon = await _id(pg_conn, "T263 WIDGETS, LLC")
+        await _relink(pg_conn)
+
+        records = await get_entity_records(pg_conn, canon)
+        assert [r["id"] for r in records] == [r3, r2, r1]
+        assert all(r.get("party_note") is None for r in records)
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_global_party_and_members(self, pg_conn, standard_new_application):
+        await _rec(pg_conn, standard_new_application, "T263D", "T263ZHAO, QIAN", day=4)
+        await _rec(pg_conn, standard_new_application, "T263E", "QIAN T263ZHAO", day=5)
+        comma = await _id(pg_conn, "T263ZHAO, QIAN")
+        natural = await _id(pg_conn, "QIAN T263ZHAO")
+        await _relink(pg_conn)
+
+        assert await global_party(pg_conn, comma) == natural
+        assert await global_party(pg_conn, natural) is None
+        members = await get_party_members(pg_conn, natural)
+        assert members == [{"id": comma, "name": "T263ZHAO, QIAN", "licences": None}]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_scoped_variant_keeps_its_page_with_a_note(
+        self, pg_conn, standard_new_application
+    ):
+        from wslcb_licensing_tracker.entity_aliases import add_manual_alias
+
+        on = await _rec(pg_conn, standard_new_application, "T263L", "T263TY", "T263 TY FULL", day=6)
+        off = await _rec(pg_conn, standard_new_application, "T263M", "T263TY", day=7)
+        ty = await _id(pg_conn, "T263TY")
+        full = await _id(pg_conn, "T263 TY FULL")
+        await add_manual_alias(pg_conn, ty, full, scope_license="T263L", created_by="t@x")
+
+        assert await global_party(pg_conn, ty) is None
+        ty_records = {r["id"]: r for r in await get_entity_records(pg_conn, ty)}
+        assert set(ty_records) == {on, off}
+        assert ty_records[on]["party_note"] == {"id": full, "name": "T263 TY FULL"}
+        assert ty_records[off]["party_note"] is None
+
+        full_records = await get_entity_records(pg_conn, full)
+        assert [r["id"] for r in full_records] == [on]
+        assert await get_party_members(pg_conn, full) == [
+            {"id": ty, "name": "T263TY", "licences": ["T263L"]}
+        ]

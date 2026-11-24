@@ -80,7 +80,12 @@
                         {% endif %}
                     </td>
                     {% endif %}
-                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">{{ r.license_number }}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600 font-mono">{{ r.license_number }}
+                        {% if r.party_note %}
+                        {# entity page only: this entity's link here resolves to another party (#263) #}
+                        <a href="/entity/{{ r.party_note.id }}" class="block font-sans text-xs text-co-purple hover:text-co-purple-700 hover:underline" onclick="event.stopPropagation()">On licence {{ r.license_number }}: {{ r.party_note.name }} →</a>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>

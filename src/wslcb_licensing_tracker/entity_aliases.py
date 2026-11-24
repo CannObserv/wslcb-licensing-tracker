@@ -579,7 +579,7 @@ async def relink(
 # ── database: record_entities.party_id (#263) ────────────────────────
 
 
-async def _reverse_closure(conn: AsyncConnection, ids: Collection[int]) -> set[int]:
+async def reverse_closure(conn: AsyncConnection, ids: Collection[int]) -> set[int]:
     """*ids* plus every entity whose alias rows reach one of them (any scope, ≤ MAX_STEPS)."""
     out = set(ids)
     frontier = set(ids)
@@ -613,7 +613,7 @@ async def refresh_parties(conn: AsyncConnection, entity_ids: Collection[int] | N
     if entity_ids is None:
         links = (await conn.execute(stmt)).fetchall()
     else:
-        affected = await _reverse_closure(conn, entity_ids)
+        affected = await reverse_closure(conn, entity_ids)
         links = []
         for chunk in _chunks(sorted(affected)):
             links += (await conn.execute(stmt.where(re_.c.entity_id.in_(chunk)))).fetchall()
