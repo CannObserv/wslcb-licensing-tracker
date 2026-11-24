@@ -721,3 +721,13 @@ async def test_manual_cycle_among_manual_rows_is_still_refused(pg_conn):
     await add_manual_alias(pg_conn, a, b, created_by="t@x")
     with pytest.raises(AliasError, match="cycle"):
         await add_manual_alias(pg_conn, b, a, created_by="t@x")
+
+
+@PG
+async def test_dismissing_a_tombstone_is_refused(pg_conn):
+    """CR 6: reclassify purges confirmed non-names, so such a dismissal would vanish."""
+    a = await _ent(pg_conn, "ZQTD SIGMA")
+    b = await _ent(pg_conn, "ZQTD TAU")
+    await record_manual(pg_conn, a, entity_type="not_a_name", entity_subtype=None, created_by="t@x")
+    with pytest.raises(AliasError, match="not-a-name"):
+        await dismiss_pair(pg_conn, a, b, dismissed_by="t@x")

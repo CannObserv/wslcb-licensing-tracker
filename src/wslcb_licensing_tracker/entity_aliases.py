@@ -756,9 +756,15 @@ async def dismiss_pair(  # noqa: PLR0913
     """Record that *entity_a* and *entity_b* are not one party; return False if already so.
 
     Stops every rule from linking the pair, then relinks their groups.
-    Manual rows are not touched.  Caller commits.
+    Manual rows are not touched.  Raises :class:`AliasError` when either is
+    marked not-a-name: ``reclassify-entities`` purges those, and the dismissal
+    would go with them.  Caller commits.
     """
     a, b = _pair(entity_a, entity_b)
+    tombs = await tombstone_ids(conn, [a, b])
+    if tombs:
+        msg = f"entity {min(tombs)} is marked not-a-name; clear that first"
+        raise AliasError(msg)
     result = await conn.execute(
         pg_insert(_ead)
         .values(
