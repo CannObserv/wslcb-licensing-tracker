@@ -49,7 +49,7 @@ Hiding drops a skill's phrases in Quick reference and its **Trigger** line, so t
 
 Audits a repository's GitHub Actions spend by measuring its cost shape first: a per-job billed-minute census computed from job timestamps, platform-incident days separated from the structural baseline, then a prescription that branches on whether the spend is job **count** or job **duration** — the levers for one are actively wrong for the other. Emits severity-tiered findings with a measured-or-estimated confidence label per finding, a path-filter replay gated on zero false skips, and a required non-levers section, then hands an accepted filter to `enforcing-architecture`. Needs an authenticated `gh` and `jq`.
 
-This project has no hosted CI at all — no `.github/` tree; the scheduled work in `infra/` is host-side systemd timers (scrape, healthcheck, straggler compression), which Actions billing never sees. The skill is linked so it is available the day that changes; until then it has no subject to measure.
+This project has no push or PR CI: its only workflow is the weekly `context-cadence.yml` measurement (#171), and the scheduled work in `infra/` is host-side systemd timers (scrape, healthcheck, straggler compression), which Actions billing never sees. The skill is linked so it is available the day that changes; until then it has next to nothing to measure, so it is hidden from the listing (`/auditing-ci-cost`).
 
 **Trigger:** "audit CI", "CI cost", "Actions spend", "optimize CI", "why is CI so expensive".
 
