@@ -60,7 +60,7 @@ predicate.
 **Migration `0011`.**
 - Creates `entity_aliases` and `entity_alias_dismissals` exactly as spec §1 gives them: `NULLS NOT DISTINCT`, both CHECKs, `ON DELETE CASCADE`.
 - Adds index `(canonical_id)` and index `(variant_id, scope_license)`.
-- Adds `entities.link_key text NULL` plus an index on `(entity_type, link_key)`, with `lock_timeout` as in 0010.
+- Adds `entities.link_key text NULL` plus an index on `(link_key)`, with `lock_timeout` as in 0010. *(Revised during step 7: every lookup filters by key alone, and the `(entity_type, link_key)` index made the ingest hook 25 ms per record on the scratch copy, against 7.9 ms with this one.)*
 - The migration does not backfill. `link_key` depends on the resolved type, so `relink-entities` fills it, and the deploy order is upgrade → dry-run → run.
 
 **CLI.** `wslcb db relink-entities [--dry-run]` prints:

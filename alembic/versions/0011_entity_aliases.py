@@ -31,7 +31,7 @@ def _fail_fast_on_lock() -> None:
 def upgrade() -> None:
     _fail_fast_on_lock()
     op.add_column("entities", sa.Column("link_key", sa.Text(), nullable=True))
-    op.create_index("idx_entities_type_link_key", "entities", ["entity_type", "link_key"])
+    op.create_index("idx_entities_link_key", "entities", ["link_key"])
 
     op.create_table(
         "entity_aliases",
@@ -115,5 +115,5 @@ def downgrade() -> None:
     _fail_fast_on_lock()
     op.drop_table("entity_alias_dismissals")
     op.drop_table("entity_aliases")
-    op.drop_index("idx_entities_type_link_key", table_name="entities")
+    op.drop_index("idx_entities_link_key", table_name="entities")
     op.drop_column("entities", "link_key")

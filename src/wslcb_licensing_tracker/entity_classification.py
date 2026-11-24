@@ -368,17 +368,30 @@ async def protected_ids(conn: AsyncConnection) -> set[int]:
     return set((await conn.execute(stmt)).scalars().all())
 
 
-async def tombstone_ids(conn: AsyncConnection) -> set[int]:
+async def tombstone_ids(conn: AsyncConnection, entity_ids: Sequence[int] | None = None) -> set[int]:
     """Entities whose current manual answer is ``not_a_name`` (#247 §5, #262).
 
     ``choose_classification`` ignores that answer, so a tombstone keeps a
     resolved ``person``/``organization`` type; alias rules key off this set
     instead.  Unlike ``confirmed_noise_ids`` an open flag doesn't matter here.
+    With *entity_ids*, only those are checked.
     """
-    m = _current_manual()
-    return set(
-        (await conn.execute(select(m.c.entity_id).where(m.c.entity_type == NOT_A_NAME))).scalars()
+    ec = entity_classifications
+    base = (
+        select(ec.c.entity_id, ec.c.entity_type)
+        .where((ec.c.source == "manual") & ec.c.ignored_at.is_(None))
+        .distinct(ec.c.entity_id)
+        .order_by(ec.c.entity_id, ec.c.id.desc())
     )
+    stmts = (
+        [base]
+        if entity_ids is None
+        else [base.where(ec.c.entity_id.in_(chunk)) for chunk in _chunks(list(entity_ids))]
+    )
+    out: set[int] = set()
+    for stmt in stmts:
+        out |= {eid for eid, etype in (await conn.execute(stmt)).fetchall() if etype == NOT_A_NAME}
+    return out
 
 
 async def confirmed_noise_ids(conn: AsyncConnection) -> set[int]:

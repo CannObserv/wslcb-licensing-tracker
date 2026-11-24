@@ -223,7 +223,7 @@ entities = Table(
     # discrepancy but it is harmless and expected.
     Index("idx_entities_name_lower", "name"),
     Index("idx_entities_subtype", "entity_subtype"),
-    Index("idx_entities_type_link_key", "entity_type", "link_key"),
+    Index("idx_entities_link_key", "link_key"),
     CheckConstraint(
         "entity_subtype IS NULL OR entity_subtype IN "
         "('business', 'nonprofit', 'trust', 'estate', 'tribe', 'government', 'unknown')",

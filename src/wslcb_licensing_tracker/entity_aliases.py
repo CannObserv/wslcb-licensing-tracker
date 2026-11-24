@@ -535,7 +535,7 @@ async def relink(
         ],
         dismissed=await _dismissed_pairs(conn),
     )
-    tombstones = await tombstone_ids(conn)
+    tombstones = await tombstone_ids(conn, None if ids is None else sorted(loaded))
     members = [m.id for ms in _format_key_groups(loaded, tombstones, {}).values() for m in ms]
     groups = _format_key_groups(loaded, tombstones, await _link_counts(conn, members))
     desired = _plan_format_key(groups, plan, result)
@@ -638,7 +638,7 @@ async def add_manual_alias(  # noqa: PLR0913
         if eid not in types:
             msg = f"entity {eid} not found"
             raise LookupError(msg)
-    tombs = await tombstone_ids(conn) & {variant_id, canonical_id}
+    tombs = await tombstone_ids(conn, [variant_id, canonical_id])
     if tombs:
         msg = f"entity {min(tombs)} is marked not-a-name; clear that first"
         raise AliasError(msg)

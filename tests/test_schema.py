@@ -311,7 +311,7 @@ async def test_entities_link_key_column_and_index(pg_conn):
     assert cols == "link_key"
     idx = (
         await pg_conn.execute(
-            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_entities_type_link_key'")
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_entities_link_key'")
         )
     ).scalar_one()
-    assert "(entity_type, link_key)" in idx
+    assert "(link_key)" in idx
