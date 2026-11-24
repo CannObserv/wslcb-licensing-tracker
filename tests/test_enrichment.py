@@ -16,6 +16,7 @@ from wslcb_licensing_tracker.enrichment import (
     STEP_ENTITIES,
     STEP_OUTCOME_LINK,
     STEP_VERSIONS,
+    current_version,
     stamp_enrichment,
 )
 from wslcb_licensing_tracker.entities import reprocess_entities
@@ -47,12 +48,19 @@ def test_step_modules_hold_no_version_of_their_own():
     assert not hasattr(endorsements, "_ENDORSEMENT_REPROCESS_VERSION")
 
 
+def test_current_version_refuses_retired_or_unknown_step():
+    assert current_version(STEP_ENTITIES) == str(STEP_VERSIONS[STEP_ENTITIES])
+    with pytest.raises(ValueError, match="retired enrichment step: 'address'"):
+        current_version(STEP_ADDRESS)
+    with pytest.raises(ValueError, match="unknown enrichment step: 'bogus'"):
+        current_version("bogus")
+
+
 @pytest.mark.asyncio(loop_scope="session")
-async def test_stamp_refuses_retired_or_unknown_step(pg_conn):
+async def test_stamp_refuses_before_touching_the_connection():
+    """No DB needed: the refusal comes before any statement is built."""
     with pytest.raises(ValueError, match="address"):
-        await stamp_enrichment(pg_conn, 1, STEP_ADDRESS)
-    with pytest.raises(ValueError, match="bogus"):
-        await stamp_enrichment(pg_conn, 1, "bogus")
+        await stamp_enrichment(None, 1, STEP_ADDRESS)  # type: ignore[arg-type]
 
 
 async def _versions(conn, record_id: int) -> dict[str, str]:
