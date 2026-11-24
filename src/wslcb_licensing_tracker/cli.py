@@ -646,8 +646,8 @@ def relink_entities(dry_run: bool) -> None:
     """Rebuild the rule-made entity alias rows and every entity's link key (#262).
 
     Operator links and dismissals are never touched.  Idempotent: a second
-    run changes nothing.  Run after a migration, a rule change, or
-    reprocess-entities / reclassify-entities.
+    run changes nothing.  Run after a migration or a rule change; ingest,
+    reprocess-entities and classification changes relink as they go.
     """
 
     async def _run(engine: AsyncEngine) -> RelinkResult:

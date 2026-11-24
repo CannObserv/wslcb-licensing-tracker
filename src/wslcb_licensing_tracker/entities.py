@@ -822,6 +822,8 @@ async def reprocess_entities(
     ``entity_source``, #266) using the current entity-normalization logic.
     Every processed record is stamped at the ``entities`` step's current
     version (``enrichment.STEP_VERSIONS``, #267); ingest stamps the same one.
+    Alias rule rows are then relinked: every group for a full run, the
+    record's entities for one record (#262).
 
     Parameters
     ----------
@@ -872,6 +874,28 @@ async def reprocess_entities(
         records_processed += 1
 
         await stamp_enrichment(conn, rid, STEP_ENTITIES, completed_at=now)
+
+    if not dry_run:
+        # A reprocess can create new spellings; they join their alias groups (#262).
+        linked_ids = (
+            None
+            if record_id is None
+            else set(
+                (
+                    await conn.execute(
+                        select(record_entities.c.entity_id).where(
+                            record_entities.c.record_id == record_id
+                        )
+                    )
+                ).scalars()
+            )
+        )
+        relinked = await relink(conn, linked_ids)
+        logger.info(
+            "reprocess_entities: relink inserted %d, deleted %d alias row(s).",
+            relinked.inserted,
+            relinked.deleted,
+        )
 
     if dry_run:
         logger.info(

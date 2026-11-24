@@ -13,6 +13,7 @@ from wslcb_licensing_tracker.entities import (
     _purge_entities,
     get_or_create_entity,
     merge_entity_into,
+    reprocess_entities,
 )
 from wslcb_licensing_tracker.entity_aliases import (
     AliasError,
@@ -37,7 +38,7 @@ from wslcb_licensing_tracker.models import (
     entity_classifications,
     entity_review_flags,
 )
-from wslcb_licensing_tracker.pipeline import IngestOptions, ingest_record
+from wslcb_licensing_tracker.pipeline import IngestOptions, ingest_record, insert_record
 
 # ── link_key (spec §2) ───────────────────────────────────────────────
 
@@ -731,3 +732,21 @@ async def test_dismissing_a_tombstone_is_refused(pg_conn):
     await record_manual(pg_conn, a, entity_type="not_a_name", entity_subtype=None, created_by="t@x")
     with pytest.raises(AliasError, match="not-a-name"):
         await dismiss_pair(pg_conn, a, b, dismissed_by="t@x")
+
+
+@PG
+async def test_reprocess_relinks_the_entities_it_links(pg_conn, standard_new_application):
+    """CR 7: a spelling first created by a reprocess joins its format-key group."""
+    natural = await _ent(pg_conn, "UPSILON ZQREPRO")
+    rec = standard_new_application | {
+        "license_number": "zq_cr7",
+        "applicants": "ACME LLC; ZQREPRO, UPSILON",
+    }
+    record_id = (await insert_record(pg_conn, rec))[0]
+
+    await reprocess_entities(pg_conn, record_id=record_id)
+
+    comma = (
+        await pg_conn.execute(select(entities.c.id).where(entities.c.name == "ZQREPRO, UPSILON"))
+    ).scalar_one()
+    assert await _rows(pg_conn, natural, comma) == {_fk(comma, natural)}
