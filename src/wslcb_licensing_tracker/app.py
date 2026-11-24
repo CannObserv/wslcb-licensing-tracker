@@ -502,7 +502,7 @@ async def entities_list(  # noqa: PLR0913
 
 @app.get("/entity/{entity_id}", response_class=HTMLResponse, response_model=None)
 async def entity_detail(
-    request: Request, entity_id: int, from_: Annotated[int | None, Query(alias="from")] = None
+    request: Request, entity_id: int, from_: Annotated[str, Query(alias="from")] = ""
 ) -> HTMLResponse | RedirectResponse:
     """Render the detail page for a single entity's party (#263).
 
@@ -532,7 +532,8 @@ async def entity_detail(
             "records": records,
             "unique_licenses": len({r["license_number"] for r in records}),
             "members": members,
-            "listed_as": next((m for m in members if m["id"] == from_), None),
+            # ?from is only a hint: anything but a member's id is ignored.
+            "listed_as": next((m for m in members if str(m["id"]) == from_.strip()), None),
         }
         if current_user:
             ctx |= {

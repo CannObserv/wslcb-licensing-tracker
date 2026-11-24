@@ -1280,6 +1280,12 @@ class TestEntityAliasPages:
         assert "(licence 355693)" in body
         assert 'href="/entity/19027"' not in body  # a global member would only redirect back
 
+    def test_malformed_from_still_renders_the_page(self):
+        """CR 2: ?from is a hint; a bad value must not turn the page into a 404."""
+        resp = self._get("/entity/27626?from=abc")
+        assert resp.status_code == 200
+        assert "BP WEST COAST PRODUCTS, LLC" in resp.text
+
     def test_unknown_from_shows_no_listed_as(self):
         body = self._get("/entity/27626?from=999").text
         assert 'data-testid="listed-as"' not in body
