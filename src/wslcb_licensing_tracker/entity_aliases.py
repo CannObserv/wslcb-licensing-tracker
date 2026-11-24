@@ -36,6 +36,7 @@ from .models import (
     entity_alias_dismissals,
     entity_aliases,
     entity_review_flags,
+    license_records,
     record_entities,
 )
 
@@ -315,11 +316,12 @@ class RelinkResult:
     skipped_cycle: int = 0
     skipped_dismissed: int = 0
     keys_updated: int = 0
+    parties_updated: int = 0  # record_entities.party_id rewrites (#263); 0 on a dry run
 
     @property
     def changed(self) -> int:
-        """Rows inserted or deleted plus link keys rewritten; 0 on a no-op run."""
-        return self.inserted + self.deleted + self.keys_updated
+        """Rows inserted or deleted, link keys and parties rewritten; 0 on a no-op run."""
+        return self.inserted + self.deleted + self.keys_updated + self.parties_updated
 
 
 async def _expand(conn: AsyncConnection, ids: set[int]) -> dict[int, tuple[str, str, str | None]]:
@@ -570,7 +572,72 @@ async def relink(
     result.kept = len(desired) - len(fresh)
     if not dry_run:
         await _write_relink(conn, key_updates, stale, fresh)
+        result.parties_updated = await refresh_parties(conn, None if ids is None else loaded)
     return result
+
+
+# ── database: record_entities.party_id (#263) ────────────────────────
+
+
+async def _reverse_closure(conn: AsyncConnection, ids: Collection[int]) -> set[int]:
+    """*ids* plus every entity whose alias rows reach one of them (any scope, ≤ MAX_STEPS)."""
+    out = set(ids)
+    frontier = set(ids)
+    for _ in range(MAX_STEPS):
+        nxt: set[int] = set()
+        for chunk in _chunks(sorted(frontier)):
+            stmt = select(_ea.c.variant_id).where(_ea.c.canonical_id.in_(chunk))
+            nxt |= set((await conn.execute(stmt)).scalars())
+        frontier = nxt - out
+        if not frontier:
+            break
+        out |= frontier
+    return out
+
+
+async def refresh_parties(conn: AsyncConnection, entity_ids: Collection[int] | None = None) -> int:
+    """Set ``record_entities.party_id = eff(entity, record's licence)``; return rows rewritten.
+
+    With *entity_ids*, the links of those entities and of every entity whose
+    resolution passes through them are refreshed; with None, every link.
+    Only changed rows are written.  Caller commits.
+    """
+    re_ = record_entities
+    stmt = select(
+        re_.c.record_id,
+        re_.c.entity_id,
+        re_.c.role,
+        re_.c.party_id,
+        license_records.c.license_number,
+    ).join(license_records, license_records.c.id == re_.c.record_id)
+    if entity_ids is None:
+        links = (await conn.execute(stmt)).fetchall()
+    else:
+        affected = await _reverse_closure(conn, entity_ids)
+        links = []
+        for chunk in _chunks(sorted(affected)):
+            links += (await conn.execute(stmt.where(re_.c.entity_id.in_(chunk)))).fetchall()
+    if not links:
+        return 0
+    parties = await eff_many(conn, [(r.entity_id, r.license_number) for r in links])
+    updates = [
+        {"_r": r.record_id, "_e": r.entity_id, "_ro": r.role, "_p": p}
+        for r in links
+        if (p := parties[(r.entity_id, r.license_number)]) != r.party_id
+    ]
+    if updates:
+        upd = (
+            update(re_)
+            .where(
+                (re_.c.record_id == bindparam("_r"))
+                & (re_.c.entity_id == bindparam("_e"))
+                & (re_.c.role == bindparam("_ro"))
+            )
+            .values(party_id=bindparam("_p"))
+        )
+        for i in range(0, len(updates), _CHUNK):
+            await conn.execute(upd, updates[i : i + _CHUNK])
+    return len(updates)
 
 
 # ── database: write API (manual rows, dismissals) ────────────────────

@@ -297,6 +297,7 @@ class TestDbGroup:
             skipped_cycle=0,
             skipped_dismissed=1,
             keys_updated=67653,
+            parties_updated=0 if dry_run else 20511,
         )
         args = ["db", "relink-entities"] + (["--dry-run"] if dry_run else [])
         result = CliRunner().invoke(main, args)
@@ -308,6 +309,10 @@ class TestDbGroup:
         assert "8,946 inserted, 0 deleted, 0 kept" in result.output
         assert "67,653 link key(s)" in result.output
         assert "1 blocked by a dismissal" in result.output
+        if dry_run:
+            assert "Record-link parties: computed on the real run." in result.output
+        else:
+            assert "Record-link parties: 20,511 updated." in result.output
 
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
     @patch("wslcb_licensing_tracker.cli.run_reclassify_entities", new_callable=AsyncMock)
