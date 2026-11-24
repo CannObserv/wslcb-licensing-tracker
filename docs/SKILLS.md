@@ -31,6 +31,20 @@ Invoke a skill by name when the trigger phrase matches — the skill provides st
 | `writing-plans` | Have spec/requirements, before touching code |
 | `writing-skills` | Create, edit, or verify skills |
 
+## Listing overrides
+
+Every session pays for each listed skill's name + description; the body loads only on invocation. `skillOverrides` in `.claude/settings.json` trims that listing without editing vendored `SKILL.md` or removing `.claude/skills/` links (hooks resolve through them). Method and per-skill evidence: [#268](https://github.com/CannObserv/wslcb-licensing-tracker/issues/268), ported from CannObserv/address-validator#442.
+
+- `user-invocable-only` — hidden from Claude; `/name` still works:
+  - repo: `auditing-ci-cost`, `init-socraticode`, `maintaining-host-disk`, `orchestrating-issue-backlog`
+  - built-in: `code-review`, `dataviz`, `fewer-permission-prompts`, `keybindings-help`, `ship-local` (`/ship`), `steward`
+- `name-only` — description dropped; Claude can still call it:
+  - repo: `coordinating-epics`, `dispatching-parallel-agents`, `enforcing-architecture` (delegated to by `reviewing-architecture`), `managing-skills`, `subagent-driven-development`, `using-mayfly-chat`, `writing-skills`
+  - built-in: `claude-api`, `run`, `simplify`, `workflow-authoring` (the Workflow tool loads it)
+- Everything else stays fully listed, deliberately `loop`, `schedule`, `update-config` (triggered by the user's wording) and `curating-context` (weekly run).
+
+Hiding drops the trigger phrases below: for a `name-only` or `user-invocable-only` skill, type `/name` — e.g. `/coordinating-epics` for #219 check-ins. Built-ins are keyed by skill name, not slash alias. Not covered: plugin skills (`/plugin`) and claude.ai `anthropic-skills:*` (left listed, #268). Measured 2026-11-24: repo skills 3,097 → ~1,440 tokens per session, built-ins ~2,677 → ~665. `tests/test_skill_listing.py` fails on a stale key, a delegated skill made uncallable, or a kept skill overridden. Verify a change in a **new** conversation; a reloaded window keeps its old listing.
+
 ## auditing-ci-cost
 
 Audits a repository's GitHub Actions spend by measuring its cost shape first: a per-job billed-minute census computed from job timestamps, platform-incident days separated from the structural baseline, then a prescription that branches on whether the spend is job **count** or job **duration** — the levers for one are actively wrong for the other. Emits severity-tiered findings with a measured-or-estimated confidence label per finding, a path-filter replay gated on zero false skips, and a required non-levers section, then hands an accepted filter to `enforcing-architecture`. Needs an authenticated `gh` and `jq`.

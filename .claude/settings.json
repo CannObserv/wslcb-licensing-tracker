@@ -2,6 +2,29 @@
   "env": {
     "SOCRATICODE_SPEC": "socraticode@1.14.0"
   },
+  "skillOverrides": {
+    "auditing-ci-cost": "user-invocable-only",
+    "init-socraticode": "user-invocable-only",
+    "maintaining-host-disk": "user-invocable-only",
+    "orchestrating-issue-backlog": "user-invocable-only",
+    "coordinating-epics": "name-only",
+    "dispatching-parallel-agents": "name-only",
+    "enforcing-architecture": "name-only",
+    "managing-skills": "name-only",
+    "subagent-driven-development": "name-only",
+    "using-mayfly-chat": "name-only",
+    "writing-skills": "name-only",
+    "code-review": "user-invocable-only",
+    "dataviz": "user-invocable-only",
+    "fewer-permission-prompts": "user-invocable-only",
+    "keybindings-help": "user-invocable-only",
+    "ship-local": "user-invocable-only",
+    "steward": "user-invocable-only",
+    "claude-api": "name-only",
+    "run": "name-only",
+    "simplify": "name-only",
+    "workflow-authoring": "name-only"
+  },
   "hooks": {
     "SessionStart": [
       {
