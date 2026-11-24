@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    FetchedValue,
     Float,
     ForeignKey,
     Identity,
@@ -255,7 +256,12 @@ record_entities = Table(
     ),
     Column("role", Text, nullable=False, server_default="'applicant'", primary_key=True),
     Column("position", Integer, nullable=False, server_default="0"),
+    # Derived (#263): eff(entity_id, the record's licence), written by
+    # entity_aliases.relink.  A trigger (migration 0012) defaults it to
+    # entity_id on insert and when an update re-points entity_id.
+    Column("party_id", Integer, nullable=False, server_default=FetchedValue()),
     Index("idx_re_entity", "entity_id"),
+    Index("idx_re_party_record", "party_id", "record_id"),
     Index("idx_re_role", "role"),
 )
 

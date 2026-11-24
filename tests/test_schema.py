@@ -18,6 +18,7 @@ from wslcb_licensing_tracker.models import (
     entity_aliases,
     entity_classifications,
     entity_review_flags,
+    record_entities,
 )
 from wslcb_licensing_tracker.schema import init_db
 
@@ -315,3 +316,74 @@ async def test_entities_link_key_column_and_index(pg_conn):
         )
     ).scalar_one()
     assert "(link_key)" in idx
+
+
+# ── 0012 record_entities.party_id (#263) ────────────────────────────
+
+
+async def _record(conn, standard_new_application, licence):
+    from wslcb_licensing_tracker.pipeline import insert_record
+
+    rec = standard_new_application | {"license_number": licence}
+    return (await insert_record(conn, rec))[0]
+
+
+async def _party(conn, rid, eid):
+    return (
+        await conn.execute(
+            select(record_entities.c.party_id).where(
+                (record_entities.c.record_id == rid) & (record_entities.c.entity_id == eid)
+            )
+        )
+    ).scalar_one()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_party_id_defaults_to_entity_id_on_insert(pg_conn, standard_new_application):
+    rid = await _record(pg_conn, standard_new_application, "zq_0012_a")
+    eid = await _entity(pg_conn, "SCHEMA TEST PARTY A")
+    await pg_conn.execute(insert(record_entities).values(record_id=rid, entity_id=eid))
+    assert await _party(pg_conn, rid, eid) == eid
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_party_id_kept_when_given_and_follows_entity_repoint(
+    pg_conn, standard_new_application
+):
+    rid = await _record(pg_conn, standard_new_application, "zq_0012_b")
+    a = await _entity(pg_conn, "SCHEMA TEST PARTY B1")
+    b = await _entity(pg_conn, "SCHEMA TEST PARTY B2")
+    c = await _entity(pg_conn, "SCHEMA TEST PARTY B3")
+    await pg_conn.execute(insert(record_entities).values(record_id=rid, entity_id=a, party_id=c))
+    assert await _party(pg_conn, rid, a) == c
+    # a merge re-points entity_id: the stale party follows the new entity
+    await pg_conn.execute(
+        record_entities.update().where(record_entities.c.entity_id == a).values(entity_id=b)
+    )
+    assert await _party(pg_conn, rid, b) == b
+    # an explicit party write alongside wins
+    await pg_conn.execute(
+        record_entities.update()
+        .where(record_entities.c.entity_id == b)
+        .values(entity_id=a, party_id=c)
+    )
+    assert await _party(pg_conn, rid, a) == c
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_party_id_not_null_and_indexed(pg_conn):
+    nullable = (
+        await pg_conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'record_entities' AND column_name = 'party_id'"
+            )
+        )
+    ).scalar_one()
+    assert nullable == "NO"
+    idx = (
+        await pg_conn.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_re_party_record'")
+        )
+    ).scalar_one()
+    assert "(party_id, record_id)" in idx
