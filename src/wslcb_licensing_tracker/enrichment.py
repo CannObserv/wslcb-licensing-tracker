@@ -10,8 +10,10 @@ alters what that step produces from the same input. Version history:
 
 - ``endorsements`` 2: async pipeline (#94). The code has not changed since.
   Mapping edits (``endorsement_codes`` / aliases) are data, not logic.
-- ``entities`` 5: WAC annotations stripped at extraction (#211);
-  6: extraction reads ``raw_*`` when it cleans to the stored value (#266).
+- ``entities`` 2: async pipeline (#94); 3: categorised classifier
+  and noise filter (#203); 4: regex subtypes (#206); 5: WAC annotations
+  stripped at extraction (#211); 6: extraction reads ``raw_*`` when it
+  cleans to the stored value (#266).
   Prod's ``entities`` stamps of "1" came from ingest before #267, which
   always wrote "1" whatever the logic; treat them as behind.
 - ``outcome_link`` 1: ``link_records.link_new_record`` at ingest. Only
