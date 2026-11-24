@@ -36,6 +36,7 @@ from .endorsements_admin import (
     suggest_duplicate_endorsements,
 )
 from .engine import get_db
+from .enrichment import STEP_ENDORSEMENTS, stamp_enrichment
 from .models import (
     endorsement_aliases,
     license_endorsements,
@@ -361,6 +362,7 @@ async def admin_unalias_endorsement(
         ).fetchall()
         for record_id, raw_license_type in affected:
             await process_record(conn, record_id, raw_license_type or "")
+            await stamp_enrichment(conn, record_id, STEP_ENDORSEMENTS)
 
         await log_action(
             conn,

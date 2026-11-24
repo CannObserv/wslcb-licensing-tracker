@@ -194,7 +194,7 @@ def test_every_category_has_a_subtype():
 
 
 def test_regex_model_is_independent_of_reprocess_version():
-    # A name-cleaning bump of _ENTITY_REPROCESS_VERSION must not re-stamp regex rows.
+    # A name-cleaning bump of the entities enrichment version must not re-stamp regex rows.
     assert REGEX_MODEL == "regex-1"
 
 

@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .enrichment import STEP_ENTITIES, stamp_enrichment
 from .entity_classification import (
     SourceAnswer,
     confirmed_noise_ids,
@@ -29,7 +30,6 @@ from .models import (
     entity_classifications,
     entity_review_flags,
     license_records,
-    record_enrichments,
     record_entities,
 )
 from .text_utils import (
@@ -41,14 +41,14 @@ from .text_utils import (
 
 logger = logging.getLogger(__name__)
 
-# Enrichment version written by reprocess_entities.
-# Bump this integer when entity processing logic changes.
-_ENTITY_REPROCESS_VERSION = 5  # 5: WAC annotations stripped at extraction (#211)
+# Changing what extraction produces for the same input? Bump the ``entities``
+# version in ``enrichment.STEP_VERSIONS`` (#267).
 
 # Version of the regex classifier rules (``_CATEGORY_CHECKS`` + ``REGEX_SUBTYPE``),
 # stored as ``entity_classifications.model`` on regex rows (#206).  Bump it only
 # when the rules change: ``reclassify_entities`` then writes a fresh regex row
-# for every entity.  Kept separate from ``_ENTITY_REPROCESS_VERSION`` so a
+# for every entity.  Kept separate from the ``entities`` enrichment version
+# (``enrichment.STEP_VERSIONS``, #267) so a
 # name-cleaning change does not re-stamp ~67K identical regex answers.
 _REGEX_CLASSIFIER_VERSION = 1
 REGEX_MODEL = f"regex-{_REGEX_CLASSIFIER_VERSION}"
@@ -812,8 +812,8 @@ async def reprocess_entities(
     targeted ``(record_id, role)`` pair are deleted and rebuilt from
     ``license_records.applicants`` / ``previous_applicants`` (read through
     ``entity_source``, #266) using the current entity-normalization logic.
-    The ``record_enrichments`` version stamp is updated to
-    ``_ENTITY_REPROCESS_VERSION`` for every processed record.
+    Every processed record is stamped at the ``entities`` step's current
+    version (``enrichment.STEP_VERSIONS``, #267); ingest stamps the same one.
 
     Parameters
     ----------
@@ -863,23 +863,7 @@ async def reprocess_entities(
         entities_linked += linked
         records_processed += 1
 
-        enrich_stmt = (
-            pg_insert(record_enrichments)
-            .values(
-                record_id=rid,
-                step="entities",
-                completed_at=now,
-                version=str(_ENTITY_REPROCESS_VERSION),
-            )
-            .on_conflict_do_update(
-                index_elements=["record_id", "step"],
-                set_={
-                    "completed_at": now,
-                    "version": str(_ENTITY_REPROCESS_VERSION),
-                },
-            )
-        )
-        await conn.execute(enrich_stmt)
+        await stamp_enrichment(conn, rid, STEP_ENTITIES, completed_at=now)
 
     if dry_run:
         logger.info(
@@ -1149,6 +1133,7 @@ async def backfill_entities(conn: AsyncConnection) -> int:
         await parse_and_link_entities(conn, r_id, r_applicants, "applicant")
         if r_prev:
             await parse_and_link_entities(conn, r_id, r_prev, "previous_applicant")
+        await stamp_enrichment(conn, r_id, STEP_ENTITIES)
         processed += 1
 
     if processed:

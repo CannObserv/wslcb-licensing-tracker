@@ -21,6 +21,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .endorsements import CODE_NAME_RE, _link_endorsement, ensure_endorsement, process_record
+from .enrichment import STEP_ENDORSEMENTS, stamp_enrichment
 from .models import (
     endorsement_codes,
     license_endorsements,
@@ -359,6 +360,7 @@ async def backfill(conn: AsyncConnection) -> int:
 
     for record_id, license_type in rows:
         await process_record(conn, record_id, license_type)
+        await stamp_enrichment(conn, record_id, STEP_ENDORSEMENTS)
 
     return len(rows)
 

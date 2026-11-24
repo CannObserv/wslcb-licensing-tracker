@@ -155,15 +155,12 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `ON DELETE CASCADE` on both FKs
 
 ### `record_enrichments` (enrichment tracking)
-- Tracks which enrichment steps have been applied to each record
-- `record_id` — FK to `license_records(id)`, `ON DELETE CASCADE`
-- `step` — enrichment step name: `'endorsements'`, `'entities'`, `'address'`, `'outcome_link'`
+- Which enrichment steps ran on each record, and with which logic version
+- `record_id` — FK to `license_records(id)`, `ON DELETE CASCADE`; composite PK `(record_id, step)`
+- `step` — `'endorsements'`, `'entities'`, `'outcome_link'`; `'address'` is retired (SQLite-era rows)
 - `completed_at` — TIMESTAMPTZ of when the step finished
-- `version` — schema/logic version of the step (default `'1'`); allows re-processing when step logic changes
-- Composite PK `(record_id, step)`
-- Written by `_record_enrichment()` in `pipeline.py` after each enrichment step succeeds; uses `INSERT OR REPLACE` so re-runs update the timestamp
-- Step name constants exported from `pipeline.py`: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`
-- Enables targeted re-processing queries, e.g., find records missing entity linking: `WHERE id NOT IN (SELECT record_id FROM record_enrichments WHERE step = 'entities')`
+- `version` — the step's logic version; a stamp below the current one is *behind* (`wslcb db check` counts them)
+- Written only by `enrichment.stamp_enrichment()` (ingest, reprocess, backfills, admin unalias); versions, bump rule, history: `enrichment.py` (#267)
 
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, resolved_endorsements, application_type, license_number, previous_business_name, previous_applicants, previous_business_location

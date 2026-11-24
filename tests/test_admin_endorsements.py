@@ -642,8 +642,9 @@ class TestAdminUnalias:
         assert "flash=unaliased" in resp.headers["location"]
 
     def test_reprocesses_resolved_endorsements(self):
-        """POST /unalias calls process_record for each affected record."""
+        """POST /unalias calls process_record for each affected record, and stamps it (#267)."""
         mock_process = AsyncMock()
+        mock_stamp = AsyncMock()
 
         @asynccontextmanager
         async def _ctx(engine):
@@ -656,6 +657,7 @@ class TestAdminUnalias:
                 new_callable=AsyncMock,
             ),
             patch("wslcb_licensing_tracker.admin_endorsement_routes.process_record", mock_process),
+            patch("wslcb_licensing_tracker.admin_endorsement_routes.stamp_enrichment", mock_stamp),
             patch(
                 "wslcb_licensing_tracker.admin_endorsement_routes.log_action",
                 new_callable=AsyncMock,
@@ -672,6 +674,8 @@ class TestAdminUnalias:
                 _stop(patches)
 
         assert mock_process.call_count >= 1
+        assert mock_stamp.await_count == 1
+        assert mock_stamp.await_args.args[1:] == (99, "endorsements")
 
     def test_422_when_not_a_variant(self):
         """POST /unalias for a non-variant endorsement returns 422."""

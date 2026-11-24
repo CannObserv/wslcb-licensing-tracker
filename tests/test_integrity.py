@@ -9,6 +9,7 @@ from wslcb_licensing_tracker.config import TEST_DATABASE_URL_ENV
 from wslcb_licensing_tracker.integrity import (
     check_broken_fks,
     check_endorsement_anomalies,
+    check_enrichment_versions,
     check_entity_duplicates,
     check_orphaned_locations,
     check_unenriched_records,
@@ -68,6 +69,7 @@ async def test_run_all_checks_returns_complete_report(conn):
         "unenriched",
         "endorsement_anomalies",
         "entity_duplicates",
+        "enrichment_versions",
     ):
         assert key in report
 
@@ -198,3 +200,51 @@ async def test_no_entities_counts_sole_proprietor_repeat(pg_conn, standard_new_a
     )
     await insert_record(pg_conn, sole)
     assert (await check_unenriched_records(pg_conn))["no_entities"] == before + 1
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
+async def test_enrichment_versions_counts_stamps_behind_current(pg_conn, standard_new_application):
+    """#267: a stamp below its step's current version counts as behind."""
+    from wslcb_licensing_tracker.enrichment import STEP_ENTITIES, STEP_VERSIONS
+    from wslcb_licensing_tracker.models import record_enrichments
+    from wslcb_licensing_tracker.pipeline import IngestOptions, ingest_record
+
+    before = await check_enrichment_versions(pg_conn)
+    assert set(before) == set(STEP_VERSIONS)
+
+    rec = dict(standard_new_application, license_number="integ_267_behind")
+    r = await ingest_record(pg_conn, rec, IngestOptions(link_outcomes=False))
+    assert await check_enrichment_versions(pg_conn) == before
+
+    await pg_conn.execute(
+        record_enrichments.update()
+        .where(
+            (record_enrichments.c.record_id == r.record_id)
+            & (record_enrichments.c.step == STEP_ENTITIES)
+        )
+        .values(version="1")
+    )
+    after = await check_enrichment_versions(pg_conn)
+    assert after[STEP_ENTITIES] == before[STEP_ENTITIES] + 1
+
+
+def test_print_report_shows_behind_versions_without_counting_them(capsys):
+    """Stale stamps are information, not integrity failures: exit code unchanged."""
+    report = {
+        "orphaned_locations": {"count": 0},
+        "broken_fks": {"count": 0, "details": []},
+        "unenriched": {
+            "no_endorsements": 0,
+            "no_entities": 0,
+            "no_provenance": 0,
+            "no_enrichment_tracking": 0,
+        },
+        "endorsement_anomalies": {"unresolved_codes": 0, "placeholder_endorsements": 0},
+        "entity_duplicates": {"count": 0, "details": []},
+        "enrichment_versions": {"endorsements": 0, "entities": 128035, "outcome_link": 0},
+    }
+    assert print_report(report) == 0
+    out = capsys.readouterr().out
+    assert "entities: 128035 record(s) behind v" in out
+    assert "endorsements: 0 record(s) behind" in out
