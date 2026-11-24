@@ -108,23 +108,10 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `has_additional_names` — `INTEGER NOT NULL DEFAULT 0`; set to `1` at ingest time when `applicants` or `previous_applicants` contains an `ADDITIONAL_NAMES_MARKERS` token. Used to show the notice *"+ WSLCB source signaled additional entities may be on file"* on the detail page. Backfilled by migration 010.
 - `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — shadow columns storing the as-parsed values from the source *before* name cleaning (uppercase, punctuation stripping); going forward, `insert_record()` saves the raw values here, then writes cleaned values to the primary columns; for existing records, these were backfilled with the already-cleaned values (originals lost)
 - `merge_duplicate_entities()` merges entities whose names differ only by case into the lowest id, moving its links. It ran once, through `backfill_entities()` in data migration `0005_backfill_entities` (`data_migration.py`), not at every startup
-- `link_key` (#262) — **derived** format key, `entity_aliases.link_key(name, resolved type)`: person `LAST, FIRST…` → `FIRST… LAST` unless the tail is `JR SR II III IV`, then `,`/`.` → space; organization strips a trailing FRANCHISOR/FRANCHISEE annotation, then `,`/`.` → space; NULL for any other type. `get_or_create_entity()` writes it on insert; `relink` refreshes it (ingest, type change, rename, `relink-entities`). Index `idx_entities_link_key (link_key)`
+- `link_key` (#262) — derived alias format key; index `idx_entities_link_key`
 
-### `entity_aliases` (entity alias layer, #262)
-- One variant entity → one canonical entity, everywhere (`scope_license` NULL) or on one licence (a `license_number`). Spec: `docs/specs/2026-11-23-247-entity-name-linking-design.md` §1-§3
-- `variant_id`, `canonical_id` — FKs to `entities(id)`, `ON DELETE CASCADE`; index `idx_entity_aliases_canonical`
-- `source` — `rule` (**derived**: `wslcb db relink-entities` rebuilds them; `rule` names it, `format_key` today, `middle_names` from #265) or `manual` (**operator data**: never rewritten or deleted by anything automated; `rule` NULL). CHECKs `ck_entity_aliases_source`, `ck_entity_aliases_rule_iff_rule_source`, `ck_entity_aliases_not_self`
-- `UNIQUE NULLS NOT DISTINCT (variant_id, scope_license, source)` (`uq_entity_aliases_variant_scope_source`)
-- `created_at`, `created_by`, `note`
-- **Resolution** `eff(e, licence)`: from `e`, follow the row scoped to the licence, else the global row; `manual` beats `rule`; at most 4 steps (`entity_aliases.resolve` / `eff_many`). The writers keep it acyclic: `add_manual_alias` refuses a link that would close a cycle, and `relink` skips a rule row that would
-- **Format-key rule** (global): entities with the same `(entity_type, link_key)` form a group; the others point at its canonical. Canonical: the current one while still eligible, else a manual target, then the natural-order (person) or annotation-free (organization) spelling, then the most links, then the lowest id. A global manual variant is never elected. Tombstones (current manual answer `not_a_name`) and pairs with a dismissal in any scope get no rule row
-- Kept in step by `relink(entity_ids)`: at ingest (per record), on a resolved-type change (`resolve_entities`), on a manual classification set/clear, and after `merge_entity_into` (operator rows re-pointed first), the noise purge and the WAC rename. A manual link across types opens an `entity_review_flags` row `members disagree on type` on the canonical, as does a later type flip
-- Entities in a manual row are in `protected_ids()`; marking one `not_a_name` is refused until it is unlinked
-
-### `entity_alias_dismissals` (operator "not the same party" pairs, #262)
-- `entity_id_a` < `entity_id_b` (CHECK `ck_entity_alias_dismissals_ordered`), FKs `ON DELETE CASCADE`; `scope_license` (NULL = everywhere); `dismissed_by`, `dismissed_at`, `note`
-- `UNIQUE NULLS NOT DISTINCT (entity_id_a, entity_id_b, scope_license)`; index on `entity_id_b`
-- **Operator data.** Blocks every rule from linking the pair (a scoped dismissal blocks the global format-key row too); manual rows are unaffected. Both ends are in `protected_ids()`
+### `entity_aliases`, `entity_alias_dismissals` (#262)
+- Alias links and dismissals: `rule` rows derived (`relink-entities`), the rest operator data. See [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md)
 
 ### `entity_classifications` (per-source classification answers)
 - Append-only (#206): one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
