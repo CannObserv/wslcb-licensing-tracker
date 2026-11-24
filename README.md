@@ -90,6 +90,7 @@ wslcb-licensing-tracker/
 ├── schema.py               # Alembic-based schema init (alembic upgrade head)
 ├── db.py                   # Async location/source/provenance helpers + shared constants
 ├── pipeline.py             # Async ingestion pipeline (insert_record, ingest_batch)
+├── enrichment.py           # Enrichment step names, per-step versions, stamp_enrichment (#267)
 ├── scraper.py              # Async scraper (WSLCB page fetch, archive, ingest)
 ├── relay.py                # Import operator-relayed captures during an IP block (#201)
 ├── backfill_snapshots.py   # Async backfill from archived HTML snapshots
@@ -239,6 +240,7 @@ wslcb-licensing-tracker/
 │   ├── test_db.py            # Location/source/provenance helper tests
 │   ├── test_schema.py        # Alembic migration tests (require the test DB)
 │   ├── test_pipeline.py      # Ingestion pipeline tests (require the test DB)
+│   ├── test_enrichment.py    # Ingest and reprocess stamp one version per step (#267)
 │   ├── test_queries.py       # Search, filter, stats tests (require the test DB)
 │   ├── test_link_records.py  # Record linking tests (require the test DB)
 │   ├── test_endorsements.py  # Endorsement pipeline tests (require the test DB)
@@ -649,6 +651,7 @@ Test structure:
 | `tests/test_db.py` | Location/source/provenance helper functions |
 | `tests/test_schema.py` | Alembic migration tests (require the test DB) |
 | `tests/test_pipeline.py` | Ingestion pipeline — insert, dedup, endorsements, entities (require the test DB) |
+| `tests/test_enrichment.py` | Enrichment versions — ingest and reprocess stamp the same per-step version; retired steps refused (#267) |
 | `tests/test_queries.py` | Search, filters, stats, export, entity queries (require the test DB) |
 | `tests/test_link_records.py` | Record linking — bulk, incremental, outcome status (require the test DB) |
 | `tests/test_endorsements.py` | Endorsement pipeline — processing, repair, alias system (require the test DB) |
@@ -660,7 +663,7 @@ Test structure:
 | `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require the test DB) |
 | `tests/test_jev_client.py` | Jev transport — request shape, 429/529 retry, auth errors, malformed responses fail the batch |
 | `tests/test_jev_classifier.py` | Jev runs — classify once, modes, advisory lock, failure stops, run rows, check-in payload (require the test DB) |
-| `tests/test_integrity.py` | Integrity checks — all check and fix functions (require the test DB) |
+| `tests/test_integrity.py` | Integrity checks — all check and fix functions, stamps behind the current version (require the test DB) |
 | `tests/test_scraper.py` | Scraper — content hash deduplication, redundant data cleanup, run history + freshness |
 | `tests/test_address_validator.py` | Address validation DB layer — standardize, validate, backfill; renewal TTLs, early renewal and a walked rolling 24h budget (#195) |
 | `tests/test_admin_audit.py` | Admin audit log — log_action, get_audit_log, filters, pagination |
