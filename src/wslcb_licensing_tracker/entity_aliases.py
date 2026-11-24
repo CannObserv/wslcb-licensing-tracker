@@ -416,6 +416,9 @@ class _Plan:
     existing: dict[int, int]
     other_rows: list[AliasRow]
     dismissed: set[tuple[int, int]]
+    # Format-key rows of entities this run did not load: not replanned, but a
+    # loop can still run through them (only fetched when one could).
+    outside: list[AliasRow] = field(default_factory=list)
 
 
 def _plan_format_key(
@@ -428,7 +431,7 @@ def _plan_format_key(
     # Pendergraft worked case): a scoped one is still its group's party
     # everywhere else, and on its licence resolution follows the chain.
     manual_variants = {r.variant for r in manual if r.scope is None}
-    by_variant = _index(plan.other_rows)  # grows as rows are accepted
+    by_variant = _index(plan.other_rows + plan.outside)  # grows as rows are accepted
     desired: dict[int, int] = {}
     for (kind, _key), members in sorted(groups.items()):
         ids = {m.id for m in members}
@@ -467,6 +470,12 @@ async def _existing_format_rows(conn: AsyncConnection, ids: Collection[int]) -> 
         )
         existing.update(dict((await conn.execute(stmt)).fetchall()))
     return existing
+
+
+async def _outside_format_rows(conn: AsyncConnection, loaded: Collection[int]) -> list[AliasRow]:
+    """Format-key rows whose variant is not in *loaded*."""
+    rows = (await conn.execute(select(*_ROW_COLS).where(_FK))).fetchall()
+    return [_alias_row(r) for r in rows if r.variant_id not in loaded]
 
 
 async def _write_relink(
@@ -538,6 +547,10 @@ async def relink(
     tombstones = await tombstone_ids(conn, None if ids is None else sorted(loaded))
     members = [m.id for ms in _format_key_groups(loaded, tombstones, {}).values() for m in ms]
     groups = _format_key_groups(loaded, tombstones, await _link_counts(conn, members))
+    if ids is not None and {r.variant for r in plan.other_rows} & set(members):
+        # A loop needs a non-format-key row out of a group member; only then
+        # can it pass through format-key rows this targeted run did not load.
+        plan.outside = await _outside_format_rows(conn, loaded)
     desired = _plan_format_key(groups, plan, result)
 
     stale = [v for v, c in plan.existing.items() if desired.get(v) != c]

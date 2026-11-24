@@ -656,3 +656,30 @@ async def test_relink_never_deletes_classification_rows(pg_conn):
         await pg_conn.execute(select(func.count()).select_from(entity_classifications))
     ).scalar_one()
     assert before == after
+
+
+# ── CR findings ──────────────────────────────────────────────────────
+
+
+async def _raw(conn, v, c, *, scope=None, **values):
+    row = {"source": "manual", "rule": None} | values
+    await conn.execute(
+        insert(entity_aliases).values(variant_id=v, canonical_id=c, scope_license=scope, **row)
+    )
+
+
+@PG
+async def test_targeted_relink_sees_rule_rows_of_unloaded_entities(pg_conn):
+    """CR 1: a loop through an unloaded entity's format-key row is still caught."""
+    v = await _ent(pg_conn, "ZQOUT, ALPHA")
+    c = await _ent(pg_conn, "ALPHA ZQOUT")
+    x = await _ent(pg_conn, "ZQOUTX, BETA")
+    y = await _ent(pg_conn, "BETA ZQOUTX")
+    await _raw(pg_conn, c, x, scope="L1")
+    await _raw(pg_conn, x, y, source="rule", rule="format_key")
+    await _raw(pg_conn, y, v, scope="L1", source="rule", rule="middle_names")
+
+    result = await relink(pg_conn, [v])
+
+    assert result.skipped_cycle == 1
+    assert _fk(v, c) not in await _rows(pg_conn, v)
