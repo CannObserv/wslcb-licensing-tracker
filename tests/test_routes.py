@@ -611,6 +611,29 @@ class TestAdditionalNamesNotice:
         finally:
             _stop(patches)
 
+    def test_chip_links_to_the_party_and_shows_every_spelling(self):
+        """#263: one chip per party, printed spellings joined, linked to the party."""
+        record = self._make_record_dict(3, has_flag=False)
+        record["entities"] = {
+            "applicant": [
+                {
+                    "id": 80,
+                    "name": "RANDAL ANDERSON / RANDAL JUAN ANDERSON",
+                    "names": ["RANDAL ANDERSON", "RANDAL JUAN ANDERSON"],
+                    "entity_ids": [81, 80],
+                }
+            ],
+            "previous_applicant": [],
+        }
+        client, patches = self._make_client_for_record(record)
+        try:
+            body = client.get("/record/3").text
+            assert body.count('href="/entity/80"') == 1
+            assert "RANDAL ANDERSON / RANDAL JUAN ANDERSON" in body
+            assert 'href="/entity/81"' not in body
+        finally:
+            _stop(patches)
+
     def test_notice_absent_when_flag_not_set(self):
         record = self._make_record_dict(
             2, has_flag=False, applicants="NOTICE TEST LLC; JANE DOE; BOB SMITH"

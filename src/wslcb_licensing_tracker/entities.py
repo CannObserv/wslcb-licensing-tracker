@@ -627,11 +627,15 @@ async def parse_and_link_entities(
 async def get_record_entities(
     conn: AsyncConnection, record_ids: list[int]
 ) -> dict[int, dict[str, list[dict]]]:
-    """Batch-fetch entities for a list of record ids.
+    """Batch-fetch the record chips for a list of record ids.
 
     Returns ``{record_id: {"applicant": [...], "previous_applicant": [...]}}``.
-    Each entity dict has keys ``id``, ``name``, ``entity_type``,
-    ``entity_subtype``, ``classification_source``.
+    Within a role, links are grouped by their alias party
+    (``record_entities.party_id``, #263): one chip per party, in the order
+    of its first printed position.  Each chip has keys ``id`` (the party, its
+    link target), ``name`` (the printed spellings joined with `` / ``),
+    ``names``, ``entity_ids``, and the first link's ``entity_type``,
+    ``entity_subtype`` and ``classification_source``.
     """
     if not record_ids:
         return {}
@@ -648,6 +652,7 @@ async def get_record_entities(
                 record_entities.c.record_id,
                 record_entities.c.role,
                 record_entities.c.position,
+                record_entities.c.party_id,
                 entities.c.id.label("entity_id"),
                 entities.c.name,
                 entities.c.entity_type,
@@ -664,22 +669,26 @@ async def get_record_entities(
             )
         )
         rows = (await conn.execute(stmt)).mappings().all()
+        chips: dict[tuple[int, str, int], dict] = {}
         for r in rows:
-            rid = r["record_id"]
-            role = r["role"]
-            if rid not in result:
-                result[rid] = {"applicant": [], "previous_applicant": []}
-            if role not in result[rid]:
-                result[rid][role] = []
-            result[rid][role].append(
-                {
-                    "id": r["entity_id"],
-                    "name": r["name"],
+            role_chips = result.setdefault(r["record_id"], {}).setdefault(r["role"], [])
+            key = (r["record_id"], r["role"], r["party_id"])
+            chip = chips.get(key)
+            if chip is None:
+                chip = {
+                    "id": r["party_id"],
+                    "names": [],
+                    "entity_ids": [],
                     "entity_type": r["entity_type"],
                     "entity_subtype": r["entity_subtype"],
                     "classification_source": r["classification_source"],
                 }
-            )
+                chips[key] = chip
+                role_chips.append(chip)
+            chip["names"].append(r["name"])
+            chip["entity_ids"].append(r["entity_id"])
+        for chip in chips.values():
+            chip["name"] = " / ".join(chip["names"])
 
     return result
 
