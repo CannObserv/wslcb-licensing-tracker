@@ -36,7 +36,7 @@ A new module, `entity_aliases.py`, owns the layer. It has four parts.
 - **Relink.**
   - `relink(conn, entity_ids=None)` computes the desired `rule='format_key'` rows for the affected groups, or for all groups when `entity_ids` is None, and diffs them against the stored rows. It deletes what's stale, inserts what's missing and leaves the rest. A second run therefore changes 0 rows, and `created_at` survives.
   - It refreshes `entities.link_key` first, for every entity it touches.
-  - It takes `pg_advisory_xact_lock(<const>)`, so the CLI and an ingest never race on the same group.
+  - Rule-row writes are `ON CONFLICT (variant_id, scope_license, source) DO UPDATE`. No advisory lock: ingest commits every 200 records, so a lock taken per record would be held for a whole batch and stall admin requests. A rare race leaves at most one stale rule row, which the next relink of that group, or a full one, corrects. *(Revised during step 1.)*
 
 Rules are written so #265 can add `rule='middle_names'` as a second planner
 without touching the diff or write code.
