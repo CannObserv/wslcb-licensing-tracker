@@ -309,8 +309,8 @@ wslcb-licensing-tracker/
 └── docs/                   # Operations and architecture documentation
     ├── ADDRESS_VALIDATION.md # address-validator client: key + flags, renewal TTL + pacing (#195), address commands
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
-    ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key rule, relink triggers (#262)
     ├── DISK_GC.md           # Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
+    ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key rule, relink triggers (#262)
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
