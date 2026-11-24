@@ -7,11 +7,13 @@ for the three lightweight check functions.
 
 import logging
 
-from sqlalchemy import delete, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .enrichment import STEP_VERSIONS
 from .entities import entity_source, extract_entity_names
 from .models import locations as locations_table
+from .models import record_enrichments
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,25 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
         "no_provenance": no_provenance,
         "no_enrichment_tracking": no_enrichment,
     }
+
+
+async def check_enrichment_versions(conn: AsyncConnection) -> dict[str, int]:
+    """Count stamps behind each live step's current version (#267).
+
+    Returns ``{step: count}`` for every step in ``enrichment.STEP_VERSIONS``.
+    A record without a stamp is not counted here (``no_enrichment_tracking``
+    covers that). Behind means "processed by older logic", not broken.
+    """
+    counts = dict.fromkeys(STEP_VERSIONS, 0)
+    rows = await conn.execute(
+        select(record_enrichments.c.step, record_enrichments.c.version, func.count())
+        .where(record_enrichments.c.step.in_(list(STEP_VERSIONS)))
+        .group_by(record_enrichments.c.step, record_enrichments.c.version)
+    )
+    for step, version, n in rows:
+        if version != str(STEP_VERSIONS[step]):
+            counts[step] += n
+    return counts
 
 
 async def check_endorsement_anomalies(conn: AsyncConnection) -> dict:
@@ -217,13 +238,25 @@ async def run_all_checks(conn: AsyncConnection, *, fix: bool = False) -> dict:
     dupes = await check_entity_duplicates(conn)
     report["entity_duplicates"] = {"count": len(dupes), "details": dupes}
 
+    report["enrichment_versions"] = await check_enrichment_versions(conn)
+
     return report
 
 
 _DETAIL_PREVIEW_LIMIT = 5
 
 
-def print_report(report: dict) -> int:  # noqa: C901, PLR0912
+def _print_enrichment_versions(behind: dict[str, int]) -> None:
+    """Print per-step stale-stamp counts (#267).
+
+    Information, not issues: they never change ``print_report``'s total.
+    """
+    for step, n in behind.items():
+        mark = "\u2139\ufe0f " if n else "\u2705"
+        print(f"{mark} Enrichment {step}: {n} record(s) behind v{STEP_VERSIONS[step]}")
+
+
+def print_report(report: dict) -> int:  # noqa: C901, PLR0912, PLR0915
     """Print a human-readable integrity report to stdout.
 
     Returns the total number of issues found (0 = clean).
@@ -290,6 +323,8 @@ def print_report(report: dict) -> int:  # noqa: C901, PLR0912
             print(f"     ... and {n - _DETAIL_PREVIEW_LIMIT} more")
     else:
         print("\u2705 No entity duplicates")
+
+    _print_enrichment_versions(report.get("enrichment_versions", {}))
 
     print()
     if total_issues:

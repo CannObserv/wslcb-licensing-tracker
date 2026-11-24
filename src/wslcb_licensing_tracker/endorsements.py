@@ -19,13 +19,13 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .enrichment import STEP_ENDORSEMENTS, stamp_enrichment
 from .models import (
     endorsement_aliases,
     endorsement_codes,
     license_endorsements,
     license_records,
     record_endorsements,
-    record_enrichments,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 # Handles names that themselves contain commas (e.g. "< 250,000 LITERS").
 CODE_NAME_RE = re.compile(r"^(\d+),\s+(.+)$")
 
-# Endorsement enrichment version — bump when processing logic changes.
-_ENDORSEMENT_REPROCESS_VERSION = 2
+# Changing what process_record produces for the same input and mappings? Bump
+# the ``endorsements`` version in ``enrichment.STEP_VERSIONS`` (#267).
 
 
 # ---
@@ -222,8 +222,9 @@ async def reprocess_endorsements(
 
     Treats ``record_endorsements`` as derived data: existing rows are deleted
     and rebuilt from ``license_records.license_type`` using current
-    ``endorsement_codes`` mappings. The ``record_enrichments`` version stamp
-    is updated to ``_ENDORSEMENT_REPROCESS_VERSION`` for every processed record.
+    ``endorsement_codes`` mappings. Every processed record is stamped at the
+    ``endorsements`` step's current version (``enrichment.STEP_VERSIONS``,
+    #267); ingest stamps the same one.
 
     Parameters
     ----------
@@ -283,23 +284,7 @@ async def reprocess_endorsements(
         endorsements_linked += linked
         records_processed += 1
 
-        stmt = (
-            pg_insert(record_enrichments)
-            .values(
-                record_id=rid,
-                step="endorsements",
-                completed_at=now,
-                version=str(_ENDORSEMENT_REPROCESS_VERSION),
-            )
-            .on_conflict_do_update(
-                index_elements=["record_id", "step"],
-                set_={
-                    "completed_at": now,
-                    "version": str(_ENDORSEMENT_REPROCESS_VERSION),
-                },
-            )
-        )
-        await conn.execute(stmt)
+        await stamp_enrichment(conn, rid, STEP_ENDORSEMENTS, completed_at=now)
 
     if dry_run:
         logger.info(

@@ -5,7 +5,6 @@ Uses SQLAlchemy Core expressions and the table objects from models.py.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -13,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .db import get_or_create_location, link_record_source
 from .endorsements import process_record
+from .enrichment import STEP_ENDORSEMENTS, STEP_ENTITIES, STEP_OUTCOME_LINK, stamp_enrichment
 from .entities import ADDITIONAL_NAMES_MARKERS, entity_source, parse_and_link_entities
 from .link_records import link_new_record
-from .models import license_records, record_enrichments
+from .models import license_records
 from .text_utils import clean_applicants_string, clean_entity_name
 
 logger = logging.getLogger(__name__)
@@ -53,16 +53,6 @@ class BatchResult:
     record_ids: list[int] = field(default_factory=list)
 
 
-# ------------------------------------------------------------------
-# Enrichment step names (canonical values for record_enrichments.step)
-# ------------------------------------------------------------------
-
-STEP_ENDORSEMENTS = "endorsements"
-STEP_ENTITIES = "entities"
-STEP_ADDRESS = "address"
-STEP_OUTCOME_LINK = "outcome_link"
-
-
 def _applicants_have_additional_names(*applicant_strings: str | None) -> bool:
     """Return True if any applicant string contains an ADDITIONAL NAMES ON FILE marker."""
     for s in applicant_strings:
@@ -71,28 +61,6 @@ def _applicants_have_additional_names(*applicant_strings: str | None) -> bool:
         if any(part.strip() in ADDITIONAL_NAMES_MARKERS for part in s.split(";")):
             return True
     return False
-
-
-async def _record_enrichment(
-    conn: AsyncConnection,
-    record_id: int,
-    step: str,
-    version: str = "1",
-) -> None:
-    """Record that an enrichment step completed for a record.
-
-    Uses ON CONFLICT DO UPDATE so re-running a step updates the timestamp.
-    """
-    now = datetime.now(UTC)
-    stmt = (
-        pg_insert(record_enrichments)
-        .values(record_id=record_id, step=step, completed_at=now, version=version)
-        .on_conflict_do_update(
-            index_elements=["record_id", "step"],
-            set_={"completed_at": now, "version": version},
-        )
-    )
-    await conn.execute(stmt)
 
 
 async def insert_record(
@@ -205,7 +173,7 @@ async def _enrich_new_record(
     try:
         async with conn.begin_nested():
             await process_record(conn, record_id, record.get("license_type", ""))
-            await _record_enrichment(conn, record_id, STEP_ENDORSEMENTS)
+            await stamp_enrichment(conn, record_id, STEP_ENDORSEMENTS)
     except Exception:
         logger.exception("Endorsement enrichment failed for record %d", record_id)
 
@@ -225,7 +193,7 @@ async def _enrich_new_record(
                     prev_applicants,
                     role="previous_applicant",
                 )
-            await _record_enrichment(conn, record_id, STEP_ENTITIES)
+            await stamp_enrichment(conn, record_id, STEP_ENTITIES)
     except Exception:
         logger.exception("Entity enrichment failed for record %d", record_id)
 
@@ -234,7 +202,7 @@ async def _enrich_new_record(
         try:
             async with conn.begin_nested():
                 await link_new_record(conn, record_id)
-                await _record_enrichment(conn, record_id, STEP_OUTCOME_LINK)
+                await stamp_enrichment(conn, record_id, STEP_OUTCOME_LINK)
         except Exception:
             logger.exception("Outcome link enrichment failed for record %d", record_id)
 

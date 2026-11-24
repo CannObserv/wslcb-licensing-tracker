@@ -157,13 +157,14 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 ### `record_enrichments` (enrichment tracking)
 - Tracks which enrichment steps have been applied to each record
 - `record_id` — FK to `license_records(id)`, `ON DELETE CASCADE`
-- `step` — enrichment step name: `'endorsements'`, `'entities'`, `'address'`, `'outcome_link'`
+- `step` — enrichment step name: `'endorsements'`, `'entities'`, `'outcome_link'`; `'address'` is retired (SQLite-era rows only, nothing writes it since #97)
 - `completed_at` — TIMESTAMPTZ of when the step finished
-- `version` — schema/logic version of the step (default `'1'`); allows re-processing when step logic changes
+- `version` — logic version of the step that produced the record's derived rows
 - Composite PK `(record_id, step)`
-- Written by `_record_enrichment()` in `pipeline.py` after each enrichment step succeeds; uses `INSERT OR REPLACE` so re-runs update the timestamp
-- Step name constants exported from `pipeline.py`: `STEP_ENDORSEMENTS`, `STEP_ENTITIES`, `STEP_ADDRESS`, `STEP_OUTCOME_LINK`
-- Enables targeted re-processing queries, e.g., find records missing entity linking: `WHERE id NOT IN (SELECT record_id FROM record_enrichments WHERE step = 'entities')`
+- Written by `enrichment.stamp_enrichment()` from ingest (`pipeline._enrich_new_record`) and from `reprocess-entities` / `reprocess-endorsements`; upserts, so a re-run moves timestamp and version forward
+- Step names and current versions live in `enrichment.py` (`STEP_VERSIONS`), one per step, shared by ingest and reprocess (#267). Bump a step's version there when its output changes for the same input
+- A stamp below its step's current version is *behind*; `wslcb db check` prints per-step counts (information, not counted as issues). Ingest wrote `'1'` for every step before #267, so pre-#267 `'1'` stamps say nothing about the logic used
+- Enables targeted re-processing queries, e.g., records behind on entities: `WHERE step = 'entities' AND version <> '<STEP_VERSIONS["entities"]>'`
 
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, resolved_endorsements, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
