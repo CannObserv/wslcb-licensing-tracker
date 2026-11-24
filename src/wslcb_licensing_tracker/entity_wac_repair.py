@@ -35,6 +35,7 @@ from .entities import (
     plan_regex_rows,
     renumber_link_positions,
 )
+from .entity_aliases import relink
 from .entity_classification import current_answers, resolve_entities
 from .models import entities, entity_classifications, license_records, record_entities
 from .text_utils import clean_entity_name, strip_wac_annotation
@@ -166,6 +167,8 @@ async def _strip(conn: AsyncConnection, *, dry_run: bool) -> dict:
         if regex_rows:
             await conn.execute(insert(entity_classifications), regex_rows)
     resolved = await resolve_entities(conn, survivors) if survivors else None
+    # A rename changes the link key; the survivors rejoin their alias groups (#262).
+    await relink(conn, survivors)
 
     unmatched = await _unmatched_records(conn, pairs)
     remaining = sum(

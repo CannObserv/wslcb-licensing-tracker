@@ -5,10 +5,12 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from wslcb_licensing_tracker.entities import REGEX_MODEL
+from wslcb_licensing_tracker.entity_aliases import relink
 from wslcb_licensing_tracker.entity_classification import record_manual
 from wslcb_licensing_tracker.entity_wac_repair import strip_wac_suffixes
 from wslcb_licensing_tracker.models import (
     entities,
+    entity_aliases,
     entity_classifications,
     entity_review_flags,
     record_entities,
@@ -142,6 +144,35 @@ class TestRename:
         assert {"jev", "manual", "regex"} <= set(await _sources(pg_conn, eid))
         assert await _triple(pg_conn, eid) == ("organization", "business", "manual")
         assert await _links(pg_conn, rid) == [(eid, 0)]
+
+    async def test_rename_relinks_the_alias_group(self, pg_conn, standard_new_application):
+        """A renamed entity's link_key is refreshed and it joins its format-key group (#262)."""
+        person = ("person", None)
+        twin = await _entity(pg_conn, "T262 JOHN ZQWAC", regex=person)
+        await relink(pg_conn, [twin])  # keyed, as relink-entities leaves prod
+        eid = await _entity(pg_conn, "ZQWAC, T262 JOHN PER WAC 314-55-035", regex=person)
+        rid = await _record(
+            pg_conn,
+            standard_new_application,
+            "t262_r1",
+            "BIZ; ZQWAC, T262 JOHN PER WAC 314-55-035",
+        )
+        await _link(pg_conn, rid, eid, 0)
+
+        await strip_wac_suffixes(pg_conn)
+
+        key = (
+            await pg_conn.execute(select(entities.c.link_key).where(entities.c.id == eid))
+        ).scalar_one()
+        assert key == "T262 JOHN ZQWAC"
+        rows = (
+            await pg_conn.execute(
+                select(entity_aliases.c.variant_id, entity_aliases.c.canonical_id).where(
+                    entity_aliases.c.variant_id == eid
+                )
+            )
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [(eid, twin)]
 
     async def test_rename_refreshes_a_stale_regex_row(self, pg_conn, standard_new_application):
         eid = await _entity(

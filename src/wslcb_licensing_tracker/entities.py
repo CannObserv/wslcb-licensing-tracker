@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .enrichment import STEP_ENTITIES, stamp_enrichment
+from .entity_aliases import key_mates, link_key, relink, repoint_alias_rows
 from .entity_classification import (
     SourceAnswer,
     confirmed_noise_ids,
@@ -509,6 +510,7 @@ async def get_or_create_entity(conn: AsyncConnection, name: str) -> int:
             entity_type=entity_type,
             entity_subtype=entity_subtype,
             classification_source="regex",
+            link_key=link_key(normalized, entity_type),
         )
         .on_conflict_do_nothing(index_elements=["name"])
         .returning(entities.c.id)
@@ -731,8 +733,10 @@ async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int)
 
     Re-links ``record_entities`` rows (a record already linked to the
     canonical entity keeps the lower position), moves the duplicate's manual
-    classification rows and review flags, then deletes it; its regex/Jev rows
-    cascade away.  Does not re-resolve the canonical entity (``resolve_entities``).
+    classification rows, review flags and operator alias rows (#262), then
+    deletes it; its regex/Jev and rule alias rows cascade away, and the
+    groups involved are relinked.  Does not re-resolve the canonical entity
+    (``resolve_entities``).
     A conflict leaves a gap in that record's positions; ``renumber_link_positions``
     closes it (``merge_duplicate_entities`` does not call it).
     """
@@ -795,9 +799,13 @@ async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int)
         .where(entity_review_flags.c.entity_id == dirty_id)
         .values(entity_id=canon_id)
     )
+    # Operator alias rows and dismissals move too (#262); rule rows cascade.
+    relink_ids = await repoint_alias_rows(conn, dirty_id, canon_id)
+    relink_ids |= await key_mates(conn, [dirty_id])
     # Delete remaining dirty links (conflict cases) and the entity itself
     await conn.execute(delete(record_entities).where(record_entities.c.entity_id == dirty_id))
     await conn.execute(delete(entities).where(entities.c.id == dirty_id))
+    await relink(conn, relink_ids)
 
 
 async def reprocess_entities(
@@ -814,6 +822,8 @@ async def reprocess_entities(
     ``entity_source``, #266) using the current entity-normalization logic.
     Every processed record is stamped at the ``entities`` step's current
     version (``enrichment.STEP_VERSIONS``, #267); ingest stamps the same one.
+    Alias rule rows are then relinked: every group for a full run, the
+    record's entities for one record (#262).
 
     Parameters
     ----------
@@ -864,6 +874,28 @@ async def reprocess_entities(
         records_processed += 1
 
         await stamp_enrichment(conn, rid, STEP_ENTITIES, completed_at=now)
+
+    if not dry_run:
+        # A reprocess can create new spellings; they join their alias groups (#262).
+        linked_ids = (
+            None
+            if record_id is None
+            else set(
+                (
+                    await conn.execute(
+                        select(record_entities.c.entity_id).where(
+                            record_entities.c.record_id == record_id
+                        )
+                    )
+                ).scalars()
+            )
+        )
+        relinked = await relink(conn, linked_ids)
+        logger.info(
+            "reprocess_entities: relink inserted %d, deleted %d alias row(s).",
+            relinked.inserted,
+            relinked.deleted,
+        )
 
     if dry_run:
         logger.info(
@@ -1044,9 +1076,12 @@ async def _purge_entities(conn: AsyncConnection, entity_ids: list[int]) -> None:
             .distinct()
         )
     ).fetchall()
+    mates = await key_mates(conn, entity_ids)
     await conn.execute(delete(record_entities).where(record_entities.c.entity_id.in_(entity_ids)))
     await conn.execute(delete(entities).where(entities.c.id.in_(entity_ids)))
     await renumber_link_positions(conn, [tuple(r) for r in affected])
+    # Their rule alias rows cascaded away; the groups they were in re-elect (#262).
+    await relink(conn, mates)
 
 
 async def renumber_link_positions(conn: AsyncConnection, pairs: list[tuple[int, str]]) -> None:

@@ -212,6 +212,9 @@ entities = Table(
     # Resolved from entity_classifications by entity_classification.resolve_entities (#206).
     Column("entity_subtype", Text),
     Column("classification_source", Text, nullable=False, server_default="regex"),
+    # Format key for alias rules (#262): derived from name + resolved type by
+    # entity_aliases.link_key; written by entity_aliases.relink. NULL = not keyed.
+    Column("link_key", Text),
     UniqueConstraint("name", name="uq_entities_name"),
     # NOTE: migration creates this as a functional index: lower(name).
     # SQLAlchemy Core can't express functional indexes inline on Table objects,
@@ -220,6 +223,7 @@ entities = Table(
     # discrepancy but it is harmless and expected.
     Index("idx_entities_name_lower", "name"),
     Index("idx_entities_subtype", "entity_subtype"),
+    Index("idx_entities_link_key", "link_key"),
     CheckConstraint(
         "entity_subtype IS NULL OR entity_subtype IN "
         "('business', 'nonprofit', 'trust', 'estate', 'tribe', 'government', 'unknown')",
@@ -253,6 +257,59 @@ record_entities = Table(
     Column("position", Integer, nullable=False, server_default="0"),
     Index("idx_re_entity", "entity_id"),
     Index("idx_re_role", "role"),
+)
+
+# Entity alias layer (#262; spec #247 §1).  A variant entity resolves to a
+# canonical one, everywhere (scope_license NULL) or on one licence.
+# source='rule' rows are derived (entity_aliases.relink); 'manual' rows and
+# dismissals are operator data.
+entity_aliases = Table(
+    "entity_aliases",
+    metadata,
+    Column("id", Integer, Identity(), primary_key=True),
+    Column("variant_id", Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("canonical_id", Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("scope_license", Text),
+    Column("source", Text, nullable=False),
+    Column("rule", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("created_by", Text),
+    Column("note", Text),
+    UniqueConstraint(
+        "variant_id",
+        "scope_license",
+        "source",
+        name="uq_entity_aliases_variant_scope_source",
+        postgresql_nulls_not_distinct=True,
+    ),
+    CheckConstraint("variant_id <> canonical_id", name="ck_entity_aliases_not_self"),
+    CheckConstraint("source IN ('rule', 'manual')", name="ck_entity_aliases_source"),
+    CheckConstraint(
+        "(source = 'rule') = (rule IS NOT NULL)", name="ck_entity_aliases_rule_iff_rule_source"
+    ),
+    Index("idx_entity_aliases_canonical", "canonical_id"),
+)
+
+# An unordered pair (a < b) an operator said are not the same party (#262).
+entity_alias_dismissals = Table(
+    "entity_alias_dismissals",
+    metadata,
+    Column("id", Integer, Identity(), primary_key=True),
+    Column("entity_id_a", Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("entity_id_b", Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("scope_license", Text),
+    Column("dismissed_by", Text, nullable=False),
+    Column("dismissed_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("note", Text),
+    UniqueConstraint(
+        "entity_id_a",
+        "entity_id_b",
+        "scope_license",
+        name="uq_entity_alias_dismissals_pair_scope",
+        postgresql_nulls_not_distinct=True,
+    ),
+    CheckConstraint("entity_id_a < entity_id_b", name="ck_entity_alias_dismissals_ordered"),
+    Index("idx_entity_alias_dismissals_b", "entity_id_b"),
 )
 
 # Append-only per-source classification answers (#206).  The latest

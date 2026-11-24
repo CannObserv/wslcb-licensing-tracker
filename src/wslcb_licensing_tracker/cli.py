@@ -6,7 +6,7 @@ All operational commands are exposed as click subcommands grouped by domain:
   backfill-addresses, renew-addresses, refresh-addresses, compress-snapshots, compress-diffs,
   compress-stragglers
 - ``db``: check, rebuild-links, cleanup-redundant, reprocess-endorsements, reprocess-entities,
-  reclassify-entities, ignore-jev, classify-entities
+  reclassify-entities, relink-entities, ignore-jev, classify-entities
 - ``admin``: add-user, list-users, remove-user
 - ``ops``: backup, restore, restore-archive
 
@@ -73,6 +73,8 @@ from .endorsements import reprocess_endorsements as run_reprocess_endorsements
 from .engine import create_engine_from_env, get_db
 from .entities import reclassify_entities as run_reclassify_entities
 from .entities import reprocess_entities as run_reprocess_entities
+from .entity_aliases import RelinkResult
+from .entity_aliases import relink as run_relink
 from .entity_classification import set_jev_ignored as run_set_jev_ignored
 from .entity_wac_repair import strip_wac_suffixes as run_strip_wac_suffixes
 from .integrity import print_report
@@ -636,6 +638,39 @@ def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
             f"Reprocessed {result['records_processed']:,} record(s); "
             f"{result['entities_linked']:,} entity link(s) written."
         )
+
+
+@db.command("relink-entities")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+def relink_entities(dry_run: bool) -> None:
+    """Rebuild the rule-made entity alias rows and every entity's link key (#262).
+
+    Operator links and dismissals are never touched.  Idempotent: a second
+    run changes nothing.  Run after a migration or a rule change; ingest,
+    reprocess-entities and classification changes relink as they go.
+    """
+
+    async def _run(engine: AsyncEngine) -> RelinkResult:
+        async with get_db(engine) as conn:
+            result = await run_relink(conn, dry_run=dry_run)
+            if not dry_run:
+                await conn.commit()
+            return result
+
+    r = _run_with_engine(_run)
+    tag = "[dry-run] " if dry_run else ""
+    click.echo(f"{tag}Format-key groups:")
+    for kind in sorted(r.groups):
+        click.echo(f"  {kind}: {r.groups[kind]:,} group(s), {r.variants.get(kind, 0):,} variant(s)")
+    verb = "Would write" if dry_run else "Wrote"
+    click.echo(
+        f"{tag}{verb} rule rows: {r.inserted:,} inserted, {r.deleted:,} deleted, "
+        f"{r.kept:,} kept; {r.keys_updated:,} link key(s) updated."
+    )
+    click.echo(
+        f"Skipped: {r.skipped_dismissed:,} blocked by a dismissal, "
+        f"{r.skipped_cycle:,} would close a cycle."
+    )
 
 
 @db.command("reclassify-entities")

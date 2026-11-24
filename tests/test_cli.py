@@ -279,6 +279,36 @@ class TestDbGroup:
         assert result.exit_code == 0
         assert "10" in result.output
 
+    @pytest.mark.parametrize("dry_run", [True, False])
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_relink", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_relink_entities(self, mock_engine, mock_rl, mock_gdb, dry_run):
+        """wslcb db relink-entities reports the rule-row diff (#262)."""
+        from wslcb_licensing_tracker.entity_aliases import RelinkResult
+
+        mock_engine.return_value = mock_async_engine()
+        mock_rl.return_value = RelinkResult(
+            groups={"person": 8896, "organization": 22},
+            variants={"person": 8914, "organization": 32},
+            kept=0,
+            inserted=8946,
+            deleted=0,
+            skipped_cycle=0,
+            skipped_dismissed=1,
+            keys_updated=67653,
+        )
+        args = ["db", "relink-entities"] + (["--dry-run"] if dry_run else [])
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code == 0, result.output
+        assert mock_rl.await_args.kwargs["dry_run"] is dry_run
+        assert ("[dry-run]" in result.output) is dry_run
+        assert "person: 8,896 group(s), 8,914 variant(s)" in result.output
+        assert "organization: 22 group(s), 32 variant(s)" in result.output
+        assert "8,946 inserted, 0 deleted, 0 kept" in result.output
+        assert "67,653 link key(s)" in result.output
+        assert "1 blocked by a dismissal" in result.output
+
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
     @patch("wslcb_licensing_tracker.cli.run_reclassify_entities", new_callable=AsyncMock)
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")

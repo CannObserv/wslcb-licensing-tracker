@@ -108,6 +108,10 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `has_additional_names` — `INTEGER NOT NULL DEFAULT 0`; set to `1` at ingest time when `applicants` or `previous_applicants` contains an `ADDITIONAL_NAMES_MARKERS` token. Used to show the notice *"+ WSLCB source signaled additional entities may be on file"* on the detail page. Backfilled by migration 010.
 - `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — shadow columns storing the as-parsed values from the source *before* name cleaning (uppercase, punctuation stripping); going forward, `insert_record()` saves the raw values here, then writes cleaned values to the primary columns; for existing records, these were backfilled with the already-cleaned values (originals lost)
 - `merge_duplicate_entities()` merges entities whose names differ only by case into the lowest id, moving its links. It ran once, through `backfill_entities()` in data migration `0005_backfill_entities` (`data_migration.py`), not at every startup
+- `link_key` (#262) — derived alias format key; index `idx_entities_link_key`
+
+### `entity_aliases`, `entity_alias_dismissals` (#262)
+- Alias links and dismissals: `rule` rows derived (`relink-entities`), the rest operator data. See [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md)
 
 ### `entity_classifications` (per-source classification answers)
 - Append-only (#206): one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)

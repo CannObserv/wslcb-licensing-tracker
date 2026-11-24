@@ -8,7 +8,8 @@ row.  A source's current answer is its latest non-ignored row.
 
 Also holds the operator-input helpers (manual rows, protected / confirmed-noise
 sets) and the reversible Jev rollback.  Must not import ``entities.py``, which
-imports this module.
+imports this module.  ``entity_aliases`` imports it too, so its relink hooks
+are imported at call time (#262).
 """
 
 import logging
@@ -21,7 +22,13 @@ from sqlalchemy.sql.expression import ColumnElement, Exists
 from sqlalchemy.sql.selectable import Subquery
 
 from .config import jev_confidence_threshold
-from .models import entities, entity_classifications, entity_review_flags
+from .models import (
+    entities,
+    entity_alias_dismissals,
+    entity_aliases,
+    entity_classifications,
+    entity_review_flags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +211,22 @@ async def resolve_entities(
         ]
         for i in range(0, len(params), _CHUNK):
             await conn.execute(stmt, params[i : i + _CHUNK])
+    type_changed = [c.entity_id for c in changes if c.old[0] != c.new[0]]
+    if type_changed:
+        await _on_type_change(conn, type_changed)
     return ResolveResult(examined=len(rows), changes=changes)
+
+
+async def _on_type_change(conn: AsyncConnection, entity_ids: list[int]) -> None:
+    """Relink the alias groups of *entity_ids* and flag manual rows now across types (#262).
+
+    Runs in the caller's transaction, so a rule row never crosses types.
+    """
+    # entity_aliases imports this module (tombstone_ids); import at call time.
+    from .entity_aliases import flag_type_disagreements, relink  # noqa: PLC0415
+
+    await relink(conn, entity_ids)
+    await flag_type_disagreements(conn, entity_ids)
 
 
 def _validate_manual(entity_type: str, entity_subtype: str | None) -> None:
@@ -241,11 +263,20 @@ async def record_manual(  # noqa: PLR0913
 ) -> int:
     """Store an operator's classification for *entity_id*, re-resolve it, and return the row id.
 
-    Raises ``ValueError`` for a bad type/subtype combination and
+    Raises ``ValueError`` for a bad type/subtype combination, or for
+    ``not_a_name`` while the entity is in a manual alias row (#262), and
     ``LookupError`` when the entity does not exist; nothing is written then.
+    The entity's alias groups are relinked in the same transaction.
     """
     _validate_manual(entity_type, entity_subtype)
     await _require_entity(conn, entity_id)
+    from .entity_aliases import in_manual_alias, relink  # noqa: PLC0415 — see _on_type_change
+
+    if entity_type == NOT_A_NAME and await in_manual_alias(conn, entity_id):
+        msg = (
+            f"entity {entity_id} is in an operator alias link; unlink it before marking not-a-name"
+        )
+        raise ValueError(msg)
     row_id = (
         await conn.execute(
             insert(entity_classifications)
@@ -261,6 +292,8 @@ async def record_manual(  # noqa: PLR0913
         )
     ).scalar_one()
     await resolve_entities(conn, [entity_id])
+    # A not-a-name mark leaves the resolved type alone; relink drops its rule rows.
+    await relink(conn, [entity_id])
     logger.info(
         "Manual classification for entity %d: %s/%s by %s",
         entity_id,
@@ -286,7 +319,10 @@ async def clear_manual(conn: AsyncConnection, entity_id: int) -> int:
         .values(ignored_at=func.now())
     )
     if result.rowcount:
+        from .entity_aliases import relink  # noqa: PLC0415 — see _on_type_change
+
         await resolve_entities(conn, [entity_id])
+        await relink(conn, [entity_id])
         logger.info("Cleared %d manual classification(s) for entity %d", result.rowcount, entity_id)
     return result.rowcount
 
@@ -312,15 +348,50 @@ def _open_flag(entity_id_col: ColumnElement[int]) -> Exists:
 async def protected_ids(conn: AsyncConnection) -> set[int]:
     """Entities an automated purge must keep.
 
-    Those with a current manual row of a real type, or an open review flag.
+    Those with a current manual row of a real type, an open review flag, or a
+    place in an operator alias decision: either end of a manual
+    ``entity_aliases`` row or of a dismissal (#262).
     """
     m = _current_manual()
     erf = entity_review_flags
+    ea = entity_aliases
+    ead = entity_alias_dismissals
+    manual = ea.c.source == "manual"
     stmt = union(
         select(m.c.entity_id).where(m.c.entity_type != NOT_A_NAME),
         select(erf.c.entity_id).where(erf.c.resolved_at.is_(None)),
+        select(ea.c.variant_id).where(manual),
+        select(ea.c.canonical_id).where(manual),
+        select(ead.c.entity_id_a),
+        select(ead.c.entity_id_b),
     )
     return set((await conn.execute(stmt)).scalars().all())
+
+
+async def tombstone_ids(conn: AsyncConnection, entity_ids: Sequence[int] | None = None) -> set[int]:
+    """Entities whose current manual answer is ``not_a_name`` (#247 §5, #262).
+
+    ``choose_classification`` ignores that answer, so a tombstone keeps a
+    resolved ``person``/``organization`` type; alias rules key off this set
+    instead.  Unlike ``confirmed_noise_ids`` an open flag doesn't matter here.
+    With *entity_ids*, only those are checked.
+    """
+    ec = entity_classifications
+    base = (
+        select(ec.c.entity_id, ec.c.entity_type)
+        .where((ec.c.source == "manual") & ec.c.ignored_at.is_(None))
+        .distinct(ec.c.entity_id)
+        .order_by(ec.c.entity_id, ec.c.id.desc())
+    )
+    stmts = (
+        [base]
+        if entity_ids is None
+        else [base.where(ec.c.entity_id.in_(chunk)) for chunk in _chunks(list(entity_ids))]
+    )
+    out: set[int] = set()
+    for stmt in stmts:
+        out |= {eid for eid, etype in (await conn.execute(stmt)).fetchall() if etype == NOT_A_NAME}
+    return out
 
 
 async def confirmed_noise_ids(conn: AsyncConnection) -> set[int]:

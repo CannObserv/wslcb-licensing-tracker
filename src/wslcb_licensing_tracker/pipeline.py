@@ -14,8 +14,9 @@ from .db import get_or_create_location, link_record_source
 from .endorsements import process_record
 from .enrichment import STEP_ENDORSEMENTS, STEP_ENTITIES, STEP_OUTCOME_LINK, stamp_enrichment
 from .entities import ADDITIONAL_NAMES_MARKERS, entity_source, parse_and_link_entities
+from .entity_aliases import relink
 from .link_records import link_new_record
-from .models import license_records
+from .models import license_records, record_entities
 from .text_utils import clean_applicants_string, clean_entity_name
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,20 @@ async def _enrich_new_record(
             await stamp_enrichment(conn, record_id, STEP_ENTITIES)
     except Exception:
         logger.exception("Entity enrichment failed for record %d", record_id)
+
+    # Alias rules for the record's entities (#262): a new spelling joins its group.
+    try:
+        async with conn.begin_nested():
+            linked = (
+                await conn.execute(
+                    select(record_entities.c.entity_id).where(
+                        record_entities.c.record_id == record_id
+                    )
+                )
+            ).scalars()
+            await relink(conn, set(linked))
+    except Exception:
+        logger.exception("Entity alias relink failed for record %d", record_id)
 
     # Outcome linking
     if options.link_outcomes:

@@ -26,6 +26,8 @@ EXPECTED_TABLES = {
     "entity_classifications",
     "entity_review_flags",
     "classification_runs",
+    "entity_aliases",
+    "entity_alias_dismissals",
 }
 
 

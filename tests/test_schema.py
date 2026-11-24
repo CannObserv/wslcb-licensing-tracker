@@ -14,6 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from wslcb_licensing_tracker.models import (
     classification_runs,
     entities,
+    entity_alias_dismissals,
+    entity_aliases,
     entity_classifications,
     entity_review_flags,
 )
@@ -206,3 +208,110 @@ async def test_ec_consistent_pairs_accepted(pg_conn):
             for t, s in _EC_PAIRS_ACCEPTED
         ],
     )
+
+
+# ── 0011 entity alias layer (#262) ──────────────────────────────────
+
+
+async def _alias(conn, variant, canonical, **values):
+    row = {"scope_license": None, "source": "rule", "rule": "format_key"} | values
+    await conn.execute(
+        insert(entity_aliases).values(variant_id=variant, canonical_id=canonical, **row)
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize(
+    ("kwargs", "constraint"),
+    [
+        ({"same": True}, "ck_entity_aliases_not_self"),
+        ({"source": "rule", "rule": None}, "ck_entity_aliases_rule_iff_rule_source"),
+        ({"source": "manual", "rule": "format_key"}, "ck_entity_aliases_rule_iff_rule_source"),
+        ({"source": "jev", "rule": None}, "ck_entity_aliases_source"),
+    ],
+)
+async def test_entity_alias_checks(pg_conn, kwargs, constraint):
+    a = await _entity(pg_conn, "SCHEMA TEST ALIAS A")
+    b = await _entity(pg_conn, "SCHEMA TEST ALIAS B")
+    same = kwargs.pop("same", False)
+    with pytest.raises(IntegrityError, match=constraint):
+        async with pg_conn.begin_nested():
+            await _alias(pg_conn, a, a if same else b, **kwargs)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_entity_alias_unique_treats_null_scope_as_equal(pg_conn):
+    a = await _entity(pg_conn, "SCHEMA TEST ALIAS U A")
+    b = await _entity(pg_conn, "SCHEMA TEST ALIAS U B")
+    c = await _entity(pg_conn, "SCHEMA TEST ALIAS U C")
+    await _alias(pg_conn, a, b)
+    with pytest.raises(IntegrityError, match="uq_entity_aliases_variant_scope_source"):
+        async with pg_conn.begin_nested():
+            await _alias(pg_conn, a, c)
+    # a scoped row and a manual row for the same variant are separate keys
+    await _alias(pg_conn, a, c, scope_license="355693")
+    await _alias(pg_conn, a, c, source="manual", rule=None)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_entity_alias_dismissal_checks_and_unique(pg_conn):
+    a = await _entity(pg_conn, "SCHEMA TEST DISMISS A")
+    b = await _entity(pg_conn, "SCHEMA TEST DISMISS B")
+    lo, hi = sorted((a, b))
+    with pytest.raises(IntegrityError, match="ck_entity_alias_dismissals_ordered"):
+        async with pg_conn.begin_nested():
+            await pg_conn.execute(
+                insert(entity_alias_dismissals).values(
+                    entity_id_a=hi, entity_id_b=lo, dismissed_by="a@example.com"
+                )
+            )
+    row = {"entity_id_a": lo, "entity_id_b": hi, "dismissed_by": "a@example.com"}
+    await pg_conn.execute(insert(entity_alias_dismissals).values(**row))
+    with pytest.raises(IntegrityError, match="uq_entity_alias_dismissals_pair_scope"):
+        async with pg_conn.begin_nested():
+            await pg_conn.execute(insert(entity_alias_dismissals).values(**row))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_entity_delete_cascades_alias_rows(pg_conn):
+    a = await _entity(pg_conn, "SCHEMA TEST ALIAS CASCADE A")
+    b = await _entity(pg_conn, "SCHEMA TEST ALIAS CASCADE B")
+    lo, hi = sorted((a, b))
+    await _alias(pg_conn, a, b)
+    await pg_conn.execute(
+        insert(entity_alias_dismissals).values(
+            entity_id_a=lo, entity_id_b=hi, dismissed_by="a@example.com"
+        )
+    )
+    await pg_conn.execute(entities.delete().where(entities.c.id == b))
+    assert (
+        await pg_conn.execute(
+            select(func.count()).select_from(entity_aliases).where(entity_aliases.c.variant_id == a)
+        )
+    ).scalar_one() == 0
+    assert (
+        await pg_conn.execute(
+            select(func.count())
+            .select_from(entity_alias_dismissals)
+            .where(entity_alias_dismissals.c.entity_id_a == lo)
+        )
+    ).scalar_one() == 0
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_entities_link_key_column_and_index(pg_conn):
+    cols = (
+        await pg_conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'entities' AND column_name = 'link_key'"
+            )
+        )
+    ).scalar_one_or_none()
+    assert cols == "link_key"
+    idx = (
+        await pg_conn.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_entities_link_key'")
+        )
+    ).scalar_one()
+    assert "(link_key)" in idx
