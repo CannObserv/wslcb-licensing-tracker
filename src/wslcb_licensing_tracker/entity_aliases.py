@@ -831,7 +831,24 @@ async def repoint_alias_rows(conn: AsyncConnection, dirty_id: int, canon_id: int
                 )
             )
         ).first()
-        if v == c or clash is not None:
+        if (
+            v == c
+            or clash is not None
+            or await _closes_cycle_after_merge(
+                conn, r.id, v, c, r.scope_license, dirty_id, canon_id
+            )
+        ):
+            # Dropping loses nothing: dirty *is* canon, so the rows left
+            # already state the same equivalence.
+            logger.info(
+                "Merge %d → %d: dropped manual alias %d (%d → %d, %s)",
+                dirty_id,
+                canon_id,
+                r.id,
+                r.variant_id,
+                r.canonical_id,
+                r.scope_license or "everywhere",
+            )
             await conn.execute(delete(_ea).where(_ea.c.id == r.id))
         else:
             await conn.execute(
@@ -872,6 +889,31 @@ async def repoint_alias_rows(conn: AsyncConnection, dirty_id: int, canon_id: int
             )
     touched.discard(dirty_id)
     return touched
+
+
+async def _closes_cycle_after_merge(  # noqa: PLR0913
+    conn: AsyncConnection,
+    row_id: int,
+    variant: int,
+    canonical: int,
+    scope: str | None,
+    dirty_id: int,
+    canon_id: int,
+) -> bool:
+    """True when re-pointed row ``variant → canonical`` would close a cycle once dirty is canon."""
+
+    def _m(e: int) -> int:
+        return canon_id if e == dirty_id else e
+
+    rows = (await conn.execute(select(_ea.c.id, *_ROW_COLS))).fetchall()
+    graph = [
+        AliasRow(_m(r.variant_id), _m(r.canonical_id), r.scope_license, r.source, r.rule)
+        for r in rows
+        if r.id != row_id
+        and not (r.source == "rule" and dirty_id in (r.variant_id, r.canonical_id))
+        and _m(r.variant_id) != _m(r.canonical_id)
+    ]
+    return find_cycle(variant, canonical, scope, graph) is not None
 
 
 async def key_mates(conn: AsyncConnection, entity_ids: Collection[int]) -> set[int]:

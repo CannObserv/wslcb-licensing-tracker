@@ -683,3 +683,17 @@ async def test_targeted_relink_sees_rule_rows_of_unloaded_entities(pg_conn):
 
     assert result.skipped_cycle == 1
     assert _fk(v, c) not in await _rows(pg_conn, v)
+
+
+@PG
+async def test_merge_drops_a_repointed_row_that_would_close_a_cycle(pg_conn):
+    """CR 2: X → canon and dirty → X; merging dirty into canon must not leave canon → X."""
+    dirty = await _ent(pg_conn, "ZQLOOP NU DUP")
+    canon = await _ent(pg_conn, "ZQLOOP NU")
+    x = await _ent(pg_conn, "ZQLOOP XI")
+    await add_manual_alias(pg_conn, x, canon, created_by="t@x")
+    await add_manual_alias(pg_conn, dirty, x, scope_license="L1", created_by="t@x")
+
+    await merge_entity_into(pg_conn, dirty, canon)
+
+    assert await _rows(pg_conn, canon, x) == {(x, canon, None, "manual", None)}
