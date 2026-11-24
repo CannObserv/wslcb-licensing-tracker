@@ -155,16 +155,12 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `ON DELETE CASCADE` on both FKs
 
 ### `record_enrichments` (enrichment tracking)
-- Tracks which enrichment steps have been applied to each record
-- `record_id` — FK to `license_records(id)`, `ON DELETE CASCADE`
-- `step` — enrichment step name: `'endorsements'`, `'entities'`, `'outcome_link'`; `'address'` is retired (SQLite-era rows only, nothing writes it since #97)
+- Which enrichment steps ran on each record, and with which logic version
+- `record_id` — FK to `license_records(id)`, `ON DELETE CASCADE`; composite PK `(record_id, step)`
+- `step` — `'endorsements'`, `'entities'`, `'outcome_link'`; `'address'` is retired (SQLite-era rows)
 - `completed_at` — TIMESTAMPTZ of when the step finished
-- `version` — logic version of the step that produced the record's derived rows
-- Composite PK `(record_id, step)`
-- Written by `enrichment.stamp_enrichment()` from ingest (`pipeline._enrich_new_record`) and from `reprocess-entities` / `reprocess-endorsements`; upserts, so a re-run moves timestamp and version forward
-- Step names and current versions live in `enrichment.py` (`STEP_VERSIONS`), one per step, shared by ingest and reprocess (#267). Bump a step's version there when its output changes for the same input
-- A stamp below its step's current version is *behind*; `wslcb db check` prints per-step counts (information, not counted as issues). Ingest wrote `'1'` for every step before #267, so pre-#267 `'1'` stamps say nothing about the logic used
-- Enables targeted re-processing queries, e.g., records behind on entities: `WHERE step = 'entities' AND version <> '<STEP_VERSIONS["entities"]>'`
+- `version` — the step's logic version; a stamp below the current one is *behind* (`wslcb db check` counts them)
+- Written only by `enrichment.stamp_enrichment()` (ingest and reprocess); versions, bump rule and history: `enrichment.py` (#267)
 
 ### `license_records_fts` (FTS5 virtual table)
 - Indexes: business_name, business_location, applicants, license_type, resolved_endorsements, application_type, license_number, previous_business_name, previous_applicants, previous_business_location
