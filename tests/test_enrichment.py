@@ -96,3 +96,27 @@ async def test_ingest_and_reprocess_stamp_the_same_version(pg_conn, standard_new
     after_reprocess = await _versions(pg_conn, r.record_id)
     for step in (STEP_ENTITIES, STEP_ENDORSEMENTS):
         assert after_reprocess[step] == after_ingest[step] == str(STEP_VERSIONS[step])
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_reprocess_stamps_empty_license_type_like_ingest(pg_conn, standard_new_application):
+    """Ingest stamps a record with no license_type; reprocess must too, or it stays behind."""
+    standard_new_application["license_number"] = "ENR267_EMPTY_LT"
+    standard_new_application["license_type"] = ""
+    r = await ingest_record(pg_conn, standard_new_application, IngestOptions(link_outcomes=False))
+    assert r is not None
+    assert (await _versions(pg_conn, r.record_id))[STEP_ENDORSEMENTS] == str(
+        STEP_VERSIONS[STEP_ENDORSEMENTS]
+    )
+
+    await pg_conn.execute(
+        record_enrichments.update()
+        .where(record_enrichments.c.record_id == r.record_id)
+        .values(version="0")
+    )
+    result = await reprocess_endorsements(pg_conn, record_id=r.record_id)
+
+    assert result["records_processed"] == 1
+    assert (await _versions(pg_conn, r.record_id))[STEP_ENDORSEMENTS] == str(
+        STEP_VERSIONS[STEP_ENDORSEMENTS]
+    )

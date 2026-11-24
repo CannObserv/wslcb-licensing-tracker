@@ -273,14 +273,13 @@ async def reprocess_endorsements(
 
     for row in rows:
         rid, license_type = row[0], row[1]
-        if not license_type:
-            continue
-
+        # An empty license_type links nothing but is still stamped, as ingest
+        # does: otherwise the record can never reach the current version.
         if dry_run:
             records_processed += 1
             continue
 
-        linked = await process_record(conn, rid, license_type)
+        linked = await process_record(conn, rid, license_type or "")
         endorsements_linked += linked
         records_processed += 1
 
