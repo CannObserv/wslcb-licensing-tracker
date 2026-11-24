@@ -156,12 +156,27 @@ async def get_entities(  # noqa: PLR0913
     ]
     params: dict = {}
     if q:
-        # The party's own name, or any member's spelling linked under it.
-        where_parts.append(
-            "(e.name ILIKE :q_like OR e.id IN (SELECT re.party_id FROM record_entities re"
-            " JOIN entities m ON m.id = re.entity_id WHERE m.name ILIKE :q_like))"
+        # The party's own name, or any member's spelling linked under it: one
+        # ILIKE scan, then the parties those spellings resolve to.
+        matched = list(
+            (
+                await conn.execute(
+                    text("SELECT id FROM entities WHERE name ILIKE :q_like"),
+                    {"q_like": f"%{q}%"},
+                )
+            ).scalars()
         )
-        params["q_like"] = f"%{q}%"
+        parties = (
+            await conn.execute(
+                text(
+                    "SELECT DISTINCT party_id FROM record_entities"
+                    " WHERE entity_id = ANY(:ids) AND party_id <> entity_id"
+                ),
+                {"ids": matched},
+            )
+        ).scalars()
+        where_parts.append("e.id = ANY(:q_ids)")
+        params["q_ids"] = sorted(set(matched) | set(parties))
     if entity_type is not None:
         where_parts.append("e.entity_type = :entity_type")
         params["entity_type"] = entity_type

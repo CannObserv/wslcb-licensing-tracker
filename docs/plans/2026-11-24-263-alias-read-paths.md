@@ -57,6 +57,21 @@ it:
 Today on prod: `/entities` 355 ms; `/entity/18623` (7-ELEVEN) 18 ms;
 `/entity/27626` (BP) 32 ms; `/record/{id}` 17 ms.
 
+## Rehearsal (step 7, scratch copy of prod; median of 5–15, branch vs main's code on the same DB)
+
+| Page | branch | main |
+|---|---|---|
+| `/entities` | 146 ms | 446 ms |
+| `/entities?q=SMITH` | 65 ms | 64 ms (was 247 ms before the search fix, see below) |
+| `/entity/18623` (7-ELEVEN) | 22 ms | 12 ms: the page now shows 26 records (union), not 14; the SQL is 0.5 ms, the rest is per-record hydration |
+| `/entity/27626` (BP) | 40 ms | 17 ms: 40 records, not 18 |
+| `/record/{id}` | 15 ms | 13 ms |
+
+- **Migration** 3 s. **`relink-entities`:** 14,355 parties written, then 0 on a second run; 5–6 s, 220 MB peak.
+- **Ingest hook:** 11.5 ms per record, against 7.1 ms before.
+- **Rendered:** BP shows "Listed as: …", 4 members and 40 records. Record 2671565 shows one chip, `PATRICIA L WHITE / PATRICIA L. WHITE`, where main shows two.
+- **Revised during step 7:** a member-name search with a second `ILIKE` subquery took 247 ms. It now runs one `ILIKE`, and those ids' parties are passed as an array (65 ms).
+
 ## Tradeoffs / alternatives
 
 - **Resolve the party at read time** (a CTE or map table joined through the record's licence). Rejected: `/entities` would roughly double, to 519 ms, even with the map table indexed.
