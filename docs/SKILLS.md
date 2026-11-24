@@ -43,7 +43,7 @@ Every session pays for each listed skill's name + description; the body loads on
   - built-in: `claude-api`, `run`, `simplify`, `workflow-authoring` (the Workflow tool loads it)
 - Everything else stays fully listed, deliberately `loop`, `schedule`, `update-config` (triggered by the user's wording) and `curating-context` (weekly run).
 
-Hiding drops the trigger phrases below: for a `name-only` or `user-invocable-only` skill, type `/name` — e.g. `/coordinating-epics` for #219 check-ins. Built-ins are keyed by skill name, not slash alias. Not covered: plugin skills (`/plugin`) and claude.ai `anthropic-skills:*` (left listed, #268). Measured 2026-11-24: repo skills 3,097 → ~1,440 tokens per session, built-ins ~2,677 → ~665. `tests/test_skill_listing.py` fails on a stale key, a delegated skill made uncallable, or a kept skill overridden. Verify a change in a **new** conversation; a reloaded window keeps its old listing.
+Hiding drops the trigger phrases below: for a `name-only` or `user-invocable-only` skill, type `/name` — e.g. `/coordinating-epics` for #219 check-ins. Built-ins are keyed by skill name, not slash alias. Not covered: plugin skills (`/plugin`) and claude.ai `anthropic-skills:*` (left listed, #268). Tokens per session, 2026-11-24: repo skills 3,097 → ~1,440 (measured here, `count_tokens`); built-ins ~2,677 → ~665 (address-validator#442's measure, same client 2.1.330). `tests/test_skill_listing.py` fails on a stale key, a delegated skill made uncallable, or a kept skill overridden. Verify a change in a **new** conversation; a reloaded window keeps its old listing.
 
 ## auditing-ci-cost
 
