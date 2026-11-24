@@ -49,10 +49,8 @@ BUILTIN = {
 # Kept fully listed on purpose (#268): built-ins Claude must trigger from the
 # user's wording ("every 5 minutes", "from now on when X"), plus repo skills
 # in regular use, on a cadence, or with a trigger the name doesn't carry.
-KEEP_ON = {
-    "loop",
-    "schedule",
-    "update-config",
+KEEP_ON_BUILTIN = {"loop", "schedule", "update-config"}
+KEEP_ON = KEEP_ON_BUILTIN | {
     "curating-context",
     "patching-hosts",
     "reviewing-architecture",
@@ -94,6 +92,18 @@ def test_builtin_list_has_no_unused_names():
 def test_override_values_are_valid():
     bad = {k: v for k, v in _overrides().items() if v not in ALLOWED}
     assert not bad, f"invalid skillOverrides values: {bad}"
+
+
+def test_guard_names_exist():
+    """A stale name in KEEP_ON or DELEGATED_TO passes its check vacuously.
+
+    ``.get(skill, "on")`` is "on" for a name with no override, so after an
+    upstream rename the new name could be hidden while the old one still
+    "stays listed".
+    """
+    known = {p.name for p in CLAUDE_SKILLS.iterdir()} | BUILTIN | KEEP_ON_BUILTIN
+    stale = sorted((KEEP_ON | set(DELEGATED_TO)) - known)
+    assert not stale, f"KEEP_ON / DELEGATED_TO names no skill: {stale}"
 
 
 @pytest.mark.parametrize("skill", sorted(KEEP_ON))
