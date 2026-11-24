@@ -386,3 +386,36 @@ class TestEntityPartyPages:
         assert await get_party_members(pg_conn, full) == [
             {"id": ty, "name": "T263TY", "licences": ["T263L"]}
         ]
+
+
+class TestGetEntitiesParties:
+    """/entities over parties (#263): variants hidden, union counts, member search."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_variants_hidden_and_counts_are_distinct_records(
+        self, pg_conn, standard_new_application
+    ):
+        # One record lists both spellings (WSLCB double-listing); one lists each alone.
+        await _rec(pg_conn, standard_new_application, "T263N", "T263KAPPA, ANNA", "ANNA T263KAPPA")
+        await _rec(pg_conn, standard_new_application, "T263O", "T263KAPPA, ANNA", day=11)
+        await _rec(pg_conn, standard_new_application, "T263P", "ANNA T263KAPPA", day=12)
+        natural = await _id(pg_conn, "ANNA T263KAPPA")
+        await _relink(pg_conn)
+
+        for sort in ("count", "name"):
+            rows = (await get_entities(pg_conn, q="T263KAPPA", sort=sort))["entities"]
+            assert [(r["id"], r["record_count"]) for r in rows] == [(natural, 3)]
+        assert (await get_entities(pg_conn, q="T263KAPPA"))["total"] == 1
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_search_on_a_variant_spelling_finds_the_party(
+        self, pg_conn, standard_new_application
+    ):
+        await _rec(pg_conn, standard_new_application, "T263Q", "T263LAMBDA, BO", day=13)
+        await _rec(pg_conn, standard_new_application, "T263R", "BO T263LAMBDA", day=14)
+        natural = await _id(pg_conn, "BO T263LAMBDA")
+        await _relink(pg_conn)
+
+        result = await get_entities(pg_conn, q="T263LAMBDA, B")
+        assert [r["id"] for r in result["entities"]] == [natural]
+        assert result["total"] == 1

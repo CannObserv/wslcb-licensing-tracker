@@ -136,6 +136,10 @@ async def get_entities(  # noqa: PLR0913
     sort:
         'count' (default) — most active first (record_count DESC, name ASC);
         'name' — alphabetical (name ASC).
+
+    Global alias variants are not listed; ``record_count`` counts the distinct
+    records of the entity's party, and ``q`` also matches the spellings linked
+    under a party (#263).
     page:
         1-based page number.
     per_page:
@@ -145,10 +149,18 @@ async def get_entities(  # noqa: PLR0913
     Rows carry ``id``, ``name``, ``entity_type``, ``entity_subtype``,
     ``classification_source``, ``record_count``, ``jev_confidence``, ``jev_subtype``.
     """
-    where_parts = []
+    # A global alias variant is listed under its party, not on its own (#263).
+    where_parts = [
+        "NOT EXISTS (SELECT 1 FROM entity_aliases a"
+        " WHERE a.variant_id = e.id AND a.scope_license IS NULL)"
+    ]
     params: dict = {}
     if q:
-        where_parts.append("e.name ILIKE :q_like")
+        # The party's own name, or any member's spelling linked under it.
+        where_parts.append(
+            "(e.name ILIKE :q_like OR e.id IN (SELECT re.party_id FROM record_entities re"
+            " JOIN entities m ON m.id = re.entity_id WHERE m.name ILIKE :q_like))"
+        )
         params["q_like"] = f"%{q}%"
     if entity_type is not None:
         where_parts.append("e.entity_type = :entity_type")
@@ -156,32 +168,47 @@ async def get_entities(  # noqa: PLR0913
     if entity_subtype in ENTITY_SUBTYPES:
         where_parts.append("e.entity_subtype = :entity_subtype")
         params["entity_subtype"] = entity_subtype
+    where_clause = "WHERE " + " AND ".join(where_parts)
+    cols = "e.id, e.name, e.entity_type, e.entity_subtype, e.classification_source"
 
-    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-    order_clause = (
-        "ORDER BY record_count DESC, e.name ASC" if sort != "name" else "ORDER BY e.name ASC"
-    )
-
-    base_sql = f"""
-        SELECT e.id, e.name, e.entity_type, e.entity_subtype, e.classification_source,
-               COUNT(re.record_id) AS record_count
-        FROM entities e
-        LEFT JOIN record_entities re ON re.entity_id = e.id
-        {where_clause}
-        GROUP BY e.id
-    """
-
-    total_result = await conn.execute(
-        text(f"SELECT COUNT(*) FROM ({base_sql}) sub"),
-        params,
-    )
-    total = total_result.scalar_one()
+    total = (
+        await conn.execute(text(f"SELECT COUNT(*) FROM entities e {where_clause}"), params)
+    ).scalar_one()
 
     page = max(1, page)
-    offset = (page - 1) * per_page
-    rows_result = await conn.execute(
-        text(f"{base_sql} {order_clause} LIMIT :limit OFFSET :offset"),
-        {**params, "limit": per_page, "offset": offset},
-    )
-    rows = [dict(r) for r in rows_result.mappings().all()]
+    page_params = {**params, "limit": per_page, "offset": (page - 1) * per_page}
+    # Records are counted per party over record_entities.party_id, distinct
+    # (two spellings on one record count once); the (party_id, record_id)
+    # index makes the distinct count presorted.
+    if sort != "name":
+        sql = f"""
+            WITH counts AS (
+                SELECT party_id, COUNT(DISTINCT record_id) AS n
+                FROM record_entities GROUP BY party_id
+            )
+            SELECT {cols}, COALESCE(c.n, 0) AS record_count
+            FROM entities e LEFT JOIN counts c ON c.party_id = e.id
+            {where_clause}
+            ORDER BY record_count DESC, e.name ASC LIMIT :limit OFFSET :offset
+        """
+        rows = [dict(r) for r in (await conn.execute(text(sql), page_params)).mappings().all()]
+    else:
+        sql = (
+            f"SELECT {cols} FROM entities e {where_clause}"
+            " ORDER BY e.name ASC LIMIT :limit OFFSET :offset"
+        )
+        rows = [dict(r) for r in (await conn.execute(text(sql), page_params)).mappings().all()]
+        counts = dict(
+            (
+                await conn.execute(
+                    text(
+                        "SELECT party_id, COUNT(DISTINCT record_id) FROM record_entities"
+                        " WHERE party_id = ANY(:ids) GROUP BY party_id"
+                    ),
+                    {"ids": [r["id"] for r in rows]},
+                )
+            ).fetchall()
+        )
+        for r in rows:
+            r["record_count"] = counts.get(r["id"], 0)
     return {"entities": await with_jev_answer(conn, rows), "total": total}
