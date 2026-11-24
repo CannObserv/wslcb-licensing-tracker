@@ -22,6 +22,10 @@ from .queries_search import RECORD_COLUMNS, RECORD_JOINS
 
 logger = logging.getLogger(__name__)
 
+# Above this many matching ids, /entities counts every party (presorted) instead
+# of filtering the count on the id array (measured on a prod copy, #263 CR 3).
+_NARROW_SEARCH = 5000
+
 
 async def get_entity_records(conn: AsyncConnection, entity_id: int) -> list[dict]:
     """Fetch the records of *entity_id*'s party, newest first, with location data.
@@ -196,10 +200,14 @@ async def get_entities(  # noqa: PLR0913
     # (two spellings on one record count once); the (party_id, record_id)
     # index makes the distinct count presorted.
     if sort != "name":
+        # A narrow search counts only its matches; a broad one is cheaper as
+        # the full presorted count than as a filter on a huge id array.
+        narrow = q and len(params["q_ids"]) <= _NARROW_SEARCH
+        only = " WHERE party_id = ANY(:q_ids)" if narrow else ""
         sql = f"""
             WITH counts AS (
                 SELECT party_id, COUNT(DISTINCT record_id) AS n
-                FROM record_entities GROUP BY party_id
+                FROM record_entities{only} GROUP BY party_id
             )
             SELECT {cols}, COALESCE(c.n, 0) AS record_count
             FROM entities e LEFT JOIN counts c ON c.party_id = e.id
