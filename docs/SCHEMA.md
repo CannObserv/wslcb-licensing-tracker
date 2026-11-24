@@ -138,7 +138,8 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `role` — `'applicant'` or `'previous_applicant'` (for ASSUMPTION seller applicants)
 - `position` — 0-indexed ordering from the source document (after the business name)
 - Composite PK `(record_id, entity_id, role)`
-- Populated at ingest time by `_parse_and_link_entities()`; backfilled for existing data on startup
+- `party_id` — derived alias party (#263, [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md))
+- Populated at ingest by `parse_and_link_entities()`; rebuilt by `reprocess-entities`
 - `ON DELETE CASCADE` on both FKs
 
 ### `record_links` (application→outcome linking)

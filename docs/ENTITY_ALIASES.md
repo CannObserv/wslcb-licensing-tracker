@@ -39,6 +39,17 @@ The **derived** format key, `link_key(name, resolved type)`; index
 `idx_entities_link_key`. NULL for any type but person and organization.
 `get_or_create_entity()` writes it on insert; `relink` refreshes it.
 
+### `record_entities.party_id` (#263)
+
+Each link's party: `eff(entity_id, the record's licence)`. **Derived.**
+Index `idx_re_party_record (party_id, record_id)`. A trigger
+(`record_entities_party_default`, migration 0012) defaults it to `entity_id`
+on insert, and when an update re-points `entity_id` without setting it, so
+it is never NULL and insert sites need not know about it. `relink` writes the
+real party (`refresh_parties`) for the links of every entity whose
+resolution passes through the entities it looked at; a full
+`relink-entities` checks every link and writes only differences.
+
 ## Resolution
 
 `eff(e, licence)`: starting at `e`, follow the row scoped to the licence,
@@ -95,6 +106,24 @@ transaction:
 | a manual classification is set or cleared | `record_manual` / `clear_manual` (so a not-a-name mark drops the rule rows) |
 | entities are merged, purged or renamed | `merge_entity_into` (operator rows re-pointed first), `_purge_entities`, the WAC repair |
 | `reprocess-entities` | every group, or the record's entities with `--record-id` |
+
+Each of these also refreshes `record_entities.party_id` for the affected links.
+
+## Read paths (#263)
+
+All read `record_entities.party_id` (`queries_entity.py`, `entities.get_record_entities`):
+
+| Page | Behaviour |
+|---|---|
+| `/entity/{id}` of a global variant | 302 to `/entity/{party}?from={id}`; the party's page shows "Listed as: …" |
+| `/entity/{id}` | records = links with `party_id = id` plus the entity's own links (distinct); licences counted over that union; "Also listed as" lists the members: everywhere, or the licences where their links resolve here |
+| a scoped variant's page (e.g. `TY`) | stays its own page; its records on the scoped licence carry "On licence N: <party> →" |
+| `/entities` | global variants hidden; `record_count` = distinct records per party (two spellings on one record count once); `q` also matches spellings linked under a party |
+| record chips | one chip per party within a role, linked to the party, every printed spelling shown (`A / B`) |
+
+Measured on a prod copy (2026-11-24): the per-party count with the
+`(party_id, record_id)` index is 95 ms, against 268 ms for the old per-entity
+count and 519 ms when the party is resolved at read time.
 
 ## Operator writes
 
