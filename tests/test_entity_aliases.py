@@ -7,14 +7,30 @@ the hooks.
 """
 
 import pytest
+from sqlalchemy import insert, select, update
 
+from wslcb_licensing_tracker.entities import get_or_create_entity
 from wslcb_licensing_tracker.entity_aliases import (
+    AliasError,
     AliasRow,
     Member,
+    add_manual_alias,
+    dismiss_pair,
+    eff_many,
     elect_canonical,
     find_cycle,
     link_key,
+    relink,
+    remove_manual_alias,
     resolve,
+    undismiss_pair,
+)
+from wslcb_licensing_tracker.entity_classification import protected_ids
+from wslcb_licensing_tracker.models import (
+    entities,
+    entity_aliases,
+    entity_classifications,
+    entity_review_flags,
 )
 
 # ── link_key (spec §2) ───────────────────────────────────────────────
@@ -189,3 +205,316 @@ def test_find_cycle_scoped_new_row_sees_global_and_same_scope():
 
 def test_find_cycle_self_link():
     assert find_cycle(1, 1, None, []) == []
+
+
+# ── PG: relink + write API ───────────────────────────────────────────
+
+PG = pytest.mark.asyncio(loop_scope="session")
+
+
+async def _ent(conn, name, etype="person", subtype=None):
+    eid = await get_or_create_entity(conn, name)
+    if etype != "person" or subtype is not None:
+        await conn.execute(
+            update(entities)
+            .where(entities.c.id == eid)
+            .values(entity_type=etype, entity_subtype=subtype)
+        )
+    return eid
+
+
+async def _org(conn, name):
+    return await _ent(conn, name, "organization", "business")
+
+
+async def _rows(conn, *ids):
+    stmt = select(
+        entity_aliases.c.variant_id,
+        entity_aliases.c.canonical_id,
+        entity_aliases.c.scope_license,
+        entity_aliases.c.source,
+        entity_aliases.c.rule,
+    ).where(entity_aliases.c.variant_id.in_(ids) | entity_aliases.c.canonical_id.in_(ids))
+    return {tuple(r) for r in (await conn.execute(stmt)).fetchall()}
+
+
+def _fk(v, c):
+    return (v, c, None, "rule", "format_key")
+
+
+@PG
+async def test_relink_groups_comma_and_annotation_not_across_types(pg_conn):
+    comma = await _ent(pg_conn, "ZQTEST, ALPHA")
+    natural = await _ent(pg_conn, "ALPHA ZQTEST")
+    org_a = await _org(pg_conn, "ZQTEST WIDGETS, LLC")
+    org_b = await _org(pg_conn, "ZQTEST WIDGETS LLC (FRANCHISOR)")
+    p = await _ent(pg_conn, "VUEZQ, SUNLIGHT")
+    o = await _org(pg_conn, "SUNLIGHT VUEZQ")
+    ids = [comma, natural, org_a, org_b, p, o]
+
+    result = await relink(pg_conn, ids)
+
+    assert await _rows(pg_conn, *ids) == {_fk(comma, natural), _fk(org_b, org_a)}
+    assert result.inserted == 2
+    keys = dict(
+        (
+            await pg_conn.execute(
+                select(entities.c.id, entities.c.link_key).where(entities.c.id.in_(ids))
+            )
+        ).fetchall()
+    )
+    assert keys[comma] == keys[natural] == "ALPHA ZQTEST"
+    assert keys[p] == keys[o] == "SUNLIGHT VUEZQ"  # same key, different types: no row
+
+
+@PG
+async def test_get_or_create_entity_writes_link_key(pg_conn):
+    eid = await get_or_create_entity(pg_conn, "ZQNEW, OMEGA")
+    key = (
+        await pg_conn.execute(select(entities.c.link_key).where(entities.c.id == eid))
+    ).scalar_one()
+    assert key == "OMEGA ZQNEW"
+
+
+@PG
+async def test_relink_second_run_changes_nothing(pg_conn):
+    a = await _ent(pg_conn, "ZQTWICE, BETA")
+    b = await _ent(pg_conn, "BETA ZQTWICE")
+    first = await relink(pg_conn, [a, b])
+    assert first.changed > 0
+    second = await relink(pg_conn, [a, b])
+    assert (second.changed, second.kept) == (0, 1)
+
+
+@PG
+async def test_relink_dry_run_writes_nothing(pg_conn):
+    a = await _ent(pg_conn, "ZQDRY, GAMMA")
+    b = await _ent(pg_conn, "GAMMA ZQDRY")
+    result = await relink(pg_conn, [a, b], dry_run=True)
+    assert result.inserted == 1
+    assert await _rows(pg_conn, a, b) == set()
+
+
+@PG
+async def test_relink_current_canonical_sticks(pg_conn):
+    comma = await _ent(pg_conn, "ZQSTICK, DELTA")
+    natural = await _ent(pg_conn, "DELTA ZQSTICK")
+    await pg_conn.execute(
+        insert(entity_aliases).values(
+            variant_id=natural, canonical_id=comma, source="rule", rule="format_key"
+        )
+    )
+    result = await relink(pg_conn, [comma, natural])
+    assert (result.inserted, result.deleted, result.kept) == (0, 0, 1)
+    assert await _rows(pg_conn, comma) == {_fk(natural, comma)}
+
+
+@PG
+async def test_relink_type_change_drops_row(pg_conn):
+    a = await _ent(pg_conn, "ZQTYPE, EPSILON")
+    b = await _ent(pg_conn, "EPSILON ZQTYPE")
+    await relink(pg_conn, [a, b])
+    await pg_conn.execute(
+        update(entities)
+        .where(entities.c.id == a)
+        .values(entity_type="organization", entity_subtype="business")
+    )
+    await relink(pg_conn, [a])
+    assert await _rows(pg_conn, a, b) == set()
+
+
+@PG
+async def test_relink_excludes_tombstones(pg_conn):
+    a = await _ent(pg_conn, "ZQTOMB, ZETA")
+    b = await _ent(pg_conn, "ZETA ZQTOMB")
+    await relink(pg_conn, [a, b])
+    await pg_conn.execute(
+        insert(entity_classifications).values(
+            entity_id=a, source="manual", entity_type="not_a_name", created_by="t@example.com"
+        )
+    )
+    await relink(pg_conn, [a])
+    assert await _rows(pg_conn, a, b) == set()
+
+
+@PG
+async def test_dismissal_blocks_rule_and_undismiss_restores(pg_conn):
+    a = await _ent(pg_conn, "ZQDISM, ETA")
+    b = await _ent(pg_conn, "ETA ZQDISM")
+    await relink(pg_conn, [a, b])
+    assert await dismiss_pair(pg_conn, b, a, scope_license="123456", dismissed_by="t@example.com")
+    assert await _rows(pg_conn, a, b) == set()
+    assert not await dismiss_pair(
+        pg_conn, a, b, scope_license="123456", dismissed_by="t@example.com"
+    )
+    assert await undismiss_pair(pg_conn, a, b, scope_license="123456")
+    assert await _rows(pg_conn, a, b) == {_fk(a, b)}
+
+
+@PG
+async def test_rule_row_closing_a_cycle_is_skipped(pg_conn):
+    v = await _ent(pg_conn, "ZQCYC, THETA")
+    c = await _ent(pg_conn, "THETA ZQCYC")
+    x = await _ent(pg_conn, "THETA Q ZQCYC")
+    # middle-name rows as #265 will write them: c → x → v on licence L
+    for var, can in ((c, x), (x, v)):
+        await pg_conn.execute(
+            insert(entity_aliases).values(
+                variant_id=var,
+                canonical_id=can,
+                scope_license="L1",
+                source="rule",
+                rule="middle_names",
+            )
+        )
+    result = await relink(pg_conn, [v, c, x])
+    assert result.skipped_cycle == 1
+    assert _fk(v, c) not in await _rows(pg_conn, v)
+
+
+@PG
+async def test_manual_rows_survive_full_relink(pg_conn):
+    a = await _ent(pg_conn, "ZQMAN IOTA")
+    b = await _ent(pg_conn, "IOTA ZQMAN")
+    rid = await add_manual_alias(
+        pg_conn, a, b, scope_license="355693", created_by="t@example.com", note="nickname"
+    )
+    await relink(pg_conn)
+    assert await _rows(pg_conn, a, b) == {(a, b, "355693", "manual", None)}
+    assert isinstance(rid, int)
+
+
+@PG
+async def test_add_manual_alias_refusals(pg_conn):
+    a = await _ent(pg_conn, "ZQREF KAPPA")
+    b = await _ent(pg_conn, "ZQREF LAMBDA")
+    c = await _ent(pg_conn, "ZQREF MU")
+    with pytest.raises(AliasError, match="itself"):
+        await add_manual_alias(pg_conn, a, a, created_by="t@example.com")
+    with pytest.raises(LookupError):
+        await add_manual_alias(pg_conn, a, 2_000_000_000, created_by="t@example.com")
+    await add_manual_alias(pg_conn, a, b, created_by="t@example.com")
+    await add_manual_alias(pg_conn, b, c, scope_license="L9", created_by="t@example.com")
+    with pytest.raises(AliasError, match="already linked"):
+        await add_manual_alias(pg_conn, a, c, created_by="t@example.com")
+    with pytest.raises(AliasError, match=f"cycle: {c} → {a}|cycle: .*{b}"):
+        await add_manual_alias(pg_conn, c, a, scope_license="L9", created_by="t@example.com")
+    # on another licence the scoped b → c row doesn't apply: no cycle
+    await add_manual_alias(pg_conn, c, a, scope_license="L8", created_by="t@example.com")
+    await pg_conn.execute(
+        insert(entity_classifications).values(
+            entity_id=c, source="manual", entity_type="not_a_name", created_by="t@example.com"
+        )
+    )
+    d = await _ent(pg_conn, "ZQREF NU")
+    with pytest.raises(AliasError, match="not-a-name"):
+        await add_manual_alias(pg_conn, d, c, created_by="t@example.com")
+
+
+@PG
+async def test_cross_type_manual_link_opens_one_flag(pg_conn):
+    p = await _ent(pg_conn, "ZQX XI")
+    o = await _org(pg_conn, "ZQX XI HOLDINGS LLC")
+    q = await _ent(pg_conn, "ZQX OMICRON")
+    await add_manual_alias(pg_conn, p, o, created_by="t@example.com")
+    await add_manual_alias(pg_conn, q, o, scope_license="L1", created_by="t@example.com")
+    flags = (
+        (
+            await pg_conn.execute(
+                select(entity_review_flags.c.reason).where(entity_review_flags.c.entity_id == o)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert flags == ["members disagree on type"]
+
+
+@PG
+async def test_remove_manual_alias(pg_conn):
+    a = await _ent(pg_conn, "ZQRM PI")
+    b = await _ent(pg_conn, "ZQRM RHO")
+    rid = await add_manual_alias(pg_conn, a, b, created_by="t@example.com")
+    assert (await remove_manual_alias(pg_conn, rid)).variant == a
+    assert await _rows(pg_conn, a, b) == set()
+    with pytest.raises(LookupError):
+        await remove_manual_alias(pg_conn, rid)
+
+
+@PG
+async def test_protected_ids_cover_manual_rows_and_dismissals(pg_conn):
+    a = await _ent(pg_conn, "ZQPROT SIGMA")
+    b = await _ent(pg_conn, "ZQPROT TAU")
+    c = await _ent(pg_conn, "ZQPROT UPSILON")
+    d = await _ent(pg_conn, "ZQPROT PHI")
+    await add_manual_alias(pg_conn, a, b, created_by="t@example.com")
+    await dismiss_pair(pg_conn, c, d, dismissed_by="t@example.com")
+    assert {a, b, c, d} <= await protected_ids(pg_conn)
+
+
+@PG
+async def test_eff_many_follows_db_rows(pg_conn):
+    a = await _ent(pg_conn, "ZQEFF, CHI")
+    b = await _ent(pg_conn, "CHI ZQEFF")
+    c = await _ent(pg_conn, "CHI PSI ZQEFF")
+    await relink(pg_conn, [a, b])
+    await add_manual_alias(pg_conn, c, b, scope_license="L5", created_by="t@example.com")
+    got = await eff_many(pg_conn, [(a, "L5"), (a, None), (c, "L5"), (c, "L6"), (b, None)])
+    assert got == {(a, "L5"): b, (a, None): b, (c, "L5"): b, (c, "L6"): c, (b, None): b}
+
+
+@PG
+async def test_global_manual_variant_is_never_a_rule_canonical(pg_conn):
+    """Spec §1: a global manual variant makes its format-key group re-elect."""
+    a = await _ent(pg_conn, "ZQMV, PSI")
+    b = await _ent(pg_conn, "PSI ZQMV")
+    c = await _ent(pg_conn, "PSI Q ZQMV")
+    await relink(pg_conn, [a, b])
+    assert await _rows(pg_conn, a, b) == {_fk(a, b)}
+    await add_manual_alias(pg_conn, b, c, created_by="t@example.com")
+    assert await _rows(pg_conn, a, b) == {_fk(b, a), (b, c, None, "manual", None)}
+    got = await eff_many(pg_conn, [(b, None), (a, None)])
+    assert got == {(b, None): c, (a, None): a}
+
+
+@PG
+async def test_scoped_manual_variant_stays_canonical(pg_conn):
+    """A scoped manual variant keeps its group; on its licence the chain runs through it."""
+    a = await _ent(pg_conn, "ZQSV, OMEGA")
+    b = await _ent(pg_conn, "OMEGA ZQSV")
+    c = await _ent(pg_conn, "OMEGA Q ZQSV")
+    await relink(pg_conn, [a, b])
+    await add_manual_alias(pg_conn, b, c, scope_license="L5", created_by="t@example.com")
+    assert _fk(a, b) in await _rows(pg_conn, a)
+    got = await eff_many(pg_conn, [(a, "L5"), (a, "L6")])
+    assert got == {(a, "L5"): c, (a, "L6"): b}
+
+
+@PG
+async def test_worked_case_pendergraft(pg_conn):
+    """Spec worked case: on 355693 all five entities resolve to TYLER DAVID PENDERGRAFT."""
+    lic = "355693"
+    comma_ty = await _ent(pg_conn, "PENDERGRAFT, TY")
+    ty_p = await _ent(pg_conn, "TY PENDERGRAFT")
+    tyler = await _ent(pg_conn, "TYLER PENDERGRAFT")
+    tyler_david = await _ent(pg_conn, "TYLER DAVID PENDERGRAFT")
+    ty = await _ent(pg_conn, "TY")
+    ids = [comma_ty, ty_p, tyler, tyler_david, ty]
+    await relink(pg_conn, ids)  # step 1: format key
+    await pg_conn.execute(  # step 2: middle-name row, as #265 will write it
+        insert(entity_aliases).values(
+            variant_id=tyler,
+            canonical_id=tyler_david,
+            scope_license=lic,
+            source="rule",
+            rule="middle_names",
+        )
+    )
+    await add_manual_alias(pg_conn, ty_p, tyler_david, scope_license=lic, created_by="t@x")
+    await add_manual_alias(pg_conn, ty, ty_p, scope_license=lic, created_by="t@x")
+    await relink(pg_conn)
+
+    got = await eff_many(pg_conn, [(e, lic) for e in ids])
+    assert set(got.values()) == {tyler_david}
+    outside = await eff_many(pg_conn, [(ty, "999999"), (comma_ty, "999999")])
+    assert outside == {(ty, "999999"): ty, (comma_ty, "999999"): ty_p}

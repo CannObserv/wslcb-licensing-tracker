@@ -21,7 +21,13 @@ from sqlalchemy.sql.expression import ColumnElement, Exists
 from sqlalchemy.sql.selectable import Subquery
 
 from .config import jev_confidence_threshold
-from .models import entities, entity_classifications, entity_review_flags
+from .models import (
+    entities,
+    entity_alias_dismissals,
+    entity_aliases,
+    entity_classifications,
+    entity_review_flags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -312,15 +318,37 @@ def _open_flag(entity_id_col: ColumnElement[int]) -> Exists:
 async def protected_ids(conn: AsyncConnection) -> set[int]:
     """Entities an automated purge must keep.
 
-    Those with a current manual row of a real type, or an open review flag.
+    Those with a current manual row of a real type, an open review flag, or a
+    place in an operator alias decision: either end of a manual
+    ``entity_aliases`` row or of a dismissal (#262).
     """
     m = _current_manual()
     erf = entity_review_flags
+    ea = entity_aliases
+    ead = entity_alias_dismissals
+    manual = ea.c.source == "manual"
     stmt = union(
         select(m.c.entity_id).where(m.c.entity_type != NOT_A_NAME),
         select(erf.c.entity_id).where(erf.c.resolved_at.is_(None)),
+        select(ea.c.variant_id).where(manual),
+        select(ea.c.canonical_id).where(manual),
+        select(ead.c.entity_id_a),
+        select(ead.c.entity_id_b),
     )
     return set((await conn.execute(stmt)).scalars().all())
+
+
+async def tombstone_ids(conn: AsyncConnection) -> set[int]:
+    """Entities whose current manual answer is ``not_a_name`` (#247 §5, #262).
+
+    ``choose_classification`` ignores that answer, so a tombstone keeps a
+    resolved ``person``/``organization`` type; alias rules key off this set
+    instead.  Unlike ``confirmed_noise_ids`` an open flag doesn't matter here.
+    """
+    m = _current_manual()
+    return set(
+        (await conn.execute(select(m.c.entity_id).where(m.c.entity_type == NOT_A_NAME))).scalars()
+    )
 
 
 async def confirmed_noise_ids(conn: AsyncConnection) -> set[int]:

@@ -68,6 +68,11 @@ predicate.
 - rows skipped for a cycle or a dismissal;
 - link keys updated.
 
+**Calls made while building** (each is pinned by a test):
+- **Only a *global* manual variant is barred from being a rule group's canonical.** Spec §1 says "a manual variant is never elected", but read literally that breaks its own Pendergraft worked case: `TY PENDERGRAFT`'s scoped manual row would re-elect `PENDERGRAFT, TY` and cut its chain on 355693.
+- **A dismissal in any scope blocks the pair's global format-key row.** A global row would otherwise link the pair on the dismissed licence as well.
+- **Cycle checks are one breadth-first search over (entity, licence committed to) states.** A per-licence pass would cost (licences × rows) once #265 adds its scoped rows.
+
 ## Tradeoffs / alternatives
 
 - **Materialised `(entity, scope) → party` map now.** Rejected for #262: nothing reads it yet. #263 owns the entity-page latency budget and can add it with a measurement.

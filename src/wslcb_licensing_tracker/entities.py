@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .enrichment import STEP_ENTITIES, stamp_enrichment
+from .entity_aliases import link_key
 from .entity_classification import (
     SourceAnswer,
     confirmed_noise_ids,
@@ -509,6 +510,7 @@ async def get_or_create_entity(conn: AsyncConnection, name: str) -> int:
             entity_type=entity_type,
             entity_subtype=entity_subtype,
             classification_source="regex",
+            link_key=link_key(normalized, entity_type),
         )
         .on_conflict_do_nothing(index_elements=["name"])
         .returning(entities.c.id)
