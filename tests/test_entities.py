@@ -590,3 +590,37 @@ class TestRepeatSurvivesReprocess:
         await backfill_entities(pg_conn)
 
         assert await _link_names(pg_conn, record_id) == [("applicant", "T266 SOLE, PROPRIETOR", 0)]
+
+
+class TestRecordChipsByParty:
+    """Record chips: one per party within a role, every printed spelling kept (#263)."""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_two_spellings_of_one_party_make_one_chip(
+        self, pg_conn, standard_new_application
+    ):
+        from wslcb_licensing_tracker.entity_aliases import relink
+
+        standard_new_application["license_number"] = "entity_263"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        await parse_and_link_entities(
+            pg_conn,
+            record_id,
+            "ACME CANNABIS CO; T263ANDERSON, RANDAL; T263 JANE ROE; RANDAL T263ANDERSON",
+        )
+        await parse_and_link_entities(
+            pg_conn, record_id, "OLD CO; RANDAL T263ANDERSON", role="previous_applicant"
+        )
+        await relink(pg_conn)
+        natural = await get_or_create_entity(pg_conn, "RANDAL T263ANDERSON")
+        comma = await get_or_create_entity(pg_conn, "T263ANDERSON, RANDAL")
+
+        chips = (await get_record_entities(pg_conn, [record_id]))[record_id]
+        assert [(c["id"], c["names"]) for c in chips["applicant"]] == [
+            (natural, ["T263ANDERSON, RANDAL", "RANDAL T263ANDERSON"]),
+            (await get_or_create_entity(pg_conn, "T263 JANE ROE"), ["T263 JANE ROE"]),
+        ]
+        assert chips["applicant"][0]["entity_ids"] == [comma, natural]
+        assert chips["applicant"][0]["name"] == "T263ANDERSON, RANDAL / RANDAL T263ANDERSON"
+        # roles are deduplicated separately
+        assert [c["id"] for c in chips["previous_applicant"]] == [natural]

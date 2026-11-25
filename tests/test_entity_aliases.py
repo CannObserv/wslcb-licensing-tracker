@@ -37,6 +37,8 @@ from wslcb_licensing_tracker.models import (
     entity_aliases,
     entity_classifications,
     entity_review_flags,
+    license_records,
+    record_entities,
 )
 from wslcb_licensing_tracker.pipeline import IngestOptions, ingest_record, insert_record
 
@@ -750,3 +752,112 @@ async def test_reprocess_relinks_the_entities_it_links(pg_conn, standard_new_app
         await pg_conn.execute(select(entities.c.id).where(entities.c.name == "ZQREPRO, UPSILON"))
     ).scalar_one()
     assert await _rows(pg_conn, natural, comma) == {_fk(comma, natural)}
+
+
+# ── #263: record_entities.party_id kept equal to eff(entity, licence) ─
+
+
+async def _link(conn, standard_new_application, licence, *names, role="applicant"):
+    """Insert a record on *licence* and link *names* to it; return (record id, entity ids)."""
+    rec = standard_new_application | {
+        "license_number": licence,
+        "applicants": "; ".join(["ACME LLC", *names]),
+        "record_date": f"2025-06-{len(names) + 10:02d}",
+    }
+    rid = (await insert_record(conn, rec))[0]
+    ids = []
+    for pos, name in enumerate(names):
+        eid = await get_or_create_entity(conn, name)
+        await conn.execute(
+            insert(record_entities).values(record_id=rid, entity_id=eid, role=role, position=pos)
+        )
+        ids.append(eid)
+    return rid, ids
+
+
+async def _assert_parties_current(conn, *entity_ids):
+    rows = (
+        await conn.execute(
+            select(
+                record_entities.c.entity_id,
+                record_entities.c.party_id,
+                license_records.c.license_number,
+            )
+            .join(license_records, license_records.c.id == record_entities.c.record_id)
+            .where(record_entities.c.entity_id.in_(entity_ids))
+        )
+    ).fetchall()
+    assert rows, "no links to check"
+    want = await eff_many(conn, [(e, lic) for e, _, lic in rows])
+    assert [(e, p) for e, p, _ in rows] == [(e, want[(e, lic)]) for e, _, lic in rows]
+    return {(e, lic): p for e, p, lic in rows}
+
+
+@PG
+async def test_relink_sets_party_for_a_format_key_group(pg_conn, standard_new_application):
+    _, (comma,) = await _link(pg_conn, standard_new_application, "ZQP1", "ZQPARTY, ALPHA")
+    _, (natural,) = await _link(pg_conn, standard_new_application, "ZQP2", "ALPHA ZQPARTY")
+    result = await relink(pg_conn, [comma, natural])
+    parties = await _assert_parties_current(pg_conn, comma, natural)
+    assert set(parties.values()) == {natural}
+    assert result.parties_updated == 1
+
+
+@PG
+async def test_party_follows_the_scoped_pendergraft_chain(pg_conn, standard_new_application):
+    lic = "355693"
+    _, (ty, ty_p, tyler_david) = await _link(
+        pg_conn, standard_new_application, lic, "ZQTY", "ZQTY PENDERGRAFT", "ZQTYLER D PENDERGRAFT"
+    )
+    _, (ty_else,) = await _link(pg_conn, standard_new_application, "999999", "ZQTY")
+    assert ty_else == ty
+    await add_manual_alias(pg_conn, ty_p, tyler_david, scope_license=lic, created_by="t@x")
+    await add_manual_alias(pg_conn, ty, ty_p, scope_license=lic, created_by="t@x")
+    parties = await _assert_parties_current(pg_conn, ty, ty_p)
+    assert parties[(ty, lic)] == tyler_david
+    assert parties[(ty, "999999")] == ty
+
+
+@PG
+async def test_party_resets_on_type_flip_and_unlink(pg_conn, standard_new_application):
+    _, (a,) = await _link(pg_conn, standard_new_application, "ZQP3", "ZQFLIPP, BETA")
+    _, (b,) = await _link(pg_conn, standard_new_application, "ZQP4", "BETA ZQFLIPP")
+    await relink(pg_conn, [a, b])
+    await record_manual(
+        pg_conn, a, entity_type="organization", entity_subtype="business", created_by="t@x"
+    )
+    parties = await _assert_parties_current(pg_conn, a, b)
+    assert parties[(a, "ZQP3")] == a
+
+    c = await _ent(pg_conn, "ZQFLIPP GAMMA")
+    rid = await add_manual_alias(pg_conn, b, c, created_by="t@x")
+    assert (await _assert_parties_current(pg_conn, b))[(b, "ZQP4")] == c
+    await remove_manual_alias(pg_conn, rid)
+    assert (await _assert_parties_current(pg_conn, b))[(b, "ZQP4")] == b
+
+
+@PG
+async def test_party_after_merge_and_purge(pg_conn, standard_new_application):
+    _, (dirty,) = await _link(pg_conn, standard_new_application, "ZQP5", "ZQMP DELTA DUP")
+    _, (canon,) = await _link(pg_conn, standard_new_application, "ZQP6", "ZQMP DELTA")
+    x = await _ent(pg_conn, "ZQMP EPSILON")
+    await add_manual_alias(pg_conn, dirty, x, created_by="t@x")
+    await merge_entity_into(pg_conn, dirty, canon)
+    parties = await _assert_parties_current(pg_conn, canon)
+    assert set(parties.values()) == {x}
+
+    _, (comma,) = await _link(pg_conn, standard_new_application, "ZQP7", "ZQPURGP, ZETA")
+    _, (natural,) = await _link(pg_conn, standard_new_application, "ZQP8", "ZETA ZQPURGP")
+    await relink(pg_conn, [comma, natural])
+    await _purge_entities(pg_conn, [natural])
+    assert (await _assert_parties_current(pg_conn, comma))[(comma, "ZQP7")] == comma
+
+
+@PG
+async def test_full_relink_twice_updates_no_party(pg_conn, standard_new_application):
+    _, (a,) = await _link(pg_conn, standard_new_application, "ZQP9", "ZQTWICEP, ETA")
+    _, (b,) = await _link(pg_conn, standard_new_application, "ZQP10", "ETA ZQTWICEP")
+    await relink(pg_conn)
+    second = await relink(pg_conn)
+    assert (second.parties_updated, second.changed) == (0, 0)
+    await _assert_parties_current(pg_conn, a, b)

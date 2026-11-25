@@ -50,7 +50,7 @@ from .parser import (
     read_replay_extract,
     strip_anchor_tags,
 )
-from .queries_entity import get_entities, get_entity_records
+from .queries_entity import get_entities, get_entity_records, get_party_members, global_party
 from .queries_filter import get_cities_for_state, get_filter_options
 from .queries_hydrate import hydrate_records
 from .queries_search import (
@@ -500,11 +500,16 @@ async def entities_list(  # noqa: PLR0913
     return await _tpl(request, "entities.html", ctx)
 
 
-@app.get("/entity/{entity_id}", response_class=HTMLResponse)
-async def entity_detail(request: Request, entity_id: int) -> HTMLResponse:
-    """Render the detail page for a single entity.
+@app.get("/entity/{entity_id}", response_class=HTMLResponse, response_model=None)
+async def entity_detail(
+    request: Request, entity_id: int, from_: Annotated[str, Query(alias="from")] = ""
+) -> HTMLResponse | RedirectResponse:
+    """Render the detail page for a single entity's party (#263).
 
-    Signed-in admins also get the classification panel (#208).
+    A global alias variant redirects (302) to its party with ``?from=<variant>``;
+    the party's page lists the union of its members' records, "Also listed as"
+    and, for ``?from``, "Listed as".  Signed-in admins also get the
+    classification panel (#208).
     """
     current_user = await get_current_user(request)
     async with get_db(request.app.state.engine) as conn:
@@ -516,14 +521,19 @@ async def entity_detail(request: Request, entity_id: int) -> HTMLResponse:
                 {"request": request, "message": "Entity not found."},
                 status_code=_HTTP_404,
             )
+        party = await global_party(conn, entity_id)
+        if party is not None:
+            return RedirectResponse(url=f"/entity/{party}?from={entity_id}", status_code=302)
         records = await get_entity_records(conn, entity_id)
-        # Count distinct license numbers
-        license_numbers = {r["license_number"] for r in records}
+        members = await get_party_members(conn, entity_id)
         ctx = {
             "request": request,
             "entity": entity,
             "records": records,
-            "unique_licenses": len(license_numbers),
+            "unique_licenses": len({r["license_number"] for r in records}),
+            "members": members,
+            # ?from is only a hint: anything but a member's id is ignored.
+            "listed_as": next((m for m in members if str(m["id"]) == from_.strip()), None),
         }
         if current_user:
             ctx |= {

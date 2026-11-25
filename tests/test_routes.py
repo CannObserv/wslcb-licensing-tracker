@@ -136,6 +136,20 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
     return client, patches
 
 
+def _party_patches(party: int | None = None, members: list | None = None) -> list:
+    """Patches for the alias read paths (#263): not a variant, no members, by default."""
+    return [
+        patch(
+            "wslcb_licensing_tracker.app.global_party", new_callable=AsyncMock, return_value=party
+        ),
+        patch(
+            "wslcb_licensing_tracker.app.get_party_members",
+            new_callable=AsyncMock,
+            return_value=members or [],
+        ),
+    ]
+
+
 def _stop(patches):
     """Stop all patches returned by ``_make_client``."""
     for p in patches:
@@ -597,6 +611,29 @@ class TestAdditionalNamesNotice:
         finally:
             _stop(patches)
 
+    def test_chip_links_to_the_party_and_shows_every_spelling(self):
+        """#263: one chip per party, printed spellings joined, linked to the party."""
+        record = self._make_record_dict(3, has_flag=False)
+        record["entities"] = {
+            "applicant": [
+                {
+                    "id": 80,
+                    "name": "RANDAL ANDERSON / RANDAL JUAN ANDERSON",
+                    "names": ["RANDAL ANDERSON", "RANDAL JUAN ANDERSON"],
+                    "entity_ids": [81, 80],
+                }
+            ],
+            "previous_applicant": [],
+        }
+        client, patches = self._make_client_for_record(record)
+        try:
+            body = client.get("/record/3").text
+            assert body.count('href="/entity/80"') == 1
+            assert "RANDAL ANDERSON / RANDAL JUAN ANDERSON" in body
+            assert 'href="/entity/81"' not in body
+        finally:
+            _stop(patches)
+
     def test_notice_absent_when_flag_not_set(self):
         record = self._make_record_dict(
             2, has_flag=False, applicants="NOTICE TEST LLC; JANE DOE; BOB SMITH"
@@ -814,6 +851,7 @@ class TestEntitySubtypeAndBadges:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
+            *_party_patches(),
         ]
         for p in extra:
             p.start()
@@ -1097,6 +1135,7 @@ class TestEntityAdminPanel:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
+            *_party_patches(),
             patch("wslcb_licensing_tracker.app.classification_detail", new=detail),
         ]
         if admin:
@@ -1169,3 +1208,100 @@ class TestEntityAdminPanel:
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch, jev_enabled=True)
         assert "Re-classify with Jev" in resp.text
         assert 'action="/admin/entities/7/jev"' in resp.text
+
+
+class TestEntityAliasPages:
+    """/entity/{id} over the alias layer (#263, spec §4)."""
+
+    _CANON = {
+        "id": 27626,
+        "name": "BP WEST COAST PRODUCTS, LLC",
+        "entity_type": "organization",
+        "entity_subtype": "business",
+        "classification_source": "jev",
+        "jev_confidence": 0.95,
+        "created_at": None,
+    }
+    _RECORD = {
+        "id": 501,
+        "record_date": "2025-06-15",
+        "section_type": "new_application",
+        "business_name": "ARCO 42",
+        "license_number": "355693",
+        "application_type": "NEW APPLICATION",
+        "license_type": "GROCERY",
+        "endorsements": [],
+        "outcome_status": {},
+        "display_city": "SEATTLE",
+        "display_zip": "98101",
+    }
+
+    def _get(self, url: str, *, party=None, members=None, records=None):
+        client, patches = _make_client()
+        extra = [
+            patch(
+                "wslcb_licensing_tracker.app.get_entity_by_id",
+                new_callable=AsyncMock,
+                return_value=dict(self._CANON),
+            ),
+            patch(
+                "wslcb_licensing_tracker.app.get_entity_records",
+                new_callable=AsyncMock,
+                return_value=records or [],
+            ),
+            *_party_patches(party, members),
+        ]
+        for p in extra:
+            p.start()
+        try:
+            return client.get(url, follow_redirects=False)
+        finally:
+            for p in extra:
+                p.stop()
+            _stop(patches)
+
+    def test_global_variant_redirects_to_its_party(self):
+        resp = self._get("/entity/19027", party=27626)
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/entity/27626?from=19027"
+
+    def test_party_page_lists_members_and_listed_as(self):
+        members = [
+            {"id": 19027, "name": "BP WEST COAST PRODUCTS LLC, FRANCHISOR", "licences": None},
+            {"id": 24142, "name": "TY", "licences": ["355693"]},
+        ]
+        resp = self._get("/entity/27626?from=19027", members=members)
+        assert resp.status_code == 200
+        body = resp.text
+        assert 'data-testid="listed-as"' in body
+        assert 'Listed as: <span class="font-medium">BP WEST COAST PRODUCTS LLC, FRANCHISOR' in body
+        assert 'data-testid="also-listed-as"' in body
+        assert 'href="/entity/24142"' in body  # a scoped member keeps its own page
+        assert "(licence 355693)" in body
+        assert 'href="/entity/19027"' not in body  # a global member would only redirect back
+
+    def test_malformed_from_still_renders_the_page(self):
+        """CR 2: ?from is a hint; a bad value must not turn the page into a 404."""
+        resp = self._get("/entity/27626?from=abc")
+        assert resp.status_code == 200
+        assert "BP WEST COAST PRODUCTS, LLC" in resp.text
+
+    def test_unknown_from_shows_no_listed_as(self):
+        body = self._get("/entity/27626?from=999").text
+        assert 'data-testid="listed-as"' not in body
+        assert 'data-testid="also-listed-as"' not in body
+
+    def test_scoped_variant_record_carries_the_party_note(self):
+        rec = dict(self._RECORD, party_note={"id": 38708, "name": "TYLER DAVID PENDERGRAFT"})
+        body = self._get("/entity/27626", records=[rec]).text
+        assert 'href="/entity/38708"' in body
+        assert "On licence 355693: TYLER DAVID PENDERGRAFT →" in body
+
+    def test_licence_count_is_over_the_union(self):
+        recs = [
+            dict(self._RECORD, id=1, license_number="A"),
+            dict(self._RECORD, id=2, license_number="B"),
+            dict(self._RECORD, id=3, license_number="A"),
+        ]
+        body = self._get("/entity/27626", records=recs).text
+        assert ">2</span> licenses" in body

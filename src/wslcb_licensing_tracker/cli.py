@@ -643,7 +643,7 @@ def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
 @db.command("relink-entities")
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
 def relink_entities(dry_run: bool) -> None:
-    """Rebuild the rule-made entity alias rows and every entity's link key (#262).
+    """Rebuild the rule-made entity alias rows, link keys and record-link parties (#262, #263).
 
     Operator links and dismissals are never touched.  Idempotent: a second
     run changes nothing.  Run after a migration or a rule change; ingest,
@@ -671,6 +671,10 @@ def relink_entities(dry_run: bool) -> None:
         f"Skipped: {r.skipped_dismissed:,} blocked by a dismissal, "
         f"{r.skipped_cycle:,} would close a cycle."
     )
+    if dry_run:
+        click.echo("Record-link parties: computed on the real run.")
+    else:
+        click.echo(f"Record-link parties: {r.parties_updated:,} updated.")
 
 
 @db.command("reclassify-entities")

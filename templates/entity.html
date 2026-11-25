@@ -14,6 +14,18 @@
                 {{ cb.type_chip(entity) }}
                 {{ cb.badge(entity) }}
             </p>
+            {% if listed_as %}
+            <p class="text-sm text-gray-700 mt-2" data-testid="listed-as">Listed as: <span class="font-medium">{{ listed_as.name }}</span></p>
+            {% endif %}
+            {% if members %}
+            {# Other spellings of this party (#263); a licence-scoped one keeps its own page. #}
+            <p class="text-xs text-gray-500 mt-2" data-testid="also-listed-as">Also listed as:
+                {% for m in members -%}
+                {% if m.licences %}<a href="/entity/{{ m.id }}" class="text-co-purple hover:text-co-purple-700 hover:underline">{{ m.name }}</a> <span class="text-gray-400">(licence {{ m.licences | join(", ") }})</span>
+                {%- else %}<span class="text-gray-700">{{ m.name }}</span>{% endif %}{% if not loop.last %}; {% endif %}
+                {%- endfor %}
+            </p>
+            {% endif %}
         </div>
         <div class="text-right text-sm text-gray-500">
             <div><span class="font-semibold text-gray-900">{{ records | length }}</span> record{{ 's' if records | length != 1 }}</div>
