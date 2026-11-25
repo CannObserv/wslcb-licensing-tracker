@@ -431,8 +431,8 @@ Archived HTML snapshots and other persistent data are stored in `./data/` relati
 | `GET /` | Dashboard with summary statistics |
 | `GET /search` | Search interface (HTML) or HTMX partial results |
 | `GET /record/{id}` | Record detail page |
-| `GET /entities` | Searchable, paginated entity list (`?q=`, `?type=`, `?subtype=`, `?sort=`); each row shows its subtype and provenance badge |
-| `GET /entity/{id}` | Entity detail page — type, subtype, provenance badge and all license records for a person or organization |
+| `GET /entities` | Searchable, paginated entity list (`?q=`, `?type=`, `?subtype=`, `?sort=`); each row shows its subtype and provenance badge. Alias variants are listed under their party: counts are distinct records over the party, and `q` also matches a variant's spelling (#263) |
+| `GET /entity/{id}` | Entity detail page — type, subtype, provenance badge and all license records for a person or organization, across its alias spellings ("Also listed as"). A global alias variant 302-redirects to its party with `?from=` (#263) |
 | `GET /source/{source_id}/record/{record_id}` | HTMX partial — renders archived source HTML for a specific record |
 
 ### Versioned API (`/api/v1/`)
