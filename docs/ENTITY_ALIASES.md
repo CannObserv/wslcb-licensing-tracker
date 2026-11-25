@@ -109,6 +109,13 @@ transaction:
 
 Each of these also refreshes `record_entities.party_id` for the affected links.
 
+**After a relink that rewrites many parties** (the first run after a deploy, or
+a rule change), run `VACUUM (ANALYZE) record_entities`. The `/entities` count
+is an index-only scan on `(party_id, record_id)`, and it reads the heap for
+every page the rewrite left not-all-visible until a vacuum marks them. A
+rewrite under autovacuum's 20 % threshold can leave that state for days
+(prod, 2026-11-25: `/entities` 495 ms before the vacuum, 199 ms after).
+
 ## Read paths (#263)
 
 All read `record_entities.party_id` (`queries_entity.py`, `entities.get_record_entities`):
