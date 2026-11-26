@@ -211,6 +211,10 @@ A pair already one party, with a dismissal in any scope, or with a not-a-name
 end is not listed. A licence scope must be one the entity is on, directly or
 through an alias row.
 
+The tab loads in 0.6–0.85 s on the prod copy (2026-11-26, 593 suggestions,
+484 of them middle names), past a 0.5 s aim. The next step down is a
+conflicts table that `relink` fills, which needs a migration.
+
 **Audit actions** (`admin_audit_log`, target the entity acted on): every
 `details` carries both ids and **both names**, the scope, the source (and rule),
 the note, and the suggestion kind when the action came from the tab.
