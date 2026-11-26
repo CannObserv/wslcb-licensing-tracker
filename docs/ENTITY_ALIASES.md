@@ -195,7 +195,7 @@ scope, source (rule name or operator email), date and note.
 - **Undo** deletes a dismissal.
 - **Same as…** links this entity to a target, and **Not linked to…**
   dismisses the pair. The target is an id or a name: HTMX fills a datalist from
-  `GET /admin/entities/lookup`. The scope is one of the entity's own licences
+  `GET /admin/entities/lookup`. The scope is one of the licences the entity is on, directly or through an alias row
   (the default) or everywhere.
 - A global variant's page redirects; `/entity/{id}?stay=1` keeps a signed-in
   admin on it, and every link in the panel carries it.

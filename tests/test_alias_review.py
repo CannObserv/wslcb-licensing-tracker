@@ -281,3 +281,13 @@ async def test_link_scope_may_be_a_licence_the_entity_holds_through_a_variant(
     await relink(pg_conn, [natural, target])
     await ar.link(pg_conn, natural, target, scope_license="T265C1", note=None, admin_email=ADMIN)
     assert await _party(pg_conn, await _id(pg_conn, "ZQSCO, ANN"), "T265C1") == target
+
+
+async def test_links_panel_offers_licences_held_through_a_variant(
+    pg_conn, standard_new_application
+):
+    """CR 6: the panel's licence choices match what the scope check accepts."""
+    await _rec(pg_conn, standard_new_application, "T265V1", "ZQVIA, ROSE")
+    comma, natural = await _id(pg_conn, "ZQVIA, ROSE"), await _id(pg_conn, "ROSE ZQVIA")
+    await relink(pg_conn, [comma, natural])
+    assert (await ar.links_detail(pg_conn, natural))["licences"] == ["T265V1"]

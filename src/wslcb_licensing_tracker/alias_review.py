@@ -63,34 +63,28 @@ async def _names(conn: AsyncConnection, *ids: int) -> dict[int, str]:
 
 
 async def entity_licences(conn: AsyncConnection, *entity_ids: int) -> list[str]:
-    """Sorted licence numbers of the records the entities' own links are on."""
+    """Sorted licence numbers the entities are on: directly, or through an alias row.
+
+    "Through" covers a spelling folded into the entity (``PENDERGRAFT, TYLER``
+    for ``TYLER PENDERGRAFT``), so a party is offered, and may be scoped to,
+    the licences its spellings are on (#265, CR 6).
+    """
     rows = await conn.execute(
         text(
             "SELECT DISTINCT lr.license_number FROM record_entities re"
             " JOIN license_records lr ON lr.id = re.record_id"
             " WHERE re.entity_id = ANY(:ids) ORDER BY 1"
         ),
-        {"ids": list(entity_ids)},
+        {"ids": sorted(await reverse_closure(conn, entity_ids))},
     )
     return list(rows.scalars())
 
 
 async def _check_scope(conn: AsyncConnection, scope_license: str | None, *entity_ids: int) -> None:
-    """A licence scope must be one the entities are on: directly or through an alias row.
-
-    "Through" lets a middle-name suggestion link a party that is on the
-    licence only by a spelling the format key folded into it (#265).
-    """
+    """A licence scope must be one of :func:`entity_licences` for the entities."""
     if scope_license is None:
         return
-    on_licence = await conn.execute(
-        text(
-            "SELECT 1 FROM record_entities re JOIN license_records lr ON lr.id = re.record_id"
-            " WHERE lr.license_number = :lic AND re.entity_id = ANY(:ids) LIMIT 1"
-        ),
-        {"lic": scope_license, "ids": sorted(await reverse_closure(conn, entity_ids))},
-    )
-    if on_licence.first() is None:
+    if scope_license not in await entity_licences(conn, *entity_ids):
         msg = f"licence {scope_license} is not one of this entity's licences"
         raise AliasError(msg)
 
