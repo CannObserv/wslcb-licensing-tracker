@@ -9,6 +9,9 @@
         <p class="text-sm text-gray-500 mt-1">
             {% if tab == 'unknown' %}
             Organizations whose subtype resolved to <em>unknown</em>, with no manual decision. Work these when convenient.
+            {% elif tab == 'links' %}
+            Spellings the automatic rules leave apart on purpose. <em>Link</em> lists the left one under the right one in the scope shown;
+            <em>Dismiss</em> records that they are not one party. Both are audited and remove the suggestion.
             {% else %}
             Open flags, AI answers below {{ '%.0f' | format(threshold * 100) }}% confidence, and AI "not a name" answers.
             Each action writes a manual decision (audited) and removes the item.
@@ -18,7 +21,7 @@
 
     {# ── Tabs ─────────────────────────────────────────────────────────── #}
     <nav aria-label="Review tabs" class="flex gap-1 border-b border-gray-200">
-        {% for key, label in [('main', 'Review queue'), ('unknown', 'Subtype unknown')] %}
+        {% for key, label in [('main', 'Review queue'), ('unknown', 'Subtype unknown'), ('links', 'Links')] %}
         <a href="/admin/entities/review?tab={{ key }}"
            {% if tab == key %}aria-current="page"{% endif %}
            class="px-4 py-2 text-sm -mb-px border-b-2 {% if tab == key %}border-co-purple text-co-purple font-medium{% else %}border-transparent text-gray-600 hover:text-co-purple{% endif %}">
@@ -28,7 +31,9 @@
         {% endfor %}
     </nav>
 
-    {% if items %}
+    {% if tab == 'links' %}
+    {% include "partials/link_suggestions.html" %}
+    {% elif items %}
     {% if counts[tab] > items | length %}
     <p class="text-xs text-gray-500">Showing the first {{ items | length }} of {{ counts[tab] }}.</p>
     {% endif %}

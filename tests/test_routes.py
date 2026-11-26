@@ -1117,7 +1117,7 @@ class TestEntityAdminPanel:
 
     _LINKS = {"outgoing": [], "incoming": [], "dismissals": [], "licences": [], "in_manual": False}
 
-    def _get(  # noqa: PLR0913
+    def _get(
         self,
         *,
         admin: bool,

@@ -1,10 +1,11 @@
-"""FastAPI APIRouter for /admin/entities/* — classification review (#208).
+"""FastAPI APIRouter for /admin/entities/* — classification review (#208), links (#264).
 
 The review queue page, and the POST actions behind it and the entity-page
 admin panel: set, accept, not-a-name, clear override, flag, re-classify with
-Jev.  Each POST commits and then 303-redirects to its ``next`` field (a local
-path only).  ``ValueError`` → 400 and ``LookupError`` → 404, with nothing
-committed.
+Jev; link, unlink, dismiss and undo a dismissal (#264), with the review
+queue's Links tab and the name lookup the link forms use.  Each POST
+commits and then 303-redirects to its ``next`` field (a local path only).
+``ValueError`` → 400 and ``LookupError`` → 404, with nothing committed.
 
 No CSRF token: the posture of the other admin routes (exe.dev proxy login).
 """
@@ -16,12 +17,15 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from markupsafe import escape
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .admin_audit import log_action
 from .admin_auth import require_admin
 from .admin_routes import render_admin
+from .alias_review import dismiss, link, lookup, parse_target, undismiss, unlink
+from .alias_suggestions import suggestions
 from .classification_review import (
     TABS,
     accept_answer,
@@ -55,8 +59,13 @@ ADMIN_JEV_TIMEOUT_SECONDS = 90
 REVIEW_PAGE_SIZE = 100
 
 
-def _safe_next(next_: str | None, entity_id: int) -> str:
-    r"""Return *next_* when it is a local path, else ``/entity/{entity_id}``.
+LINKS_TAB = "/admin/entities/review?tab=links"
+
+
+def _safe_next(next_: str | None, fallback: int | str) -> str:
+    r"""Return *next_* when it is a local path, else *fallback*.
+
+    An int *fallback* is an entity id: ``/entity/{fallback}``.
 
     Rejects ``//host`` and ``/\host`` (browsers read both as another host),
     and control characters, which browsers strip before parsing.
@@ -69,7 +78,7 @@ def _safe_next(next_: str | None, entity_id: int) -> str:
         and all(ch >= " " for ch in next_)
     ):
         return next_
-    return f"/entity/{entity_id}"
+    return f"/entity/{fallback}" if isinstance(fallback, int) else fallback
 
 
 def _blank_to_none(value: str | None) -> str | None:
@@ -79,11 +88,14 @@ def _blank_to_none(value: str | None) -> str | None:
 
 async def _act(
     request: Request,
-    entity_id: int,
+    fallback: int | str,
     next_: str | None,
     action: Callable[[AsyncConnection], Awaitable[object]],
 ) -> RedirectResponse:
-    """Run *action*, commit, redirect; map ValueError → 400 and LookupError → 404."""
+    """Run *action*, commit, redirect to *next_* (else *fallback*).
+
+    Maps ValueError → 400 and LookupError → 404, with nothing committed.
+    """
     async with get_db(request.app.state.engine) as conn:
         try:
             await action(conn)
@@ -92,17 +104,20 @@ async def _act(
         except LookupError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         await conn.commit()
-    return RedirectResponse(_safe_next(next_, entity_id), status_code=303)
+    return RedirectResponse(_safe_next(next_, fallback), status_code=303)
 
 
 @router.get("/entities/review", response_class=HTMLResponse)
 async def admin_entity_review(request: Request, admin: Admin, tab: str = "main") -> HTMLResponse:
-    """The classification review queue: a main tab and a *Subtype unknown* tab."""
-    if tab not in TABS:
+    """The review queue: a main tab, a *Subtype unknown* tab, and a *Links* tab (#264)."""
+    if tab not in (*TABS, "links"):
         tab = "main"
     async with get_db(request.app.state.engine) as conn:
-        items = await review_queue(conn, tab=tab, limit=REVIEW_PAGE_SIZE)
-        counts = await review_counts(conn)
+        links = await suggestions(conn)
+        items = (
+            links if tab == "links" else await review_queue(conn, tab=tab, limit=REVIEW_PAGE_SIZE)
+        )
+        counts = {**await review_counts(conn), "links": len(links)}
     return await render_admin(
         request,
         "admin/entity_review.html",
@@ -293,3 +308,116 @@ async def admin_entity_jev(
             detail="Jev classification failed: the request failed; see the web service log.",
         )
     return RedirectResponse(_safe_next(next_url, entity_id), status_code=303)
+
+
+# ── links (#264) ─────────────────────────────────────────────────────
+
+
+def _scope(scope: str, licence: str) -> str | None:
+    """The form's scope: ``everywhere`` → None, ``licence`` → the chosen licence."""
+    if scope == "everywhere":
+        return None
+    if scope == "licence":
+        licence = licence.strip()
+        if not licence:
+            msg = "choose a licence, or the scope everywhere"
+            raise ValueError(msg)
+        return licence
+    msg = f"scope must be 'licence' or 'everywhere' (got {scope!r})"
+    raise ValueError(msg)
+
+
+@router.post("/entities/{entity_id}/alias")
+async def admin_entity_alias(  # noqa: PLR0913
+    request: Request,
+    admin: Admin,
+    entity_id: int,
+    target: Annotated[str, Form()] = "",
+    scope: Annotated[str, Form()] = "licence",
+    licence: Annotated[str, Form()] = "",
+    note: Annotated[str, Form()] = "",
+    suggestion: Annotated[str, Form()] = "",
+    next_url: Next = None,
+) -> RedirectResponse:
+    """Same as…: link this entity to the target (``entity.alias_set``)."""
+
+    async def action(conn: AsyncConnection) -> None:
+        scope_license = _scope(scope, licence)
+        await link(
+            conn,
+            entity_id,
+            await parse_target(conn, target),
+            scope_license=scope_license,
+            note=_blank_to_none(note),
+            admin_email=admin["email"],
+            suggestion=_blank_to_none(suggestion),
+        )
+
+    return await _act(request, f"/entity/{entity_id}?stay=1", next_url, action)
+
+
+@router.post("/entities/{entity_id}/not-linked")
+async def admin_entity_not_linked(  # noqa: PLR0913
+    request: Request,
+    admin: Admin,
+    entity_id: int,
+    target: Annotated[str, Form()] = "",
+    scope: Annotated[str, Form()] = "licence",
+    licence: Annotated[str, Form()] = "",
+    note: Annotated[str, Form()] = "",
+    suggestion: Annotated[str, Form()] = "",
+    next_url: Next = None,
+) -> RedirectResponse:
+    """Not linked to…: dismiss the pair (``entity.alias_dismiss``)."""
+
+    async def action(conn: AsyncConnection) -> None:
+        scope_license = _scope(scope, licence)
+        await dismiss(
+            conn,
+            entity_id,
+            await parse_target(conn, target),
+            scope_license=scope_license,
+            note=_blank_to_none(note),
+            admin_email=admin["email"],
+            suggestion=_blank_to_none(suggestion),
+        )
+
+    return await _act(request, f"/entity/{entity_id}?stay=1", next_url, action)
+
+
+@router.post("/entities/aliases/{alias_id}/unlink")
+async def admin_alias_unlink(
+    request: Request, admin: Admin, alias_id: int, next_url: Next = None
+) -> RedirectResponse:
+    """Unlink: delete a manual row, or dismiss a rule row's pair in its scope."""
+    return await _act(
+        request,
+        LINKS_TAB,
+        next_url,
+        lambda conn: unlink(conn, alias_id, admin_email=admin["email"]),
+    )
+
+
+@router.post("/entities/dismissals/{dismissal_id}/undo")
+async def admin_dismissal_undo(
+    request: Request, admin: Admin, dismissal_id: int, next_url: Next = None
+) -> RedirectResponse:
+    """Undo a dismissal (``entity.alias_undismiss``)."""
+    return await _act(
+        request,
+        LINKS_TAB,
+        next_url,
+        lambda conn: undismiss(conn, dismissal_id, admin_email=admin["email"]),
+    )
+
+
+@router.get("/entities/lookup", response_class=HTMLResponse)
+async def admin_entity_lookup(request: Request, _admin: Admin, target: str = "") -> HTMLResponse:
+    """``<option>`` elements for a link form's ``<datalist>`` (HTMX), names containing *target*."""
+    async with get_db(request.app.state.engine) as conn:
+        rows = await lookup(conn, target)
+    options = (
+        f'<option value="{r["id"]} · {escape(r["name"])}">{escape(r["entity_type"] or "")}</option>'
+        for r in rows
+    )
+    return HTMLResponse("".join(options))

@@ -395,7 +395,7 @@ def test_jev_call_has_a_deadline_and_is_audited(client, conn, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _no_suggestions():
+def no_suggestions():
     """The review page counts the Links tab; tests that don't care see none."""
     with patch(f"{MOD}.suggestions", new_callable=AsyncMock, return_value=[]) as fn:
         yield fn
@@ -416,8 +416,8 @@ def _suggestion(**kw) -> dict:
     return {**s, **kw}
 
 
-def test_links_tab_renders_suggestions(client, _no_suggestions):
-    _no_suggestions.return_value = [
+def test_links_tab_renders_suggestions(client, no_suggestions):
+    no_suggestions.return_value = [
         _suggestion(),
         _suggestion(
             kind="legal_designator",

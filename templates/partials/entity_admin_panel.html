@@ -94,6 +94,8 @@
                 {% if c.open_flags %}An open flag holds the purge: resolve it and the next <code>reclassify-entities</code> deletes this entity.
                 {% else %}The next <code>reclassify-entities</code> deletes this entity.{% endif %}
                 <em>Clear manual override</em> undoes the mark until then.</p>
+            {% elif links and links.in_manual %}
+            <p class="text-xs text-gray-600">This entity is in an operator link (see Links below). Unlink it before marking it not a name.</p>
             {% else %}
             {{ f.not_a_name_form(entity.id, here) }}
             {% endif %}

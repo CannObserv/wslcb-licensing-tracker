@@ -1,0 +1,127 @@
+{# Entity-page Links panel, admins only (#264, spec §4).  Context: ``entity``,
+   ``links`` (alias_review.links_detail).  Every action posts to
+   /admin/entities/... and returns here with ?stay=1, so a variant's page stays put. #}
+{% set here = "/entity/" ~ entity.id ~ "?stay=1" %}
+{% set btn = "text-xs font-medium px-2.5 py-1 rounded border transition-colors" %}
+{% set btn_primary = btn ~ " bg-co-purple text-white border-co-purple hover:bg-co-purple-700" %}
+{% set btn_plain = btn ~ " bg-white text-gray-700 border-gray-300 hover:border-co-purple hover:text-co-purple" %}
+{% set btn_danger = btn ~ " bg-white text-red-700 border-red-300 hover:bg-red-50" %}
+{% set input = "border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:border-co-purple focus:ring-1 focus:ring-co-purple" %}
+
+{% macro scope_label(scope) -%}
+{%- if scope %}licence {{ scope }}{% else %}everywhere{% endif -%}
+{%- endmacro %}
+
+{% macro alias_rows(rows, arrow, next, btn_danger) -%}
+{% for r in rows %}
+<tr>
+    <td class="px-4 py-2">{{ arrow }} <a href="/entity/{{ r.other_id }}?stay=1" class="text-co-purple hover:text-co-purple-700 hover:underline">{{ r.other_name }}</a> <span class="text-xs text-gray-400">#{{ r.other_id }}</span></td>
+    <td class="px-4 py-2 whitespace-nowrap">{{ scope_label(r.scope) }}</td>
+    <td class="px-4 py-2 text-xs">{% if r.source == 'rule' %}<span class="font-mono">{{ r.rule }}</span>{% else %}{{ r.created_by or 'operator' }}{% endif %}</td>
+    <td class="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{{ r.created_at.strftime('%Y-%m-%d') if r.created_at else '—' }}</td>
+    <td class="px-4 py-2 text-xs text-gray-600">{{ r.note or '' }}</td>
+    <td class="px-4 py-2 text-right">
+        <form method="POST" action="/admin/entities/aliases/{{ r.id }}/unlink" class="inline">
+            <input type="hidden" name="next" value="{{ next }}">
+            {% if r.source == 'rule' %}
+            <button type="submit" class="{{ btn_danger }}"
+                    onclick="return confirm('This link comes from the {{ r.rule }} rule. Unlinking writes a dismissal ({{ scope_label(r.scope) }}) so the rule will not link the pair again. Continue?')">Unlink</button>
+            {% else %}
+            <button type="submit" class="{{ btn_danger }}"
+                    onclick="return confirm('Delete this operator link?')">Unlink</button>
+            {% endif %}
+        </form>
+    </td>
+</tr>
+{% endfor %}
+{%- endmacro %}
+
+{% macro target_form(entity_id, action, button, licences, next, list_id, btn_class, input) -%}
+<form method="POST" action="/admin/entities/{{ entity_id }}/{{ action }}" class="flex flex-wrap items-center gap-1.5">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="sr-only" for="{{ list_id }}-target">Target entity</label>
+    <input type="text" name="target" id="{{ list_id }}-target" required list="{{ list_id }}" autocomplete="off"
+           placeholder="Entity id, or type a name" class="{{ input }} w-72"
+           hx-get="/admin/entities/lookup" hx-trigger="input changed delay:300ms"
+           hx-target="#{{ list_id }}" hx-swap="innerHTML">
+    <datalist id="{{ list_id }}"></datalist>
+    {% if licences %}
+    <label class="text-xs text-gray-700 inline-flex items-center gap-1"><input type="radio" name="scope" value="licence" checked> this licence</label>
+    <label class="sr-only" for="{{ list_id }}-licence">Licence</label>
+    <select name="licence" id="{{ list_id }}-licence" class="{{ input }}">
+        {% for lic in licences %}<option value="{{ lic }}">{{ lic }}</option>{% endfor %}
+    </select>
+    <label class="text-xs text-gray-700 inline-flex items-center gap-1"><input type="radio" name="scope" value="everywhere"> everywhere</label>
+    {% else %}
+    <input type="hidden" name="scope" value="everywhere">
+    <span class="text-xs text-gray-500">everywhere (no licences of its own)</span>
+    {% endif %}
+    <label class="sr-only" for="{{ list_id }}-note">Note</label>
+    <input type="text" name="note" id="{{ list_id }}-note" placeholder="Note (optional)" maxlength="500" class="{{ input }} w-40">
+    <button type="submit" class="{{ btn_class }}">{{ button }}</button>
+</form>
+{%- endmacro %}
+
+<section data-testid="links-panel" aria-labelledby="links-heading" class="mt-6 bg-white rounded-lg shadow-sm border border-co-purple-100 overflow-hidden">
+    <div class="px-6 py-4 bg-co-purple-50 border-b border-co-purple-100 flex flex-wrap items-center justify-between gap-2">
+        <h2 id="links-heading" class="text-sm font-semibold text-co-purple">Links <span class="font-normal text-gray-500">(admin)</span></h2>
+        <a href="/admin/entities/review?tab=links" class="text-xs text-co-purple hover:text-co-purple-700 hover:underline">Link suggestions →</a>
+    </div>
+
+    {% if links.outgoing or links.incoming or links.dismissals %}
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b border-gray-200">
+                <tr>
+                    {% for h in ['Entity', 'Scope', 'Source / by', 'When', 'Note', ''] %}
+                    <th class="text-left px-4 py-2 font-medium text-gray-600 whitespace-nowrap">{{ h }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% if links.outgoing %}
+                <tr><th colspan="6" class="text-left px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50">Listed under (this entity → party)</th></tr>
+                {{ alias_rows(links.outgoing, "→", here, btn_danger) }}
+                {% endif %}
+                {% if links.incoming %}
+                <tr><th colspan="6" class="text-left px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50">Linked here (spelling → this entity)</th></tr>
+                {{ alias_rows(links.incoming, "←", here, btn_danger) }}
+                {% endif %}
+                {% if links.dismissals %}
+                <tr><th colspan="6" class="text-left px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50">Dismissed (not one party)</th></tr>
+                {% for d in links.dismissals %}
+                <tr>
+                    <td class="px-4 py-2">≠ <a href="/entity/{{ d.other_id }}?stay=1" class="text-co-purple hover:text-co-purple-700 hover:underline">{{ d.other_name }}</a> <span class="text-xs text-gray-400">#{{ d.other_id }}</span></td>
+                    <td class="px-4 py-2 whitespace-nowrap">{{ scope_label(d.scope) }}</td>
+                    <td class="px-4 py-2 text-xs">{{ d.dismissed_by }}</td>
+                    <td class="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{{ d.dismissed_at.strftime('%Y-%m-%d') if d.dismissed_at else '—' }}</td>
+                    <td class="px-4 py-2 text-xs text-gray-600">{{ d.note or '' }}</td>
+                    <td class="px-4 py-2 text-right">
+                        <form method="POST" action="/admin/entities/dismissals/{{ d.id }}/undo" class="inline">
+                            <input type="hidden" name="next" value="{{ here }}">
+                            <button type="submit" class="{{ btn_plain }}">Undo</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="px-6 py-3 text-xs text-gray-500">No links.</p>
+    {% endif %}
+
+    <div class="px-6 py-4 border-t border-gray-100 space-y-3">
+        <div>
+            <h3 class="text-xs font-semibold text-gray-700 mb-1.5">Same as…</h3>
+            {{ target_form(entity.id, "alias", "Link", links.licences, here, "same-as-" ~ entity.id, btn_primary, input) }}
+            <p class="text-xs text-gray-500 mt-1">Lists this entity under the target. A link that would close a loop is refused, naming the links that close it.</p>
+        </div>
+        <div>
+            <h3 class="text-xs font-semibold text-gray-700 mb-1.5">Not linked to…</h3>
+            {{ target_form(entity.id, "not-linked", "Dismiss", links.licences, here, "not-linked-" ~ entity.id, btn_plain, input) }}
+            <p class="text-xs text-gray-500 mt-1">Records that the two are not one party, so no rule links them.</p>
+        </div>
+    </div>
+</section>

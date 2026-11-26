@@ -33,6 +33,7 @@ from . import (
     api_routes,
 )
 from .admin_auth import AdminRedirectException, get_current_user
+from .alias_review import links_detail
 from .classification_review import classification_detail
 from .config import get_build_id
 from .data_migration import run_pending_migrations
@@ -502,14 +503,18 @@ async def entities_list(  # noqa: PLR0913
 
 @app.get("/entity/{entity_id}", response_class=HTMLResponse, response_model=None)
 async def entity_detail(
-    request: Request, entity_id: int, from_: Annotated[str, Query(alias="from")] = ""
+    request: Request,
+    entity_id: int,
+    from_: Annotated[str, Query(alias="from")] = "",
+    stay: str = "",
 ) -> HTMLResponse | RedirectResponse:
     """Render the detail page for a single entity's party (#263).
 
     A global alias variant redirects (302) to its party with ``?from=<variant>``;
     the party's page lists the union of its members' records, "Also listed as"
     and, for ``?from``, "Listed as".  Signed-in admins also get the
-    classification panel (#208).
+    classification panel (#208) and the Links panel (#264), and with
+    ``?stay=1`` stay on a variant's own page to manage its links.
     """
     current_user = await get_current_user(request)
     async with get_db(request.app.state.engine) as conn:
@@ -522,7 +527,7 @@ async def entity_detail(
                 status_code=_HTTP_404,
             )
         party = await global_party(conn, entity_id)
-        if party is not None:
+        if party is not None and not (current_user and stay):
             return RedirectResponse(url=f"/entity/{party}?from={entity_id}", status_code=302)
         records = await get_entity_records(conn, entity_id)
         members = await get_party_members(conn, entity_id)
@@ -537,6 +542,16 @@ async def entity_detail(
         }
         if current_user:
             ctx |= {
+                # An admin staying on a global variant's page (?stay=1).
+                "variant_of": (
+                    None
+                    if party is None
+                    else {
+                        "id": party,
+                        "name": (await get_entity_by_id(conn, party) or {}).get("name"),
+                    }
+                ),
+                "links": await links_detail(conn, entity_id),
                 "classification": await classification_detail(conn, entity_id),
                 "jev_enabled": is_classification_enabled(),
                 "entity_types": ENTITY_TYPES,
