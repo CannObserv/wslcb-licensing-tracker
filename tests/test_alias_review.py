@@ -216,6 +216,17 @@ async def test_parse_target(pg_conn):
         await ar.parse_target(pg_conn, "  ")
 
 
+async def test_lookup_prefix_first_and_literal_wildcards(pg_conn):
+    inner = await _id(pg_conn, "ACME ZQLOOK_UP CO")
+    prefix = await _id(pg_conn, "ZQLOOK_UP HOLDINGS")
+    other = await _id(pg_conn, "ZQLOOKXUP LLC")
+    ids = [r["id"] for r in await ar.lookup(pg_conn, "zqlook_up")]
+    assert ids[:2] == [prefix, inner]
+    assert other not in ids  # "_" is not a wildcard
+    assert await ar.lookup(pg_conn, "z") == []
+    assert await ar.lookup(pg_conn, "ZQLOOK%HOLD") == []
+
+
 # ── the panel ────────────────────────────────────────────────────────
 
 

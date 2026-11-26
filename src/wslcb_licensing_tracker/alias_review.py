@@ -121,9 +121,10 @@ async def lookup(conn: AsyncConnection, q: str, *, limit: int = 20) -> list[dict
         return []
     rows = await conn.execute(
         select(entities.c.id, entities.c.name, entities.c.entity_type)
-        .where(entities.c.name.ilike(f"%{q}%"))
+        # autoescape: a typed % or _ is a character, not a wildcard.
+        .where(entities.c.name.icontains(q, autoescape=True))
         .order_by(
-            (~entities.c.name.ilike(f"{q}%")),
+            (~entities.c.name.istartswith(q, autoescape=True)),
             func.length(entities.c.name),
             entities.c.name,
             entities.c.id,
