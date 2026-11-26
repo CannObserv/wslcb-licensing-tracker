@@ -708,11 +708,19 @@ async def flag_type_disagreements(conn: AsyncConnection, entity_ids: Collection[
     return opened
 
 
-def _describe(path: list[AliasRow]) -> str:
+def _describe(path: list[AliasRow], names: dict[int, str]) -> str:
+    def label(eid: int) -> str:
+        return f"{names.get(eid, '?')} ({eid})"
+
     return " → ".join(
-        [str(path[0].variant)]
-        + [f"{r.canonical} ({r.source}, {r.scope or 'everywhere'})" for r in path]
+        [label(path[0].variant)]
+        + [f"{label(r.canonical)} [{r.source}, {r.scope or 'everywhere'}]" for r in path]
     )
+
+
+async def _names(conn: AsyncConnection, ids: Collection[int]) -> dict[int, str]:
+    stmt = select(entities.c.id, entities.c.name).where(entities.c.id.in_(list(ids)))
+    return dict((await conn.execute(stmt)).fetchall())
 
 
 async def add_manual_alias(  # noqa: PLR0913
@@ -767,7 +775,13 @@ async def add_manual_alias(  # noqa: PLR0913
     rows = [_alias_row(r) for r in (await conn.execute(select(*_ROW_COLS).where(~_FK))).fetchall()]
     path = find_cycle(variant_id, canonical_id, scope_license, rows)
     if path is not None:
-        msg = f"linking {variant_id} → {canonical_id} would close a cycle: {_describe(path)}"
+        names = await _names(
+            conn, {variant_id, canonical_id} | {e for r in path for e in (r.variant, r.canonical)}
+        )
+        msg = (
+            f"linking {names[variant_id]} ({variant_id}) → {names[canonical_id]} "
+            f"({canonical_id}) would close a cycle: {_describe(path, names)}"
+        )
         raise AliasError(msg)
 
     row_id = (

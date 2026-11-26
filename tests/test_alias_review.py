@@ -83,9 +83,7 @@ async def test_link_scoped_writes_row_and_audit_with_names(pg_conn, standard_new
     }
 
 
-async def test_link_scope_must_be_one_of_the_variants_licences(
-    pg_conn, standard_new_application
-):
+async def test_link_scope_must_be_one_of_the_variants_licences(pg_conn, standard_new_application):
     await _rec(pg_conn, standard_new_application, "T264L2", "ZQSCOPE ALPHA")
     await _rec(pg_conn, standard_new_application, "T264L3", "ZQSCOPE BETA")
     a = await _id(pg_conn, "ZQSCOPE ALPHA")
@@ -99,7 +97,7 @@ async def test_link_cycle_message_names_the_rows(pg_conn):
     a = await _id(pg_conn, "ZQCYC ALPHA")
     b = await _id(pg_conn, "ZQCYC BETA")
     await ar.link(pg_conn, a, b, scope_license=None, note=None, admin_email=ADMIN)
-    with pytest.raises(AliasError, match="ZQCYC BETA.*ZQCYC ALPHA"):
+    with pytest.raises(AliasError, match=r"ZQCYC BETA.*ZQCYC ALPHA"):
         await ar.link(pg_conn, b, a, scope_license=None, note=None, admin_email=ADMIN)
 
 
@@ -234,9 +232,7 @@ async def test_links_detail(pg_conn, standard_new_application):
         (comma, "ZQPANEL, EPS", "rule", None),
         (epsy, "EPSY ZQPANEL", "manual", "T264P2"),
     }
-    assert [(x["other_id"], x["other_name"]) for x in d["dismissals"]] == [
-        (other, "ZQPANEL OTHER")
-    ]
+    assert [(x["other_id"], x["other_name"]) for x in d["dismissals"]] == [(other, "ZQPANEL OTHER")]
     assert d["in_manual"] is True
 
     v = await ar.links_detail(pg_conn, epsy)
@@ -253,4 +249,6 @@ async def test_not_a_name_refused_while_in_a_manual_row(pg_conn):
     b = await _id(pg_conn, "ZQNAN BETA")
     await ar.link(pg_conn, a, b, scope_license=None, note=None, admin_email=ADMIN)
     with pytest.raises(ValueError, match="unlink"):
-        await record_manual(pg_conn, a, entity_type="not_a_name", created_by=ADMIN)
+        await record_manual(
+            pg_conn, a, entity_type="not_a_name", entity_subtype=None, created_by=ADMIN
+        )

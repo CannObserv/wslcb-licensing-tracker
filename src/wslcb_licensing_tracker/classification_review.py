@@ -92,13 +92,17 @@ async def _audit(  # noqa: PLR0913
     details: dict,
 ) -> None:
     new = await _triple(conn, entity_id)
+    # The name, so a row about a purged entity can still be read (#247 §4).
+    name = (
+        await conn.execute(select(entities.c.name).where(entities.c.id == entity_id))
+    ).scalar_one_or_none()
     await log_action(
         conn,
         admin_email,
         action,
         "entity",
         entity_id,
-        {"old": list(old), "new": list(new), **details},
+        {"name": name, "old": list(old), "new": list(new), **details},
     )
 
 

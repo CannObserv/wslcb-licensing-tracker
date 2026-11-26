@@ -15,7 +15,7 @@ from wslcb_licensing_tracker.entity_aliases import relink
 from wslcb_licensing_tracker.models import entities, entity_classifications
 from wslcb_licensing_tracker.pipeline import insert_record
 
-pytestmark = pytest.mark.asyncio(loop_scope="session")
+PG = pytest.mark.asyncio(loop_scope="session")
 
 ADMIN = "admin@example.com"
 
@@ -44,9 +44,7 @@ async def _rec(conn, base, licence, *names, day=10):
 async def _mine(conn, *ids):
     """Suggestions whose variant or canonical is one of *ids*."""
     want = set(ids)
-    return [
-        s for s in await suggestions(conn) if {s["variant_id"], s["canonical_id"]} & want
-    ]
+    return [s for s in await suggestions(conn) if {s["variant_id"], s["canonical_id"]} & want]
 
 
 def _pair(s):
@@ -69,6 +67,7 @@ def test_designator_base(key, base):
     assert designator_base(key) == base
 
 
+@PG
 async def test_comma_drop_trap(pg_conn):
     comma = await _ent(pg_conn, "ZQTHOM, DANIA")
     dropped = await _ent(pg_conn, "ZQTHOM DANIA")
@@ -82,6 +81,7 @@ async def test_comma_drop_trap(pg_conn):
     assert (s["variant_name"], s["canonical_name"]) == ("ZQTHOM DANIA", "DANIA ZQTHOM")
 
 
+@PG
 async def test_comma_dropped_only(pg_conn):
     comma = await _ent(pg_conn, "ZQHAAG, GRANTO")
     dropped = await _ent(pg_conn, "ZQHAAG GRANTO")
@@ -93,6 +93,7 @@ async def test_comma_dropped_only(pg_conn):
     assert s["label"] == "comma-dropped only"
 
 
+@PG
 async def test_comma_drop_whose_dropped_form_is_another_natural_order(pg_conn):
     comma = await _ent(pg_conn, "ZQCHAR, KAURA")  # natural order: KAURA ZQCHAR
     other = await _ent(pg_conn, "KAURA, ZQCHAR")  # natural order: ZQCHAR KAURA
@@ -105,6 +106,7 @@ async def test_comma_drop_whose_dropped_form_is_another_natural_order(pg_conn):
     assert s["label"] == "also the natural order of KAURA, ZQCHAR"
 
 
+@PG
 async def test_legal_designator(pg_conn):
     bare = await _ent(pg_conn, "ZQSUGAR MTN CAPITAL", "organization")
     llc = await _ent(pg_conn, "ZQSUGAR MTN CAPITAL LLC", "organization")
@@ -115,6 +117,7 @@ async def test_legal_designator(pg_conn):
     assert _pair(s) == ("legal_designator", bare, llc, None)
 
 
+@PG
 async def test_single_token(pg_conn, standard_new_application):
     await _rec(pg_conn, standard_new_application, "T264S1", "ZQTYY", "ZQTYY ZQPENDX", day=1)
     await _rec(pg_conn, standard_new_application, "T264S2", "ZQHALL", "ZQHALL ZQA", "ZQHALL ZQB")
@@ -131,6 +134,7 @@ async def test_single_token(pg_conn, standard_new_application):
     assert await _mine(pg_conn, hal) == []
 
 
+@PG
 async def test_linked_dismissed_and_tombstoned_pairs_drop_out(pg_conn, standard_new_application):
     a = await _ent(pg_conn, "ZQGONE CO", "organization")
     b = await _ent(pg_conn, "ZQGONE CO LLC", "organization")
