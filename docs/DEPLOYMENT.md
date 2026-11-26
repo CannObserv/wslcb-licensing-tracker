@@ -303,11 +303,8 @@ audit log remains. Until then, *Clear manual override* undoes it.
 **Re-classify with Jev** is one paid call: 409 while the flag is off, 503
 while another run holds the lock, 502 (audited) past a 90 s deadline.
 
-**Entity links (#264).** The entity page's admin **Links** panel links,
-unlinks and dismisses alias spellings, and the review queue's **Links** tab
-lists suggestions. Every action is audited (`entity.alias_*`). A global
-variant's own page is `/entity/{id}?stay=1`. Details:
-[`ENTITY_ALIASES.md`](ENTITY_ALIASES.md) "Operator UI".
+**Entity links (#264):** Links panel, review **Links** tab, `entity.alias_*`
+audit rows: [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md) "Operator UI".
 
 ## Testing
 
