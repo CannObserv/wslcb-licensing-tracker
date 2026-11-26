@@ -263,6 +263,8 @@ async def test_mark_not_a_name_then_reclassify_purges(pg_conn):
     [(action, _, details)] = await _audit(pg_conn, eid)
     assert action == "entity.classify_not_a_name"
     assert details["note"] == "fragment"
+    # The name survives the purge in the audit row (#247 §4, #264).
+    assert details["name"] == "T208 PURGE ME PLEASE"
 
     await reclassify_entities(pg_conn)
     gone = (await pg_conn.execute(select(func.count()).where(entities.c.id == eid))).scalar_one()

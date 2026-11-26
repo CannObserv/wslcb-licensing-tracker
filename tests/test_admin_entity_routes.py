@@ -389,3 +389,245 @@ def test_jev_call_has_a_deadline_and_is_audited(client, conn, monkeypatch):
     assert resp.status_code == 502
     assert "TimeoutError" in resp.text
     assert audit.await_args.args[5] == {"error": "TimeoutError"}
+
+
+# ── #264: alias actions, lookup, the Links tab ──────────────────────
+
+
+@pytest.fixture(autouse=True)
+def no_suggestions():
+    """The review page counts the Links tab; tests that don't care see none."""
+    with patch(f"{MOD}.suggestions", new_callable=AsyncMock, return_value=[]) as fn:
+        yield fn
+
+
+def _suggestion(**kw) -> dict:
+    s = {
+        "kind": "single_token",
+        "label": "single-token name",
+        "variant_id": 24142,
+        "variant_name": "TY",
+        "canonical_id": 38707,
+        "canonical_name": "TY PENDERGRAFT",
+        "scope_license": "355693",
+        "shared_licences": ["355693"],
+        "shared_records": 2,
+    }
+    return {**s, **kw}
+
+
+def test_links_tab_renders_suggestions(client, no_suggestions):
+    no_suggestions.return_value = [
+        _suggestion(),
+        _suggestion(
+            kind="legal_designator",
+            label="legal designator",
+            variant_id=5964,
+            variant_name="SUGAR MOUNTAIN CAPITAL",
+            canonical_id=41265,
+            canonical_name="SUGAR MOUNTAIN CAPITAL LLC",
+            scope_license=None,
+            shared_licences=[],
+            shared_records=0,
+        ),
+    ]
+    with (
+        patch(f"{MOD}.review_queue", new_callable=AsyncMock) as rq,
+        patch(
+            f"{MOD}.review_counts", new_callable=AsyncMock, return_value={"main": 0, "unknown": 0}
+        ),
+    ):
+        resp = client.get("/admin/entities/review?tab=links")
+    assert resp.status_code == 200
+    rq.assert_not_awaited()
+    body = " ".join(resp.text.split())
+    for text in (
+        "TY PENDERGRAFT",
+        "single-token name",
+        "licence 355693",
+        "SUGAR MOUNTAIN CAPITAL LLC",
+        "everywhere",
+        'action="/admin/entities/24142/alias"',
+        'action="/admin/entities/24142/not-linked"',
+        'name="target" value="38707"',
+        'name="licence" value="355693"',
+        'name="suggestion" value="single_token"',
+        'value="/admin/entities/review?tab=links"',
+    ):
+        assert text in body, text
+    # The tab count
+    assert re.search(r"Links\s*<span[^>]*>\s*2\s*</span>", resp.text)
+
+
+def test_other_tabs_skip_the_suggestions(client, no_suggestions):
+    with (
+        patch(f"{MOD}.review_queue", new_callable=AsyncMock, return_value=[]),
+        patch(
+            f"{MOD}.review_counts", new_callable=AsyncMock, return_value={"main": 3, "unknown": 0}
+        ),
+    ):
+        body = client.get("/admin/entities/review").text
+    no_suggestions.assert_not_awaited()
+    assert 'href="/admin/entities/review?tab=links"' in body
+    assert not re.search(r"Links\s*<span", body)
+
+
+def test_alias_posts_link_with_scope(client, conn):
+    with (
+        patch(f"{MOD}.parse_target", new_callable=AsyncMock, return_value=38708) as pt,
+        patch(f"{MOD}.link", new_callable=AsyncMock, return_value=5) as fn,
+    ):
+        resp = client.post(
+            "/admin/entities/38707/alias",
+            data={
+                "target": "38708 · TYLER DAVID PENDERGRAFT",
+                "scope": "licence",
+                "licence": " 355693 ",
+                "note": " nickname ",
+                "next": "/entity/38707?stay=1",
+            },
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/entity/38707?stay=1"
+    pt.assert_awaited_once_with(conn, "38708 · TYLER DAVID PENDERGRAFT")
+    fn.assert_awaited_once_with(
+        conn,
+        38707,
+        38708,
+        scope_license="355693",
+        note="nickname",
+        admin_email=ADMIN["email"],
+        suggestion=None,
+    )
+    conn.commit.assert_awaited_once()
+
+
+def test_alias_everywhere_and_suggestion(client, conn):
+    with (
+        patch(f"{MOD}.parse_target", new_callable=AsyncMock, return_value=41265),
+        patch(f"{MOD}.link", new_callable=AsyncMock, return_value=5) as fn,
+    ):
+        client.post(
+            "/admin/entities/5964/alias",
+            data={
+                "target": "41265",
+                "scope": "everywhere",
+                "licence": "401176",
+                "suggestion": "legal_designator",
+            },
+            follow_redirects=False,
+        )
+    assert fn.await_args.kwargs["scope_license"] is None
+    assert fn.await_args.kwargs["suggestion"] == "legal_designator"
+
+
+@pytest.mark.parametrize(
+    ("data", "detail"),
+    [
+        ({"target": "1", "scope": "licence", "licence": " "}, "choose a licence"),
+        ({"target": "1", "scope": "somewhere"}, "scope"),
+    ],
+)
+def test_alias_bad_scope_400(client, conn, data, detail):
+    with (
+        patch(f"{MOD}.parse_target", new_callable=AsyncMock, return_value=1),
+        patch(f"{MOD}.link", new_callable=AsyncMock) as fn,
+    ):
+        resp = client.post("/admin/entities/7/alias", data=data, follow_redirects=False)
+    assert resp.status_code == 400
+    assert detail in resp.text
+    fn.assert_not_awaited()
+    conn.commit.assert_not_awaited()
+
+
+def test_alias_refusal_400_names_the_cycle(client, conn):
+    from wslcb_licensing_tracker.entity_aliases import AliasError
+
+    err = AliasError(
+        "linking A (1) → B (2) would close a cycle: B (2) → A (1) [manual, everywhere]"
+    )
+    with (
+        patch(f"{MOD}.parse_target", new_callable=AsyncMock, return_value=2),
+        patch(f"{MOD}.link", new_callable=AsyncMock, side_effect=err),
+    ):
+        resp = client.post(
+            "/admin/entities/1/alias",
+            data={"target": "2", "scope": "everywhere"},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 400
+    assert "would close a cycle: B (2) → A (1)" in resp.text
+    conn.commit.assert_not_awaited()
+
+
+def test_not_linked_posts_dismiss(client, conn):
+    with (
+        patch(f"{MOD}.parse_target", new_callable=AsyncMock, return_value=9),
+        patch(f"{MOD}.dismiss", new_callable=AsyncMock, return_value=3) as fn,
+    ):
+        resp = client.post(
+            "/admin/entities/7/not-linked",
+            data={"target": "9", "scope": "everywhere", "note": ""},
+            follow_redirects=False,
+        )
+    assert resp.headers["location"] == "/entity/7?stay=1"
+    fn.assert_awaited_once_with(
+        conn, 7, 9, scope_license=None, note=None, admin_email=ADMIN["email"], suggestion=None
+    )
+    conn.commit.assert_awaited_once()
+
+
+def test_unlink_and_undo(client, conn):
+    with patch(f"{MOD}.unlink", new_callable=AsyncMock, return_value="removed") as fn:
+        resp = client.post(
+            "/admin/entities/aliases/12/unlink",
+            data={"next": "//evil.example/"},
+            follow_redirects=False,
+        )
+    assert resp.headers["location"] == "/admin/entities/review?tab=links"
+    fn.assert_awaited_once_with(conn, 12, admin_email=ADMIN["email"])
+    with patch(f"{MOD}.undismiss", new_callable=AsyncMock, return_value=None) as fn:
+        resp = client.post(
+            "/admin/entities/dismissals/4/undo",
+            data={"next": "/entity/7?stay=1"},
+            follow_redirects=False,
+        )
+    assert resp.headers["location"] == "/entity/7?stay=1"
+    fn.assert_awaited_once_with(conn, 4, admin_email=ADMIN["email"])
+    assert conn.commit.await_count == 2
+
+
+def test_unlink_missing_404(client, conn):
+    with patch(f"{MOD}.unlink", new_callable=AsyncMock, side_effect=LookupError("alias 12")):
+        resp = client.post("/admin/entities/aliases/12/unlink", follow_redirects=False)
+    assert resp.status_code == 404
+    conn.commit.assert_not_awaited()
+
+
+def test_lookup_returns_datalist_options(client, conn):
+    rows = [
+        {"id": 41265, "name": "SUGAR MOUNTAIN CAPITAL LLC", "entity_type": "organization"},
+        {"id": 7, "name": "A <B> & C", "entity_type": "person"},
+    ]
+    with patch(f"{MOD}.lookup", new_callable=AsyncMock, return_value=rows) as fn:
+        resp = client.get("/admin/entities/lookup", params={"target": "sugar"})
+    assert resp.status_code == 200
+    fn.assert_awaited_once_with(conn, "sugar")
+    assert '<option value="41265 · SUGAR MOUNTAIN CAPITAL LLC">organization</option>' in resp.text
+    assert "A &lt;B&gt; &amp; C" in resp.text
+
+
+def test_alias_routes_require_admin():
+    c = TestClient(app)
+    c.headers["X-Forwarded-Proto"] = "https"
+    for path in (
+        "/admin/entities/7/alias",
+        "/admin/entities/7/not-linked",
+        "/admin/entities/aliases/1/unlink",
+        "/admin/entities/dismissals/1/undo",
+    ):
+        resp = c.post(path, data={"target": "1", "scope": "everywhere"}, follow_redirects=False)
+        assert resp.status_code in (302, 303, 401, 403), path
+    resp = c.get("/admin/entities/lookup?target=ab", follow_redirects=False)
+    assert resp.status_code in (302, 303, 401, 403)

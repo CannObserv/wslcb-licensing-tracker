@@ -3,7 +3,8 @@
    ``jev_enabled``, ``entity_types``, ``entity_subtypes``, ``entity``. #}
 {% import "partials/entity_classification_forms.html" as f %}
 {% set c = classification %}
-{% set here = "/entity/" ~ entity.id %}
+{# An admin staying on a global variant's page (#264) comes back to it. #}
+{% set here = "/entity/" ~ entity.id ~ ("?stay=1" if variant_of else "") %}
 {% set source_labels = {'manual': 'Reviewed', 'jev': 'AI (Jev)', 'regex': 'Rules'} %}
 <section aria-labelledby="classification-heading" class="mt-6 bg-white rounded-lg shadow-sm border border-co-purple-100 overflow-hidden">
     <div class="px-6 py-4 bg-co-purple-50 border-b border-co-purple-100 flex flex-wrap items-center justify-between gap-2">
@@ -94,6 +95,8 @@
                 {% if c.open_flags %}An open flag holds the purge: resolve it and the next <code>reclassify-entities</code> deletes this entity.
                 {% else %}The next <code>reclassify-entities</code> deletes this entity.{% endif %}
                 <em>Clear manual override</em> undoes the mark until then.</p>
+            {% elif links and links.in_manual %}
+            <p class="text-xs text-gray-600">This entity is in an operator link (see Links below). Unlink it before marking it not a name.</p>
             {% else %}
             {{ f.not_a_name_form(entity.id, here) }}
             {% endif %}

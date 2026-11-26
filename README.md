@@ -78,7 +78,7 @@ wslcb-licensing-tracker/
 ├── api_routes.py           # Versioned API router (/api/v1/*)
 ├── admin_routes.py         # Admin router (/admin/*: dashboard, users, audit log)
 ├── admin_endorsement_routes.py # Admin endorsement-curation router (/admin/endorsements*)
-├── admin_entity_routes.py  # Admin classification review router (/admin/entities/*, #208)
+├── admin_entity_routes.py  # Admin entity review router: classification (#208), links (#264) (/admin/entities/*)
 ├── admin_auth.py           # Admin authentication (exe.dev proxy headers)
 ├── cli.py                  # Unified CLI entry point (click groups: ingest, db, admin)
 ├── display.py              # Presentation formatting (format_outcome, summarize_provenance, classification_badge)
@@ -107,6 +107,8 @@ wslcb-licensing-tracker/
 ├── jev_client.py           # HTTP transport for TypeSafe Jev classification (#207)
 ├── jev_classifier.py       # Jev orchestration: candidates, batches, run rows, check-in payload (#207)
 ├── classification_review.py # Audited operator actions, review queue, health/spend queries (#208)
+├── alias_review.py         # Audited link/unlink/dismiss actions + entity-page Links panel data (#264)
+├── alias_suggestions.py    # Review-queue Links tab: comma-drop, legal-designator, single-token suggestions (#264)
 ├── address_client.py       # HTTP transport for the address-validator service
 ├── address_validator.py    # Async address validation DB layer
 ├── link_records.py         # Async application→outcome record linking
@@ -139,7 +141,7 @@ wslcb-licensing-tracker/
 │   │   ├── base.html       # Admin base layout
 │   │   ├── dashboard.html  # System dashboard
 │   │   ├── endorsements.html # Endorsement management (list, suggestions, codes)
-│   │   ├── entity_review.html # Entity classification review queue (#208)
+│   │   ├── entity_review.html # Entity review queue: classification (#208), Links tab (#264)
 │   │   ├── users.html      # Admin user management
 │   │   └── audit_log.html  # Audit log
 │   └── partials/
@@ -150,6 +152,8 @@ wslcb-licensing-tracker/
 │       ├── classification_badge.html # Entity type chip + public provenance badge macros (#209)
 │       ├── entity_admin_panel.html # Entity-page classification panel, admins only (#208)
 │       ├── entity_classification_forms.html # Classification action form macros (#208)
+│       ├── entity_links_panel.html # Entity-page Links panel, admins only (#264)
+│       ├── link_suggestions.html  # Review queue's Links tab list (#264)
 │       └── source_viewer.html     # Source viewer partial (HTMX iframe)
 ├── static/                 # Static assets
 │   ├── css/
@@ -252,6 +256,8 @@ wslcb-licensing-tracker/
 │   ├── test_entity_classification.py # Classification resolver + Jev rollback (require the test DB)
 │   ├── test_entity_wac_repair.py # WAC-suffix rename/merge + verification (require the test DB)
 │   ├── test_classification_review.py # Operator actions, review queue, health (require the test DB)
+│   ├── test_alias_review.py   # Audited alias actions + Links panel data (require the test DB)
+│   ├── test_alias_suggestions.py # Links-tab suggestion generators (PG parts require the test DB)
 │   ├── test_integrity.py     # Integrity check tests (require the test DB)
 │   ├── test_scraper.py       # Scraper hash dedup + check-in outcome/history/variables (#196), freshness (#197)
 │   ├── test_backfill_snapshots.py # Two-phase snapshot ingest and repair helpers
@@ -432,7 +438,7 @@ Archived HTML snapshots and other persistent data are stored in `./data/` relati
 | `GET /search` | Search interface (HTML) or HTMX partial results |
 | `GET /record/{id}` | Record detail page |
 | `GET /entities` | Searchable, paginated entity list (`?q=`, `?type=`, `?subtype=`, `?sort=`); each row shows its subtype and provenance badge. Alias variants are listed under their party: counts are distinct records over the party, and `q` also matches a variant's spelling (#263) |
-| `GET /entity/{id}` | Entity detail page — type, subtype, provenance badge and all license records for a person or organization, across its alias spellings ("Also listed as"). A global alias variant 302-redirects to its party with `?from=` (#263) |
+| `GET /entity/{id}` | Entity detail page — type, subtype, provenance badge and all license records for a person or organization, across its alias spellings ("Also listed as"). A global alias variant 302-redirects to its party with `?from=` (#263); a signed-in admin stays with `?stay=1` (#264) |
 | `GET /source/{source_id}/record/{record_id}` | HTMX partial — renders archived source HTML for a specific record |
 
 ### Versioned API (`/api/v1/`)
@@ -453,8 +459,11 @@ All `/api/v1/` responses use a consistent JSON envelope: `{"ok": bool, "message"
 |---|---|
 | `GET /admin/` | System dashboard — record counts, recent scrapes, data quality checklist, entity classification health/spend |
 | `GET /admin/endorsements` | Endorsement management — list, duplicate suggestions, code mappings |
-| `GET /admin/entities/review` | Entity classification review queue (`?tab=unknown` for *Subtype unknown*) |
+| `GET /admin/entities/review` | Entity review queue (`?tab=unknown` for *Subtype unknown*, `?tab=links` for link suggestions, #264) |
 | `POST /admin/entities/{id}/{classify,accept,not-a-name,clear-manual,flag,jev}` | Audited classification actions; each 303-redirects to its `next` path. `jev` is a paid call (409 while disabled) |
+| `POST /admin/entities/{id}/{alias,not-linked}` | Audited *Same as…* (manual link) and *Not linked to…* (dismissal); form `target` (id or name), `scope` `licence`/`everywhere`, `licence`, `note` (#264) |
+| `POST /admin/entities/aliases/{alias_id}/unlink` · `POST /admin/entities/dismissals/{id}/undo` | Audited unlink (a manual row is deleted; a rule row gets a dismissal) and undo of a dismissal (#264) |
+| `GET /admin/entities/lookup?target=` | `<option>` list of names for the link forms' target field (HTMX) |
 | `GET /admin/users` | Admin user management — add/remove admins |
 | `GET /admin/audit-log` | Audit log — paginated history of all admin mutations |
 

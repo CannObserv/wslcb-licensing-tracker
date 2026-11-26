@@ -1,0 +1,52 @@
+{# The review queue's Links tab (#264): ``items`` are alias_suggestions.suggestions(),
+   ``next_url`` the tab.  Link / Dismiss post the pair with its scope pre-filled. #}
+{% set btn = "text-xs font-medium px-2.5 py-1 rounded border transition-colors" %}
+{% set kind_style = {'comma_drop': 'bg-amber-100 text-amber-800', 'legal_designator': 'bg-blue-50 text-blue-800', 'single_token': 'bg-gray-100 text-gray-700'} %}
+{% macro pair_fields(s, next) -%}
+<input type="hidden" name="target" value="{{ s.canonical_id }}">
+{% if s.scope_license %}
+<input type="hidden" name="scope" value="licence">
+<input type="hidden" name="licence" value="{{ s.scope_license }}">
+{% else %}
+<input type="hidden" name="scope" value="everywhere">
+{% endif %}
+<input type="hidden" name="suggestion" value="{{ s.kind }}">
+<input type="hidden" name="next" value="{{ next }}">
+{%- endmacro %}
+{% if items %}
+<ul class="space-y-2 list-none">
+    {% for s in items %}
+    <li class="bg-white border border-gray-200 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div class="space-y-1">
+            <div class="text-sm">
+                <a href="/entity/{{ s.variant_id }}?stay=1" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ s.variant_name }}</a>
+                <span class="text-gray-400">→</span>
+                <a href="/entity/{{ s.canonical_id }}?stay=1" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ s.canonical_name }}</a>
+            </div>
+            <div class="text-xs text-gray-500 flex flex-wrap items-center gap-2">
+                <span class="inline-flex items-center px-2 py-0.5 rounded font-medium {{ kind_style.get(s.kind, 'bg-gray-100 text-gray-700') }}">{{ s.label }}</span>
+                <span>{% if s.scope_license %}licence {{ s.scope_license }}{% else %}everywhere{% endif %}</span>
+                <span>·
+                    {% if s.shared_licences %}shares licence{{ 's' if s.shared_licences | length != 1 }} {{ s.shared_licences[:3] | join(', ') }}{% if s.shared_licences | length > 3 %} +{{ s.shared_licences | length - 3 }}{% endif %}
+                    {%- else %}no shared licence{% endif %},
+                    {{ s.shared_records }} shared record{{ 's' if s.shared_records != 1 }}</span>
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <form method="POST" action="/admin/entities/{{ s.variant_id }}/alias" class="inline">
+                {{ pair_fields(s, next_url) }}
+                <button type="submit" class="{{ btn }} bg-co-purple text-white border-co-purple hover:bg-co-purple-700">Link</button>
+            </form>
+            <form method="POST" action="/admin/entities/{{ s.variant_id }}/not-linked" class="inline">
+                {{ pair_fields(s, next_url) }}
+                <button type="submit" class="{{ btn }} bg-white text-gray-700 border-gray-300 hover:border-co-purple hover:text-co-purple">Dismiss</button>
+            </form>
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="bg-white border border-gray-200 rounded-lg px-4 py-8 text-center text-sm text-gray-500">
+    No link suggestions.
+</div>
+{% endif %}

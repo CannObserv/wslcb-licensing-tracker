@@ -14,6 +14,12 @@
                 {{ cb.type_chip(entity) }}
                 {{ cb.badge(entity) }}
             </p>
+            {% if variant_of %}
+            {# An admin staying on a global variant's page (#264); visitors are redirected. #}
+            <p class="text-sm text-amber-800 bg-amber-50 rounded px-2 py-1 mt-2" data-testid="variant-of">Admin view: this spelling is listed under
+                <a href="/entity/{{ variant_of.id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ variant_of.name or ('#' ~ variant_of.id) }}</a>
+                everywhere; visitors are redirected there.</p>
+            {% endif %}
             {% if listed_as %}
             <p class="text-sm text-gray-700 mt-2" data-testid="listed-as">Listed as: <span class="font-medium">{{ listed_as.name }}</span></p>
             {% endif %}
@@ -44,5 +50,9 @@
 {# Admin-only classification panel (#208); kept apart from the public header above. #}
 {% if current_user and classification %}
 {% include "partials/entity_admin_panel.html" %}
+{% endif %}
+{# Admin-only Links panel (#264). #}
+{% if current_user and links %}
+{% include "partials/entity_links_panel.html" %}
 {% endif %}
 {% endblock %}

@@ -1115,7 +1115,17 @@ class TestEntityAdminPanel:
         "open_flags": [{"id": 1, "reason": "second look", "flagged_by": "x@y", "created_at": None}],
     }
 
-    def _get(self, *, admin: bool, monkeypatch, jev_enabled: bool = False):
+    _LINKS = {"outgoing": [], "incoming": [], "dismissals": [], "licences": [], "in_manual": False}
+
+    def _get(
+        self,
+        *,
+        admin: bool,
+        monkeypatch,
+        jev_enabled: bool = False,
+        url: str = "/entity/7",
+        party: int | None = None,
+    ):
         monkeypatch.delenv(ADMIN_DEV_EMAIL_ENV, raising=False)
         env = "CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION"
         if jev_enabled:
@@ -1135,8 +1145,13 @@ class TestEntityAdminPanel:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            *_party_patches(),
+            *_party_patches(party),
             patch("wslcb_licensing_tracker.app.classification_detail", new=detail),
+            patch(
+                "wslcb_licensing_tracker.app.links_detail",
+                new_callable=AsyncMock,
+                return_value=self._LINKS,
+            ),
         ]
         if admin:
             extra.append(
@@ -1149,7 +1164,7 @@ class TestEntityAdminPanel:
             p.start()
         try:
             headers = {"X-ExeDev-Email": "admin@example.com"} if admin else {}
-            return client.get("/entity/7", headers=headers), detail
+            return client.get(url, headers=headers, follow_redirects=False), detail
         finally:
             for p in extra:
                 p.stop()
@@ -1208,6 +1223,117 @@ class TestEntityAdminPanel:
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch, jev_enabled=True)
         assert "Re-classify with Jev" in resp.text
         assert 'action="/admin/entities/7/jev"' in resp.text
+
+    # ── #264: the Links section ──────────────────────────────────────
+
+    _LINKS_FULL = {
+        "outgoing": [
+            {
+                "id": 31,
+                "other_id": 38708,
+                "other_name": "TYLER DAVID PENDERGRAFT",
+                "scope": "355693",
+                "source": "manual",
+                "rule": None,
+                "created_at": None,
+                "created_by": "admin@example.com",
+                "note": "nickname",
+            }
+        ],
+        "incoming": [
+            {
+                "id": 32,
+                "other_id": 24234,
+                "other_name": "PENDERGRAFT, TY",
+                "scope": None,
+                "source": "rule",
+                "rule": "format_key",
+                "created_at": None,
+                "created_by": None,
+                "note": None,
+            }
+        ],
+        "dismissals": [
+            {
+                "id": 4,
+                "other_id": 99,
+                "other_name": "TY SOMEONE ELSE",
+                "scope": None,
+                "dismissed_by": "admin@example.com",
+                "dismissed_at": None,
+                "note": "different person",
+            }
+        ],
+        "licences": ["355693", "412000"],
+        "in_manual": True,
+    }
+
+    def test_links_section_lists_rows_and_forms(self, monkeypatch):
+        monkeypatch.setattr(self, "_LINKS", self._LINKS_FULL)
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        assert resp.status_code == 200
+        body = " ".join(resp.text.split())
+        for text in (
+            'data-testid="links-panel"',
+            "TYLER DAVID PENDERGRAFT",
+            'href="/entity/38708?stay=1"',
+            "licence 355693",
+            "nickname",
+            "PENDERGRAFT, TY",
+            "format_key",
+            'action="/admin/entities/aliases/31/unlink"',
+            'action="/admin/entities/aliases/32/unlink"',
+            "TY SOMEONE ELSE",
+            "different person",
+            'action="/admin/entities/dismissals/4/undo"',
+            'action="/admin/entities/7/alias"',
+            'action="/admin/entities/7/not-linked"',
+            'hx-get="/admin/entities/lookup"',
+            '<option value="355693"',
+            '<option value="412000"',
+            'value="/entity/7?stay=1"',
+        ):
+            assert text in body, text
+        # A rule row's Unlink warns that it writes a dismissal.
+        assert "dismissal" in body
+        # In a manual row: not-a-name is barred, with the reason.
+        assert 'action="/admin/entities/7/not-a-name"' not in body
+        assert "Unlink it before marking it not a name" in body
+
+    def test_unlink_confirm_text_is_a_safe_js_string(self, monkeypatch):
+        """CR 2: data reaches the confirm() string through tojson, not HTML escaping."""
+        row = {**self._LINKS_FULL["incoming"][0], "scope": "1');alert(1);//"}
+        monkeypatch.setattr(self, "_LINKS", {**self._LINKS_FULL, "incoming": [row]})
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        [onclick] = re.findall(r"onclick='([^']*alert[^']*)'", resp.text)
+        assert "1\\u0027);alert(1);//" in onclick
+        assert "&#39;" not in onclick
+
+    def test_links_section_without_licences_offers_everywhere_only(self, monkeypatch):
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        body = resp.text
+        assert 'action="/admin/entities/7/alias"' in body
+        assert 'value="licence"' not in body
+        assert "No links." in body
+
+    def test_admin_stays_on_a_variant_page(self, monkeypatch):
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch, url="/entity/7?stay=1", party=8)
+        assert resp.status_code == 200
+        assert 'data-testid="variant-of"' in resp.text
+        assert 'href="/entity/8"' in resp.text
+        # CR 3: the classification forms come back to this page too.
+        assert 'action="/admin/entities/7/classify"' in resp.text
+        assert 'name="next" value="/entity/7"' not in resp.text
+        # Without ?stay=1 an admin is redirected like anyone else.
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch, party=8)
+        assert resp.status_code == 302
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch, url="/entity/7?stay=0", party=8)
+        assert resp.status_code == 302
+
+    def test_public_is_redirected_even_with_stay(self, monkeypatch):
+        resp, _ = self._get(admin=False, monkeypatch=monkeypatch, url="/entity/7?stay=1", party=8)
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/entity/8?from=7"
 
 
 class TestEntityAliasPages:
