@@ -270,3 +270,14 @@ async def test_not_a_name_refused_while_in_a_manual_row(pg_conn):
         await record_manual(
             pg_conn, a, entity_type="not_a_name", entity_subtype=None, created_by=ADMIN
         )
+
+
+async def test_link_scope_may_be_a_licence_the_entity_holds_through_a_variant(
+    pg_conn, standard_new_application
+):
+    """#265: a middle-name pair's parties may be on the licence only through their spellings."""
+    await _rec(pg_conn, standard_new_application, "T265C1", "ZQSCO, ANN", "ZQSCO, ANN Q")
+    natural, target = await _id(pg_conn, "ANN ZQSCO"), await _id(pg_conn, "ANN Q ZQSCO")
+    await relink(pg_conn, [natural, target])
+    await ar.link(pg_conn, natural, target, scope_license="T265C1", note=None, admin_email=ADMIN)
+    assert await _party(pg_conn, await _id(pg_conn, "ZQSCO, ANN"), "T265C1") == target

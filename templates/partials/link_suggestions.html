@@ -1,7 +1,7 @@
 {# The review queue's Links tab (#264): ``items`` are alias_suggestions.suggestions(),
    ``next_url`` the tab.  Link / Dismiss post the pair with its scope pre-filled. #}
 {% set btn = "text-xs font-medium px-2.5 py-1 rounded border transition-colors" %}
-{% set kind_style = {'comma_drop': 'bg-amber-100 text-amber-800', 'legal_designator': 'bg-blue-50 text-blue-800', 'single_token': 'bg-gray-100 text-gray-700'} %}
+{% set kind_style = {'comma_drop': 'bg-amber-100 text-amber-800', 'legal_designator': 'bg-blue-50 text-blue-800', 'single_token': 'bg-gray-100 text-gray-700', 'middle_names': 'bg-green-50 text-green-800'} %}
 {% macro pair_fields(s, next) -%}
 <input type="hidden" name="target" value="{{ s.canonical_id }}">
 {% if s.scope_license %}

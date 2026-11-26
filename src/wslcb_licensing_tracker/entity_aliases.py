@@ -6,8 +6,9 @@ An entity stays one cleaned string.  ``entity_aliases`` maps a variant
 entity to a canonical one, globally (``scope_license`` NULL) or on one
 licence.  Rows have a source:
 
-- ``rule`` rows are **derived**: :func:`relink` rebuilds them (the
-  ``format_key`` rule here; #265 adds ``middle_names``).
+- ``rule`` rows are **derived**: :func:`relink` rebuilds them: the global
+  ``format_key`` rule (#262), then the licence-scoped ``middle_names`` rule
+  (#265) over the parties the first leaves.
 - ``manual`` rows and every ``entity_alias_dismissals`` row are **operator
   data**: nothing automated rewrites or deletes them.
 
@@ -21,13 +22,14 @@ This module holds the pure functions (``link_key``, ``elect_canonical``,
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from sqlalchemy import bindparam, delete, func, insert, or_, select, update
+from sqlalchemy import bindparam, delete, func, insert, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .entity_classification import tombstone_ids
@@ -41,7 +43,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterable, Sequence
+    from collections.abc import Collection, Container, Iterable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -49,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 MAX_STEPS = 4
 RULE_FORMAT_KEY = "format_key"
+RULE_MIDDLE_NAMES = "middle_names"
 KEYED_TYPES = frozenset({"person", "organization"})
 
 _GENERATIONAL = frozenset({"JR", "SR", "II", "III", "IV"})
@@ -154,6 +157,132 @@ def elect_canonical(
         key=lambda m: (m.id not in manual_targets, _preference(kind, m.name), -m.links, m.id),
     )
     return best.id
+
+
+# ── middle-name rule, pure (#265; spec §3) ───────────────────────────
+
+# A standalone AND / & marks a couple string (#246): it takes no part.
+_COUPLE_TOKENS = frozenset({"AND", "&"})
+
+
+@dataclass(frozen=True)
+class PersonKey:
+    """A person ``link_key`` split for the middle-name rule."""
+
+    first: str
+    last: str
+    suffix: str | None
+    middles: tuple[str, ...]
+
+
+def parse_person_key(key: str | None) -> PersonKey | None:
+    """Split *key* into first, last, middles and a trailing generational suffix.
+
+    The suffix is split off before the last token is taken.  None when the
+    key has fewer than two tokens or names a couple (a standalone ``AND``/``&``).
+    """
+    toks = (key or "").split()
+    if _COUPLE_TOKENS & set(toks):
+        return None
+    suffix = toks.pop() if len(toks) > 2 and toks[-1] in _GENERATIONAL else None  # noqa: PLR2004
+    if len(toks) < 2:  # noqa: PLR2004
+        return None
+    return PersonKey(toks[0], toks[-1], suffix, tuple(toks[1:-1]))
+
+
+def _token_compatible(a: str, b: str) -> bool:
+    return a == b or (len(a) == 1 and b.startswith(a)) or (len(b) == 1 and a.startswith(b))
+
+
+def middles_compatible(a: Sequence[str], b: Sequence[str]) -> bool:
+    """No middles fits any; else the same count, each equal or an initial of the other.
+
+    ``B`` ~ ``B C`` is not compatible.
+    """
+    if not a or not b:
+        return True
+    return len(a) == len(b) and all(_token_compatible(x, y) for x, y in zip(a, b, strict=True))
+
+
+@dataclass(frozen=True)
+class Party:
+    """A person party on one licence: its id, name, link key, roles there, link count."""
+
+    id: int
+    name: str
+    key: str | None
+    roles: frozenset[str]
+    links: int = 0
+
+
+@dataclass
+class LicencePlan:
+    """What the middle-name rule makes of one licence's parties."""
+
+    rows: dict[int, int] = field(default_factory=dict)  # variant → canonical
+    conflicts: list[list[Party]] = field(default_factory=list)  # best-ranked first
+    skipped_role: int = 0
+    skipped_dismissed: int = 0
+
+
+def _middle_rank(p: Party, parsed: PersonKey) -> tuple:
+    """Longest first: most middles, most characters, natural order, most links, lowest id."""
+    return (-len(parsed.middles), -len(p.key or ""), _preference("person", p.name), -p.links, p.id)
+
+
+def _middle_groups(parties: Iterable[Party]) -> list[list[tuple[Party, PersonKey]]]:
+    groups: dict[tuple[str, str, str | None], list[tuple[Party, PersonKey]]] = defaultdict(list)
+    for p in parties:
+        if (k := parse_person_key(p.key)) is not None:
+            groups[(k.first, k.last, k.suffix)].append((p, k))
+    return [
+        sorted(ms, key=lambda m: _middle_rank(*m))
+        for _, ms in sorted(groups.items(), key=lambda g: (g[0][0], g[0][1], g[0][2] or ""))
+        if len(ms) > 1
+    ]
+
+
+def plan_licence(
+    parties: Iterable[Party], dismissed: Container[tuple[int, int]] = frozenset()
+) -> LicencePlan:
+    """Apply the middle-name rule to one licence's person parties.
+
+    Parties group by ``(first, last, suffix)``.  In a group whose middles are
+    all pairwise compatible, every party links to the longest form, if the
+    two share a role and the pair (ordered a < b) is not in *dismissed*.  A
+    group with any incompatible pair writes nothing and is returned as a
+    conflict.
+    """
+    plan = LicencePlan()
+    for group in _middle_groups(parties):
+        if not all(
+            middles_compatible(a.middles, b.middles)
+            for (_, a), (_, b) in itertools.combinations(group, 2)
+        ):
+            plan.conflicts.append([p for p, _ in group])
+            continue
+        canon = group[0][0]
+        for p, _ in group[1:]:
+            if not p.roles & canon.roles:
+                plan.skipped_role += 1
+            elif (min(p.id, canon.id), max(p.id, canon.id)) in dismissed:
+                plan.skipped_dismissed += 1
+            else:
+                plan.rows[p.id] = canon.id
+    return plan
+
+
+def conflict_pairs(group: Sequence[Party]) -> list[tuple[int, int]]:
+    """Every ``(variant, canonical)`` pair of a conflicting group that shares a role.
+
+    The canonical is the better-ranked (longer) form.  Ordered by the
+    canonical's rank, then the variant's.
+    """
+    parsed = [(p, k) for p in group if (k := parse_person_key(p.key)) is not None]
+    ranked = [p for p, _ in sorted(parsed, key=lambda m: _middle_rank(*m))]
+    return [
+        (v.id, c.id) for i, c in enumerate(ranked) for v in ranked[i + 1 :] if v.roles & c.roles
+    ]
 
 
 # ── resolution (spec §1) ─────────────────────────────────────────────
@@ -306,8 +435,28 @@ async def eff_many(
 
 
 @dataclass
+class MiddleNameStats:
+    """The middle-name rule's share of a :class:`RelinkResult` (#265).
+
+    Covers the licences the run planned: every licence on a full run.
+    """
+
+    rows: int = 0  # desired rows
+    variants: int = 0  # distinct variant entities among them
+    licences: int = 0  # distinct licences among them
+    conflicts: int = 0  # groups left for review (Links tab)
+    skipped_role: int = 0
+    skipped_dismissed: int = 0
+
+
+@dataclass
 class RelinkResult:
-    """What :func:`relink` did (or, with ``dry_run``, would do)."""
+    """What :func:`relink` did (or, with ``dry_run``, would do).
+
+    ``groups``, ``variants`` and the ``skipped_*`` counts are the format
+    key's; ``middle`` is the middle-name rule's.  ``kept``, ``inserted`` and
+    ``deleted`` count rule rows of both rules.
+    """
 
     groups: dict[str, int] = field(default_factory=dict)
     variants: dict[str, int] = field(default_factory=dict)
@@ -318,6 +467,7 @@ class RelinkResult:
     skipped_dismissed: int = 0
     keys_updated: int = 0
     parties_updated: int = 0  # record_entities.party_id rewrites (#263); 0 on a dry run
+    middle: MiddleNameStats = field(default_factory=MiddleNameStats)
 
     @property
     def changed(self) -> int:
@@ -417,7 +567,7 @@ class _Plan:
     """What the format-key planner needs besides the groups."""
 
     existing: dict[int, int]
-    other_rows: list[AliasRow]
+    other_rows: list[AliasRow]  # manual rows
     dismissed: set[tuple[int, int]]
     # Format-key rows of entities this run did not load: not replanned, but a
     # loop can still run through them (only fetched when one could).
@@ -471,6 +621,8 @@ def _plan_format_key(
 
 
 _FK = (_ea.c.source == "rule") & (_ea.c.rule == RULE_FORMAT_KEY)
+_MN = (_ea.c.source == "rule") & (_ea.c.rule == RULE_MIDDLE_NAMES)
+_MANUAL = _ea.c.source == "manual"
 
 
 async def _existing_format_rows(conn: AsyncConnection, ids: Collection[int]) -> dict[int, int]:
@@ -490,11 +642,212 @@ async def _outside_format_rows(conn: AsyncConnection, loaded: Collection[int]) -
     return [_alias_row(r) for r in rows if r.variant_id not in loaded]
 
 
+# ── database: the middle-name rule (#265) ────────────────────────────
+
+_MiddleKey = tuple[int, str]  # (variant, licence)
+
+
+async def _middle_licences(conn: AsyncConnection, loaded: Collection[int]) -> set[str]:
+    """The licences a targeted relink of *loaded* must replan for the middle-name rule.
+
+    Those of the person links of *loaded* and of every entity resolving through
+    one, plus each scope of an alias row or dismissal touching *loaded*.
+    """
+    re_, lr = record_entities, license_records
+    lics: set[str] = set()
+    for chunk in _chunks(sorted(await reverse_closure(conn, loaded))):
+        stmt = (
+            select(lr.c.license_number)
+            .distinct()
+            .select_from(
+                re_.join(lr, lr.c.id == re_.c.record_id).join(
+                    entities, entities.c.id == re_.c.entity_id
+                )
+            )
+            .where(re_.c.entity_id.in_(chunk) & (entities.c.entity_type == "person"))
+        )
+        lics |= set((await conn.execute(stmt)).scalars())
+    for chunk in _chunks(sorted(loaded)):
+        for stmt in (
+            select(_ea.c.scope_license).where(
+                _ea.c.scope_license.is_not(None)
+                & or_(_ea.c.variant_id.in_(chunk), _ea.c.canonical_id.in_(chunk))
+            ),
+            select(_ead.c.scope_license).where(
+                _ead.c.scope_license.is_not(None)
+                & or_(_ead.c.entity_id_a.in_(chunk), _ead.c.entity_id_b.in_(chunk))
+            ),
+        ):
+            lics |= set((await conn.execute(stmt)).scalars())
+    return {lic for lic in lics if lic}
+
+
+async def _base_index(
+    conn: AsyncConnection,
+    entity_ids: Collection[int],
+    loaded: Collection[int],
+    fk_desired: dict[int, int],
+) -> dict[int, list[AliasRow]]:
+    """Manual rows plus the format-key rows as just planned, enough to resolve *entity_ids*.
+
+    Middle-name rows are left out: the rule plans over the parties the other
+    rows leave.  A *loaded* entity's format-key row is the planned one in
+    *fk_desired*, not the stored one.
+    """
+    rows: list[AliasRow] = []
+    seen: set[int] = set()
+    frontier = set(entity_ids)
+    for _ in range(MAX_STEPS):
+        frontier -= seen
+        if not frontier:
+            break
+        seen |= frontier
+        fetched = [
+            r
+            for r in await _rows_from(conn, frontier)
+            if r.source == "manual" or (r.rule == RULE_FORMAT_KEY and r.variant not in loaded)
+        ]
+        fetched += [
+            AliasRow(v, fk_desired[v], None, "rule", RULE_FORMAT_KEY)
+            for v in frontier
+            if v in fk_desired and v in loaded
+        ]
+        rows += fetched
+        frontier = {r.canonical for r in fetched}
+    return _index(rows)
+
+
+class _LicenceDismissals:
+    """The dismissed party pairs on one licence, computed on first use.
+
+    A dismissal between two entities counts against the parties they resolve
+    to on that licence; a global dismissal applies on every licence.
+    """
+
+    def __init__(
+        self,
+        lic: str,
+        dismissals: Sequence[tuple[int, int, str | None]],
+        index: dict[int, list[AliasRow]],
+    ) -> None:
+        self._lic, self._dismissals, self._index = lic, dismissals, index
+        self._pairs: set[tuple[int, int]] | None = None
+
+    def __contains__(self, pair: object) -> bool:
+        if self._pairs is None:
+            self._pairs = set()
+            for a, b, scope in self._dismissals:
+                if scope is None or scope == self._lic:
+                    pa = _resolve_indexed(a, self._lic, self._index)
+                    pb = _resolve_indexed(b, self._lic, self._index)
+                    self._pairs.add((min(pa, pb), max(pa, pb)))
+        return pair in self._pairs
+
+
+async def _licence_links(
+    conn: AsyncConnection, licences: set[str] | None
+) -> list[tuple[str, int, str]]:
+    """Distinct ``(licence, entity, role)`` links on *licences* (None: every licence)."""
+    re_, lr = record_entities, license_records
+    stmt = (
+        select(lr.c.license_number, re_.c.entity_id, re_.c.role)
+        .distinct()
+        .select_from(re_.join(lr, lr.c.id == re_.c.record_id))
+    )
+    if licences is None:
+        return [tuple(r) for r in (await conn.execute(stmt)).fetchall()]
+    out: list[tuple[str, int, str]] = []
+    for chunk in _chunks(sorted(licences)):
+        rows = await conn.execute(stmt.where(lr.c.license_number.in_(chunk)))
+        out += [tuple(r) for r in rows.fetchall()]
+    return out
+
+
+async def _middle_parties(
+    conn: AsyncConnection,
+    licences: set[str] | None,
+    loaded: Collection[int],
+    fk_desired: dict[int, int],
+) -> tuple[dict[str, list[Party]], dict[int, list[AliasRow]], list[tuple[int, int, str | None]]]:
+    """Each licence's person parties, the index that resolved them, and the dismissals."""
+    links = await _licence_links(conn, licences)
+    dstmt = select(_ead.c.entity_id_a, _ead.c.entity_id_b, _ead.c.scope_license)
+    dismissals = [tuple(r) for r in (await conn.execute(dstmt)).fetchall()]
+    dismissals = [d for d in dismissals if d[2] is None or licences is None or d[2] in licences]
+    index = await _base_index(
+        conn,
+        {e for _, e, _ in links} | {e for a, b, _ in dismissals for e in (a, b)},
+        loaded,
+        fk_desired,
+    )
+    roles: dict[str, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for lic, eid, role in links:
+        roles[lic][_resolve_indexed(eid, lic, index)].add(role)
+    party_ids = sorted({p for ps in roles.values() for p in ps})
+    info: dict[int, tuple[str, str]] = {}
+    for chunk in _chunks(party_ids):
+        stmt = select(entities.c.id, entities.c.name, entities.c.entity_type).where(
+            entities.c.id.in_(chunk)
+        )
+        info.update({eid: (name, etype) for eid, name, etype in (await conn.execute(stmt))})
+    persons = [p for p in party_ids if info.get(p, ("", ""))[1] == "person"]
+    tombs = await tombstone_ids(conn, None if licences is None else persons)
+    counts = await _link_counts(conn, persons)
+    by_licence = {
+        lic: [
+            Party(p, info[p][0], link_key(info[p][0], "person"), frozenset(rs), counts.get(p, 0))
+            for p, rs in sorted(ps.items())
+            if info.get(p, ("", ""))[1] == "person" and p not in tombs
+        ]
+        for lic, ps in roles.items()
+    }
+    return by_licence, index, dismissals
+
+
+async def _plan_middle_names(
+    conn: AsyncConnection,
+    licences: set[str] | None,
+    loaded: Collection[int],
+    fk_desired: dict[int, int],
+    stats: MiddleNameStats,
+) -> dict[_MiddleKey, int]:
+    """Return the desired ``{(variant, licence): canonical}`` middle-name rows on *licences*."""
+    by_licence, index, dismissals = await _middle_parties(conn, licences, loaded, fk_desired)
+    desired: dict[_MiddleKey, int] = {}
+    for lic, parties in sorted(by_licence.items()):
+        plan = plan_licence(parties, _LicenceDismissals(lic, dismissals, index))
+        desired.update({(v, lic): c for v, c in plan.rows.items()})
+        stats.conflicts += len(plan.conflicts)
+        stats.skipped_role += plan.skipped_role
+        stats.skipped_dismissed += plan.skipped_dismissed
+    stats.rows = len(desired)
+    stats.variants = len({v for v, _ in desired})
+    stats.licences = len({lic for _, lic in desired})
+    return desired
+
+
+async def _existing_middle_rows(
+    conn: AsyncConnection, licences: set[str] | None
+) -> dict[_MiddleKey, int]:
+    stmt = select(_ea.c.variant_id, _ea.c.scope_license, _ea.c.canonical_id).where(_MN)
+    if licences is None:
+        return {(v, s): c for v, s, c in (await conn.execute(stmt)).fetchall()}
+    out: dict[_MiddleKey, int] = {}
+    for chunk in _chunks(sorted(licences)):
+        rows = await conn.execute(stmt.where(_ea.c.scope_license.in_(chunk)))
+        out.update({(v, s): c for v, s, c in rows.fetchall()})
+    return out
+
+
+# ── database: relink ─────────────────────────────────────────────────
+
+
 async def _write_relink(
     conn: AsyncConnection,
     key_updates: list[dict],
     stale: list[int],
-    fresh: list[tuple[int, int]],
+    stale_middle: list[_MiddleKey],
+    fresh: list[dict],
 ) -> None:
     if key_updates:
         stmt = (
@@ -506,37 +859,42 @@ async def _write_relink(
             await conn.execute(stmt, key_updates[i : i + _CHUNK])
     for chunk in _chunks(stale):
         await conn.execute(delete(_ea).where(_FK & _ea.c.variant_id.in_(chunk)))
+    for chunk in _chunks(stale_middle):
+        await conn.execute(
+            delete(_ea).where(_MN & tuple_(_ea.c.variant_id, _ea.c.scope_license).in_(chunk))
+        )
     if fresh:
         ins = pg_insert(_ea)
         stmt = ins.on_conflict_do_update(
             constraint="uq_entity_aliases_variant_scope_source",
             set_={"canonical_id": ins.excluded.canonical_id, "rule": ins.excluded.rule},
         )
-        params = [
-            {
-                "variant_id": v,
-                "canonical_id": c,
-                "scope_license": None,
-                "source": "rule",
-                "rule": RULE_FORMAT_KEY,
-            }
-            for v, c in fresh
-        ]
-        for i in range(0, len(params), _CHUNK):
-            await conn.execute(stmt, params[i : i + _CHUNK])
+        for i in range(0, len(fresh), _CHUNK):
+            await conn.execute(stmt, fresh[i : i + _CHUNK])
+
+
+def _rule_row(variant: int, canonical: int, scope: str | None, rule: str) -> dict:
+    return {
+        "variant_id": variant,
+        "canonical_id": canonical,
+        "scope_license": scope,
+        "source": "rule",
+        "rule": rule,
+    }
 
 
 async def relink(
     conn: AsyncConnection, entity_ids: Iterable[int] | None = None, *, dry_run: bool = False
 ) -> RelinkResult:
-    """Rebuild the derived ``rule='format_key'`` alias rows; return what changed.
+    """Rebuild the derived rule rows (format key, then middle names); return what changed.
 
-    With *entity_ids*, only the groups those entities belong to now or
-    belonged to before are rebuilt (ingest, a type change, a merge); with
-    None, every group (``wslcb db relink-entities``).  ``entities.link_key``
-    is refreshed for every entity looked at.  Rows are diffed, not rewritten,
-    so a second run changes nothing.  Manual rows and dismissals are never
-    touched.  Caller commits.
+    With *entity_ids*, only the format-key groups those entities belong to
+    now or belonged to before are rebuilt (ingest, a type change, a merge),
+    and the middle-name rule replans the licences they touch
+    (:func:`_middle_licences`); with None, everything (``wslcb db
+    relink-entities``).  ``entities.link_key`` is refreshed for every entity
+    looked at.  Rows are diffed, not rewritten, so a second run changes
+    nothing.  Manual rows and dismissals are never touched.  Caller commits.
     """
     result = RelinkResult()
     ids = None if entity_ids is None else set(entity_ids)
@@ -551,8 +909,11 @@ async def relink(
     ]
     plan = _Plan(
         existing=await _existing_format_rows(conn, loaded),
+        # Manual rows only: middle-name rows are replanned below, over the
+        # parties these format-key rows leave, so they never block one.
         other_rows=[
-            _alias_row(r) for r in (await conn.execute(select(*_ROW_COLS).where(~_FK))).fetchall()
+            _alias_row(r)
+            for r in (await conn.execute(select(*_ROW_COLS).where(_MANUAL))).fetchall()
         ],
         dismissed=await _dismissed_pairs(conn),
     )
@@ -560,20 +921,39 @@ async def relink(
     members = [m.id for ms in _format_key_groups(loaded, tombstones, {}).values() for m in ms]
     groups = _format_key_groups(loaded, tombstones, await _link_counts(conn, members))
     if ids is not None and {r.variant for r in plan.other_rows} & set(members):
-        # A loop needs a non-format-key row out of a group member; only then
-        # can it pass through format-key rows this targeted run did not load.
+        # A loop needs a manual row out of a group member; only then can it
+        # pass through format-key rows this targeted run did not load.
         plan.outside = await _outside_format_rows(conn, loaded)
     desired = _plan_format_key(groups, plan, result)
 
+    licences = None if ids is None else await _middle_licences(conn, loaded)
+    desired_mid: dict[_MiddleKey, int] = {}
+    existing_mid: dict[_MiddleKey, int] = {}
+    if licences is None or licences:
+        desired_mid = await _plan_middle_names(conn, licences, loaded, desired, result.middle)
+        existing_mid = await _existing_middle_rows(conn, licences)
+
     stale = [v for v, c in plan.existing.items() if desired.get(v) != c]
-    fresh = [(v, c) for v, c in desired.items() if plan.existing.get(v) != c]
+    fresh = [
+        _rule_row(v, c, None, RULE_FORMAT_KEY)
+        for v, c in desired.items()
+        if plan.existing.get(v) != c
+    ]
+    stale_mid = [k for k, c in existing_mid.items() if desired_mid.get(k) != c]
+    fresh_mid = [k for k, c in desired_mid.items() if existing_mid.get(k) != c]
+    fresh += [_rule_row(v, desired_mid[(v, lic)], lic, RULE_MIDDLE_NAMES) for v, lic in fresh_mid]
     result.keys_updated = len(key_updates)
-    result.deleted = len(stale)
+    result.deleted = len(stale) + len(stale_mid)
     result.inserted = len(fresh)
-    result.kept = len(desired) - len(fresh)
+    result.kept = len(desired) + len(desired_mid) - len(fresh)
     if not dry_run:
-        await _write_relink(conn, key_updates, stale, fresh)
-        result.parties_updated = await refresh_parties(conn, None if ids is None else loaded)
+        await _write_relink(conn, key_updates, stale, stale_mid, fresh)
+        touched = None
+        if ids is not None:
+            touched = set(loaded)
+            for v, lic in stale_mid + fresh_mid:
+                touched |= {v, existing_mid.get((v, lic), v), desired_mid.get((v, lic), v)}
+        result.parties_updated = await refresh_parties(conn, touched)
     return result
 
 
@@ -769,10 +1149,13 @@ async def add_manual_alias(  # noqa: PLR0913
     if same is not None:
         msg = f"entity {variant_id} is already linked to {same} in this scope; unlink it first"
         raise AliasError(msg)
-    # Format-key rows are left out: the relink below replans them in this
-    # transaction, and the planner skips any rule row that would loop with a
-    # manual one, so the operator's link wins (spec §1 Writes).
-    rows = [_alias_row(r) for r in (await conn.execute(select(*_ROW_COLS).where(~_FK))).fetchall()]
+    # Rule rows are left out: the relink below replans them in this
+    # transaction.  The format-key planner skips a row that would loop with a
+    # manual one, and middle-name rows only join parties, so the operator's
+    # link wins (spec §1 Writes).
+    rows = [
+        _alias_row(r) for r in (await conn.execute(select(*_ROW_COLS).where(_MANUAL))).fetchall()
+    ]
     path = find_cycle(variant_id, canonical_id, scope_license, rows)
     if path is not None:
         names = await _names(

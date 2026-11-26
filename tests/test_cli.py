@@ -285,7 +285,7 @@ class TestDbGroup:
     @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
     def test_relink_entities(self, mock_engine, mock_rl, mock_gdb, dry_run):
         """wslcb db relink-entities reports the rule-row diff (#262)."""
-        from wslcb_licensing_tracker.entity_aliases import RelinkResult
+        from wslcb_licensing_tracker.entity_aliases import MiddleNameStats, RelinkResult
 
         mock_engine.return_value = mock_async_engine()
         mock_rl.return_value = RelinkResult(
@@ -298,6 +298,7 @@ class TestDbGroup:
             skipped_dismissed=1,
             keys_updated=67653,
             parties_updated=0 if dry_run else 20511,
+            middle=MiddleNameStats(rows=4706, variants=3506, licences=3651, conflicts=397),
         )
         args = ["db", "relink-entities"] + (["--dry-run"] if dry_run else [])
         result = CliRunner().invoke(main, args)
@@ -308,6 +309,10 @@ class TestDbGroup:
         assert "organization: 22 group(s), 32 variant(s)" in result.output
         assert "8,946 inserted, 0 deleted, 0 kept" in result.output
         assert "67,653 link key(s)" in result.output
+        assert (
+            "Middle names: 4,706 row(s), 3,506 variant(s), 3,651 licence(s); "
+            "397 conflicting group(s) left for review"
+        ) in result.output
         assert "1 blocked by a dismissal" in result.output
         if dry_run:
             assert "Record-link parties: computed on the real run." in result.output

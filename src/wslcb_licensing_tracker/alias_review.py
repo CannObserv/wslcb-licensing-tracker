@@ -33,6 +33,7 @@ from .entity_aliases import (
     in_manual_alias,
     relink,
     remove_manual_alias,
+    reverse_closure,
 )
 from .models import entities, entity_alias_dismissals, entity_aliases
 
@@ -75,10 +76,21 @@ async def entity_licences(conn: AsyncConnection, *entity_ids: int) -> list[str]:
 
 
 async def _check_scope(conn: AsyncConnection, scope_license: str | None, *entity_ids: int) -> None:
-    """A licence scope must be one of the entities' own licences."""
+    """A licence scope must be one the entities are on: directly or through an alias row.
+
+    "Through" lets a middle-name suggestion link a party that is on the
+    licence only by a spelling the format key folded into it (#265).
+    """
     if scope_license is None:
         return
-    if scope_license not in await entity_licences(conn, *entity_ids):
+    on_licence = await conn.execute(
+        text(
+            "SELECT 1 FROM record_entities re JOIN license_records lr ON lr.id = re.record_id"
+            " WHERE lr.license_number = :lic AND re.entity_id = ANY(:ids) LIMIT 1"
+        ),
+        {"lic": scope_license, "ids": sorted(await reverse_closure(conn, entity_ids))},
+    )
+    if on_licence.first() is None:
         msg = f"licence {scope_license} is not one of this entity's licences"
         raise AliasError(msg)
 
