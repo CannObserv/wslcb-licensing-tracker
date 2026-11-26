@@ -1,7 +1,7 @@
 ---
 title: "#265 licence-scoped middle-name linking rule"
 date: 2026-11-26
-status: draft
+status: approved
 ---
 
 # #265 licence-scoped middle-name rule
@@ -172,7 +172,7 @@ licences and conflicting groups.
 
 ## Open questions / risks
 
-- **D1 (yours): accept the per-party counts as the done-when.** The issue's
+- **D1 (approved 2026-11-26): the per-party counts are the done-when.** The issue's
   numbers (4,908 / 3,724 / 3,638 / 404) count one row per entity and include
   couples. Under this plan the dry run should show about
   4,706 / 3,506 / 3,651 / 397, give or take new ingests, with the same

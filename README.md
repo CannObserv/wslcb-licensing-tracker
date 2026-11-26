@@ -101,14 +101,14 @@ wslcb-licensing-tracker/
 ├── endorsements_seed.py    # Async endorsement seeding and repair
 ├── endorsements_admin.py   # Async admin helpers for endorsement management
 ├── entities.py             # Async entity normalization + regex classifier
-├── entity_aliases.py      # Entity alias layer: format key, canonical election, eff() resolution, relink, manual links (#262)
+├── entity_aliases.py      # Entity alias layer: format key, middle-name rule, canonical election, eff() resolution, relink, manual links (#262, #265)
 ├── entity_classification.py # Classification resolver (manual > Jev > regex), manual rows, Jev rollback (#206)
 ├── entity_wac_repair.py    # One-off rename/merge of WAC-suffixed entities: `db strip-wac-suffixes` (#211)
 ├── jev_client.py           # HTTP transport for TypeSafe Jev classification (#207)
 ├── jev_classifier.py       # Jev orchestration: candidates, batches, run rows, check-in payload (#207)
 ├── classification_review.py # Audited operator actions, review queue, health/spend queries (#208)
 ├── alias_review.py         # Audited link/unlink/dismiss actions + entity-page Links panel data (#264)
-├── alias_suggestions.py    # Review-queue Links tab: comma-drop, legal-designator, single-token suggestions (#264)
+├── alias_suggestions.py    # Review-queue Links tab: comma-drop, legal-designator, single-token, middle-name-conflict suggestions (#264, #265)
 ├── address_client.py       # HTTP transport for the address-validator service
 ├── address_validator.py    # Async address validation DB layer
 ├── link_records.py         # Async application→outcome record linking
@@ -316,7 +316,7 @@ wslcb-licensing-tracker/
     ├── ADDRESS_VALIDATION.md # address-validator client: key + flags, renewal TTL + pacing (#195), address commands
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
     ├── DISK_GC.md           # Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
-    ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key rule, relink triggers (#262)
+    ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key and middle-name rules, relink triggers (#262, #265)
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
@@ -671,7 +671,7 @@ Test structure:
 | `tests/test_endorsements_seed.py` | Endorsement seeding and code-map repair (require the test DB) |
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
 | `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require the test DB) |
-| `tests/test_entity_aliases.py` | Alias layer (#262): `link_key`, canonical election, `eff()` resolution, cycle checks, `relink` idempotence, manual links + dismissals, ingest/type-change/merge/purge/reprocess hooks, spec worked cases (PG parts require the test DB) |
+| `tests/test_entity_aliases.py` | Alias layer (#262, #265): `link_key`, canonical election, middle-name rule, `eff()` resolution, cycle checks, `relink` idempotence, manual links + dismissals, ingest/type-change/merge/purge/reprocess hooks, spec worked cases (PG parts require the test DB) |
 | `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require the test DB) |
 | `tests/test_entity_wac_repair.py` | `strip-wac-suffixes` — rename, twin/group merge, regex refresh, link renumbering, noise skip, dry-run, idempotence, mismatch report (require the test DB) |
 | `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require the test DB) |
