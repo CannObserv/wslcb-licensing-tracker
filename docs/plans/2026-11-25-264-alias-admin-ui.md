@@ -1,7 +1,7 @@
 ---
 title: "#264 entity Links admin UI: panel, review-queue Links tab, audit actions"
 date: 2026-11-25
-status: draft
+status: approved
 ---
 
 # #264 entity Links admin UI
@@ -126,11 +126,9 @@ when" asks. This is the spec's §4 "from now on" sentence. It overlaps #261's
 
 ## Open questions / risks
 
-- **`entity.alias_undismiss`** is a fourth audit action that the issue
-  doesn't list. Keep it, or drop the Undo button?
-- **The worked cases on prod** are operator decisions. I rehearse them on the
-  scratch copy only. Should I run them on prod after shipping, or leave them
-  to you?
+- **`entity.alias_undismiss`:** kept (operator, 2026-11-26).
+- **The worked cases on prod:** rehearsed on the scratch copy, then run on prod
+  after shipping (operator, 2026-11-26).
 - **Review-tab counts:** the nav shows a count per tab. Computing the Links
   count on every queue load costs one suggestion pass (target < 100 ms). If
   it is slower, the Links tab shows no count until it is opened.
