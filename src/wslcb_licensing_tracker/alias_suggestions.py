@@ -251,7 +251,7 @@ _MIDDLE_LINKS_SQL = text(
     FROM record_entities re
     JOIN license_records lr ON lr.id = re.record_id
     JOIN entities e ON e.id = re.party_id
-    WHERE re.party_id = ANY(:ids)
+    WHERE re.party_id = ANY(:ids) AND btrim(lr.license_number) <> ''
     """
 )
 

@@ -1150,3 +1150,17 @@ async def test_full_relink_writes_middle_rows_once(pg_conn, standard_new_applica
     assert first.middle.rows >= 1
     second = await relink(pg_conn)
     assert second.changed == 0
+
+
+@PG
+@pytest.mark.parametrize("licence", [None, "", "  "])
+async def test_middle_names_never_from_a_record_without_a_licence(
+    pg_conn, standard_new_application, licence
+):
+    """CR 1: a NULL or blank licence must not group people, least of all as scope NULL."""
+    _, (short, long_) = await _link(
+        pg_conn, standard_new_application, licence, "ZQNUL ZQLIC", "ZQNUL K ZQLIC"
+    )
+    await relink(pg_conn, [short, long_])
+    await relink(pg_conn)
+    assert await _rows(pg_conn, short, long_) == set()

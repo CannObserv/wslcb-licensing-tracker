@@ -679,7 +679,7 @@ async def _middle_licences(conn: AsyncConnection, loaded: Collection[int]) -> se
             ),
         ):
             lics |= set((await conn.execute(stmt)).scalars())
-    return {lic for lic in lics if lic}
+    return {lic for lic in lics if lic and lic.strip()}
 
 
 async def _base_index(
@@ -747,12 +747,17 @@ class _LicenceDismissals:
 async def _licence_links(
     conn: AsyncConnection, licences: set[str] | None
 ) -> list[tuple[str, int, str]]:
-    """Distinct ``(licence, entity, role)`` links on *licences* (None: every licence)."""
+    """Distinct ``(licence, entity, role)`` links on *licences* (None: every licence).
+
+    A record with a NULL or blank licence number is left out: it names no
+    licence to scope a row to, and a NULL scope would mean everywhere (CR 1).
+    """
     re_, lr = record_entities, license_records
     stmt = (
         select(lr.c.license_number, re_.c.entity_id, re_.c.role)
         .distinct()
         .select_from(re_.join(lr, lr.c.id == re_.c.record_id))
+        .where(func.btrim(lr.c.license_number) != "")
     )
     if licences is None:
         return [tuple(r) for r in (await conn.execute(stmt)).fetchall()]
