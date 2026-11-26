@@ -117,6 +117,9 @@ the long form through its party's one row.
   dismissal everywhere or on the licence. A dismissal between two entities
   counts against the parties they resolve to there.
 - **Any conflict:** the group writes nothing and goes to the Links tab.
+- **Not covered by a dismissal:** two variants dismissed from each other
+  still both link to their canonical, and so resolve together. The format
+  key behaves the same way. To keep one apart, dismiss it from the canonical.
 
 A targeted `relink` replans the licences of the person links of every entity
 it looked at or that resolves through one, plus each scope of an alias row or
