@@ -1417,6 +1417,24 @@ async def _closes_cycle_after_merge(  # noqa: PLR0913
     return find_cycle(variant, canonical, scope, graph) is not None
 
 
+async def alias_partners(conn: AsyncConnection, entity_ids: Collection[int]) -> set[int]:
+    """The other end of every alias row touching *entity_ids*, those excluded.
+
+    Call before deleting *entity_ids*: their rows cascade away, so relink the
+    result afterwards to refresh those entities' parties.
+    """
+    ids = list(entity_ids)
+    if not ids:
+        return set()
+    out: set[int] = set()
+    for chunk in _chunks(sorted(ids)):
+        stmt = select(_ea.c.variant_id, _ea.c.canonical_id).where(
+            or_(_ea.c.variant_id.in_(chunk), _ea.c.canonical_id.in_(chunk))
+        )
+        out |= {e for row in (await conn.execute(stmt)).fetchall() for e in row}
+    return out - set(ids)
+
+
 async def key_mates(conn: AsyncConnection, entity_ids: Collection[int]) -> set[int]:
     """Entities sharing a stored ``link_key`` with any of *entity_ids*, those excluded.
 

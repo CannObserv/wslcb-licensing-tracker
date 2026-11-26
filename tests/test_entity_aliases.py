@@ -1164,3 +1164,17 @@ async def test_middle_names_never_from_a_record_without_a_licence(
     await relink(pg_conn, [short, long_])
     await relink(pg_conn)
     assert await _rows(pg_conn, short, long_) == set()
+
+
+@PG
+async def test_purging_a_middle_name_canonical_refreshes_its_variants(
+    pg_conn, standard_new_application
+):
+    """CR 2: the variant is no key-mate of the purged canonical; its party must not dangle."""
+    _, (short, long_) = await _link(
+        pg_conn, standard_new_application, "ZQPG1", "ZQPUR ZQMID", "ZQPUR T ZQMID"
+    )
+    await relink(pg_conn, [short, long_])
+    assert (await _assert_parties_current(pg_conn, short))[(short, "ZQPG1")] == long_
+    await _purge_entities(pg_conn, [long_])
+    assert (await _assert_parties_current(pg_conn, short))[(short, "ZQPG1")] == short
