@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__)
 _ea = entity_aliases
 _ead = entity_alias_dismissals
 # A target typed as an id, or picked from the lookup list ("41265 · NAME").
-_LEADING_ID = re.compile(r"^\s*#?(\d+)\b")
+# Anything else is a name, even with leading digits (``7-ELEVEN``, ``13 COINS``).
+_LEADING_ID = re.compile(r"^\s*#?(\d+)\s*(?:·.*)?$")
 
 
 def _check_note(note: str | None) -> None:

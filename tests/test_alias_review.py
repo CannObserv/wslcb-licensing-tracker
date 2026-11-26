@@ -203,6 +203,13 @@ async def test_parse_target(pg_conn):
     assert await ar.parse_target(pg_conn, f"{a}") == a
     assert await ar.parse_target(pg_conn, f" #{a} · ZQTARGET ALPHA") == a
     assert await ar.parse_target(pg_conn, "zqtarget alpha") == a
+    # CR 1: a name that starts with digits is a name, not an id.
+    seven = await _id(pg_conn, "7-ZQELEVEN INC")
+    coins = await _id(pg_conn, "13 ZQCOINS HOLDINGS LLC")
+    assert await ar.parse_target(pg_conn, "7-ZQELEVEN INC") == seven
+    assert await ar.parse_target(pg_conn, "13 zqcoins holdings llc") == coins
+    with pytest.raises(AliasError, match="no entity"):
+        await ar.parse_target(pg_conn, "13 ZQCOINS")
     with pytest.raises(AliasError, match="no entity"):
         await ar.parse_target(pg_conn, "ZQTARGET NOBODY")
     with pytest.raises(AliasError, match="target"):
