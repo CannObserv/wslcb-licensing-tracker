@@ -3,7 +3,8 @@
    ``jev_enabled``, ``entity_types``, ``entity_subtypes``, ``entity``. #}
 {% import "partials/entity_classification_forms.html" as f %}
 {% set c = classification %}
-{% set here = "/entity/" ~ entity.id %}
+{# An admin staying on a global variant's page (#264) comes back to it. #}
+{% set here = "/entity/" ~ entity.id ~ ("?stay=1" if variant_of else "") %}
 {% set source_labels = {'manual': 'Reviewed', 'jev': 'AI (Jev)', 'regex': 'Rules'} %}
 <section aria-labelledby="classification-heading" class="mt-6 bg-white rounded-lg shadow-sm border border-co-purple-100 overflow-hidden">
     <div class="px-6 py-4 bg-co-purple-50 border-b border-co-purple-100 flex flex-wrap items-center justify-between gap-2">
