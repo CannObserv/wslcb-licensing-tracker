@@ -131,7 +131,7 @@ one row per entity instead, as the spec did (4,908 on 11-23), it is 4,924.
 
 `relink(conn, entity_ids)` rebuilds the groups those entities are in now or
 were in before; `relink(conn)` rebuilds all of them (`wslcb db
-relink-entities [--dry-run]`, ≈7 s on prod). Rows are diffed, not
+relink-entities [--dry-run]`, ≈10 s and a ≈220 MB peak on prod, 2026-11-26). Rows are diffed, not
 rewritten, so a second run changes nothing. It runs, in the caller's
 transaction:
 
