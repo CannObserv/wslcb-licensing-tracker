@@ -58,11 +58,13 @@ else the global row; at each step `manual` beats `rule`; at most 4 steps.
 step. With no licence context only global rows apply.
 
 The writers keep the graph acyclic:
-- `add_manual_alias` refuses a link that would close a loop among manual and
-  other non-format-key rows, and names the rows that close it.
-- `relink` skips a rule row that would close a loop (counted as
-  `skipped_cycle`). A manual link therefore beats a format-key row: it is
-  accepted, and the group is replanned in the same transaction.
+- `add_manual_alias` refuses a link that would close a loop among manual
+  rows, and names the rows that close it.
+- `relink` skips a format-key row that would close a loop with manual rows
+  (counted as `skipped_cycle`). A manual link therefore beats a rule row: it
+  is accepted, and the rules are replanned in the same transaction.
+- A middle-name row runs from a party to a party on its licence, and a party
+  has no applicable row there, so it never closes a loop.
 - A merge drops a re-pointed manual row that would close a loop: the rows left
   already state the same equivalence.
 
@@ -91,17 +93,54 @@ is still its group's party everywhere else (the spec's Pendergraft case).
 a pair with a dismissal in any scope: the rule row is global, so it would
 link the pair on the dismissed licence too.
 
+## The middle-name rule (licence-scoped, #265)
+
+Spec §3. Within each licence, the **members** are its person parties under the
+format-key and manual rows: every spelling the format key already links, and
+any variant an operator linked on the licence, folds into its party. So a
+format-key variant (`PENDERGRAFT, TYLER`) needs no row of its own: it reaches
+the long form through its party's one row.
+
+- **Key:** the party's `link_key` split into first, last, middles and a
+  trailing `JR SR II III IV` (split off first). Left out: under two tokens, a
+  standalone `AND`/`&` token (couple strings, #246), a tombstone.
+- **Group:** `(licence, first, last, suffix)`; a missing suffix matches only a
+  missing suffix.
+- **Compatible:** no middles fits any middles; otherwise the same number of
+  middles, each equal or a single letter that starts the other. `B` ~ `B C`
+  is not compatible.
+- **All compatible:** each party gets a row scoped to the licence to the
+  longest form: the most middles, then the most characters, then the person
+  order (natural order, most links, lowest id). No stickiness: a scoped row
+  redirects nothing. Skipped (counted): a party sharing no role
+  (`applicant` / `previous_applicant`) with the canonical, and a pair with a
+  dismissal everywhere or on the licence. A dismissal between two entities
+  counts against the parties they resolve to there.
+- **Any conflict:** the group writes nothing and goes to the Links tab.
+- **Not covered by a dismissal:** two variants dismissed from each other
+  still both link to their canonical, and so resolve together. The format
+  key behaves the same way. To keep one apart, dismiss it from the canonical.
+
+A targeted `relink` replans the licences of the person links of every entity
+it looked at or that resolves through one, plus each scope of an alias row or
+dismissal touching those entities. A purge relinks only its key-mates, so a
+conflict that a purged person alone caused clears at the next full run.
+
+Measured on prod (2026-11-26, read-only): 4,706 rows, 3,506 variant entities,
+3,651 licences, 397 conflicting groups, 0 pairs blocked by roles. Counted
+one row per entity instead, as the spec did (4,908 on 11-23), it is 4,924.
+
 ## Keeping rule rows current
 
 `relink(conn, entity_ids)` rebuilds the groups those entities are in now or
 were in before; `relink(conn)` rebuilds all of them (`wslcb db
-relink-entities [--dry-run]`, ≈7 s on prod). Rows are diffed, not
+relink-entities [--dry-run]`, ≈10 s and a ≈220 MB peak on prod, 2026-11-26). Rows are diffed, not
 rewritten, so a second run changes nothing. It runs, in the caller's
 transaction:
 
 | When | Where |
 |---|---|
-| a record is ingested | `pipeline._enrich_new_record` (own savepoint) |
+| a record is ingested | `pipeline._enrich_new_record` (own savepoint); ≈16 ms a record with the middle-name rule, ≈7 ms without (median, prod copy, 2026-11-26) |
 | a resolved type changes | `resolve_entities` (classify, reclassify, Jev); manual rows now across types get a flag |
 | a manual classification is set or cleared | `record_manual` / `clear_manual` (so a not-a-name mark drops the rule rows) |
 | entities are merged, purged or renamed | `merge_entity_into` (operator rows re-pointed first), `_purge_entities`, the WAC repair |
@@ -156,7 +195,7 @@ scope, source (rule name or operator email), date and note.
 - **Undo** deletes a dismissal.
 - **Same as…** links this entity to a target, and **Not linked to…**
   dismisses the pair. The target is an id or a name: HTMX fills a datalist from
-  `GET /admin/entities/lookup`. The scope is one of the entity's own licences
+  `GET /admin/entities/lookup`. The scope is one of the licences the entity is on, directly or through an alias row
   (the default) or everywhere.
 - A global variant's page redirects; `/entity/{id}?stay=1` keeps a signed-in
   admin on it, and every link in the panel carries it.
@@ -169,9 +208,15 @@ pairs the rules leave apart, computed on load by `alias_suggestions.py`:
 | `comma_drop` | `LAST, FIRST` and the comma-dropped `LAST FIRST`: a *trap* when `FIRST LAST` also exists; labelled when `LAST FIRST` is itself another comma name's natural order | everywhere |
 | `legal_designator` | organizations equal once trailing `LLC`, `INC`, `CORP`, `CO`, `LTD`, `LP`… are stripped; the target prefers a designator form, then the most records | everywhere |
 | `single_token` | a one-token person and the one other person party on a licence whose spelling has that token | that licence |
+| `middle_names` | each pair, shorter → longer, of a group the middle-name rule left alone; labelled with both middles (`J / K`, `none / A`); read from the stored `party_id`, which for a conflicting group is the rule's own input | that licence |
 
 A pair already one party, with a dismissal in any scope, or with a not-a-name
-end is not listed. #265 adds middle-name conflicts to `GENERATORS`.
+end is not listed. A licence scope must be one the entity is on, directly or
+through an alias row.
+
+The tab loads in 0.6–0.85 s on the prod copy (2026-11-26, 593 suggestions,
+484 of them middle names), past a 0.5 s aim. The next step down is a
+conflicts table that `relink` fills, which needs a migration.
 
 **Audit actions** (`admin_audit_log`, target the entity acted on): every
 `details` carries both ids and **both names**, the scope, the source (and rule),

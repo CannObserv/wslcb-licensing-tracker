@@ -154,3 +154,36 @@ async def test_linked_dismissed_and_tombstoned_pairs_drop_out(pg_conn, standard_
     )
 
     assert await _mine(pg_conn, a, b, c, d, e, f) == []
+
+
+@PG
+async def test_middle_name_conflicts(pg_conn, standard_new_application):
+    """#265: a conflicting group lists each pair, shorter → longer, scoped to the licence."""
+    await _rec(
+        pg_conn, standard_new_application, "T265M1", "ZQJON ZQMID", "ZQJON A ZQMID", "ZQJON B ZQMID"
+    )
+    await _rec(pg_conn, standard_new_application, "T265M2", "ZQJON ZQMID", "ZQJON A ZQMID", day=2)
+    bare, a, b = [await _ent(pg_conn, n) for n in ("ZQJON ZQMID", "ZQJON A ZQMID", "ZQJON B ZQMID")]
+    await relink(pg_conn, [bare, a, b])
+
+    got = {_pair(s): s["label"] for s in await _mine(pg_conn, bare, a, b)}
+    assert got == {
+        ("middle_names", b, a, "T265M1"): "middle names: B / A",
+        ("middle_names", bare, a, "T265M1"): "middle names: none / A",
+        ("middle_names", bare, b, "T265M1"): "middle names: none / B",
+    }  # T265M2's group is compatible: the rule linked it, nothing to suggest
+
+    await ar.link(pg_conn, bare, a, scope_license="T265M1", note=None, admin_email=ADMIN)
+    assert [_pair(s) for s in await _mine(pg_conn, bare, a, b)] == [
+        ("middle_names", b, a, "T265M1")
+    ]
+
+
+@PG
+async def test_middle_name_conflicts_with_a_suffix(pg_conn, standard_new_application):
+    """The SQL cut groups by the raw last token: for a suffixed key that is the suffix."""
+    names = ("ZQJAY A ZQSUF JR", "ZQJAY B ZQSUF JR", "ZQJAY C ZQSUF")
+    await _rec(pg_conn, standard_new_application, "T265M3", *names)
+    a, b, c = [await _ent(pg_conn, n) for n in names]
+    await relink(pg_conn, [a, b, c])
+    assert [_pair(s) for s in await _mine(pg_conn, a, b, c)] == [("middle_names", b, a, "T265M3")]

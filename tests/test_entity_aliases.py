@@ -19,12 +19,17 @@ from wslcb_licensing_tracker.entity_aliases import (
     AliasError,
     AliasRow,
     Member,
+    Party,
     add_manual_alias,
+    conflict_pairs,
     dismiss_pair,
     eff_many,
     elect_canonical,
     find_cycle,
     link_key,
+    middles_compatible,
+    parse_person_key,
+    plan_licence,
     relink,
     remove_manual_alias,
     resolve,
@@ -216,6 +221,144 @@ def test_find_cycle_self_link():
     assert find_cycle(1, 1, None, []) == []
 
 
+# ── middle-name rule, pure (#265; spec §3) ───────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("TYLER DAVID PENDERGRAFT", ("TYLER", "PENDERGRAFT", None, ("DAVID",))),
+        ("TYLER PENDERGRAFT", ("TYLER", "PENDERGRAFT", None, ())),
+        ("JOHN SMITH JR", ("JOHN", "SMITH", "JR", ())),
+        ("JOHN A SMITH III", ("JOHN", "SMITH", "III", ("A",))),
+        ("H S WRIGHT III", ("H", "WRIGHT", "III", ("S",))),
+        ("JOHN B C SMITH", ("JOHN", "SMITH", None, ("B", "C"))),
+        # one token, couples, nothing: no part in the rule
+        ("TY", None),
+        ("WASSEF & RACHA HAROUN", None),
+        ("RENEE AND TIM OCHS", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_parse_person_key(key, expected):
+    got = parse_person_key(key)
+    assert (got if got is None else (got.first, got.last, got.suffix, got.middles)) == expected
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "ok"),
+    [
+        ((), ("DAVID",), True),
+        ((), ("B", "C"), True),
+        (("A",), ("ALLEN",), True),
+        (("ALLEN",), ("A",), True),
+        (("ALLEN",), ("ALLEN",), True),
+        (("J", "R"), ("JAMES", "R"), True),
+        (("ALLEN",), ("ANDREW",), False),
+        (("A",), ("B",), False),
+        (("B",), ("B", "C"), False),
+        (("AL",), ("ALLEN",), False),
+    ],
+)
+def test_middles_compatible(a, b, ok):
+    assert middles_compatible(a, b) is ok
+    assert middles_compatible(b, a) is ok
+
+
+def _p(pid, name, roles=("applicant",), links=1):
+    return Party(pid, name, link_key(name, "person"), frozenset(roles), links)
+
+
+def test_plan_licence_pendergraft():
+    plan = plan_licence([_p(83154, "TYLER PENDERGRAFT"), _p(38708, "TYLER DAVID PENDERGRAFT")])
+    assert plan.rows == {83154: 38708}
+    assert plan.conflicts == []
+
+
+def test_plan_licence_links_every_form_to_the_longest():
+    plan = plan_licence(
+        [_p(1, "JOHN SMITH"), _p(2, "JOHN A SMITH"), _p(3, "JOHN ALLEN SMITH"), _p(4, "MARY SMITH")]
+    )
+    assert plan.rows == {1: 3, 2: 3}
+
+
+def test_plan_licence_suffix_only_matches_the_same_suffix():
+    plan = plan_licence(
+        [
+            _p(1, "JOHN SMITH"),
+            _p(2, "JOHN A SMITH JR"),
+            _p(3, "JOHN SMITH JR"),
+            _p(4, "JOHN SMITH SR"),
+        ]
+    )
+    assert plan.rows == {3: 2}
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["JOHN B SMITH", "JOHN B C SMITH"],
+        ["JOHN SMITH", "JOHN A SMITH", "JOHN B SMITH"],  # one conflict poisons the group
+        ["JOHN ALLEN SMITH", "JOHN ANDREW SMITH"],
+    ],
+)
+def test_plan_licence_a_conflict_writes_nothing(names):
+    plan = plan_licence([_p(i, n) for i, n in enumerate(names, 1)])
+    assert plan.rows == {}
+    assert [sorted(p.id for p in g) for g in plan.conflicts] == [list(range(1, len(names) + 1))]
+
+
+def test_plan_licence_needs_a_shared_role():
+    plan = plan_licence([_p(1, "JOHN SMITH", roles=("previous_applicant",)), _p(2, "JOHN A SMITH")])
+    assert plan.rows == {}
+    assert plan.skipped_role == 1
+    both = plan_licence(
+        [_p(1, "JOHN SMITH", roles=("previous_applicant", "applicant")), _p(2, "JOHN A SMITH")]
+    )
+    assert both.rows == {1: 2}
+
+
+def test_plan_licence_skips_a_dismissed_pair_only():
+    plan = plan_licence(
+        [_p(1, "JOHN SMITH"), _p(2, "JOHN A SMITH"), _p(3, "JOHN ALLEN SMITH")],
+        dismissed={(1, 3)},
+    )
+    assert plan.rows == {2: 3}
+    assert plan.skipped_dismissed == 1
+
+
+def test_plan_licence_couples_and_single_tokens_take_no_part():
+    plan = plan_licence(
+        [
+            _p(1, "RENEE OCHS"),
+            _p(2, "RENEE ELIZABETH OCHS"),
+            _p(3, "RENEE AND TIM OCHS"),
+            _p(4, "RENEE"),
+        ]
+    )
+    assert plan.rows == {1: 2}
+    assert plan.conflicts == []
+
+
+def test_plan_licence_tie_breaks():
+    # most characters, then natural order, then most links, then lowest id
+    assert plan_licence([_p(1, "JOHN A SMITH"), _p(2, "JOHN ALLEN SMITH")]).rows == {1: 2}
+    assert plan_licence([_p(1, "SMITH, JOHN A"), _p(2, "JOHN A SMITH")]).rows == {1: 2}
+    assert plan_licence([_p(1, "JOHN A SMITH"), _p(2, "JOHN A. SMITH", links=5)]).rows == {1: 2}
+    assert plan_licence([_p(2, "JOHN A SMITH"), _p(1, "JOHN A. SMITH")]).rows == {2: 1}
+
+
+def test_conflict_pairs_run_shorter_to_longer_and_need_a_shared_role():
+    group = [
+        _p(1, "JOHN SMITH"),
+        _p(2, "JOHN A SMITH"),
+        _p(3, "JOHN B SMITH", links=3),
+        _p(4, "JOHN C SMITH", roles=("previous_applicant",)),
+    ]
+    assert conflict_pairs(group) == [(2, 3), (1, 3), (1, 2)]
+
+
 # ── PG: relink + write API ───────────────────────────────────────────
 
 PG = pytest.mark.asyncio(loop_scope="session")
@@ -249,6 +392,10 @@ async def _rows(conn, *ids):
 
 def _fk(v, c):
     return (v, c, None, "rule", "format_key")
+
+
+def _mid(v, c, lic):
+    return (v, c, lic, "rule", "middle_names")
 
 
 @PG
@@ -365,17 +512,11 @@ async def test_rule_row_closing_a_cycle_is_skipped(pg_conn):
     v = await _ent(pg_conn, "ZQCYC, THETA")
     c = await _ent(pg_conn, "THETA ZQCYC")
     x = await _ent(pg_conn, "THETA Q ZQCYC")
-    # middle-name rows as #265 will write them: c → x → v on licence L
-    for var, can in ((c, x), (x, v)):
-        await pg_conn.execute(
-            insert(entity_aliases).values(
-                variant_id=var,
-                canonical_id=can,
-                scope_license="L1",
-                source="rule",
-                rule="middle_names",
-            )
-        )
+    y = await _ent(pg_conn, "ZQCYC OTHER")
+    # operator rows c → x → v on licence L1; y → c keeps c the elected canonical
+    await _raw(pg_conn, c, x, scope="L1")
+    await _raw(pg_conn, x, v, scope="L1")
+    await _raw(pg_conn, y, c)
     result = await relink(pg_conn, [v, c, x])
     assert result.skipped_cycle == 1
     assert _fk(v, c) not in await _rows(pg_conn, v)
@@ -500,25 +641,22 @@ async def test_scoped_manual_variant_stays_canonical(pg_conn):
 
 
 @PG
-async def test_worked_case_pendergraft(pg_conn):
+async def test_worked_case_pendergraft(pg_conn, standard_new_application):
     """Spec worked case: on 355693 all five entities resolve to TYLER DAVID PENDERGRAFT."""
     lic = "355693"
-    comma_ty = await _ent(pg_conn, "PENDERGRAFT, TY")
-    ty_p = await _ent(pg_conn, "TY PENDERGRAFT")
-    tyler = await _ent(pg_conn, "TYLER PENDERGRAFT")
-    tyler_david = await _ent(pg_conn, "TYLER DAVID PENDERGRAFT")
-    ty = await _ent(pg_conn, "TY")
-    ids = [comma_ty, ty_p, tyler, tyler_david, ty]
-    await relink(pg_conn, ids)  # step 1: format key
-    await pg_conn.execute(  # step 2: middle-name row, as #265 will write it
-        insert(entity_aliases).values(
-            variant_id=tyler,
-            canonical_id=tyler_david,
-            scope_license=lic,
-            source="rule",
-            rule="middle_names",
-        )
+    _, ids = await _link(
+        pg_conn,
+        standard_new_application,
+        lic,
+        "PENDERGRAFT, TY",
+        "TY PENDERGRAFT",
+        "TYLER PENDERGRAFT",
+        "TYLER DAVID PENDERGRAFT",
+        "TY",
     )
+    comma_ty, ty_p, tyler, tyler_david, ty = ids
+    await relink(pg_conn, ids)  # steps 1 and 2: format key, middle names
+    assert await _rows(pg_conn, tyler) == {_mid(tyler, tyler_david, lic)}
     await add_manual_alias(pg_conn, ty_p, tyler_david, scope_license=lic, created_by="t@x")
     await add_manual_alias(pg_conn, ty, ty_p, scope_license=lic, created_by="t@x")
     await relink(pg_conn)
@@ -678,9 +816,11 @@ async def test_targeted_relink_sees_rule_rows_of_unloaded_entities(pg_conn):
     c = await _ent(pg_conn, "ALPHA ZQOUT")
     x = await _ent(pg_conn, "ZQOUTX, BETA")
     y = await _ent(pg_conn, "BETA ZQOUTX")
+    z = await _ent(pg_conn, "ZQOUT GAMMA")
     await _raw(pg_conn, c, x, scope="L1")
     await _raw(pg_conn, x, y, source="rule", rule="format_key")
-    await _raw(pg_conn, y, v, scope="L1", source="rule", rule="middle_names")
+    await _raw(pg_conn, y, v, scope="L1")
+    await _raw(pg_conn, z, c)  # c stays the elected canonical (both are manual targets)
 
     result = await relink(pg_conn, [v])
 
@@ -861,3 +1001,180 @@ async def test_full_relink_twice_updates_no_party(pg_conn, standard_new_applicat
     second = await relink(pg_conn)
     assert (second.parties_updated, second.changed) == (0, 0)
     await _assert_parties_current(pg_conn, a, b)
+
+
+# ── #265: the middle-name rule in relink ─────────────────────────────
+
+
+@PG
+async def test_middle_names_link_short_to_long_on_the_licence_only(
+    pg_conn, standard_new_application
+):
+    _, (tyler, tyler_d, comma) = await _link(
+        pg_conn,
+        standard_new_application,
+        "ZQM1",
+        "ZQTYLER ZQPEND",
+        "ZQTYLER DAVID ZQPEND",
+        "ZQPEND, ZQTYLER",
+    )
+    await _link(pg_conn, standard_new_application, "ZQM2", "ZQPEND, ZQTYLER")
+    result = await relink(pg_conn, [tyler, tyler_d, comma])
+
+    assert await _rows(pg_conn, tyler, tyler_d, comma) == {
+        _fk(comma, tyler),
+        _mid(tyler, tyler_d, "ZQM1"),  # one row per party: the comma form needs none
+    }
+    assert (result.middle.rows, result.middle.variants, result.middle.licences) == (1, 1, 1)
+    parties = await _assert_parties_current(pg_conn, tyler, comma)
+    assert parties[(comma, "ZQM1")] == tyler_d
+    assert parties[(comma, "ZQM2")] == tyler
+    again = await relink(pg_conn, [tyler, tyler_d, comma])
+    assert (again.changed, again.kept) == (0, 2)
+
+
+@PG
+async def test_middle_names_conflict_writes_nothing(pg_conn, standard_new_application):
+    _, ids = await _link(
+        pg_conn, standard_new_application, "ZQM3", "ZQJOHN ZQSM", "ZQJOHN A ZQSM", "ZQJOHN B ZQSM"
+    )
+    result = await relink(pg_conn, ids)
+    assert await _rows(pg_conn, *ids) == set()
+    assert result.middle.conflicts == 1
+
+
+@PG
+async def test_middle_names_couple_strings_take_no_part(pg_conn, standard_new_application):
+    _, (short, long_, couple) = await _link(
+        pg_conn,
+        standard_new_application,
+        "ZQM4",
+        "ZQRENEE ZQOCHS",
+        "ZQRENEE ELIZABETH ZQOCHS",
+        "ZQRENEE AND TIM ZQOCHS",
+    )
+    await relink(pg_conn, [short, long_, couple])
+    assert await _rows(pg_conn, short, long_, couple) == {_mid(short, long_, "ZQM4")}
+
+
+@PG
+async def test_middle_names_need_a_shared_role(pg_conn, standard_new_application):
+    _, (prev,) = await _link(
+        pg_conn, standard_new_application, "ZQM5", "ZQJANE ZQHAND", role="previous_applicant"
+    )
+    _, (cur, _) = await _link(pg_conn, standard_new_application, "ZQM5", "ZQJANE Q ZQHAND", "ZQX Y")
+    result = await relink(pg_conn, [prev, cur])
+    assert await _rows(pg_conn, prev, cur) == set()
+    assert result.middle.skipped_role == 1
+
+
+@PG
+async def test_ingest_of_a_long_form_adds_the_row(pg_conn, standard_new_application):
+    _, (short,) = await _link(pg_conn, standard_new_application, "ZQ0265", "ZQIRIS ZQPENDLE")
+    record = standard_new_application | {
+        "applicants": "ACME CANNABIS CO; ZQIRIS MAE ZQPENDLE",
+        "license_number": "ZQ0265",
+        "record_date": "2025-07-01",
+    }
+    assert (await ingest_record(pg_conn, record, IngestOptions(link_outcomes=False))).is_new
+    long_ = (
+        await pg_conn.execute(select(entities.c.id).where(entities.c.name == "ZQIRIS MAE ZQPENDLE"))
+    ).scalar_one()
+    assert await _rows(pg_conn, short) == {_mid(short, long_, "ZQ0265")}
+    assert (await _assert_parties_current(pg_conn, short))[(short, "ZQ0265")] == long_
+
+
+@PG
+async def test_type_change_drops_the_middle_row(pg_conn, standard_new_application):
+    _, (short, long_) = await _link(
+        pg_conn, standard_new_application, "ZQM6", "ZQKAI ZQFLOP", "ZQKAI R ZQFLOP"
+    )
+    await relink(pg_conn, [short, long_])
+    await record_manual(
+        pg_conn, short, entity_type="organization", entity_subtype="business", created_by="t@x"
+    )
+    assert await _rows(pg_conn, short, long_) == set()
+    await clear_manual(pg_conn, short)
+    assert await _rows(pg_conn, short, long_) == {_mid(short, long_, "ZQM6")}
+
+
+@PG
+async def test_operator_link_wins_over_a_middle_row(pg_conn, standard_new_application):
+    _, (short, long_) = await _link(
+        pg_conn, standard_new_application, "ZQM7", "ZQLEO ZQWIN", "ZQLEO M ZQWIN"
+    )
+    await relink(pg_conn, [short, long_])
+    # the reverse direction loops only through the rule row: accepted, rule row dropped
+    await add_manual_alias(pg_conn, long_, short, scope_license="ZQM7", created_by="t@x")
+    assert await _rows(pg_conn, short, long_) == {(long_, short, "ZQM7", "manual", None)}
+    assert (await _assert_parties_current(pg_conn, long_))[(long_, "ZQM7")] == short
+
+
+@PG
+async def test_unlink_then_undo_a_middle_row(pg_conn, standard_new_application):
+    _, (short, long_, comma) = await _link(
+        pg_conn, standard_new_application, "ZQM8", "ZQMIA ZQUNDO", "ZQMIA J ZQUNDO", "ZQUNDO, ZQMIA"
+    )
+    await relink(pg_conn, [short, long_, comma])
+    assert _mid(short, long_, "ZQM8") in await _rows(pg_conn, short)
+
+    await dismiss_pair(pg_conn, short, long_, scope_license="ZQM8", dismissed_by="t@x")
+    assert _mid(short, long_, "ZQM8") not in await _rows(pg_conn, short)
+    await undismiss_pair(pg_conn, short, long_, scope_license="ZQM8")
+    assert _mid(short, long_, "ZQM8") in await _rows(pg_conn, short)
+
+    # a dismissal on a member counts against its party; another licence's does not
+    await dismiss_pair(pg_conn, comma, long_, scope_license="ZQOTHER", dismissed_by="t@x")
+    assert _mid(short, long_, "ZQM8") in await _rows(pg_conn, short)
+    await dismiss_pair(pg_conn, comma, long_, scope_license="ZQM8", dismissed_by="t@x")
+    assert _mid(short, long_, "ZQM8") not in await _rows(pg_conn, short)
+    assert (await _assert_parties_current(pg_conn, comma))[(comma, "ZQM8")] == short
+
+
+@PG
+async def test_full_relink_writes_middle_rows_once(pg_conn, standard_new_application):
+    _, (short, long_) = await _link(
+        pg_conn, standard_new_application, "ZQM9", "ZQNOA ZQFULL", "ZQNOA P ZQFULL"
+    )
+    await pg_conn.execute(  # a stale row the full run must drop
+        insert(entity_aliases).values(
+            variant_id=long_,
+            canonical_id=short,
+            scope_license="ZQGONE",
+            source="rule",
+            rule="middle_names",
+        )
+    )
+    first = await relink(pg_conn)
+    assert await _rows(pg_conn, short, long_) == {_mid(short, long_, "ZQM9")}
+    assert first.middle.rows >= 1
+    second = await relink(pg_conn)
+    assert second.changed == 0
+
+
+@PG
+@pytest.mark.parametrize("licence", [None, "", "  "])
+async def test_middle_names_never_from_a_record_without_a_licence(
+    pg_conn, standard_new_application, licence
+):
+    """CR 1: a NULL or blank licence must not group people, least of all as scope NULL."""
+    _, (short, long_) = await _link(
+        pg_conn, standard_new_application, licence, "ZQNUL ZQLIC", "ZQNUL K ZQLIC"
+    )
+    await relink(pg_conn, [short, long_])
+    await relink(pg_conn)
+    assert await _rows(pg_conn, short, long_) == set()
+
+
+@PG
+async def test_purging_a_middle_name_canonical_refreshes_its_variants(
+    pg_conn, standard_new_application
+):
+    """CR 2: the variant is no key-mate of the purged canonical; its party must not dangle."""
+    _, (short, long_) = await _link(
+        pg_conn, standard_new_application, "ZQPG1", "ZQPUR ZQMID", "ZQPUR T ZQMID"
+    )
+    await relink(pg_conn, [short, long_])
+    assert (await _assert_parties_current(pg_conn, short))[(short, "ZQPG1")] == long_
+    await _purge_entities(pg_conn, [long_])
+    assert (await _assert_parties_current(pg_conn, short))[(short, "ZQPG1")] == short

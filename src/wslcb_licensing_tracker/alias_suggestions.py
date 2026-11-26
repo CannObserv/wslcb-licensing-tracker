@@ -9,10 +9,12 @@ and never stored as links.  Each is a variant → canonical pair with a scope:
   trailing designators (``LLC``, ``INC``, …).
 - ``single_token`` (that licence): a one-token person and the one other
   person party on a licence whose spelling has that token.
+- ``middle_names`` (that licence, #265): each pair, shorter → longer, of a
+  group the middle-name rule left alone because its middles conflict.
 
 A pair already one party in that scope, a pair with a dismissal in any scope,
 and a pair with a not-a-name end are left out, so linking or dismissing a
-suggestion removes it.  Middle-name conflicts are added by #265.
+suggestion removes it.
 """
 
 import logging
@@ -24,7 +26,14 @@ from dataclasses import dataclass
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .entity_aliases import eff_many, has_reorder_comma
+from .entity_aliases import (
+    Party,
+    conflict_pairs,
+    eff_many,
+    has_reorder_comma,
+    parse_person_key,
+    plan_licence,
+)
 from .entity_classification import tombstone_ids
 from .models import entities, entity_alias_dismissals
 
@@ -35,7 +44,7 @@ _DESIGNATOR = (
     r"|LIMITED|LTD|LP|PLLC|P S|PS|P C|PC)"
 )
 _TRAILING_DESIGNATORS = re.compile(rf"(?:\s+{_DESIGNATOR})+$")
-KIND_ORDER = ("comma_drop", "legal_designator", "single_token")
+KIND_ORDER = ("comma_drop", "legal_designator", "single_token", "middle_names")
 
 
 @dataclass(frozen=True)
@@ -218,11 +227,81 @@ async def _single_token(conn: AsyncConnection) -> list[_Pair]:
     return pairs
 
 
-# #265 appends its middle-name conflict generator here.
+# A conflict needs two parties whose middles differ, so both keys have three
+# or more tokens and share a first and a last token (the raw last token: for
+# a suffixed key it is the suffix, which group-mates share too).  Only person
+# parties whose (first, last) has two such keys can be in one; this cut keeps
+# about 5k of 66k entities on prod (2026-11-26).
+_MIDDLE_CANDIDATES_SQL = text(
+    """
+    SELECT e.id FROM entities e
+    WHERE e.entity_type = 'person' AND e.link_key LIKE '% %'
+      AND (split_part(e.link_key, ' ', 1), reverse(split_part(reverse(e.link_key), ' ', 1))) IN (
+        SELECT split_part(link_key, ' ', 1), reverse(split_part(reverse(link_key), ' ', 1))
+        FROM entities WHERE entity_type = 'person' AND link_key LIKE '% % %'
+        GROUP BY 1, 2 HAVING min(link_key) <> max(link_key))
+    """
+)
+# Their links by stored party.  For a conflicting group that is the rule's own
+# input: the rule wrote no row there, and a compatible group folds into its
+# canonical.
+_MIDDLE_LINKS_SQL = text(
+    """
+    SELECT DISTINCT lr.license_number, re.party_id, re.role, e.name, e.link_key
+    FROM record_entities re
+    JOIN license_records lr ON lr.id = re.record_id
+    JOIN entities e ON e.id = re.party_id
+    WHERE re.party_id = ANY(:ids) AND btrim(lr.license_number) <> ''
+    """
+)
+
+
+def _middles_label(a: str | None, b: str | None) -> str:
+    def mids(key: str | None) -> str:
+        parsed = parse_person_key(key)
+        return " ".join(parsed.middles) if parsed and parsed.middles else "none"
+
+    return f"middle names: {mids(a)} / {mids(b)}"
+
+
+async def _middle_names(conn: AsyncConnection) -> list[_Pair]:
+    candidates = list((await conn.execute(_MIDDLE_CANDIDATES_SQL)).scalars())
+    if not candidates:
+        return []
+    by_licence: dict[str, dict[int, tuple[str, str, set[str]]]] = defaultdict(dict)
+    links = await conn.execute(_MIDDLE_LINKS_SQL, {"ids": candidates})
+    for lic, pid, role, name, key in links.fetchall():
+        by_licence[lic].setdefault(pid, (name, key, set()))[2].add(role)
+    tombs = await tombstone_ids(conn)
+    groups: list[tuple[str, list[Party]]] = []
+    for lic, members in sorted(by_licence.items()):
+        if len(members) < 2:  # noqa: PLR2004
+            continue
+        parties = [
+            Party(pid, name, key, frozenset(roles))
+            for pid, (name, key, roles) in members.items()
+            if pid not in tombs
+        ]
+        groups += [(lic, g) for g in plan_licence(parties).conflicts]
+    if not groups:
+        return []
+    counts = await _record_counts(conn, {p.id for _, g in groups for p in g})
+    keys = {p.id: p.key for _, g in groups for p in g}
+    pairs = []
+    for lic, group in groups:
+        ranked = [Party(p.id, p.name, p.key, p.roles, counts.get(p.id, 0)) for p in group]
+        pairs += [
+            _Pair("middle_names", _middles_label(keys[v], keys[c]), v, c, lic)
+            for v, c in conflict_pairs(ranked)
+        ]
+    return pairs
+
+
 GENERATORS: list[Callable[[AsyncConnection], Awaitable[list[_Pair]]]] = [
     _comma_drop,
     _legal_designator,
     _single_token,
+    _middle_names,
 ]
 
 

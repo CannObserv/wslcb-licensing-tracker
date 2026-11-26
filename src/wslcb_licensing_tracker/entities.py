@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .enrichment import STEP_ENTITIES, stamp_enrichment
-from .entity_aliases import key_mates, link_key, relink, repoint_alias_rows
+from .entity_aliases import alias_partners, key_mates, link_key, relink, repoint_alias_rows
 from .entity_classification import (
     SourceAnswer,
     confirmed_noise_ids,
@@ -1086,6 +1086,9 @@ async def _purge_entities(conn: AsyncConnection, entity_ids: list[int]) -> None:
         )
     ).fetchall()
     mates = await key_mates(conn, entity_ids)
+    # The other end of each alias row too: a middle-name variant is no key-mate
+    # of its canonical, and its links' party_id would dangle (#265 CR 2).
+    mates |= await alias_partners(conn, entity_ids)
     await conn.execute(delete(record_entities).where(record_entities.c.entity_id.in_(entity_ids)))
     await conn.execute(delete(entities).where(entities.c.id.in_(entity_ids)))
     await renumber_link_positions(conn, [tuple(r) for r in affected])
