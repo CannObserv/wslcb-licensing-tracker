@@ -527,7 +527,7 @@ async def entity_detail(
                 status_code=_HTTP_404,
             )
         party = await global_party(conn, entity_id)
-        if party is not None and not (current_user and stay):
+        if party is not None and not (current_user and stay == "1"):
             return RedirectResponse(url=f"/entity/{party}?from={entity_id}", status_code=302)
         records = await get_entity_records(conn, entity_id)
         members = await get_party_members(conn, entity_id)

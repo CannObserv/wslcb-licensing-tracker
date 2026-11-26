@@ -1324,8 +1324,10 @@ class TestEntityAdminPanel:
         # CR 3: the classification forms come back to this page too.
         assert 'action="/admin/entities/7/classify"' in resp.text
         assert 'name="next" value="/entity/7"' not in resp.text
-        # Without ?stay an admin is redirected like anyone else.
+        # Without ?stay=1 an admin is redirected like anyone else.
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch, party=8)
+        assert resp.status_code == 302
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch, url="/entity/7?stay=0", party=8)
         assert resp.status_code == 302
 
     def test_public_is_redirected_even_with_stay(self, monkeypatch):
