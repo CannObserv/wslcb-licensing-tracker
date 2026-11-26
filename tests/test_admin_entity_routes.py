@@ -459,6 +459,19 @@ def test_links_tab_renders_suggestions(client, no_suggestions):
     assert re.search(r"Links\s*<span[^>]*>\s*2\s*</span>", resp.text)
 
 
+def test_other_tabs_skip_the_suggestions(client, no_suggestions):
+    with (
+        patch(f"{MOD}.review_queue", new_callable=AsyncMock, return_value=[]),
+        patch(
+            f"{MOD}.review_counts", new_callable=AsyncMock, return_value={"main": 3, "unknown": 0}
+        ),
+    ):
+        body = client.get("/admin/entities/review").text
+    no_suggestions.assert_not_awaited()
+    assert 'href="/admin/entities/review?tab=links"' in body
+    assert not re.search(r"Links\s*<span", body)
+
+
 def test_alias_posts_link_with_scope(client, conn):
     with (
         patch(f"{MOD}.parse_target", new_callable=AsyncMock, return_value=38708) as pt,

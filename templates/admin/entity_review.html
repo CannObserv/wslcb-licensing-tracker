@@ -26,7 +26,7 @@
            {% if tab == key %}aria-current="page"{% endif %}
            class="px-4 py-2 text-sm -mb-px border-b-2 {% if tab == key %}border-co-purple text-co-purple font-medium{% else %}border-transparent text-gray-600 hover:text-co-purple{% endif %}">
             {{ label }}
-            <span class="ml-1 inline-flex items-center px-1.5 rounded text-xs {% if tab == key %}bg-co-purple-50 text-co-purple{% else %}bg-gray-100 text-gray-600{% endif %}">{{ counts[key] }}</span>
+            {% if key in counts %}<span class="ml-1 inline-flex items-center px-1.5 rounded text-xs {% if tab == key %}bg-co-purple-50 text-co-purple{% else %}bg-gray-100 text-gray-600{% endif %}">{{ counts[key] }}</span>{% endif %}
         </a>
         {% endfor %}
     </nav>

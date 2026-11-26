@@ -113,11 +113,14 @@ async def admin_entity_review(request: Request, admin: Admin, tab: str = "main")
     if tab not in (*TABS, "links"):
         tab = "main"
     async with get_db(request.app.state.engine) as conn:
-        links = await suggestions(conn)
-        items = (
-            links if tab == "links" else await review_queue(conn, tab=tab, limit=REVIEW_PAGE_SIZE)
-        )
-        counts = {**await review_counts(conn), "links": len(links)}
+        counts: dict[str, int] = await review_counts(conn)
+        # Suggestions cost ~100 ms (prod copy): only the Links tab computes
+        # them, so the other tabs show no Links count.
+        if tab == "links":
+            items = await suggestions(conn)
+            counts = {**counts, "links": len(items)}
+        else:
+            items = await review_queue(conn, tab=tab, limit=REVIEW_PAGE_SIZE)
     return await render_admin(
         request,
         "admin/entity_review.html",

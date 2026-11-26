@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .entity_aliases import _squash, eff_many, has_reorder_comma
+from .entity_aliases import eff_many, has_reorder_comma
 from .entity_classification import tombstone_ids
 from .models import entities, entity_alias_dismissals
 
@@ -57,50 +57,55 @@ async def _global_parties(conn: AsyncConnection, ids: set[int]) -> dict[int, int
     return {e: resolved[(e, None)] for e in ids}
 
 
-async def _comma_drop(conn: AsyncConnection) -> list[_Pair]:
-    commas = [
-        (r.id, r.name, r.link_key, _squash(r.name))
-        for r in (
-            await conn.execute(
-                select(entities.c.id, entities.c.name, entities.c.link_key).where(
-                    (entities.c.entity_type == "person")
-                    & entities.c.name.contains(",")
-                    & entities.c.link_key.is_not(None)
-                )
-            )
-        ).fetchall()
-        if has_reorder_comma(r.name)
-    ]
-    if not commas:
-        return []
-    keys = {c[2] for c in commas} | {c[3] for c in commas}
-    by_key: dict[str, list[tuple[int, str]]] = defaultdict(list)
-    for r in (
-        await conn.execute(
-            select(entities.c.id, entities.c.name, entities.c.link_key)
-            .where((entities.c.entity_type == "person") & entities.c.link_key.in_(list(keys)))
-            .order_by(entities.c.id)
-        )
-    ).fetchall():
-        by_key[r.link_key].append((r.id, r.name))
-    dropped_of = {c[0]: by_key.get(c[3], []) for c in commas}
-    ids = {c[0] for c in commas} | {d for ds in dropped_of.values() for d, _ in ds}
-    party = await _global_parties(conn, ids)
+# Each comma-form person joined to the comma-free persons keyed as its name
+# with the punctuation dropped and no reorder (``_squash``), in SQL: pulling the
+# 12.5k comma names into Python and back as an IN list took 700 ms on prod.
+_COMMA_DROP_SQL = text(
+    """
+    WITH c AS (
+        SELECT id, name, link_key,
+               btrim(regexp_replace(regexp_replace(name, '[,.]', ' ', 'g'), '\\s+', ' ', 'g'))
+                   AS dropped_key
+        FROM entities
+        WHERE entity_type = 'person' AND name LIKE '%,%' AND link_key IS NOT NULL
+    )
+    SELECT c.id AS comma_id, c.name AS comma_name, d.id AS dropped_id,
+           (SELECT count(*) FROM entities k
+             WHERE k.entity_type = 'person' AND k.link_key = c.link_key) AS key_size,
+           (SELECT o.name FROM entities o
+             WHERE o.entity_type = 'person' AND o.link_key = d.link_key AND o.name LIKE '%,%'
+             ORDER BY o.id LIMIT 1) AS other_comma
+    FROM c JOIN entities d
+      ON d.entity_type = 'person' AND d.link_key = c.dropped_key AND d.name NOT LIKE '%,%'
+    ORDER BY c.id, d.id
+    """
+)
 
+
+async def _comma_drop(conn: AsyncConnection) -> list[_Pair]:
+    # The scalar subqueries' estimate trips JIT, whose compile cost is most of
+    # the query (85 ms with it, 47 ms without, prod copy 2026-11-26).  LOCAL:
+    # this transaction only; the review page never commits.
+    await conn.execute(text("SET LOCAL jit = off"))
+    rows = [
+        r
+        for r in (await conn.execute(_COMMA_DROP_SQL)).fetchall()
+        if has_reorder_comma(r.comma_name)
+    ]
+    if not rows:
+        return []
+    party = await _global_parties(conn, {e for r in rows for e in (r.comma_id, r.dropped_id)})
     pairs = []
-    for eid, _name, key, _dkey in commas:
-        group = dropped_of[eid]
-        others = [n for d, n in group if "," in n]
-        for d, dname in group:
-            if "," in dname or party[d] == party[eid]:
-                continue
-            if others:
-                label = f"also the natural order of {others[0]}"
-            elif len(by_key[key]) > 1:
-                label = "comma-drop trap"
-            else:
-                label = "comma-dropped only"
-            pairs.append(_Pair("comma_drop", label, party[d], party[eid]))
+    for r in rows:
+        if party[r.dropped_id] == party[r.comma_id]:
+            continue
+        if r.other_comma:
+            label = f"also the natural order of {r.other_comma}"
+        elif r.key_size > 1:
+            label = "comma-drop trap"
+        else:
+            label = "comma-dropped only"
+        pairs.append(_Pair("comma_drop", label, party[r.dropped_id], party[r.comma_id]))
     return pairs
 
 
