@@ -23,13 +23,14 @@
     <td class="px-4 py-2 text-right">
         <form method="POST" action="/admin/entities/aliases/{{ r.id }}/unlink" class="inline">
             <input type="hidden" name="next" value="{{ next }}">
+            {# Data goes into the JS string through tojson, in a single-quoted
+               attribute: HTML escaping alone does not protect a JS string. #}
             {% if r.source == 'rule' %}
-            <button type="submit" class="{{ btn_danger }}"
-                    onclick="return confirm('This link comes from the {{ r.rule }} rule. Unlinking writes a dismissal ({{ scope_label(r.scope) }}) so the rule will not link the pair again. Continue?')">Unlink</button>
+            {% set msg = "This link comes from the " ~ r.rule ~ " rule. Unlinking writes a dismissal (" ~ (("licence " ~ r.scope) if r.scope else "everywhere") ~ ") so the rule will not link the pair again. Continue?" %}
             {% else %}
-            <button type="submit" class="{{ btn_danger }}"
-                    onclick="return confirm('Delete this operator link?')">Unlink</button>
+            {% set msg = "Delete this operator link?" %}
             {% endif %}
+            <button type="submit" class="{{ btn_danger }}" onclick='return confirm({{ msg | tojson }})'>Unlink</button>
         </form>
     </td>
 </tr>

@@ -1300,6 +1300,15 @@ class TestEntityAdminPanel:
         assert 'action="/admin/entities/7/not-a-name"' not in body
         assert "Unlink it before marking it not a name" in body
 
+    def test_unlink_confirm_text_is_a_safe_js_string(self, monkeypatch):
+        """CR 2: data reaches the confirm() string through tojson, not HTML escaping."""
+        row = {**self._LINKS_FULL["incoming"][0], "scope": "1');alert(1);//"}
+        monkeypatch.setattr(self, "_LINKS", {**self._LINKS_FULL, "incoming": [row]})
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        [onclick] = re.findall(r"onclick='([^']*alert[^']*)'", resp.text)
+        assert "1\\u0027);alert(1);//" in onclick
+        assert "&#39;" not in onclick
+
     def test_links_section_without_licences_offers_everywhere_only(self, monkeypatch):
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
         body = resp.text
