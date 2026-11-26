@@ -135,7 +135,8 @@ count and 519 ms when the party is resolved at read time.
 ## Operator writes
 
 `add_manual_alias`, `remove_manual_alias`, `dismiss_pair` and
-`undismiss_pair` (the #264 UI calls them; audit rows are written there):
+`undismiss_pair` (the #264 UI calls them through `alias_review.py`, which
+writes the audit rows):
 - a self-link, a not-a-name entity at either end, or a second manual row for
   the variant in the same scope is refused (`AliasError`);
 - a manual link across resolved types is allowed and opens an
@@ -144,3 +145,44 @@ count and 519 ms when the party is resolved at read time.
 
 Entities in a manual row or a dismissal are in `protected_ids()`. Marking an
 entity in a manual row not-a-name is refused until it is unlinked.
+
+## Operator UI (#264)
+
+**The entity page's Links panel** (admins): the links from the entity (its
+party in each scope) and to it, and its dismissals, each with the other name,
+scope, source (rule name or operator email), date and note.
+- **Unlink** deletes a manual row. A rule row is derived, so Unlink writes a
+  dismissal in the row's scope instead, and `relink` won't write it again.
+- **Undo** deletes a dismissal.
+- **Same as…** links this entity to a target, and **Not linked to…**
+  dismisses the pair. The target is an id or a name: HTMX fills a datalist from
+  `GET /admin/entities/lookup`. The scope is one of the entity's own licences
+  (the default) or everywhere.
+- A global variant's page redirects; `/entity/{id}?stay=1` keeps a signed-in
+  admin on it, and every link in the panel carries it.
+
+**The review queue's Links tab** (`/admin/entities/review?tab=links`) lists the
+pairs the rules leave apart, computed on load by `alias_suggestions.py`:
+
+| Kind | Pair | Scope |
+|---|---|---|
+| `comma_drop` | `LAST, FIRST` and the comma-dropped `LAST FIRST`: a *trap* when `FIRST LAST` also exists; labelled when `LAST FIRST` is itself another comma name's natural order | everywhere |
+| `legal_designator` | organizations equal once trailing `LLC`, `INC`, `CORP`, `CO`, `LTD`, `LP`… are stripped; the target prefers a designator form, then the most records | everywhere |
+| `single_token` | a one-token person and the one other person party on a licence whose spelling has that token | that licence |
+
+A pair already one party, with a dismissal in any scope, or with a not-a-name
+end is not listed. #265 adds middle-name conflicts to `GENERATORS`.
+
+**Audit actions** (`admin_audit_log`, target the entity acted on): every
+`details` carries both ids and **both names**, the scope, the source (and rule),
+the note, and the suggestion kind when the action came from the tab.
+
+| Action | When |
+|---|---|
+| `entity.alias_set` | Same as…, or Link on a suggestion |
+| `entity.alias_remove` | Unlink of a manual row |
+| `entity.alias_dismiss` | Not linked to…, Dismiss on a suggestion (source `manual`), or Unlink of a rule row (source `rule`) |
+| `entity.alias_undismiss` | Undo |
+
+Classification audit rows (`entity.classify_*`) carry the entity's `name` too,
+so a row about a purged entity stays readable.
