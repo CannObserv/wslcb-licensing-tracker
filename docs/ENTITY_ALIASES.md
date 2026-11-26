@@ -140,7 +140,7 @@ transaction:
 
 | When | Where |
 |---|---|
-| a record is ingested | `pipeline._enrich_new_record` (own savepoint) |
+| a record is ingested | `pipeline._enrich_new_record` (own savepoint); ≈16 ms a record with the middle-name rule, ≈7 ms without (median, prod copy, 2026-11-26) |
 | a resolved type changes | `resolve_entities` (classify, reclassify, Jev); manual rows now across types get a flag |
 | a manual classification is set or cleared | `record_manual` / `clear_manual` (so a not-a-name mark drops the rule rows) |
 | entities are merged, purged or renamed | `merge_entity_into` (operator rows re-pointed first), `_purge_entities`, the WAC repair |
