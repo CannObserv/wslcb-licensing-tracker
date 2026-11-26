@@ -227,16 +227,31 @@ async def _single_token(conn: AsyncConnection) -> list[_Pair]:
     return pairs
 
 
-# Each licence's person parties with a two-token or longer key.  The stored
-# party_id is the rule's own input for a conflicting group: the rule wrote
-# no row there, and a compatible group folds into its canonical.
-_MIDDLE_SQL = text(
+# A conflict needs two parties whose middles differ, so both keys have three
+# or more tokens and share a first and a last token (the raw last token: for
+# a suffixed key it is the suffix, which group-mates share too).  Only person
+# parties whose (first, last) has two such keys can be in one; this cut keeps
+# about 5k of 66k entities on prod (2026-11-26).
+_MIDDLE_CANDIDATES_SQL = text(
     """
-    SELECT DISTINCT lr.license_number, re.party_id, re.role, p.name, p.link_key
+    SELECT e.id FROM entities e
+    WHERE e.entity_type = 'person' AND e.link_key LIKE '% %'
+      AND (split_part(e.link_key, ' ', 1), reverse(split_part(reverse(e.link_key), ' ', 1))) IN (
+        SELECT split_part(link_key, ' ', 1), reverse(split_part(reverse(link_key), ' ', 1))
+        FROM entities WHERE entity_type = 'person' AND link_key LIKE '% % %'
+        GROUP BY 1, 2 HAVING min(link_key) <> max(link_key))
+    """
+)
+# Their links by stored party.  For a conflicting group that is the rule's own
+# input: the rule wrote no row there, and a compatible group folds into its
+# canonical.
+_MIDDLE_LINKS_SQL = text(
+    """
+    SELECT DISTINCT lr.license_number, re.party_id, re.role, e.name, e.link_key
     FROM record_entities re
     JOIN license_records lr ON lr.id = re.record_id
-    JOIN entities p ON p.id = re.party_id
-    WHERE p.entity_type = 'person' AND p.link_key LIKE '% %'
+    JOIN entities e ON e.id = re.party_id
+    WHERE re.party_id = ANY(:ids)
     """
 )
 
@@ -250,8 +265,12 @@ def _middles_label(a: str | None, b: str | None) -> str:
 
 
 async def _middle_names(conn: AsyncConnection) -> list[_Pair]:
+    candidates = list((await conn.execute(_MIDDLE_CANDIDATES_SQL)).scalars())
+    if not candidates:
+        return []
     by_licence: dict[str, dict[int, tuple[str, str, set[str]]]] = defaultdict(dict)
-    for lic, pid, role, name, key in (await conn.execute(_MIDDLE_SQL)).fetchall():
+    links = await conn.execute(_MIDDLE_LINKS_SQL, {"ids": candidates})
+    for lic, pid, role, name, key in links.fetchall():
         by_licence[lic].setdefault(pid, (name, key, set()))[2].add(role)
     tombs = await tombstone_ids(conn)
     groups: list[tuple[str, list[Party]]] = []

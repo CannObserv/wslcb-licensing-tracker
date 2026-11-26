@@ -177,3 +177,13 @@ async def test_middle_name_conflicts(pg_conn, standard_new_application):
     assert [_pair(s) for s in await _mine(pg_conn, bare, a, b)] == [
         ("middle_names", b, a, "T265M1")
     ]
+
+
+@PG
+async def test_middle_name_conflicts_with_a_suffix(pg_conn, standard_new_application):
+    """The SQL cut groups by the raw last token: for a suffixed key that is the suffix."""
+    names = ("ZQJAY A ZQSUF JR", "ZQJAY B ZQSUF JR", "ZQJAY C ZQSUF")
+    await _rec(pg_conn, standard_new_application, "T265M3", *names)
+    a, b, c = [await _ent(pg_conn, n) for n in names]
+    await relink(pg_conn, [a, b, c])
+    assert [_pair(s) for s in await _mine(pg_conn, a, b, c)] == [("middle_names", b, a, "T265M3")]
