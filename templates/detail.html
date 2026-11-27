@@ -4,7 +4,13 @@
 {% macro entity_links(entities) %}
 {% for e in entities %}
 <a href="/entity/{{ e.id }}" class="inline-flex items-center gap-1 text-co-purple hover:text-co-purple-700 hover:underline"
-   onclick="event.stopPropagation()">{{ e.name }}</a>{% if not loop.last %}; {% endif %}
+   onclick="event.stopPropagation()">{{ e.name }}</a>
+{%- if e.members %}
+{# A split couple (#269): the printed name stays; the people it names are linked inside its chip. #}
+<span class="text-gray-500" data-testid="couple-members">→ {% for m in e.members -%}
+{% if m.id %}<a href="/entity/{{ m.id }}" class="text-co-purple hover:text-co-purple-700 hover:underline" onclick="event.stopPropagation()">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %}{% if not loop.last %} · {% endif %}
+{%- endfor %}</span>
+{%- endif %}{% if not loop.last %}; {% endif %}
 {% endfor %}
 {% endmacro %}
 

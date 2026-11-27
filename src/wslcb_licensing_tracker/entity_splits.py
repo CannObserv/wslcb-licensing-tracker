@@ -17,17 +17,18 @@ import re
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .entity_aliases import (
     COUPLE_TOKENS,
     VERDICT_SPLIT,
+    eff_many,
     link_key,
     middles_compatible,
     parse_person_key,
 )
-from .models import entity_split_members, entity_splits
+from .models import entities, entity_split_members, entity_splits
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +175,28 @@ async def split_members(
     for cid, name in (await conn.execute(stmt)).fetchall():
         out.setdefault(cid, []).append(name)
     return {cid: tuple(names) for cid, names in out.items()}
+
+
+async def member_ids(conn: AsyncConnection, names: Collection[str]) -> dict[str, int]:
+    """``{member name: entity id}`` for the names that exist (names are stored cleaned)."""
+    if not names:
+        return {}
+    stmt = select(entities.c.name, entities.c.id).where(
+        func.lower(entities.c.name).in_(sorted({n.lower() for n in names}))
+    )
+    found = {name.lower(): eid for name, eid in (await conn.execute(stmt)).fetchall()}
+    return {n: found[n.lower()] for n in names if n.lower() in found}
+
+
+async def split_banner(conn: AsyncConnection, entity_id: int) -> list[dict] | None:
+    """The people a ``split`` entity names, as ``{"id", "name"}`` in order; None without one.
+
+    ``id`` is the member's party everywhere (``eff``), or None for a member no
+    record has linked yet.
+    """
+    members = (await split_members(conn, [entity_id])).get(entity_id)
+    if not members:
+        return None
+    ids = await member_ids(conn, members)
+    parties = await eff_many(conn, [(i, None) for i in ids.values()])
+    return [{"id": parties[(ids[m], None)] if m in ids else None, "name": m} for m in members]

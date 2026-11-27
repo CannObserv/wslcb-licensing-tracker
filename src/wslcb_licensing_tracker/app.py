@@ -42,6 +42,7 @@ from .display import SUBTYPE_LABELS, classification_badge, format_outcome, summa
 from .engine import create_engine_from_env, get_db
 from .entities import get_entity_by_id
 from .entity_classification import ENTITY_SUBTYPES, ENTITY_TYPES
+from .entity_splits import split_banner
 from .jev_client import is_classification_enabled
 from .link_records import get_outcome_status, get_reverse_link_info
 from .log_config import setup_logging
@@ -537,6 +538,7 @@ async def entity_detail(
             "records": records,
             "unique_licenses": len({r["license_number"] for r in records}),
             "members": members,
+            "split_banner": await split_banner(conn, entity_id),
             # ?from is only a hint: anything but a member's id is ignored.
             "listed_as": next((m for m in members if str(m["id"]) == from_.strip()), None),
         }

@@ -28,7 +28,7 @@ from .entity_classification import (
     verdict_ids,
     with_jev_answer,
 )
-from .entity_splits import split_members
+from .entity_splits import member_ids, split_members
 from .models import (
     entities,
     entity_classifications,
@@ -676,6 +676,12 @@ async def get_record_entities(
     link target), ``name`` (the printed spellings joined with `` / ``),
     ``names``, ``entity_ids``, and the first link's ``entity_type``,
     ``entity_subtype`` and ``classification_source``.
+
+    Chips are the printed rows only.  A chip whose entity has a ``split``
+    verdict (#269) lists the people it names as ``members``, each
+    ``{"id", "name"}``: ``id`` is that member's party on the record (from its
+    member row, or its printed row when it is printed too).  ``members`` is
+    empty on every other chip.
     """
     if not record_ids:
         return {}
@@ -693,6 +699,7 @@ async def get_record_entities(
                 record_entities.c.role,
                 record_entities.c.position,
                 record_entities.c.party_id,
+                record_entities.c.via_entity_id,
                 entities.c.id.label("entity_id"),
                 entities.c.name,
                 entities.c.entity_type,
@@ -709,8 +716,16 @@ async def get_record_entities(
             )
         )
         rows = (await conn.execute(stmt)).mappings().all()
+        # Every link's party on its record and role, member rows included.
+        party_of = {(r["record_id"], r["role"], r["entity_id"]): r["party_id"] for r in rows}
+        splits = await split_members(
+            conn, {r["entity_id"] for r in rows if r["via_entity_id"] is None}
+        )
+        ids = await member_ids(conn, {m for ms in splits.values() for m in ms})
         chips: dict[tuple[int, str, int], dict] = {}
         for r in rows:
+            if r["via_entity_id"] is not None:
+                continue
             role_chips = result.setdefault(r["record_id"], {}).setdefault(r["role"], [])
             key = (r["record_id"], r["role"], r["party_id"])
             chip = chips.get(key)
@@ -722,11 +737,16 @@ async def get_record_entities(
                     "entity_type": r["entity_type"],
                     "entity_subtype": r["entity_subtype"],
                     "classification_source": r["classification_source"],
+                    "members": [],
                 }
                 chips[key] = chip
                 role_chips.append(chip)
             chip["names"].append(r["name"])
             chip["entity_ids"].append(r["entity_id"])
+            for m in splits.get(r["entity_id"], ()):
+                mid = ids.get(m)
+                party = party_of.get((r["record_id"], r["role"], mid), mid)
+                chip["members"].append({"id": party, "name": m})
         for chip in chips.values():
             chip["name"] = " / ".join(chip["names"])
 

@@ -20,6 +20,14 @@
                 <a href="/entity/{{ variant_of.id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ variant_of.name or ('#' ~ variant_of.id) }}</a>
                 everywhere; visitors are redirected there.</p>
             {% endif %}
+            {% if split_banner %}
+            {# A split couple (#269): one printed name, several people. #}
+            <p class="text-sm text-gray-700 bg-gray-50 rounded px-2 py-1 mt-2" data-testid="split-banner">WSLCB lists {{ split_banner | length }} people under this name:
+                {% for m in split_banner -%}
+                {% if m.id %}<a href="/entity/{{ m.id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ m.name }}</a>{% else %}<span class="font-medium">{{ m.name }}</span>{% endif %}{% if not loop.last %} · {% endif %}
+                {%- endfor %}
+            </p>
+            {% endif %}
             {% if listed_as %}
             <p class="text-sm text-gray-700 mt-2" data-testid="listed-as">Listed as: <span class="font-medium">{{ listed_as.name }}</span></p>
             {% endif %}

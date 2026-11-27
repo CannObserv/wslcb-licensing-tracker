@@ -521,3 +521,66 @@ async def test_merging_a_member_into_a_printed_entity_keeps_the_printed_row(
     await merge_entity_into(pg_conn, jayne_m, jayne_marie)
     vias = {n: via for n, _, via in await _links(pg_conn, rid)}
     assert vias["T269 JAYNE MARIE BLACKWELL"] is None
+
+
+# ── PG: display (spec §4) ────────────────────────────────────────────
+
+from wslcb_licensing_tracker.entities import get_record_entities  # noqa: E402
+from wslcb_licensing_tracker.entity_splits import split_banner  # noqa: E402
+from wslcb_licensing_tracker.queries_entity import get_entities, get_entity_records  # noqa: E402
+
+
+async def _split_record(conn, rec, licence):
+    rid = await _record(conn, rec, licence)
+    couple = await _id(conn, COUPLE)
+    await _verdict(conn, couple, MEMBERS)
+    await reprocess_entities(conn, record_ids=[rid])
+    return rid, couple
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_chips_are_printed_rows_with_members_inside_the_couple(
+    pg_conn, standard_new_application
+):
+    rid, couple = await _split_record(pg_conn, standard_new_application, "t269_chip")
+    chips = (await get_record_entities(pg_conn, [rid]))[rid]["applicant"]
+    assert [c["name"] for c in chips] == [COUPLE, "T269 TREVOR EUGENE BLACKWELL"]
+    trevor = await _id(pg_conn, "T269 TREVOR EUGENE BLACKWELL")
+    jayne = await _id(pg_conn, "T269 JAYNE MARIE BLACKWELL")
+    assert chips[0]["members"] == [
+        {"id": trevor, "name": "T269 TREVOR EUGENE BLACKWELL"},
+        {"id": jayne, "name": "T269 JAYNE MARIE BLACKWELL"},
+    ]
+    assert chips[1]["members"] == []
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_member_page_labels_records_reached_through_the_couple(
+    pg_conn, standard_new_application
+):
+    rid, couple = await _split_record(pg_conn, standard_new_application, "t269_page")
+    jayne = await _id(pg_conn, "T269 JAYNE MARIE BLACKWELL")
+    trevor = await _id(pg_conn, "T269 TREVOR EUGENE BLACKWELL")
+    [jr] = [r for r in await get_entity_records(pg_conn, jayne) if r["id"] == rid]
+    assert jr["listed_as"] == {"id": couple, "name": COUPLE}
+    [tr] = [r for r in await get_entity_records(pg_conn, trevor) if r["id"] == rid]
+    assert tr["listed_as"] is None  # printed in his own name here
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_banner_names_the_members(pg_conn, standard_new_application):
+    _, couple = await _split_record(pg_conn, standard_new_application, "t269_banner")
+    jayne = await _id(pg_conn, "T269 JAYNE MARIE BLACKWELL")
+    banner = await split_banner(pg_conn, couple)
+    assert [m["name"] for m in banner] == MEMBERS
+    assert banner[1]["id"] == jayne
+    assert await split_banner(pg_conn, jayne) is None
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize(("verdict", "listed"), [("split", False), ("keep", True)])
+async def test_entities_list_hides_split_entities(pg_conn, verdict, listed):
+    eid = await _person(pg_conn, f"T269 LISTED {verdict} O & P")
+    await _verdict(pg_conn, eid, ["T269 O", "T269 P"] if verdict == "split" else [], verdict)
+    rows = (await get_entities(pg_conn, q=f"T269 LISTED {verdict}"))["entities"]
+    assert ([r["id"] for r in rows] == [eid]) is listed

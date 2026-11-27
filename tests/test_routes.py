@@ -147,6 +147,9 @@ def _party_patches(party: int | None = None, members: list | None = None) -> lis
             new_callable=AsyncMock,
             return_value=members or [],
         ),
+        patch(
+            "wslcb_licensing_tracker.app.split_banner", new_callable=AsyncMock, return_value=None
+        ),
     ]
 
 
@@ -631,6 +634,34 @@ class TestAdditionalNamesNotice:
             assert body.count('href="/entity/80"') == 1
             assert "RANDAL ANDERSON / RANDAL JUAN ANDERSON" in body
             assert 'href="/entity/81"' not in body
+        finally:
+            _stop(patches)
+
+    def test_couple_chip_links_its_members(self):
+        """#269: a split couple's chip keeps the printed name and links each member."""
+        record = self._make_record_dict(3, has_flag=False)
+        record["entities"] = {
+            "applicant": [
+                {
+                    "id": 13439,
+                    "name": "TREVOR & JAYNE BLACKWELL",
+                    "names": ["TREVOR & JAYNE BLACKWELL"],
+                    "entity_ids": [13439],
+                    "members": [
+                        {"id": 13440, "name": "TREVOR EUGENE BLACKWELL"},
+                        {"id": 13436, "name": "JAYNE MARIE BLACKWELL"},
+                    ],
+                }
+            ],
+            "previous_applicant": [],
+        }
+        client, patches = self._make_client_for_record(record)
+        try:
+            body = client.get("/record/3").text
+            assert "TREVOR &amp; JAYNE BLACKWELL" in body
+            assert 'data-testid="couple-members"' in body
+            assert 'href="/entity/13440"' in body
+            assert 'href="/entity/13436"' in body
         finally:
             _stop(patches)
 
@@ -1405,6 +1436,47 @@ class TestEntityAliasPages:
         assert 'href="/entity/24142"' in body  # a scoped member keeps its own page
         assert "(licence 355693)" in body
         assert 'href="/entity/19027"' not in body  # a global member would only redirect back
+
+    def test_split_couple_page_shows_the_banner(self):
+        """#269: the combined entity's page names the people WSLCB lists under it."""
+        banner = [
+            {"id": 13440, "name": "TREVOR EUGENE BLACKWELL"},
+            {"id": 13436, "name": "JAYNE MARIE BLACKWELL"},
+        ]
+        with patch(
+            "wslcb_licensing_tracker.app.split_banner", new_callable=AsyncMock, return_value=banner
+        ):
+            client, patches = _make_client()
+            extra = [
+                patch(
+                    "wslcb_licensing_tracker.app.get_entity_by_id",
+                    new_callable=AsyncMock,
+                    return_value=dict(self._CANON),
+                ),
+                patch(
+                    "wslcb_licensing_tracker.app.get_entity_records",
+                    new_callable=AsyncMock,
+                    return_value=[],
+                ),
+                *_party_patches()[:2],
+            ]
+            for p in extra:
+                p.start()
+            try:
+                body = client.get("/entity/13439").text
+            finally:
+                for p in extra:
+                    p.stop()
+                _stop(patches)
+        assert 'data-testid="split-banner"' in body
+        assert "WSLCB lists 2 people under this name" in body
+        assert 'href="/entity/13436"' in body
+
+    def test_record_reached_through_a_couple_is_labelled(self):
+        record = dict(self._RECORD, listed_as={"id": 13439, "name": "TREVOR & JAYNE BLACKWELL"})
+        body = self._get("/entity/13436", records=[record]).text
+        assert 'data-testid="listed-via"' in body
+        assert "listed as TREVOR &amp; JAYNE BLACKWELL" in body
 
     def test_malformed_from_still_renders_the_page(self):
         """CR 2: ?from is a hint; a bad value must not turn the page into a 404."""

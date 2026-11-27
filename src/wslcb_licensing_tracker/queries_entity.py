@@ -34,7 +34,9 @@ async def get_entity_records(conn: AsyncConnection, entity_id: int) -> list[dict
     members', ``record_entities.party_id``) and the entity's own links.  An
     own link that resolves elsewhere (a scoped variant on its licence) sets
     the record's ``party_note`` to ``{"id", "name"}`` of that party; it is
-    None on every other record.
+    None on every other record.  A record the party reaches only through
+    member rows (a split couple, #269) sets ``listed_as`` to ``{"id", "name"}``
+    of the couple; None elsewhere.
     """
     result = await conn.execute(
         text(
@@ -61,9 +63,25 @@ async def get_entity_records(conn: AsyncConnection, entity_id: int) -> list[dict
             )
         ).fetchall()
     }
+    listed_as = {
+        rid: {"id": via, "name": name}
+        for rid, via, name in (
+            await conn.execute(
+                text(
+                    "SELECT x.record_id, x.via, v.name FROM ("
+                    "  SELECT re.record_id, min(re.via_entity_id) AS via FROM record_entities re"
+                    "  WHERE re.party_id = :entity_id OR re.entity_id = :entity_id"
+                    "  GROUP BY re.record_id HAVING bool_and(re.via_entity_id IS NOT NULL)"
+                    ") x JOIN entities v ON v.id = x.via"
+                ),
+                {"entity_id": entity_id},
+            )
+        ).fetchall()
+    }
     records = await _hydrate_records(conn, rows)
     for r in records:
         r["party_note"] = notes.get(r["id"])
+        r["listed_as"] = listed_as.get(r["id"])
     return records
 
 
@@ -141,9 +159,9 @@ async def get_entities(  # noqa: PLR0913
         'count' (default) — most active first (record_count DESC, name ASC);
         'name' — alphabetical (name ASC).
 
-    Global alias variants are not listed; ``record_count`` counts the distinct
-    records of the entity's party, and ``q`` also matches the spellings linked
-    under a party (#263).
+    Global alias variants and split couples (#269) are not listed;
+    ``record_count`` counts the distinct records of the entity's party, and
+    ``q`` also matches the spellings linked under a party (#263).
     page:
         1-based page number.
     per_page:
@@ -153,10 +171,13 @@ async def get_entities(  # noqa: PLR0913
     Rows carry ``id``, ``name``, ``entity_type``, ``entity_subtype``,
     ``classification_source``, ``record_count``, ``jev_confidence``, ``jev_subtype``.
     """
-    # A global alias variant is listed under its party, not on its own (#263).
+    # A global alias variant is listed under its party, not on its own (#263);
+    # a split couple is not a person: its members are listed instead (#269).
     where_parts = [
         "NOT EXISTS (SELECT 1 FROM entity_aliases a"
-        " WHERE a.variant_id = e.id AND a.scope_license IS NULL)"
+        " WHERE a.variant_id = e.id AND a.scope_license IS NULL)",
+        "NOT EXISTS (SELECT 1 FROM entity_splits s"
+        " WHERE s.combined_id = e.id AND s.verdict = 'split')",
     ]
     params: dict = {}
     if q:
