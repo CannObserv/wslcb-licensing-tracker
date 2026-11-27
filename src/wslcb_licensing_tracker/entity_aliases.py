@@ -162,7 +162,7 @@ def elect_canonical(
 # ── middle-name rule, pure (#265; spec §3) ───────────────────────────
 
 # A standalone AND / & marks a couple string (#246): it takes no part.
-_COUPLE_TOKENS = frozenset({"AND", "&"})
+COUPLE_TOKENS = frozenset({"AND", "&"})
 
 
 @dataclass(frozen=True)
@@ -182,7 +182,7 @@ def parse_person_key(key: str | None) -> PersonKey | None:
     key has fewer than two tokens or names a couple (a standalone ``AND``/``&``).
     """
     toks = (key or "").split()
-    if _COUPLE_TOKENS & set(toks):
+    if COUPLE_TOKENS & set(toks):
         return None
     suffix = toks.pop() if len(toks) > 2 and toks[-1] in _GENERATIONAL else None  # noqa: PLR2004
     if len(toks) < 2:  # noqa: PLR2004
