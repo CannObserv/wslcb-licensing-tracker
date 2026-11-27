@@ -1251,8 +1251,8 @@ async def dismiss_pair(  # noqa: PLR0913
 
     Stops every rule from linking the pair, then relinks their groups.
     Manual rows are not touched.  Raises :class:`AliasError` when either is
-    marked not-a-name: ``reclassify-entities`` purges those, and the dismissal
-    would go with them.  Caller commits.
+    marked not-a-name: a tombstone takes no part in linking (#261), so a
+    dismissal on it would mean nothing.  Caller commits.
     """
     a, b = _pair(entity_a, entity_b)
     tombs = await tombstone_ids(conn, [a, b])
