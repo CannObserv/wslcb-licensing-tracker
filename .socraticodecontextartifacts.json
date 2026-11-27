@@ -28,7 +28,7 @@
     {
       "name": "logging",
       "path": "docs/LOGGING.md",
-      "description": "Where logs go: uvicorn's --log-config routing and the shared JSON formatter, the persistent journal (journald config, flush unmask, retention, personal data) and PID 1's log target. Check before touching log_config.py/json, journald, or systemd's log target."
+      "description": "Where logs go: uvicorn's --log-config routing and the shared JSON formatter, the persistent journal (journald config, flush unmask, retention, personal data) and PID 1's log target. Check before touching log_config.py or log_config.json, journald, or systemd's log target."
     },
     {
       "name": "address-validation",
