@@ -36,7 +36,7 @@ from .entities import (
     renumber_link_positions,
 )
 from .entity_aliases import relink
-from .entity_classification import current_answers, resolve_entities, verdict_ids
+from .entity_classification import current_answers, resolve_entities, tombstone_names, verdict_ids
 from .models import entities, entity_classifications, license_records, record_entities
 from .text_utils import clean_entity_name, strip_wac_annotation
 
@@ -219,13 +219,14 @@ async def _strip(conn: AsyncConnection, *, dry_run: bool) -> dict:
 async def _unmatched_records(conn: AsyncConnection, pairs: list[tuple[int, str]]) -> list[dict]:
     """Return the ``(record, role)`` pairs whose links differ from a fresh extraction."""
     out: list[dict] = []
+    skip = await tombstone_names(conn)
     for record_id, role in pairs:
         stored, raw = (
             await conn.execute(
                 select(*_ROLE_COLUMNS[role]).where(license_records.c.id == record_id)
             )
         ).one()
-        expected = extract_entity_names(entity_source(stored, raw))
+        expected = extract_entity_names(entity_source(stored, raw), skip=skip)
         rows = (
             await conn.execute(
                 select(entities.c.name, record_entities.c.position)

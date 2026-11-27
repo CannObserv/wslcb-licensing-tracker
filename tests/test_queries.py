@@ -270,6 +270,23 @@ class TestGetEntities:
         assert bogus["total"] == unfiltered["total"]
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_tombstones_not_listed(self, pg_conn):
+        """#261: an operator-confirmed non-name is not listed; clearing lists it again."""
+        from wslcb_licensing_tracker.entity_classification import clear_manual, record_manual
+
+        tomb = await get_or_create_entity(pg_conn, "T209 IL IL")
+        person = await get_or_create_entity(pg_conn, "T209 JOHN DOE")
+        await record_manual(
+            pg_conn, tomb, entity_type="not_a_name", entity_subtype=None, created_by="op@x"
+        )
+        result = await get_entities(pg_conn, q="T209")
+        assert [e["id"] for e in result["entities"]] == [person]
+        assert result["total"] == 1
+        assert (await get_entities(pg_conn, q="T209", sort="name"))["total"] == 1
+        await clear_manual(pg_conn, tomb)
+        assert (await get_entities(pg_conn, q="T209"))["total"] == 2
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_person_with_business_subtype_is_empty(self, pg_conn):
         await get_or_create_entity(pg_conn, "T209 ACME LLC")
         await get_or_create_entity(pg_conn, "T209 JOHN DOE")

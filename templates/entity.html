@@ -20,6 +20,10 @@
                 <a href="/entity/{{ variant_of.id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ variant_of.name or ('#' ~ variant_of.id) }}</a>
                 everywhere; visitors are redirected there.</p>
             {% endif %}
+            {% if tombstone %}
+            {# An operator-confirmed non-name (#261): admins only; the public gets a 404. #}
+            <p class="text-sm text-amber-800 bg-amber-50 rounded px-2 py-1 mt-2" data-testid="tombstone-banner">Not a name: an operator confirmed this string is not a name, so no record links to it. {{ tombstone.records }} record{{ "s" if tombstone.records != 1 }} print this name; clearing the manual override links them again.</p>
+            {% endif %}
             {% if split_banner %}
             {# A split couple (#269): one printed name, several people. #}
             <p class="text-sm text-gray-700 bg-gray-50 rounded px-2 py-1 mt-2" data-testid="split-banner">WSLCB lists {{ split_banner | length }} people under this name:

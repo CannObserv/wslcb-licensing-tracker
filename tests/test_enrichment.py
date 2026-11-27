@@ -35,9 +35,9 @@ def test_address_step_is_retired():
     assert STEP_ADDRESS not in STEP_VERSIONS
 
 
-def test_entities_version_counts_entity_source():
-    """#266 changed what entity extraction reads: that is v6 (#267)."""
-    assert STEP_VERSIONS[STEP_ENTITIES] == 6
+def test_entities_version_counts_tombstone_skip():
+    """#266 changed what entity extraction reads (v6, #267); #261's tombstone skip is v7."""
+    assert STEP_VERSIONS[STEP_ENTITIES] == 7
 
 
 def test_step_modules_hold_no_version_of_their_own():

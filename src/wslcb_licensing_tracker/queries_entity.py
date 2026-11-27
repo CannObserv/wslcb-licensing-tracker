@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .entity_aliases import eff_many, reverse_closure
-from .entity_classification import ENTITY_SUBTYPES, with_jev_answer
+from .entity_classification import ENTITY_SUBTYPES, tombstone_ids, with_jev_answer
 from .queries_hydrate import _hydrate_records
 from .queries_search import RECORD_COLUMNS, RECORD_JOINS
 
@@ -159,7 +159,8 @@ async def get_entities(  # noqa: PLR0913
         'count' (default) — most active first (record_count DESC, name ASC);
         'name' — alphabetical (name ASC).
 
-    Global alias variants and split couples (#269) are not listed;
+    Global alias variants, split couples (#269) and tombstones (#261) are
+    not listed;
     ``record_count`` counts the distinct records of the entity's party, and
     ``q`` also matches the spellings linked under a party (#263).
     page:
@@ -178,8 +179,10 @@ async def get_entities(  # noqa: PLR0913
         " WHERE a.variant_id = e.id AND a.scope_license IS NULL)",
         "NOT EXISTS (SELECT 1 FROM entity_splits s"
         " WHERE s.combined_id = e.id AND s.verdict = 'split')",
+        # An operator-confirmed non-name (#261): a handful of ids.
+        "NOT (e.id = ANY(:tomb_ids))",
     ]
-    params: dict = {}
+    params: dict = {"tomb_ids": sorted(await tombstone_ids(conn))}
     if q:
         # The party's own name, or any member's spelling linked under it: one
         # ILIKE scan, then the parties those spellings resolve to.

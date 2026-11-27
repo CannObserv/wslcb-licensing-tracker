@@ -446,6 +446,21 @@ async def tombstone_ids(conn: AsyncConnection, entity_ids: Sequence[int] | None 
     return out
 
 
+async def tombstone_names(conn: AsyncConnection) -> frozenset[str]:
+    """Lowercased names of every tombstone (#261): what extraction must not link.
+
+    Small (one row per operator not-a-name decision), so a caller that links
+    many records loads it once and passes it down.
+    """
+    m = _current_manual()
+    stmt = (
+        select(func.lower(entities.c.name))
+        .join(m, m.c.entity_id == entities.c.id)
+        .where(m.c.entity_type == NOT_A_NAME)
+    )
+    return frozenset((await conn.execute(stmt)).scalars())
+
+
 async def confirmed_noise_ids(conn: AsyncConnection) -> set[int]:
     """Entities an operator confirmed are not names.
 

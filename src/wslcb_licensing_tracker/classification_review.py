@@ -25,6 +25,7 @@ from sqlalchemy.sql.selectable import Subquery
 
 from .admin_audit import log_action
 from .config import JEV_USD_PER_MILLION_INPUT_TOKENS, jev_confidence_threshold
+from .entities import records_naming, reprocess_entities, unlink_tombstones
 from .entity_classification import (
     ENTITY_TYPES,
     NOT_A_NAME,
@@ -32,6 +33,7 @@ from .entity_classification import (
     clear_manual,
     current_answers,
     record_manual,
+    tombstone_ids,
     verdict_ids,
 )
 from .jev_classifier import awaiting_count
@@ -107,6 +109,28 @@ async def _audit(  # noqa: PLR0913
     )
 
 
+async def _sync_tombstone(conn: AsyncConnection, entity_id: int, *, was: bool) -> dict:
+    """Apply a change of tombstone state (#261); return audit details for it.
+
+    Entering (a current manual ``not_a_name``): the entity's links go at once.
+    Leaving: the records that print its name are reprocessed, and
+    extraction links it again where it is listed.
+    """
+    now = bool(await tombstone_ids(conn, [entity_id]))
+    if now and not was:
+        return {"tombstone": "entered", "links_removed": await unlink_tombstones(conn, [entity_id])}
+    if was and not now:
+        name = (
+            await conn.execute(select(entities.c.name).where(entities.c.id == entity_id))
+        ).scalar_one()
+        ids = await records_naming(conn, name)
+        if ids:
+            await reprocess_entities(conn, record_ids=ids)
+        logger.info("Entity %d left tombstone state: %d record(s) reprocessed", entity_id, len(ids))
+        return {"tombstone": "left", "records_reprocessed": len(ids)}
+    return {}
+
+
 async def _record_and_resolve(  # noqa: PLR0913
     conn: AsyncConnection,
     entity_id: int,
@@ -121,6 +145,7 @@ async def _record_and_resolve(  # noqa: PLR0913
     """Write a manual row, close open flags, audit; return the manual row id."""
     _check_length("note", note)
     old = await _triple(conn, entity_id)
+    was = bool(await tombstone_ids(conn, [entity_id]))
     row_id = await record_manual(
         conn,
         entity_id,
@@ -129,6 +154,7 @@ async def _record_and_resolve(  # noqa: PLR0913
         created_by=admin_email,
         note=note,
     )
+    tomb = await _sync_tombstone(conn, entity_id, was=was)
     flags = await _resolve_flags(conn, entity_id, admin_email=admin_email, resolution=action)
     await _audit(
         conn,
@@ -142,6 +168,7 @@ async def _record_and_resolve(  # noqa: PLR0913
             "entity_subtype": entity_subtype,
             "note": note,
             "flags_resolved": flags,
+            **tomb,
             **(details or {}),
         },
     )
@@ -184,8 +211,9 @@ async def mark_not_a_name(
 ) -> int:
     """Confirm the entity is not a name (``entity.classify_not_a_name``); return the row id.
 
-    The next ``reclassify-entities`` purges the entity with all its rows,
-    this one included; the audit row is the lasting record.
+    The entity becomes a tombstone (#261): its record links go at once and
+    extraction never links it again, but the entity and this decision are
+    kept.  Clearing the decision brings its links back.
     """
     return await _record_and_resolve(
         conn,
@@ -254,14 +282,16 @@ async def clear_override(conn: AsyncConnection, entity_id: int, *, admin_email: 
     Open flags stay open.
     """
     old = await _triple(conn, entity_id)
+    was = bool(await tombstone_ids(conn, [entity_id]))
     cleared = await clear_manual(conn, entity_id)
+    tomb = await _sync_tombstone(conn, entity_id, was=was)
     await _audit(
         conn,
         entity_id,
         admin_email=admin_email,
         action="entity.classify_clear",
         old=old,
-        details={"cleared": cleared},
+        details={"cleared": cleared, **tomb},
     )
     return cleared
 

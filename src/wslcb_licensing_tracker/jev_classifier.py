@@ -160,7 +160,12 @@ def _candidate_stmt(
 async def _purgeable_noise(
     conn: AsyncConnection, rows: Sequence[tuple[int, str]], *, include_manual: bool
 ) -> set[int]:
-    """Ids among *rows* the reclassify purge would delete: ``(noise - protected) | confirmed``."""
+    """Ids among *rows* not worth a paid answer: ``(noise - protected) | confirmed``.
+
+    Unprotected regex noise is deleted by the reclassify purge, answer and
+    all; a confirmed non-name is a tombstone (#261) the operator has already
+    decided.
+    """
     noise = {eid for eid, name in rows if is_noise_name(name)}
     if noise:
         noise -= await protected_ids(conn)
@@ -188,7 +193,9 @@ async def select_candidates(  # noqa: PLR0913 — one keyword per selection rule
     Every mode skips an entity with a current manual row unless
     *include_manual*.  Noise names (``entities.is_noise_name``) are skipped
     unless protected (a manual decision or an open flag): the reclassify purge
-    would delete them, and their paid answers with them.
+    would delete them, and their paid answers with them.  With
+    *include_manual*, confirmed non-names (tombstones, #261) are skipped too:
+    the operator has decided them.
     """
     stmt = _candidate_stmt(mode, model, ids, include_manual=include_manual)
     if mode == "ids":

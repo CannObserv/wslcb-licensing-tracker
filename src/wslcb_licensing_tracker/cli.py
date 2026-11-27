@@ -58,6 +58,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from . import tombstone_restore
 from .address_validator import DAILY_VALIDATION_LIMIT, RENEWAL_RESERVE
 from .address_validator import backfill_addresses as run_backfill_addresses
 from .address_validator import refresh_addresses as run_refresh_addresses
@@ -744,10 +745,66 @@ def seed_couple_splits(dry_run: bool, admin_email: str | None) -> None:
         click.echo("Dry run: rolled back, nothing written.")
 
 
+@db.command("restore-tombstones")
+@click.option(
+    "--backup",
+    "backup_dir",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="The remediation backup holding the purged rows (e.g. #214's).",
+)
+@click.option("--dry-run", is_flag=True, help="Report what would change, then roll back.")
+@click.option(
+    "--admin-email",
+    default=None,
+    help="The admin the audit rows name; defaults to the only admin there is.",
+)
+def restore_tombstones(backup_dir: Path, dry_run: bool, admin_email: str | None) -> None:
+    """Recreate non-names a pre-#261 reclassify purged, as tombstones (#261).
+
+    Reads entities.jsonl and entity_classifications.jsonl from --backup and
+    recreates each entity whose latest manual answer there is not_a_name:
+    original id, name and dates, its manual row with the original author,
+    and one audit row.  It links nothing.  Refuses (nothing written) on a
+    conflict; a rerun reports what is already restored.  Back up first
+    (docs/TOMBSTONES.md).
+    """
+
+    async def _run(engine: AsyncEngine) -> tombstone_restore.RestoreResult:
+        async with get_db(engine) as conn:
+            email = await resolve_admin(conn, admin_email)
+            result = await tombstone_restore.restore_tombstones(
+                conn, backup_dir, admin_email=email, dry_run=dry_run
+            )
+            if not dry_run and result.restored:
+                await conn.commit()
+            return result
+
+    try:
+        r = _run_with_engine(_run)
+    except (SeedRefused, tombstone_restore.RestoreRefused) as e:
+        click.echo(f"Refused: {e}")
+        sys.exit(1)
+    tag = "[dry-run] " if dry_run else ""
+    verb = "Would restore" if dry_run else "Restored"
+    click.echo(f"{tag}{verb} {len(r.restored)} tombstone(s).")
+    for eid, name in r.restored:
+        click.echo(f"    {eid:>7} {name}")
+    if r.already:
+        click.echo(f"Already restored: {len(r.already)}.")
+        for eid, name in r.already:
+            click.echo(f"    {eid:>7} {name}")
+    if dry_run:
+        click.echo("Dry run: rolled back, nothing written.")
+
+
 @db.command("reclassify-entities")
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
 def reclassify_entities(dry_run: bool) -> None:
-    """Re-apply the regex classifier, re-resolve classifications, drop non-name entities.
+    """Re-apply the regex classifier, re-resolve classifications, drop regex-noise entities.
+
+    Operator-confirmed non-names are kept as tombstones and lose any record
+    links they still have (#261).
 
     reprocess-entities never updates an existing entity's type; this does,
     through the resolver: manual decisions and Jev answers are kept (#206).
@@ -782,7 +839,12 @@ def reclassify_entities(dry_run: bool) -> None:
     kept = "[dry-run] Would keep" if dry_run else "Kept"
     click.echo(
         f"{kept} {r['protected_noise_skipped']:,} noise-named entities with a manual decision "
-        f"or open flag (protected); {r['confirmed_noise']:,} operator-confirmed non-names removed."
+        f"or open flag (protected)."
+    )
+    unlink = "[dry-run] Would unlink" if dry_run else "Unlinked"
+    click.echo(
+        f"{unlink} {r['tombstone_links']:,} record link(s) from "
+        f"{r['tombstones']:,} operator-confirmed non-name(s), kept as tombstones (#261)."
     )
 
 

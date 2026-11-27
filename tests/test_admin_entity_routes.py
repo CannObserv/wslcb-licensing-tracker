@@ -103,7 +103,7 @@ def test_review_page_renders_items(client):
         "Accept rules",
         "Set other",
         "Not a name",
-        "Only the audit log keeps a record",
+        "no record links it again",
         "Subtype unknown",
         'action="/admin/entities/7/accept"',
         'value="/admin/entities/review?tab=main"',

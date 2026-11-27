@@ -194,7 +194,7 @@ async def admin_entity_not_a_name(
     note: Annotated[str, Form()] = "",
     next_url: Next = None,
 ) -> RedirectResponse:
-    """Confirm the entity is not a name; the next reclassify purges it."""
+    """Confirm the entity is not a name; it becomes an unlinked tombstone (#261)."""
     return await _act(
         request,
         entity_id,

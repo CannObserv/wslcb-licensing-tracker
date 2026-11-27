@@ -137,7 +137,10 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
 
 
 def _party_patches(
-    party: int | None = None, members: list | None = None, split: dict | None = None
+    party: int | None = None,
+    members: list | None = None,
+    split: dict | None = None,
+    tombstone: int | None = None,
 ) -> list:
     """Patches for the alias read paths (#263): not a variant, no members, by default."""
     return [
@@ -154,6 +157,16 @@ def _party_patches(
         ),
         patch(
             "wslcb_licensing_tracker.app.split_detail", new_callable=AsyncMock, return_value=split
+        ),
+        patch(
+            "wslcb_licensing_tracker.app.tombstone_ids",
+            new_callable=AsyncMock,
+            return_value={tombstone} if tombstone is not None else set(),
+        ),
+        patch(
+            "wslcb_licensing_tracker.app.records_naming",
+            new_callable=AsyncMock,
+            return_value=[1, 2, 3],
         ),
     ]
 
@@ -1162,6 +1175,7 @@ class TestEntityAdminPanel:
         url: str = "/entity/7",
         party: int | None = None,
         split: dict | None = None,
+        tombstone: int | None = None,
     ):
         monkeypatch.delenv(ADMIN_DEV_EMAIL_ENV, raising=False)
         env = "CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION"
@@ -1182,7 +1196,7 @@ class TestEntityAdminPanel:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            *_party_patches(party, split=split),
+            *_party_patches(party, split=split, tombstone=tombstone),
             patch("wslcb_licensing_tracker.app.classification_detail", new=detail),
             patch(
                 "wslcb_licensing_tracker.app.links_detail",
@@ -1206,6 +1220,23 @@ class TestEntityAdminPanel:
             for p in extra:
                 p.stop()
             _stop(patches)
+
+    def test_tombstone_404_for_public_banner_for_admin(self, monkeypatch):
+        """#261: an operator-confirmed non-name has no public page; an admin can clear it."""
+        resp, detail = self._get(admin=False, monkeypatch=monkeypatch, tombstone=7)
+        assert resp.status_code == 404
+        assert "HOPE HOUSE" not in resp.text
+        detail.assert_not_awaited()
+
+        resp, detail = self._get(admin=True, monkeypatch=monkeypatch, tombstone=7)
+        assert resp.status_code == 200
+        body = resp.text
+        assert 'data-testid="tombstone-banner"' in body
+        assert "3 records print this name" in body
+        assert "Clear manual override" in body
+
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        assert 'data-testid="tombstone-banner"' not in resp.text
 
     def test_entity_page_admin_panel_for_admin_only(self, monkeypatch):
         resp, detail = self._get(admin=True, monkeypatch=monkeypatch)
@@ -1261,8 +1292,8 @@ class TestEntityAdminPanel:
         assert 'action="/admin/entities/7/split-clear"' in body
         assert 'value="/entity/7?stay=1"' in body
 
-    def test_not_a_name_pending_purge_hides_button(self, monkeypatch):
-        """A current manual not_a_name row shows the pending purge instead of the button."""
+    def test_not_a_name_tombstone_hides_button(self, monkeypatch):
+        """A current manual not_a_name row says it is a tombstone instead of the button (#261)."""
         manual = {**self._DETAIL["current"]["manual"], "entity_type": "not_a_name"}
         detail = {
             **self._DETAIL,
@@ -1274,14 +1305,22 @@ class TestEntityAdminPanel:
         assert resp.status_code == 200
         assert 'action="/admin/entities/7/not-a-name"' not in resp.text
         assert "Marked not a name" in resp.text
-        assert "reclassify-entities" in resp.text
-        assert "holds the purge" not in resp.text
+        assert "tombstone" in resp.text
+        assert "Clear manual override" in resp.text
+        assert "deletes" not in resp.text
 
-        # An open flag keeps the entity out of the purge (confirmed_noise_ids).
+        # An open flag changes nothing: a tombstone is unlinked either way.
         monkeypatch.setattr(self, "_DETAIL", detail)
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
         assert "Marked not a name" in resp.text
-        assert "An open flag holds the purge" in resp.text
+        assert "purge" not in resp.text
+
+    def test_not_a_name_form_describes_the_tombstone(self, monkeypatch):
+        """#261: the mark's confirm and help text describe what it now does."""
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        assert 'action="/admin/entities/7/not-a-name"' in resp.text
+        assert "Its record links are removed now" in resp.text
+        assert "next reclassify deletes" not in resp.text
 
     def test_jev_button_only_when_enabled(self, monkeypatch):
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch, jev_enabled=True)
@@ -1491,7 +1530,9 @@ class TestEntityAliasPages:
                     new_callable=AsyncMock,
                     return_value=[],
                 ),
+                # Every alias-path patch but split_banner, patched above.
                 *_party_patches()[:2],
+                *_party_patches()[3:],
             ]
             for p in extra:
                 p.start()

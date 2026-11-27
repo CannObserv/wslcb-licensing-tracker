@@ -40,8 +40,8 @@ from .data_migration import run_pending_migrations
 from .db import DATA_DIR, get_record_sources
 from .display import SUBTYPE_LABELS, classification_badge, format_outcome, summarize_provenance
 from .engine import create_engine_from_env, get_db
-from .entities import get_entity_by_id
-from .entity_classification import ENTITY_SUBTYPES, ENTITY_TYPES
+from .entities import get_entity_by_id, records_naming
+from .entity_classification import ENTITY_SUBTYPES, ENTITY_TYPES, tombstone_ids
 from .entity_splits import split_banner
 from .jev_client import is_classification_enabled
 from .link_records import get_outcome_status, get_reverse_link_info
@@ -517,12 +517,15 @@ async def entity_detail(
     and, for ``?from``, "Listed as".  Signed-in admins also get the
     classification panel (#208), the Links panel (#264) and the couple split
     panel (#269), and with
-    ``?stay=1`` stay on a variant's own page to manage its links.
+    ``?stay=1`` stay on a variant's own page to manage its links.  A
+    tombstone (an operator-confirmed non-name, #261) is a 404 to the public;
+    an admin sees its page with a banner, so the decision can be cleared.
     """
     current_user = await get_current_user(request)
     async with get_db(request.app.state.engine) as conn:
         entity = await get_entity_by_id(conn, entity_id)
-        if not entity:
+        tombstone = bool(entity) and bool(await tombstone_ids(conn, [entity_id]))
+        if not entity or (tombstone and not current_user):
             return await _tpl(
                 request,
                 "404.html",
@@ -546,6 +549,12 @@ async def entity_detail(
         }
         if current_user:
             ctx |= {
+                # How many records a clear would reprocess (#261).
+                "tombstone": (
+                    {"records": len(await records_naming(conn, entity["name"]))}
+                    if tombstone
+                    else None
+                ),
                 # An admin staying on a global variant's page (?stay=1).
                 "variant_of": (
                     None

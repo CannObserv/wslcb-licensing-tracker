@@ -356,7 +356,8 @@ class TestDbGroup:
             "regex_rows_written": 997,
             "subtype_changes": 40,
             "protected_noise_skipped": 1,
-            "confirmed_noise": 1,
+            "tombstones": 2,
+            "tombstone_links": 11,
         }
         result = CliRunner().invoke(main, ["db", "reclassify-entities", "--dry-run"])
         assert result.exit_code == 0, result.output
@@ -369,7 +370,7 @@ class TestDbGroup:
         assert "40 subtype change(s)" in result.output
         assert "Would keep 1 noise-named entities" in result.output
         assert "protected" in result.output
-        assert "1 operator-confirmed" in result.output
+        assert "Would unlink 11 record link(s) from 2 operator-confirmed" in result.output
 
 
 class TestStripWacSuffixes:
@@ -1040,3 +1041,57 @@ class TestSeedCoupleSplits:
         out, _ = self._invoke([], error=SeedRefused("13439: renamed"))
         assert out.exit_code == 1
         assert "Refused: 13439: renamed" in out.output
+
+
+class TestRestoreTombstones:
+    """wslcb db restore-tombstones (#261)."""
+
+    def _invoke(self, args, result=None, error=None):
+        from wslcb_licensing_tracker.tombstone_restore import RestoreResult
+
+        with (
+            patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db),
+            patch("wslcb_licensing_tracker.cli.create_engine_from_env") as eng,
+            patch(
+                "wslcb_licensing_tracker.cli.resolve_admin",
+                new_callable=AsyncMock,
+                return_value="secret-admin@example.com",
+            ),
+            patch(
+                "wslcb_licensing_tracker.tombstone_restore.restore_tombstones",
+                new_callable=AsyncMock,
+                return_value=result or RestoreResult(),
+                side_effect=error,
+            ) as fn,
+        ):
+            eng.return_value = mock_async_engine()
+            out = CliRunner().invoke(main, ["db", "restore-tombstones", "--backup", "bk", *args])
+            return out, fn
+
+    def test_dry_run_lists_names_without_the_email(self):
+        from wslcb_licensing_tracker.tombstone_restore import RestoreResult
+
+        r = RestoreResult(restored=[(30693, "IL"), (30694, "IL IL")], dry_run=True)
+        out, fn = self._invoke(["--dry-run"], r)
+        assert out.exit_code == 0, out.output
+        assert "[dry-run] Would restore 2 tombstone(s)." in out.output
+        assert "30693 IL" in out.output
+        assert "rolled back" in out.output
+        assert "secret-admin" not in out.output
+        assert fn.call_args.kwargs == {"admin_email": "secret-admin@example.com", "dry_run": True}
+        assert str(fn.call_args.args[1]) == "bk"
+
+    def test_rerun_reports_already(self):
+        from wslcb_licensing_tracker.tombstone_restore import RestoreResult
+
+        out, _ = self._invoke([], RestoreResult(already=[(30693, "IL")]))
+        assert out.exit_code == 0
+        assert "Restored 0 tombstone(s)." in out.output
+        assert "Already restored: 1." in out.output
+
+    def test_refusal_exits_1(self):
+        from wslcb_licensing_tracker.tombstone_restore import RestoreRefused
+
+        out, _ = self._invoke([], error=RestoreRefused("'IL' is held by entity 9"))
+        assert out.exit_code == 1
+        assert "Refused: 'IL' is held by entity 9" in out.output

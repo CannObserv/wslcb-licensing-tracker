@@ -112,6 +112,7 @@ wslcb-licensing-tracker/
 ├── entity_splits.py       # Couple names (#269): prefill (shape, cut-off completion, fuller form), verdict reads
 ├── split_review.py        # Couple verdicts: audited split / keep / clear, split panel, Couples tab queue (#269)
 ├── couple_seed.py         # One-off: the operator-approved #246 couple verdicts (wslcb db seed-couple-splits, #269)
+├── tombstone_restore.py   # One-off: recreate purged non-names as tombstones from a backup (wslcb db restore-tombstones, #261)
 ├── address_client.py       # HTTP transport for the address-validator service
 ├── address_validator.py    # Async address validation DB layer
 ├── link_records.py         # Async application→outcome record linking
@@ -260,6 +261,7 @@ wslcb-licensing-tracker/
 │   ├── test_entity_splits.py # Couple names: prefill on the 14 fixtures, member rows, guards, display (PG parts require the test DB)
 │   ├── test_split_review.py  # Couple verdicts: audited writes, validation, split panel, Couples queue (require the test DB)
 │   ├── test_couple_seed.py   # The #246 seeded pass: dry run, apply, rerun, refusals (require the test DB)
+│   ├── test_tombstone_restore.py # Restoring #214's purged non-names: restore, rerun, refusals, then a full reprocess (require the test DB)
 │   ├── test_entity_classification.py # Classification resolver + Jev rollback (require the test DB)
 │   ├── test_entity_wac_repair.py # WAC-suffix rename/merge + verification (require the test DB)
 │   ├── test_classification_review.py # Operator actions, review queue, health (require the test DB)
@@ -324,6 +326,7 @@ wslcb-licensing-tracker/
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
     ├── DISK_GC.md           # Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
     ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key and middle-name rules, relink triggers (#262, #265)
+    ├── TOMBSTONES.md        # Operator-confirmed non-names kept unlinked: effects, clearing, restore-tombstones (#261)
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
@@ -682,6 +685,7 @@ Test structure:
 | `tests/test_entity_splits.py` | Couple names (#269): prefill on the 14 #246 fixtures, member rows at ingest and reprocess, guards (protection, type, merge, alias rules), chips / listed-as / banner / `/entities` (PG parts require the test DB) |
 | `tests/test_split_review.py` | Couple verdicts (#269): audited split / keep / clear, validation, the split panel, the Couples queue (require the test DB) |
 | `tests/test_couple_seed.py` | The #246 seeded pass (#269): dry run, apply, rerun, refusals, admin attribution (require the test DB) |
+| `tests/test_tombstone_restore.py` | `restore-tombstones` (#261): backup parsing, original ids/dates/authors, audit, rerun, refusals, dry run, a full reprocess afterwards (require the test DB) |
 | `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require the test DB) |
 | `tests/test_entity_wac_repair.py` | `strip-wac-suffixes` — rename, twin/group merge, regex refresh, link renumbering, noise skip, dry-run, idempotence, mismatch report (require the test DB) |
 | `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require the test DB) |

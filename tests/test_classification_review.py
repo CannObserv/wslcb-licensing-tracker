@@ -25,6 +25,7 @@ from wslcb_licensing_tracker.models import (
     entities,
     entity_classifications,
     entity_review_flags,
+    record_entities,
 )
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -251,26 +252,104 @@ async def test_accept_missing_source_raises(pg_conn):
     assert await _audit(pg_conn, eid) == []
 
 
-async def test_mark_not_a_name_then_reclassify_purges(pg_conn):
+async def test_mark_not_a_name_keeps_a_tombstone(pg_conn):
     eid = await _entity(pg_conn, "PURGE ME PLEASE")
     await _flag(pg_conn, eid)
 
     await cr.mark_not_a_name(pg_conn, eid, admin_email=ADMIN, note="fragment")
 
-    # Unchanged until the purge: the resolver never picks not_a_name.
+    # The resolver never picks not_a_name.
     assert await _resolved(pg_conn, eid) == ("person", None, "regex")
     assert await _flags(pg_conn, eid) == [(True, ADMIN, "entity.classify_not_a_name")]
     [(action, _, details)] = await _audit(pg_conn, eid)
     assert action == "entity.classify_not_a_name"
     assert details["note"] == "fragment"
-    # The name survives the purge in the audit row (#247 §4, #264).
     assert details["name"] == "T208 PURGE ME PLEASE"
+    assert details["tombstone"] == "entered"
 
+    # #261: reclassify keeps the entity and its decision (a tombstone).
     await reclassify_entities(pg_conn)
-    gone = (await pg_conn.execute(select(func.count()).where(entities.c.id == eid))).scalar_one()
-    assert gone == 0
-    # The audit log is the lasting record.
-    assert [a for a, _, _ in await _audit(pg_conn, eid)] == ["entity.classify_not_a_name"]
+    kept = (await pg_conn.execute(select(func.count()).where(entities.c.id == eid))).scalar_one()
+    assert kept == 1
+    assert [r[0] for r in await _manual_rows(pg_conn, eid)] == ["not_a_name"]
+
+
+async def _record(conn, app: dict, number: str, applicants: str) -> int:
+    from wslcb_licensing_tracker.entities import parse_and_link_entities
+    from wslcb_licensing_tracker.pipeline import insert_record
+
+    rid = (await insert_record(conn, dict(app, license_number=number, applicants=applicants)))[0]
+    await parse_and_link_entities(conn, rid, applicants, delete_existing=True)
+    return rid
+
+
+async def _id_of(conn, name: str) -> int:
+    return (await conn.execute(select(entities.c.id).where(entities.c.name == name))).scalar_one()
+
+
+async def _links(conn, rid: int) -> list[tuple[str, int]]:
+    rows = (
+        await conn.execute(
+            select(entities.c.name, record_entities.c.position)
+            .join(entities, entities.c.id == record_entities.c.entity_id)
+            .where(record_entities.c.record_id == rid)
+            .order_by(record_entities.c.position)
+        )
+    ).fetchall()
+    return [tuple(r) for r in rows]
+
+
+async def test_mark_not_a_name_unlinks_at_once(pg_conn, standard_new_application):
+    """#261: no record keeps a chip pointing at a page the public gets a 404 for."""
+    rid = await _record(
+        pg_conn, standard_new_application, "cr_261_mark", "BIZ; T261 IL; T261 MARK REAL"
+    )
+    eid = await _id_of(pg_conn, "T261 IL")
+
+    await cr.mark_not_a_name(pg_conn, eid, admin_email=ADMIN)
+
+    assert await _links(pg_conn, rid) == [("T261 MARK REAL", 0)]
+    details = (await _audit(pg_conn, eid))[-1][2]
+    assert details["tombstone"] == "entered"
+    assert details["links_removed"] == 1
+
+
+@pytest.mark.parametrize("leave", ["clear", "set_person"])
+async def test_leaving_tombstone_relinks_its_records(pg_conn, standard_new_application, leave):
+    """#261: clearing (or overriding) a not-a-name reprocesses the records that print it."""
+    rid = await _record(
+        pg_conn, standard_new_application, "cr_261_leave", "BIZ; T261 IL; T261 LEAVE REAL"
+    )
+    other = await _record(
+        pg_conn, standard_new_application, "cr_261_other", "BIZ; T261 WILLIAM REAL"
+    )
+    eid = await _id_of(pg_conn, "T261 IL")
+    await cr.mark_not_a_name(pg_conn, eid, admin_email=ADMIN)
+
+    if leave == "clear":
+        await cr.clear_override(pg_conn, eid, admin_email=ADMIN)
+    else:
+        await cr.set_classification(
+            pg_conn, eid, entity_type="person", entity_subtype=None, note=None, admin_email=ADMIN
+        )
+
+    assert await _links(pg_conn, rid) == [("T261 IL", 0), ("T261 LEAVE REAL", 1)]
+    assert await _links(pg_conn, other) == [("T261 WILLIAM REAL", 0)]
+    details = (await _audit(pg_conn, eid))[-1][2]
+    assert details["tombstone"] == "left"
+    assert details["records_reprocessed"] == 1
+
+
+async def test_records_naming_is_token_bounded(pg_conn, standard_new_application):
+    """The clear path's prefilter: the whole name, case-insensitive, regex chars literal."""
+    from wslcb_licensing_tracker.entities import records_naming
+
+    hit = await _record(pg_conn, standard_new_application, "cr_261_b1", "BIZ; t261 il; X Y")
+    await _record(pg_conn, standard_new_application, "cr_261_b2", "BIZ; T261 ILL; X Y")
+    dots = await _record(pg_conn, standard_new_application, "cr_261_b3", "BIZ; T261 A.B (C); X")
+    await _record(pg_conn, standard_new_application, "cr_261_b4", "BIZ; T261 AXB (C); X")
+    assert await records_naming(pg_conn, "T261 IL") == [hit]
+    assert await records_naming(pg_conn, "T261 A.B (C)") == [dots]
 
 
 async def test_clear_override_audited_and_flags_untouched(pg_conn):
