@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 ACTION_SET = "entity.split_set"
 ACTION_KEEP = "entity.split_keep"
 ACTION_CLEAR = "entity.split_clear"
+# The form shows 4 fields; the route takes any number, so cap it here (CR 6).
+MAX_MEMBERS = 10
 
 
 def _check_text(field: str, value: str | None) -> None:
@@ -123,6 +125,9 @@ async def _clean_members(
         out.append(name)
     if len(out) < 2:  # noqa: PLR2004
         msg = "a split names at least 2 people (one is an alias: use Same as…)"
+        raise ValueError(msg)
+    if len(out) > MAX_MEMBERS:
+        msg = f"a split names at most {MAX_MEMBERS} people"
         raise ValueError(msg)
     existing = dict(
         (

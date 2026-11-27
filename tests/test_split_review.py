@@ -136,6 +136,7 @@ async def test_resplit_replaces_the_members(pg_conn, standard_new_application):
         (["T269R JASON MINAMI", "T269R A & B MINAMI"], "AND"),
         (["T269R JASON MINAMI", "..."], "empty"),
         (["T269R JASON MINAMI", "X" * 501], "long"),
+        ([f"T269R P{i} MINAMI" for i in range(11)], "at most 10"),
     ],
 )
 async def test_split_validation(pg_conn, standard_new_application, members, match):
