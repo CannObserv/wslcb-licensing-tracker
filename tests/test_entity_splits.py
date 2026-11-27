@@ -207,7 +207,7 @@ def test_fuller_form_ignores_couples_and_other_suffixes():
 
 # ── PG: extraction (spec §2) ─────────────────────────────────────────
 
-from sqlalchemy import delete, insert, select  # noqa: E402
+from sqlalchemy import delete, func, insert, select  # noqa: E402
 
 from wslcb_licensing_tracker.entities import (  # noqa: E402
     get_or_create_entity,
@@ -335,3 +335,189 @@ async def test_link_check_ignores_member_rows(pg_conn, standard_new_application)
     await _verdict(pg_conn, await _id(pg_conn, COUPLE), MEMBERS)
     await reprocess_entities(pg_conn, record_ids=[rid])
     assert await _unmatched_records(pg_conn, [(rid, "applicant")]) == []
+
+
+# ── PG: guards (spec §5, §5a) ────────────────────────────────────────
+
+from wslcb_licensing_tracker.entities import (  # noqa: E402
+    merge_duplicate_entities,
+    merge_entity_into,
+)
+from wslcb_licensing_tracker.entity_aliases import (  # noqa: E402
+    AliasError,
+    add_manual_alias,
+    relink,
+)
+from wslcb_licensing_tracker.entity_classification import (  # noqa: E402
+    SPLIT_NOT_PERSON_REASON,
+    protected_ids,
+    resolve_entities,
+)
+from wslcb_licensing_tracker.models import (  # noqa: E402
+    entity_aliases,
+    entity_classifications,
+    entity_review_flags,
+)
+
+
+async def _person(conn, name):
+    return await get_or_create_entity(conn, name)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize("verdict", ["split", "keep"])
+async def test_a_verdict_protects_the_entity(pg_conn, verdict):
+    eid = await _person(pg_conn, f"T269 PROTECT {verdict} A & B")
+    await _verdict(pg_conn, eid, ["T269 A", "T269 B"] if verdict == "split" else [], verdict)
+    assert eid in await protected_ids(pg_conn)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize(("etype", "sub"), [("not_a_name", None), ("organization", "trust")])
+async def test_manual_type_change_refused_while_a_verdict_exists(pg_conn, etype, sub):
+    eid = await _person(pg_conn, "T269 CLASSIFY C & D")
+    await _verdict(pg_conn, eid, [], "keep")
+    with pytest.raises(ValueError, match="clear the verdict"):
+        await record_manual(pg_conn, eid, entity_type=etype, entity_subtype=sub, created_by="t@x")
+    # person stays allowed
+    await record_manual(pg_conn, eid, entity_type="person", entity_subtype=None, created_by="t@x")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_automated_flip_flags_a_decided_entity(pg_conn):
+    eid = await _person(pg_conn, "T269 FLIP E & F")
+    await _verdict(pg_conn, eid, ["T269 E", "T269 F"])
+    await pg_conn.execute(
+        insert(entity_classifications).values(
+            entity_id=eid,
+            source="jev",
+            entity_type="organization",
+            entity_subtype="business",
+            confidence=0.99,
+            model="t269",
+        )
+    )
+    await resolve_entities(pg_conn, [eid])
+    await resolve_entities(pg_conn, [eid])  # no second flag
+    reasons = (
+        (
+            await pg_conn.execute(
+                select(entity_review_flags.c.reason).where(
+                    (entity_review_flags.c.entity_id == eid)
+                    & entity_review_flags.c.resolved_at.is_(None)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert reasons == [SPLIT_NOT_PERSON_REASON]
+    # The verdict stays in force.
+    assert (await pg_conn.execute(select(entity_splits.c.verdict))).scalars().all().count(
+        "split"
+    ) >= 1
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize("side", ["dirty", "canon"])
+async def test_merge_refuses_a_decided_entity(pg_conn, side):
+    decided = await _person(pg_conn, f"T269 MERGE {side} G & H")
+    other = await _person(pg_conn, f"T269 MERGE {side} OTHER")
+    await _verdict(pg_conn, decided, [], "keep")
+    dirty, canon = (decided, other) if side == "dirty" else (other, decided)
+    with pytest.raises(ValueError, match="verdict"):
+        await merge_entity_into(pg_conn, dirty, canon)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_case_dupe_merge_skips_a_decided_entity(pg_conn):
+    canon = await _person(pg_conn, "T269 CASE I & J")
+    dupe = (
+        await pg_conn.execute(
+            insert(entities)
+            .values(name="t269 case i & j", entity_type="person")
+            .returning(entities.c.id)
+        )
+    ).scalar_one()
+    await _verdict(pg_conn, canon, [], "keep")
+    await merge_duplicate_entities(pg_conn)
+    assert (
+        await pg_conn.execute(select(entities.c.id).where(entities.c.id == dupe))
+    ).scalar_one_or_none() == dupe
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_split_entity_takes_no_format_key_row(pg_conn):
+    a = await _person(pg_conn, "T269 K & L SMITH")
+    b = await _person(pg_conn, "SMITH, T269 K & L")
+    await relink(pg_conn, [a, b])
+
+    async def _rows():
+        return (
+            (
+                await pg_conn.execute(
+                    select(entity_aliases.c.variant_id).where(
+                        entity_aliases.c.variant_id.in_([a, b])
+                        | entity_aliases.c.canonical_id.in_([a, b])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert await _rows()  # the format key links the two spellings
+    await _verdict(pg_conn, a, ["T269 K SMITH", "T269 L SMITH"])
+    await relink(pg_conn, [a, b])
+    assert await _rows() == []
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_split_entity_takes_no_middle_name_row(pg_conn, standard_new_application):
+    names = "ZQ269 BIZ; ZQJON ZQSMYTHE; ZQJON ZQK ZQSMYTHE"
+    rid = await _record(pg_conn, standard_new_application, "t269_mn", names)
+    short = await _id(pg_conn, "ZQJON ZQSMYTHE")
+    await relink(pg_conn, [short])
+
+    async def _mid():
+        return (
+            await pg_conn.execute(
+                select(func.count())
+                .select_from(entity_aliases)
+                .where(
+                    (entity_aliases.c.rule == "middle_names")
+                    & (entity_aliases.c.variant_id == short)
+                )
+            )
+        ).scalar_one()
+
+    assert await _mid() == 1
+    await _verdict(pg_conn, short, ["ZQANN ZQSMYTHE", "ZQBOB ZQSMYTHE"])
+    await reprocess_entities(pg_conn, record_ids=[rid])
+    assert await _mid() == 0
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_manual_link_refused_on_a_split_entity(pg_conn):
+    split = await _person(pg_conn, "T269 ALIAS M & N")
+    other = await _person(pg_conn, "T269 ALIAS OTHER")
+    await _verdict(pg_conn, split, ["T269 M", "T269 N"])
+    for v, c in ((split, other), (other, split)):
+        with pytest.raises(AliasError, match="split"):
+            await add_manual_alias(pg_conn, v, c, created_by="t@x")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_merging_a_member_into_a_printed_entity_keeps_the_printed_row(
+    pg_conn, standard_new_application
+):
+    names = f"T269 Q LLC; {COUPLE}; T269 JAYNE M BLACKWELL"
+    rid = await _record(pg_conn, standard_new_application, "t269_merge", names)
+    await _verdict(pg_conn, await _id(pg_conn, COUPLE), MEMBERS)
+    await reprocess_entities(pg_conn, record_ids=[rid])
+    jayne_m = await _id(pg_conn, "T269 JAYNE M BLACKWELL")
+    jayne_marie = await _id(pg_conn, "T269 JAYNE MARIE BLACKWELL")
+    # The printed spelling folds into the member: the survivor is printed here.
+    await merge_entity_into(pg_conn, jayne_m, jayne_marie)
+    vias = {n: via for n, _, via in await _links(pg_conn, rid)}
+    assert vias["T269 JAYNE MARIE BLACKWELL"] is None

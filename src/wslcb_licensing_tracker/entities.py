@@ -25,6 +25,7 @@ from .entity_classification import (
     protected_ids,
     resolve_entities,
     tombstone_ids,
+    verdict_ids,
     with_jev_answer,
 )
 from .entity_splits import split_members
@@ -763,14 +764,23 @@ async def merge_duplicate_entities(conn: AsyncConnection) -> int:
         )
     ).fetchall()
 
+    decided = await verdict_ids(conn, sorted({i for r in dup_rows for i in (r[0], r[2])}))
     merged = 0
     for dirty_id, dirty_name, canon_id in dup_rows:
+        if decided & {dirty_id, canon_id}:
+            logger.warning(
+                "Not merging entity %d %r → %d: a couple verdict (#269)",
+                dirty_id,
+                dirty_name,
+                canon_id,
+            )
+            continue
         await merge_entity_into(conn, dirty_id, canon_id)
         logger.info("Merged entity %d %r → %d", dirty_id, dirty_name, canon_id)
         merged += 1
 
     if merged:
-        await resolve_entities(conn, sorted({canon for _, _, canon in dup_rows}))
+        await resolve_entities(conn, sorted({canon for _, _, canon in dup_rows} - decided))
         logger.info("Merged %d duplicate entities", merged)
 
     return merged
@@ -787,32 +797,44 @@ async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int)
     (``resolve_entities``).
     A conflict leaves a gap in that record's positions; ``renumber_link_positions``
     closes it (``merge_duplicate_entities`` does not call it).
+    Raises ``ValueError`` when either entity has a couple verdict (#269).
     """
+    decided = await verdict_ids(conn, [dirty_id, canon_id])
+    if decided:
+        msg = f"entity {min(decided)} has a couple verdict; clear the verdict before merging"
+        raise ValueError(msg)
     dirty_links = (
         await conn.execute(
             select(
                 record_entities.c.record_id,
                 record_entities.c.role,
                 record_entities.c.position,
+                record_entities.c.via_entity_id,
             ).where(record_entities.c.entity_id == dirty_id)
         )
     ).fetchall()
 
-    for rid, role, pos in dirty_links:
+    for rid, role, pos, via in dirty_links:
         # Check if canonical already has a link for this (record, role)
         existing = (
             await conn.execute(
-                select(record_entities.c.position).where(
+                select(record_entities.c.position, record_entities.c.via_entity_id).where(
                     (record_entities.c.record_id == rid)
                     & (record_entities.c.entity_id == canon_id)
                     & (record_entities.c.role == role)
                 )
             )
-        ).scalar_one_or_none()
+        ).one_or_none()
 
         if existing is not None:
-            # Conflict — keep lower position on canonical
-            if pos < existing:
+            # Conflict — keep lower position on canonical; a printed row beats
+            # a member row (#269), so the survivor stays printed where either was.
+            values: dict = {}
+            if pos < existing[0]:
+                values["position"] = pos
+            if via is None and existing[1] is not None:
+                values["via_entity_id"] = None
+            if values:
                 await conn.execute(
                     update(record_entities)
                     .where(
@@ -820,7 +842,7 @@ async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int)
                         & (record_entities.c.entity_id == canon_id)
                         & (record_entities.c.role == role)
                     )
-                    .values(position=pos)
+                    .values(**values)
                 )
         else:
             await conn.execute(

@@ -95,7 +95,7 @@ async def test_get_db_yields_async_connection(pg_engine, monkeypatch):
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_alembic_baseline_creates_all_tables(pg_engine):
-    """After running all migrations, all 23 app tables + alembic_version exist."""
+    """After running all migrations, all 27 app tables + alembic_version exist."""
     # Migrations already applied by pg_engine fixture — just verify the tables exist
     async with pg_engine.connect() as conn:
         result = await conn.execute(
@@ -107,8 +107,8 @@ async def test_alembic_baseline_creates_all_tables(pg_engine):
         table_names = {row[0] for row in result}
 
     count = len(table_names)
-    # 25 app tables + 1 alembic_version
-    assert count == 26
+    # 27 app tables + 1 alembic_version
+    assert count == 28
 
     EXPECTED_TABLES = {
         "locations",
@@ -136,6 +136,8 @@ async def test_alembic_baseline_creates_all_tables(pg_engine):
         "classification_runs",
         "entity_aliases",
         "entity_alias_dismissals",
+        "entity_splits",
+        "entity_split_members",
         "alembic_version",
     }
     assert table_names == EXPECTED_TABLES

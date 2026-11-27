@@ -20,12 +20,17 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .entity_aliases import COUPLE_TOKENS, link_key, middles_compatible, parse_person_key
+from .entity_aliases import (
+    COUPLE_TOKENS,
+    VERDICT_SPLIT,
+    link_key,
+    middles_compatible,
+    parse_person_key,
+)
 from .models import entity_split_members, entity_splits
 
 logger = logging.getLogger(__name__)
 
-VERDICT_SPLIT = "split"
 VERDICT_KEEP = "keep"
 
 # WSLCB cuts a name at 30 characters (entities._TRUNCATION_MIN_LEN's comment).
@@ -169,18 +174,3 @@ async def split_members(
     for cid, name in (await conn.execute(stmt)).fetchall():
         out.setdefault(cid, []).append(name)
     return {cid: tuple(names) for cid, names in out.items()}
-
-
-async def verdict_ids(
-    conn: AsyncConnection, entity_ids: Collection[int] | None = None, *, verdict: str | None = None
-) -> set[int]:
-    """Entities with a verdict (of kind *verdict*, when given), among *entity_ids* when given."""
-    s = entity_splits
-    stmt = select(s.c.combined_id)
-    if verdict is not None:
-        stmt = stmt.where(s.c.verdict == verdict)
-    if entity_ids is not None:
-        if not entity_ids:
-            return set()
-        stmt = stmt.where(s.c.combined_id.in_(list(entity_ids)))
-    return set((await conn.execute(stmt)).scalars())

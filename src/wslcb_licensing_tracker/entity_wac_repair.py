@@ -36,7 +36,7 @@ from .entities import (
     renumber_link_positions,
 )
 from .entity_aliases import relink
-from .entity_classification import current_answers, resolve_entities
+from .entity_classification import current_answers, resolve_entities, verdict_ids
 from .models import entities, entity_classifications, license_records, record_entities
 from .text_utils import clean_entity_name, strip_wac_annotation
 
@@ -138,6 +138,9 @@ async def _apply(
             )
             renamed.append({"id": survivor, "old": old, "new": target})
         for dup_id, dup_name in dups:
+            if await verdict_ids(conn, [dup_id, survivor]):
+                logger.warning("Not merging entity %d into %d: a couple verdict", dup_id, survivor)
+                continue
             await merge_entity_into(conn, dup_id, survivor)
             merged.append({"id": dup_id, "name": dup_name, "into": survivor, "into_name": target})
         survivors.append(survivor)
