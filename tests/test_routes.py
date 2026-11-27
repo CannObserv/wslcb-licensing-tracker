@@ -137,7 +137,10 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
 
 
 def _party_patches(
-    party: int | None = None, members: list | None = None, split: dict | None = None
+    party: int | None = None,
+    members: list | None = None,
+    split: dict | None = None,
+    tombstone: int | None = None,
 ) -> list:
     """Patches for the alias read paths (#263): not a variant, no members, by default."""
     return [
@@ -154,6 +157,16 @@ def _party_patches(
         ),
         patch(
             "wslcb_licensing_tracker.app.split_detail", new_callable=AsyncMock, return_value=split
+        ),
+        patch(
+            "wslcb_licensing_tracker.app.tombstone_ids",
+            new_callable=AsyncMock,
+            return_value={tombstone} if tombstone is not None else set(),
+        ),
+        patch(
+            "wslcb_licensing_tracker.app.records_naming",
+            new_callable=AsyncMock,
+            return_value=[1, 2, 3],
         ),
     ]
 
@@ -1162,6 +1175,7 @@ class TestEntityAdminPanel:
         url: str = "/entity/7",
         party: int | None = None,
         split: dict | None = None,
+        tombstone: int | None = None,
     ):
         monkeypatch.delenv(ADMIN_DEV_EMAIL_ENV, raising=False)
         env = "CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION"
@@ -1182,7 +1196,7 @@ class TestEntityAdminPanel:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            *_party_patches(party, split=split),
+            *_party_patches(party, split=split, tombstone=tombstone),
             patch("wslcb_licensing_tracker.app.classification_detail", new=detail),
             patch(
                 "wslcb_licensing_tracker.app.links_detail",
@@ -1206,6 +1220,23 @@ class TestEntityAdminPanel:
             for p in extra:
                 p.stop()
             _stop(patches)
+
+    def test_tombstone_404_for_public_banner_for_admin(self, monkeypatch):
+        """#261: an operator-confirmed non-name has no public page; an admin can clear it."""
+        resp, detail = self._get(admin=False, monkeypatch=monkeypatch, tombstone=7)
+        assert resp.status_code == 404
+        assert "HOPE HOUSE" not in resp.text
+        detail.assert_not_awaited()
+
+        resp, detail = self._get(admin=True, monkeypatch=monkeypatch, tombstone=7)
+        assert resp.status_code == 200
+        body = resp.text
+        assert 'data-testid="tombstone-banner"' in body
+        assert "3 records print this name" in body
+        assert "Clear manual override" in body
+
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        assert 'data-testid="tombstone-banner"' not in resp.text
 
     def test_entity_page_admin_panel_for_admin_only(self, monkeypatch):
         resp, detail = self._get(admin=True, monkeypatch=monkeypatch)
@@ -1491,7 +1522,9 @@ class TestEntityAliasPages:
                     new_callable=AsyncMock,
                     return_value=[],
                 ),
+                # Every alias-path patch but split_banner, patched above.
                 *_party_patches()[:2],
+                *_party_patches()[3:],
             ]
             for p in extra:
                 p.start()
