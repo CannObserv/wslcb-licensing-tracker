@@ -100,15 +100,19 @@
                 </div>
             </dl>
 
+            {% if item.decided %}
+            {# A couple verdict (#269): only person can be set; anything else would be refused. #}
+            <p class="text-xs text-amber-800 bg-amber-50 rounded px-2 py-1" data-testid="decided-note">This name has a couple verdict: only <em>person</em> can be set here. To reclassify it, clear the verdict on the <a href="/entity/{{ item.entity_id }}?stay=1" class="underline">entity page</a> first.</p>
+            {% endif %}
             <div class="flex flex-wrap items-center gap-2">
-                {% if item.jev and item.jev.entity_type != 'not_a_name' %}{{ f.accept_form(item.entity_id, next_url, 'jev', 'Accept AI') }}{% endif %}
-                {% if item.regex %}{{ f.accept_form(item.entity_id, next_url, 'regex', 'Accept rules') }}{% endif %}
+                {% if item.jev and item.jev.entity_type != 'not_a_name' and (not item.decided or item.jev.entity_type == 'person') %}{{ f.accept_form(item.entity_id, next_url, 'jev', 'Accept AI') }}{% endif %}
+                {% if item.regex and (not item.decided or item.regex.entity_type == 'person') %}{{ f.accept_form(item.entity_id, next_url, 'regex', 'Accept rules') }}{% endif %}
             </div>
             <details class="text-xs">
                 <summary class="cursor-pointer text-co-purple hover:text-co-purple-700">Set other…</summary>
                 <div class="mt-2">{{ f.classify_form(item.entity_id, next_url, entity_types, entity_subtypes, item.entity_type, item.entity_subtype) }}</div>
             </details>
-            {{ f.not_a_name_form(item.entity_id, next_url) }}
+            {% if not item.decided %}{{ f.not_a_name_form(item.entity_id, next_url) }}{% endif %}
         </li>
         {% endfor %}
     </ul>

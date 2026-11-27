@@ -288,3 +288,14 @@ async def test_split_without_records_still_drops_its_rule_rows(pg_conn):
     assert await _rows()
     await sr.set_split(pg_conn, a, ["T269R ZQK SMYTH", "T269R ZQL SMYTH"], admin_email=ADMIN)
     assert await _rows() == []
+
+
+async def test_review_queue_marks_decided_entities(pg_conn):
+    """CR 7: the main queue says which items have a couple verdict (they take only person)."""
+    from wslcb_licensing_tracker.classification_review import flag_entity, review_queue
+
+    eid = await _id(pg_conn, "T269R QUEUE A & B")
+    await sr.keep_whole(pg_conn, eid, admin_email=ADMIN)
+    await flag_entity(pg_conn, eid, reason="check", admin_email=ADMIN)
+    [item] = [i for i in await review_queue(pg_conn, tab="main") if i["entity_id"] == eid]
+    assert item["decided"] is True

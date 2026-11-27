@@ -32,6 +32,7 @@ from .entity_classification import (
     clear_manual,
     current_answers,
     record_manual,
+    verdict_ids,
 )
 from .jev_classifier import awaiting_count
 from .jev_client import get_api_key, get_model, is_classification_enabled
@@ -409,8 +410,9 @@ async def review_queue(conn: AsyncConnection, *, tab: Tab, limit: int = 200) -> 
     Sorted by open flag first, then Jev confidence ascending (no Jev answer
     last), then id.  Each item carries the entity's resolved columns,
     ``reasons`` (``flag``, ``low_confidence``, ``not_a_name``,
-    ``unknown_subtype``), its open ``flags``, and the current ``jev`` and
-    ``regex`` answers (or None).
+    ``unknown_subtype``), its open ``flags``, the current ``jev`` and
+    ``regex`` answers (or None), and ``decided``: it has a couple verdict, so
+    only ``person`` can be set (#269).
     """
     threshold = jev_confidence_threshold()
     q = _queue_source()
@@ -439,6 +441,7 @@ async def review_queue(conn: AsyncConnection, *, tab: Tab, limit: int = 200) -> 
     ids = [r["id"] for r in rows]
     flags = await _open_flags(conn, ids)
     answers = await current_answers(conn, ids) if ids else {}
+    decided = await verdict_ids(conn, ids)
     items = []
     for r in rows:
         regex = answers.get(r["id"], {}).get("regex")
@@ -449,6 +452,7 @@ async def review_queue(conn: AsyncConnection, *, tab: Tab, limit: int = 200) -> 
             "entity_subtype": r["entity_subtype"],
             "classification_source": r["classification_source"],
             "flags": flags.get(r["id"], []),
+            "decided": r["id"] in decided,
             "jev": None
             if r["jev_entity_id"] is None
             else {

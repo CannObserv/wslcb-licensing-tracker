@@ -752,3 +752,28 @@ def test_split_routes_require_admin():
     ):
         resp = c.post(path, data={"member": ["A B", "C D"]}, follow_redirects=False)
         assert resp.status_code in (302, 303, 401, 403), path
+
+
+def test_review_queue_hides_refused_actions_for_a_decided_entity(client):
+    """#269 CR 7: an item with a couple verdict offers only what would be accepted."""
+    item = _item(
+        decided=True,
+        jev={
+            "entity_type": "organization",
+            "entity_subtype": "trust",
+            "confidence": 0.5,
+            "model": "m",
+        },
+        regex={"entity_type": "person", "entity_subtype": None},
+    )
+    with (
+        patch(f"{MOD}.review_queue", new_callable=AsyncMock, return_value=[item]),
+        patch(
+            f"{MOD}.review_counts", new_callable=AsyncMock, return_value={"main": 1, "unknown": 0}
+        ),
+    ):
+        body = client.get("/admin/entities/review?tab=main").text
+    assert 'data-testid="decided-note"' in body
+    assert "Accept AI" not in body  # an organization answer would be refused
+    assert "Accept rules" in body  # person is fine
+    assert 'action="/admin/entities/7/not-a-name"' not in body
