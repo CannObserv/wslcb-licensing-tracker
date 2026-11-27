@@ -80,4 +80,5 @@ infra/preferences.d-nodesource :: Install: docs/PATCHING.md § Node.js.
 infra/sources.list.d-nodesource.sources :: Install: docs/PATCHING.md § Node.js.
 infra/wslcb-healthcheck.service :: (see docs/DEPLOYMENT.md "Sudoers rule").
 tests/test_log_target_config.py :: install time: ``docs/LOGGING.md`` § PID 1's log target.
+.socraticodecontextartifacts.json :: "description": "Where logs go: uvicorn's --log-config routing
 # @run end

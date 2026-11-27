@@ -18,3 +18,8 @@ retarget :: the journal's `Storage=persistent` ([`DEPLOYMENT.md`](DEPLOYMENT.md)
 retarget :: ([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal)). If `/run/log/journal`
 retarget :: bundled npm, so [`DEPLOYMENT.md`](DEPLOYMENT.md#nodejs) checks the pinned tree
 # @run end
+# Same run, CR follow-through: SOCRATICODE.md's current-state artifact list names the two
+# artifacts the moved sections now live in (`patching`, `logging`), split out of `deployment`.
+# @run base=aa0c553e1c43 file=docs/SOCRATICODE.md
+retarget :: `deployment`, `memory-pressure`, `source-page`, `style` or `infra` — never
+# @run end
