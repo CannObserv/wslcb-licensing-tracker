@@ -57,3 +57,34 @@ It links nothing, and it refuses (writing nothing) when an id now holds
 another name or the name is held by another entity. A rerun lists the
 entities as already restored. The #214 backup is
 `data/remediation-backups/2026-11-06-214/` (`IL` 30693, `IL IL` 30694).
+
+**The #261 pass on prod.** Back up first, under
+`data/remediation-backups/<date>-261/`. Run from the deploy checkout with
+`PG*` set from the production `.env`; never put a URL on the command line.
+A full reprocess rewrites every link, so the whole table is copied:
+
+```bash
+D=data/remediation-backups/$(date -u +%F)-261; mkdir -p "$D"
+export PGOPTIONS='-c default_transaction_read_only=on'
+psql -X -c "\copy (SELECT * FROM record_entities ORDER BY record_id, role, position) TO '$D/record_entities.csv' CSV HEADER"
+psql -X -c "\copy (SELECT * FROM entity_classifications WHERE entity_id = 20239 ORDER BY id) TO '$D/entity_classifications_20239.csv' CSV HEADER"
+unset PGOPTIONS
+B=data/remediation-backups/2026-11-06-214
+.venv/bin/wslcb db restore-tombstones --backup $B --dry-run | tee "$D/restore-dry-run.txt"
+.venv/bin/wslcb db restore-tombstones --backup $B | tee "$D/restore.txt"
+.venv/bin/wslcb db reclassify-entities --dry-run | tee "$D/reclassify-dry-run.txt"
+.venv/bin/wslcb db reclassify-entities | tee "$D/reclassify.txt"
+.venv/bin/wslcb db reprocess-entities | tee "$D/reprocess.txt"   # ~11 min
+psql -X -c "VACUUM (ANALYZE) record_entities"
+.venv/bin/wslcb db check | tee "$D/check.txt"
+```
+
+Rehearsed on a prod copy (2026-11-27):
+- The restore recreated 30693 and 30694; the #214 audit rows point at them again.
+- Reclassify unlinked 2 links from 3 tombstones (20239's, records 17941 and 19491).
+- The full reprocess covered 128,758 records in 10 m 49 s (268 MB RSS). Against
+  the starting links it removed those 2 and nothing else: 0 added, 0 moved,
+  0 `IL` links.
+- Afterwards: entities 0 behind v7, 0 records missing entity links, and a
+  relink dry run makes 0 changes.
+- Clearing `IL` (rolled back) reprocessed 101 records in 1.6 s and restored its 7 links.
