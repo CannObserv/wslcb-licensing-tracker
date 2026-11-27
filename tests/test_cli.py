@@ -987,3 +987,56 @@ class TestCompressStragglers:
         with patch("wslcb_licensing_tracker.disk_hygiene.DATA_DIR", tmp_path):
             result = CliRunner().invoke(main, ["compress-stragglers", "--dry-run"])
         assert result.exit_code == 0
+
+
+class TestSeedCoupleSplits:
+    """wslcb db seed-couple-splits (#269)."""
+
+    def _invoke(self, args, result=None, error=None):
+        from wslcb_licensing_tracker.couple_seed import SeedResult
+
+        with (
+            patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db),
+            patch("wslcb_licensing_tracker.cli.create_engine_from_env") as eng,
+            patch(
+                "wslcb_licensing_tracker.cli.resolve_admin",
+                new_callable=AsyncMock,
+                return_value="secret-admin@example.com",
+            ),
+            patch(
+                "wslcb_licensing_tracker.cli.seed_couples",
+                new_callable=AsyncMock,
+                return_value=result or SeedResult(),
+                side_effect=error,
+            ) as fn,
+        ):
+            eng.return_value = mock_async_engine()
+            return CliRunner().invoke(main, ["db", "seed-couple-splits", *args]), fn
+
+    def test_dry_run_reports_counts_without_the_email(self):
+        from wslcb_licensing_tracker.couple_seed import SeedResult
+
+        r = SeedResult(
+            splits=9, keeps=3, trusts=2, records=29, member_links=21, new_entities=["A B"]
+        )
+        out, fn = self._invoke(["--dry-run"], r)
+        assert out.exit_code == 0, out.output
+        assert "[dry-run] Would write 9 split and 3 keep verdict(s), 2 trust" in out.output
+        assert "member links: 21" in out.output and "new person entities: 1" in out.output
+        assert "rolled back" in out.output
+        assert "secret-admin" not in out.output
+        assert fn.call_args.kwargs == {"admin_email": "secret-admin@example.com", "dry_run": True}
+
+    def test_already_applied(self):
+        from wslcb_licensing_tracker.couple_seed import SeedResult
+
+        out, _ = self._invoke([], SeedResult(already_applied=True))
+        assert out.exit_code == 0
+        assert "Already applied" in out.output
+
+    def test_refusal_exits_1(self):
+        from wslcb_licensing_tracker.couple_seed import SeedRefused
+
+        out, _ = self._invoke([], error=SeedRefused("13439: renamed"))
+        assert out.exit_code == 1
+        assert "Refused: 13439: renamed" in out.output
