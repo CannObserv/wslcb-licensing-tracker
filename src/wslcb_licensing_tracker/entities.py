@@ -9,7 +9,7 @@ strings, deduplicating by name, and linking them to license records.
 
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, insert, select, text, update
@@ -20,11 +20,11 @@ from .enrichment import STEP_ENTITIES, stamp_enrichment
 from .entity_aliases import alias_partners, key_mates, link_key, relink, repoint_alias_rows
 from .entity_classification import (
     SourceAnswer,
-    confirmed_noise_ids,
     current_answers,
     protected_ids,
     resolve_entities,
     tombstone_ids,
+    tombstone_names,
     verdict_ids,
     with_jev_answer,
 )
@@ -543,11 +543,13 @@ def extract_entity_names(
     *,
     record_id: int | None = None,
     role: str = "applicant",
+    skip: Collection[str] = (),
 ) -> list[str]:
     """Return the cleaned, de-duplicated entity names in a semicolon-delimited applicants string.
 
     The first element (the business name) is skipped, as are
-    ``ADDITIONAL_NAMES_MARKERS`` and non-name strings (``is_noise_name``).
+    ``ADDITIONAL_NAMES_MARKERS``, non-name strings (``is_noise_name``) and
+    names whose lowercase is in *skip* (tombstones, ``tombstone_names``, #261).
     An appended ``PER WAC 314-…`` annotation is dropped from each name
     (``strip_wac_annotation``, #211); a part that is only an annotation is skipped.
     *record_id* / *role* only label the debug log lines.
@@ -562,7 +564,7 @@ def extract_entity_names(
         if not clean or clean in seen:
             continue
         seen.add(clean)
-        if clean in ADDITIONAL_NAMES_MARKERS or is_noise_name(clean):
+        if clean in ADDITIONAL_NAMES_MARKERS or is_noise_name(clean) or clean.lower() in skip:
             logger.debug("Skipping non-name %r in record %s (role %s)", clean, record_id, role)
             continue
         names.append(clean)
@@ -595,13 +597,15 @@ async def parse_and_link_entities(  # noqa: PLR0913
     *,
     delete_existing: bool = False,
     split_map: Mapping[int, Sequence[str]] | None = None,
+    tombstones: Collection[str] | None = None,
 ) -> int:
     """Split applicants string, skip first element (business name), create entities and link.
 
     Two passes (#269, spec #246 §2):
 
     1. **Printed:** each extracted name, at contiguous 0-based positions,
-       with ``via_entity_id`` NULL.
+       with ``via_entity_id`` NULL.  A tombstone (current manual
+       ``not_a_name``, #261) is never linked, nor its entity row recreated.
     2. **Members:** for each printed entity with a ``split`` verdict, in
        printed order, each member it names, at the following positions with
        ``via_entity_id`` set to the combined entity.  A member already linked
@@ -618,6 +622,9 @@ async def parse_and_link_entities(  # noqa: PLR0913
     split_map:
         ``entity_splits.split_members(conn)``, preloaded by a caller that
         links many records; None reads the printed entities' verdicts here.
+    tombstones:
+        ``entity_classification.tombstone_names(conn)``, preloaded likewise;
+        None loads it here.
     """
     if delete_existing:
         await conn.execute(
@@ -626,9 +633,13 @@ async def parse_and_link_entities(  # noqa: PLR0913
             )
         )
 
+    if tombstones is None:
+        tombstones = await tombstone_names(conn)
     linked = 0
     printed: list[int] = []
-    for name in extract_entity_names(applicants_str, record_id=record_id, role=role):
+    for name in extract_entity_names(
+        applicants_str, record_id=record_id, role=role, skip=tombstones
+    ):
         entity_id = await get_or_create_entity(conn, name)
         stmt = (
             pg_insert(record_entities)
@@ -947,6 +958,7 @@ async def reprocess_entities(
 
     rows = (await conn.execute(stmt)).fetchall()
     split_map = None if dry_run else await split_members(conn)
+    tombstones = await tombstone_names(conn)
 
     records_processed = 0
     entities_linked = 0
@@ -962,7 +974,13 @@ async def reprocess_entities(
             continue
 
         linked = await parse_and_link_entities(
-            conn, rid, applicants, "applicant", delete_existing=True, split_map=split_map
+            conn,
+            rid,
+            applicants,
+            "applicant",
+            delete_existing=True,
+            split_map=split_map,
+            tombstones=tombstones,
         )
         linked += await parse_and_link_entities(
             conn,
@@ -971,6 +989,7 @@ async def reprocess_entities(
             "previous_applicant",
             delete_existing=True,
             split_map=split_map,
+            tombstones=tombstones,
         )
         entities_linked += linked
         records_processed += 1
@@ -1027,8 +1046,9 @@ async def reclassify_entities(
     writes ``entities.entity_type`` directly (#206):
 
     1. purge set = noise-named entities (``is_noise_name``) without a manual
-       decision or open flag, plus operator-confirmed non-names
-       (``confirmed_noise_ids``);
+       decision or open flag, and never a tombstone (current manual
+       ``not_a_name``, #261): a tombstone keeps its rows but loses its
+       ``record_entities`` links (``unlink_tombstones``);
     2. for every other entity, appends a regex ``entity_classifications`` row
        when its current one is missing or differs in type, subtype or model;
     3. deletes the purge set with its ``record_entities`` links, renumbering
@@ -1045,7 +1065,8 @@ async def reclassify_entities(
         changes), ``transitions`` (``"old->new"`` counts),
         ``reclassified_sample``, ``subtype_changes``, ``regex_rows_written``,
         ``noise_entities`` (entities removed), ``noise_links``,
-        ``noise_sample``, ``protected_noise_skipped``, ``confirmed_noise``.
+        ``noise_sample``, ``protected_noise_skipped``, ``tombstones`` (entities
+        kept as tombstones), ``tombstone_links`` (links removed from them).
     """
     if not dry_run:
         return await _reclassify(conn, sample_limit=sample_limit, dry_run=False)
@@ -1064,8 +1085,8 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
 
     noise = {eid for eid, name in rows if is_noise_name(name)}
     protected = await protected_ids(conn)
-    confirmed = await confirmed_noise_ids(conn)
-    purge = sorted((noise - protected) | confirmed)
+    tombs = await tombstone_ids(conn)
+    purge = sorted(noise - protected - tombs)
     purge_set = set(purge)
 
     regex_rows = plan_regex_rows(
@@ -1080,6 +1101,7 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
             await conn.execute(select(func.count()).where(record_entities.c.entity_id.in_(purge)))
         ).scalar_one()
         await _purge_entities(conn, purge)
+    tombstone_links = await unlink_tombstones(conn, sorted(tombs))
 
     resolved = await resolve_entities(conn)
     type_changes = [c for c in resolved.changes if c.old[0] != c.new[0]]
@@ -1098,7 +1120,7 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
         for c in type_changes[:sample_limit]
     ]
     subtype_changes = sum(1 for c in resolved.changes if c.old[1] != c.new[1])
-    protected_noise = len(noise & protected)
+    protected_noise = len(noise & (protected | tombs))
 
     tag = " (dry-run)" if dry_run else ""
     if not dry_run:
@@ -1117,7 +1139,8 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
             )
     logger.info(
         "reclassify_entities%s: examined %d, %d regex row(s), reclassified %d %s, "
-        "%d subtype change(s), noise %d (%d link(s)), %d protected, %d confirmed",
+        "%d subtype change(s), noise %d (%d link(s)), %d protected, "
+        "%d tombstone(s) (%d link(s) removed)",
         tag,
         len(rows),
         len(regex_rows),
@@ -1127,7 +1150,8 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
         len(purge),
         noise_links,
         protected_noise,
-        len(confirmed),
+        len(tombs),
+        tombstone_links,
     )
     return {
         "entities_examined": len(rows),
@@ -1140,7 +1164,8 @@ async def _reclassify(conn: AsyncConnection, *, sample_limit: int, dry_run: bool
         "noise_links": noise_links,
         "noise_sample": [{"id": eid, "name": names[eid]} for eid in purge[:sample_limit]],
         "protected_noise_skipped": protected_noise,
-        "confirmed_noise": len(confirmed),
+        "tombstones": len(tombs),
+        "tombstone_links": tombstone_links,
     }
 
 
@@ -1171,6 +1196,24 @@ def plan_regex_rows(
 
 async def _purge_entities(conn: AsyncConnection, entity_ids: list[int]) -> None:
     """Delete *entity_ids* and their links, then re-compact link positions."""
+    await _drop_links(conn, entity_ids, delete_entities=True)
+
+
+async def unlink_tombstones(conn: AsyncConnection, entity_ids: Sequence[int]) -> int:
+    """Delete every ``record_entities`` row of *entity_ids*, keeping the entities (#261).
+
+    A tombstone keeps its entity row and its classification rows, so the
+    operator's not-a-name decision survives; only its links go.  Positions
+    are re-compacted and its alias groups re-elected.  Returns links removed.
+    """
+    if not entity_ids:
+        return 0
+    return await _drop_links(conn, list(entity_ids), delete_entities=False)
+
+
+async def _drop_links(
+    conn: AsyncConnection, entity_ids: list[int], *, delete_entities: bool
+) -> int:
     affected = (
         await conn.execute(
             select(record_entities.c.record_id, record_entities.c.role)
@@ -1178,15 +1221,24 @@ async def _purge_entities(conn: AsyncConnection, entity_ids: list[int]) -> None:
             .distinct()
         )
     ).fetchall()
+    if not affected and not delete_entities:
+        return 0
     mates = await key_mates(conn, entity_ids)
     # The other end of each alias row too: a middle-name variant is no key-mate
     # of its canonical, and its links' party_id would dangle (#265 CR 2).
     mates |= await alias_partners(conn, entity_ids)
-    await conn.execute(delete(record_entities).where(record_entities.c.entity_id.in_(entity_ids)))
-    await conn.execute(delete(entities).where(entities.c.id.in_(entity_ids)))
+    removed = (
+        await conn.execute(
+            delete(record_entities).where(record_entities.c.entity_id.in_(entity_ids))
+        )
+    ).rowcount
+    if delete_entities:
+        await conn.execute(delete(entities).where(entities.c.id.in_(entity_ids)))
     await renumber_link_positions(conn, [tuple(r) for r in affected])
-    # Their rule alias rows cascaded away; the groups they were in re-elect (#262).
-    await relink(conn, mates)
+    # Their rule alias rows cascaded away (or, for a tombstone, relink drops
+    # them); the groups they were in re-elect (#262).
+    await relink(conn, mates | (set() if delete_entities else set(entity_ids)))
+    return removed
 
 
 async def renumber_link_positions(conn: AsyncConnection, pairs: list[tuple[int, str]]) -> None:
@@ -1266,13 +1318,16 @@ async def backfill_entities(conn: AsyncConnection) -> int:
     )
 
     rows = (await conn.execute(stmt)).fetchall()
+    tombstones = await tombstone_names(conn)
     processed = 0
     for row in rows:
         r_id = row[0]
         r_applicants, r_prev = entity_source(row[1], row[3]), entity_source(row[2], row[4])
-        await parse_and_link_entities(conn, r_id, r_applicants, "applicant")
+        await parse_and_link_entities(conn, r_id, r_applicants, "applicant", tombstones=tombstones)
         if r_prev:
-            await parse_and_link_entities(conn, r_id, r_prev, "previous_applicant")
+            await parse_and_link_entities(
+                conn, r_id, r_prev, "previous_applicant", tombstones=tombstones
+            )
         await stamp_enrichment(conn, r_id, STEP_ENTITIES)
         processed += 1
 

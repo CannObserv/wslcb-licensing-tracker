@@ -356,7 +356,8 @@ class TestDbGroup:
             "regex_rows_written": 997,
             "subtype_changes": 40,
             "protected_noise_skipped": 1,
-            "confirmed_noise": 1,
+            "tombstones": 2,
+            "tombstone_links": 11,
         }
         result = CliRunner().invoke(main, ["db", "reclassify-entities", "--dry-run"])
         assert result.exit_code == 0, result.output
@@ -369,7 +370,7 @@ class TestDbGroup:
         assert "40 subtype change(s)" in result.output
         assert "Would keep 1 noise-named entities" in result.output
         assert "protected" in result.output
-        assert "1 operator-confirmed" in result.output
+        assert "Would unlink 11 record link(s) from 2 operator-confirmed" in result.output
 
 
 class TestStripWacSuffixes:

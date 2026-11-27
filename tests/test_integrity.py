@@ -188,6 +188,32 @@ async def test_no_entities_ignores_records_with_only_non_name_parts(
 
 @_needs_db
 @pytest.mark.asyncio(loop_scope="session")
+async def test_no_entities_ignores_records_naming_only_tombstones(
+    pg_conn, standard_new_application
+):
+    """#261: a tombstone is never linked, so a record naming only tombstones needs no links."""
+    from wslcb_licensing_tracker.entities import get_or_create_entity
+    from wslcb_licensing_tracker.entity_classification import record_manual
+    from wslcb_licensing_tracker.pipeline import insert_record
+
+    tomb = await get_or_create_entity(pg_conn, "T261 INTEG TOMB")
+    await record_manual(
+        pg_conn, tomb, entity_type="not_a_name", entity_subtype=None, created_by="op@example.com"
+    )
+    before = (await check_unenriched_records(pg_conn))["no_entities"]
+    await insert_record(
+        pg_conn,
+        dict(
+            standard_new_application,
+            license_number="integ_261_tomb",
+            applicants="ACME LLC; T261 INTEG TOMB",
+        ),
+    )
+    assert (await check_unenriched_records(pg_conn))["no_entities"] == before
+
+
+@_needs_db
+@pytest.mark.asyncio(loop_scope="session")
 async def test_no_entities_counts_sole_proprietor_repeat(pg_conn, standard_new_application):
     """#266: stored ``X`` (no ';') whose raw ``X; X`` yields a link is an unlinked candidate."""
     from wslcb_licensing_tracker.pipeline import insert_record

@@ -13,7 +13,8 @@ alters what that step produces from the same input. Version history:
 - ``entities`` 2: async pipeline (#94); 3: categorised classifier
   and noise filter (#203); 4: regex subtypes (#206); 5: WAC annotations
   stripped at extraction (#211); 6: extraction reads ``raw_*`` when it
-  cleans to the stored value (#266).
+  cleans to the stored value (#266); 7: extraction never links a tombstone
+  (current manual ``not_a_name``, #261).
   Prod's ``entities`` stamps of "1" came from ingest before #267, which
   always wrote "1" whatever the logic; treat them as behind.
 - ``outcome_link`` 1: ``link_records.link_new_record`` at ingest. Only
@@ -38,7 +39,7 @@ STEP_ADDRESS = "address"
 
 STEP_VERSIONS: dict[str, int] = {
     STEP_ENDORSEMENTS: 2,
-    STEP_ENTITIES: 6,
+    STEP_ENTITIES: 7,
     STEP_OUTCOME_LINK: 1,
 }
 

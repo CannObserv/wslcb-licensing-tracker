@@ -782,7 +782,12 @@ def reclassify_entities(dry_run: bool) -> None:
     kept = "[dry-run] Would keep" if dry_run else "Kept"
     click.echo(
         f"{kept} {r['protected_noise_skipped']:,} noise-named entities with a manual decision "
-        f"or open flag (protected); {r['confirmed_noise']:,} operator-confirmed non-names removed."
+        f"or open flag (protected)."
+    )
+    unlink = "[dry-run] Would unlink" if dry_run else "Unlinked"
+    click.echo(
+        f"{unlink} {r['tombstone_links']:,} record link(s) from "
+        f"{r['tombstones']:,} operator-confirmed non-name(s), kept as tombstones (#261)."
     )
 
 

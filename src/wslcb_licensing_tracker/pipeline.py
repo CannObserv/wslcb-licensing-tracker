@@ -4,7 +4,7 @@ Uses SQLAlchemy Core expressions and the table objects from models.py.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -15,6 +15,7 @@ from .endorsements import process_record
 from .enrichment import STEP_ENDORSEMENTS, STEP_ENTITIES, STEP_OUTCOME_LINK, stamp_enrichment
 from .entities import ADDITIONAL_NAMES_MARKERS, entity_source, parse_and_link_entities
 from .entity_aliases import relink
+from .entity_classification import tombstone_names
 from .link_records import link_new_record
 from .models import license_records, record_entities
 from .text_utils import clean_applicants_string, clean_entity_name
@@ -30,6 +31,9 @@ class IngestOptions:
     source_id: int | None = None
     source_role: str = "first_seen"
     batch_size: int = 200
+    # Lowercased tombstone names (#261); ``ingest_batch`` loads them once.
+    # None: each record's entity step loads them itself.
+    tombstones: frozenset[str] | None = None
 
 
 @dataclass
@@ -184,7 +188,9 @@ async def _enrich_new_record(
             raw = record.get("applicants", "")
             applicants = entity_source(clean_applicants_string(raw), raw)
             if applicants:
-                await parse_and_link_entities(conn, record_id, applicants)
+                await parse_and_link_entities(
+                    conn, record_id, applicants, tombstones=options.tombstones
+                )
             raw_prev = record.get("previous_applicants", "")
             prev_applicants = entity_source(clean_applicants_string(raw_prev), raw_prev)
             if prev_applicants:
@@ -193,6 +199,7 @@ async def _enrich_new_record(
                     record_id,
                     prev_applicants,
                     role="previous_applicant",
+                    tombstones=options.tombstones,
                 )
             await stamp_enrichment(conn, record_id, STEP_ENTITIES)
     except Exception:
@@ -300,6 +307,8 @@ async def ingest_batch(
     interruption.
     """
     result = BatchResult()
+    if options.tombstones is None:
+        options = replace(options, tombstones=await tombstone_names(conn))
 
     for i, rec in enumerate(records):
         ir = await ingest_record(conn, rec, options)

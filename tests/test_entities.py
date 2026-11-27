@@ -355,7 +355,8 @@ class TestReclassifyThroughResolver:
         assert n == 1
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_confirmed_noise_is_purged(self, pg_conn, standard_new_application):
+    async def test_confirmed_noise_is_kept_as_tombstone(self, pg_conn, standard_new_application):
+        """#261: a confirmed non-name keeps its entity and manual rows but loses its links."""
         standard_new_application["license_number"] = "entity_noise_206"
         record_id = (await insert_record(pg_conn, standard_new_application))[0]
         await parse_and_link_entities(
@@ -371,24 +372,49 @@ class TestReclassifyThroughResolver:
         ).scalar_one()
         await _manual(pg_conn, noise, "not_a_name")
         result = await reclassify_entities(pg_conn)
-        assert result["confirmed_noise"] >= 1
-        assert not await _exists(pg_conn, noise)
-        rows = (
+        assert result["tombstones"] >= 1
+        assert result["tombstone_links"] >= 1
+        assert await _exists(pg_conn, noise)
+        manual = (
             await pg_conn.execute(
-                select(entities.c.name, record_entities.c.position)
-                .join(entities, entities.c.id == record_entities.c.entity_id)
-                .where(record_entities.c.record_id == record_id)
+                select(entity_classifications.c.entity_type).where(
+                    (entity_classifications.c.entity_id == noise)
+                    & (entity_classifications.c.source == "manual")
+                )
             )
-        ).fetchall()
-        assert [tuple(r) for r in rows] == [("T206 JANE ROE", 0)]
+        ).scalars()
+        assert list(manual) == ["not_a_name"]
+        assert await _link_names(pg_conn, record_id) == [("applicant", "T206 JANE ROE", 0)]
+        again = await reclassify_entities(pg_conn)
+        assert again["tombstone_links"] == 0
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_flag_keeps_confirmed_noise(self, pg_conn):
-        eid = await _seed_entity(pg_conn, "T206 NOT A NAME BUT FLAGGED", "person")
+    async def test_flagged_tombstone_is_unlinked_too(self, pg_conn, standard_new_application):
+        """#261: one definition of a tombstone; an open flag doesn't keep its links."""
+        standard_new_application["license_number"] = "entity_noise_261_flag"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        await parse_and_link_entities(
+            pg_conn, record_id, "ACME LLC; T261 FLAGGED NON NAME", delete_existing=True
+        )
+        eid = (
+            await pg_conn.execute(
+                select(entities.c.id).where(entities.c.name == "T261 FLAGGED NON NAME")
+            )
+        ).scalar_one()
         await _manual(pg_conn, eid, "not_a_name")
         await _flag(pg_conn, eid)
         await reclassify_entities(pg_conn)
         assert await _exists(pg_conn, eid)
+        assert await _link_names(pg_conn, record_id) == []
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_noise_named_tombstone_is_kept(self, pg_conn):
+        """#261: an operator's not-a-name on a regex-noise name is a decision too; kept."""
+        eid = await _seed_entity(pg_conn, "PER WAC 314-07-261", "person")
+        await _manual(pg_conn, eid, "not_a_name")
+        result = await reclassify_entities(pg_conn)
+        assert await _exists(pg_conn, eid)
+        assert eid not in {n["id"] for n in result["noise_sample"]}
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_reclassify_dry_run_writes_nothing(self, pg_conn):
@@ -624,3 +650,99 @@ class TestRecordChipsByParty:
         assert chips["applicant"][0]["name"] == "T263ANDERSON, RANDAL / RANDAL T263ANDERSON"
         # roles are deduplicated separately
         assert [c["id"] for c in chips["previous_applicant"]] == [natural]
+
+
+async def _entity_ids(conn, name: str) -> list[int]:
+    return list(
+        (
+            await conn.execute(
+                select(entities.c.id).where(func.lower(entities.c.name) == name.lower())
+            )
+        ).scalars()
+    )
+
+
+async def _tombstone(conn, name: str) -> int:
+    """An entity with a current manual not-a-name row and no links (#261)."""
+    eid = await get_or_create_entity(conn, name)
+    await _manual(conn, eid, "not_a_name")
+    return eid
+
+
+class TestTombstoneNotRelinked:
+    """#261: extraction never links a tombstone, by any path."""
+
+    def test_extract_skips_given_names(self):
+        assert extract_entity_names("BIZ; IL; IL IL; JOHN DOE", skip={"il", "il il"}) == [
+            "JOHN DOE"
+        ]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_tombstone_names(self, pg_conn):
+        from wslcb_licensing_tracker.entity_classification import tombstone_names
+
+        await _tombstone(pg_conn, "T261 Tomb Name")
+        kept = await get_or_create_entity(pg_conn, "T261 NOT A TOMB")
+        await _manual(pg_conn, kept, "not_a_name")
+        await _manual(pg_conn, kept, "person")
+        names = await tombstone_names(pg_conn)
+        assert "t261 tomb name" in names
+        assert "t261 not a tomb" not in names
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_parse_and_link_skips_tombstone(self, pg_conn, standard_new_application):
+        standard_new_application["license_number"] = "entity_tomb_261a"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        tomb = await _tombstone(pg_conn, "T261 IL IL")
+        n = await parse_and_link_entities(
+            pg_conn, record_id, "BIZ; T261 IL IL; T261 REAL PERSON", delete_existing=True
+        )
+        assert n == 1
+        assert await _link_names(pg_conn, record_id) == [("applicant", "T261 REAL PERSON", 0)]
+        assert await _entity_ids(pg_conn, "T261 IL IL") == [tomb]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_survives_reclassify_then_full_reprocess(self, pg_conn, standard_new_application):
+        """The issue's sequence: mark, reclassify, then a full reprocess links nothing."""
+        standard_new_application["license_number"] = "entity_tomb_261b"
+        standard_new_application["applicants"] = "BIZ; T261 IL; T261 IL IL; T261 JACOB M"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        await parse_and_link_entities(
+            pg_conn, record_id, standard_new_application["applicants"], delete_existing=True
+        )
+        il = (await _entity_ids(pg_conn, "T261 IL"))[0]
+        il_il = (await _entity_ids(pg_conn, "T261 IL IL"))[0]
+        await _manual(pg_conn, il, "not_a_name")
+        await _manual(pg_conn, il_il, "not_a_name")
+        await reclassify_entities(pg_conn)
+        await reprocess_entities(pg_conn)
+        assert await _link_names(pg_conn, record_id) == [("applicant", "T261 JACOB M", 0)]
+        assert await _entity_ids(pg_conn, "T261 IL") == [il]
+        assert await _entity_ids(pg_conn, "T261 IL IL") == [il_il]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_ingest_skips_tombstone(self, pg_conn, standard_new_application):
+        from wslcb_licensing_tracker.pipeline import IngestOptions, ingest_record
+
+        await _tombstone(pg_conn, "T261 INGEST TOMB")
+        standard_new_application["license_number"] = "entity_tomb_261c"
+        standard_new_application["applicants"] = "BIZ; T261 INGEST TOMB; T261 INGEST REAL"
+        one = await ingest_record(
+            pg_conn, standard_new_application, IngestOptions(link_outcomes=False)
+        )
+        assert await _link_names(pg_conn, one.record_id) == [("applicant", "T261 INGEST REAL", 0)]
+        # A batch preloads the set once and hands it down in the options.
+        rec = dict(standard_new_application, license_number="entity_tomb_261d")
+        rec["applicants"] = "BIZ; T261 INGEST PRELOADED; T261 INGEST REAL"
+        opts = IngestOptions(link_outcomes=False, tombstones=frozenset({"t261 ingest preloaded"}))
+        two = await ingest_record(pg_conn, rec, opts)
+        assert await _link_names(pg_conn, two.record_id) == [("applicant", "T261 INGEST REAL", 0)]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_backfill_skips_tombstone(self, pg_conn, standard_new_application):
+        await _tombstone(pg_conn, "T261 BACKFILL TOMB")
+        standard_new_application["license_number"] = "entity_tomb_261e"
+        standard_new_application["applicants"] = "BIZ; T261 BACKFILL TOMB; T261 BACKFILL REAL"
+        record_id = (await insert_record(pg_conn, standard_new_application))[0]
+        await backfill_entities(pg_conn)
+        assert await _link_names(pg_conn, record_id) == [("applicant", "T261 BACKFILL REAL", 0)]

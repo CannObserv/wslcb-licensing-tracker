@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .enrichment import STEP_VERSIONS
 from .entities import entity_source, extract_entity_names
+from .entity_classification import tombstone_names
 from .models import locations as locations_table
 from .models import record_enrichments
 
@@ -74,8 +75,10 @@ async def check_unenriched_records(conn: AsyncConnection) -> dict:
           )
     """)
     )
+    # A tombstone is never linked (#261): a record naming only tombstones has no links.
+    skip = await tombstone_names(conn)
     no_entities = sum(
-        1 for stored, raw in result if extract_entity_names(entity_source(stored, raw))
+        1 for stored, raw in result if extract_entity_names(entity_source(stored, raw), skip=skip)
     )
 
     result = await conn.execute(
