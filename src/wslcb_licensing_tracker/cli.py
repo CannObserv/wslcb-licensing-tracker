@@ -767,7 +767,7 @@ def restore_tombstones(backup_dir: Path, dry_run: bool, admin_email: str | None)
     original id, name and dates, its manual row with the original author,
     and one audit row.  It links nothing.  Refuses (nothing written) on a
     conflict; a rerun reports what is already restored.  Back up first
-    (docs/ENTITY_ALIASES.md, *Tombstones*).
+    (docs/TOMBSTONES.md).
     """
 
     async def _run(engine: AsyncEngine) -> tombstone_restore.RestoreResult:

@@ -269,7 +269,7 @@ Optional TypeSafe Jev pass (#205): `jev_client.py` is the transport,
 ingested a capture. Either way, before the address backfill, and it never
 fails the ingest. Also from the weekly timer, and by hand. A run:
 - sends only entities with no Jev answer yet (classify once), capped per run;
-- skips operator-classified entities and noise names the purge would delete;
+- skips operator-classified entities, tombstones and noise names the purge would delete;
 - skips if another run holds the advisory lock;
 - writes a `classification_runs` row.
 
@@ -297,9 +297,10 @@ half-configured). That is expected: the weekly timer is the dead-man.
 **Operator review (#208).** Admins get `/admin/entities/review` (flags, low
 confidence, `not_a_name`; a separate *Subtype unknown* tab), a panel on each
 entity page, and a dashboard section (health, spend, queue counts). Every
-action is audited. **Not a name** (queue cards and the entity page) means
-the next `reclassify-entities` deletes the entity with all its rows; only the
-audit log remains. Until then, *Clear manual override* undoes it.
+action is audited. **Not a name** (queue cards and the entity page) makes the
+entity a tombstone (#261): its record links go at once, nothing links it
+again, and the public gets a 404 for its page. *Clear manual override* links
+it back: [`TOMBSTONES.md`](TOMBSTONES.md).
 **Re-classify with Jev** is one paid call: 409 while the flag is off, 503
 while another run holds the lock, 502 (audited) past a 90 s deadline.
 
@@ -377,7 +378,8 @@ uv run wslcb db rebuild-links
 uv run wslcb db reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
 uv run wslcb db reprocess-entities [--record-id 12345 ...] [--dry-run]   # --record-id repeatable (#269)
 uv run wslcb db seed-couple-splits [--dry-run] [--admin-email E]  # one-off: the approved #246 couple verdicts (#269); back up first (COUPLE_SPLITS.md); rerun is a no-op
-uv run wslcb db reclassify-entities [--dry-run]   # regex rows + re-resolve classifications; drop non-name entities (#203, #206)
+uv run wslcb db restore-tombstones --backup DIR [--dry-run] [--admin-email E]  # one-off: recreate non-names a pre-#261 reclassify purged (IL / IL IL from #214's backup) as tombstones (TOMBSTONES.md); rerun is a no-op
+uv run wslcb db reclassify-entities [--dry-run]   # regex rows + re-resolve classifications; drop regex-noise entities, unlink tombstones (#203, #206, #261)
 uv run wslcb db relink-entities [--dry-run]       # rebuild rule-made alias rows (format key, middle names), link keys + record-link parties; idempotent (#262, #263, #265)
 uv run wslcb db strip-wac-suffixes [--dry-run]    # one-off: rename/merge entities named '… PER WAC 314-…' (#211); commits only if verified
 uv run wslcb db ignore-jev [--model ID] [--undo] [--dry-run]  # reversible Jev rollback: entities fall back to manual/regex (#206)
