@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from .admin_audit import log_action
 from .classification_review import MAX_TEXT_CHARS
 from .entities import entity_source, reprocess_entities
-from .entity_aliases import VERDICT_SPLIT, in_manual_alias
+from .entity_aliases import VERDICT_SPLIT, in_manual_alias, relink
 from .entity_classification import tombstone_ids
 from .entity_splits import VERDICT_KEEP, has_couple_token, member_ids, suggest_split
 from .models import entities, entity_split_members, entity_splits, record_entities
@@ -190,10 +190,16 @@ async def printed_records(conn: AsyncConnection, combined_id: int) -> list[int]:
 
 
 async def _apply(conn: AsyncConnection, combined_id: int) -> int:
-    """Reprocess the combined entity's printed records (and relink them); return the count."""
+    """Reprocess the combined entity's printed records (and relink them); return the count.
+
+    With no printed records there is nothing to reprocess, but its alias groups
+    still relink: a split entity leaves every rule row it was in (spec §5a).
+    """
     records = await printed_records(conn, combined_id)
     if records:
         await reprocess_entities(conn, record_ids=records)
+    else:
+        await relink(conn, [combined_id])
     return len(records)
 
 

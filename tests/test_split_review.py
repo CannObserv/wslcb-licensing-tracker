@@ -265,3 +265,25 @@ async def test_couples_queue_lists_undecided_couple_shaped_persons(pg_conn):
     ids = [d["entity_id"] for d in await sr.couples_queue(pg_conn)]
     assert undecided in ids
     assert not {decided, tomb, plain, org} & set(ids)
+
+
+async def test_split_without_records_still_drops_its_rule_rows(pg_conn):
+    """CR 5: no printed records means no reprocess, but the relink still runs."""
+    from wslcb_licensing_tracker.entity_aliases import relink
+    from wslcb_licensing_tracker.models import entity_aliases
+
+    a = await _id(pg_conn, "T269R ZQK & ZQL SMYTH")
+    b = await _id(pg_conn, "SMYTH, T269R ZQK & ZQL")
+    await relink(pg_conn, [a, b])
+
+    async def _rows():
+        ea = entity_aliases
+        return (
+            await pg_conn.execute(
+                select(ea.c.id).where(ea.c.variant_id.in_([a, b]) | ea.c.canonical_id.in_([a, b]))
+            )
+        ).all()
+
+    assert await _rows()
+    await sr.set_split(pg_conn, a, ["T269R ZQK SMYTH", "T269R ZQL SMYTH"], admin_email=ADMIN)
+    assert await _rows() == []
