@@ -1211,6 +1211,34 @@ async def unlink_tombstones(conn: AsyncConnection, entity_ids: Sequence[int]) ->
     return await _drop_links(conn, list(entity_ids), delete_entities=False)
 
 
+# Characters an ARE treats as operators; escaped so a name matches literally.
+_REGEX_SPECIAL = frozenset("\\^$.|?*+()[]{}")
+
+
+def _literal_regex(text_: str) -> str:
+    return "".join("\\" + c if c in _REGEX_SPECIAL else c for c in text_)
+
+
+async def records_naming(conn: AsyncConnection, name: str) -> list[int]:
+    """Records whose applicant columns (stored or raw) print *name* as a whole (#261).
+
+    Case-insensitive, bounded by a non-alphanumeric character or either end,
+    so ``IL`` finds ``…; IL; …`` but not ``WILLIAM``.  A prefilter: extraction
+    decides what a reprocess of these records links.
+    """
+    lr = license_records
+    haystack = func.concat_ws(
+        ";",
+        lr.c.applicants,
+        lr.c.previous_applicants,
+        lr.c.raw_applicants,
+        lr.c.raw_previous_applicants,
+    )
+    pattern = f"(^|[^[:alnum:]]){_literal_regex(name)}([^[:alnum:]]|$)"
+    stmt = select(lr.c.id).where(haystack.op("~*")(pattern)).order_by(lr.c.id)
+    return list((await conn.execute(stmt)).scalars())
+
+
 async def _drop_links(
     conn: AsyncConnection, entity_ids: list[int], *, delete_entities: bool
 ) -> int:
