@@ -85,7 +85,7 @@ coupled, and changing one alone silently re-arms the bug.
 Until #186, the journal lived in `/run/log/journal`. `/run` is tmpfs, so on a
 host with no swap the journal held RAM: up to its 147.6M runtime cap before it
 rotated. It's on disk now, capped at 512M
-([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal)). If `/run/log/journal`
+([LOGGING.md § Journal](LOGGING.md#journal)). If `/run/log/journal`
 grows again, the flush has been re-masked.
 
 ## Verifying earlyoom actually took the config
@@ -164,7 +164,7 @@ Code's machine setting, which it reads itself. Its report lists the tree as `pin
 exists but won't parse, it keeps every npx tree and warns. (`~/.socraticode/pin` is outside `_npx`, so the GC never touches it.)
 
 That key is npm's derivation, not the GC's: every `nodejs` update brings a new
-bundled npm, so [`DEPLOYMENT.md`](DEPLOYMENT.md#nodejs) checks the pinned tree
+bundled npm, so [`PATCHING.md`](PATCHING.md#nodejs) checks the pinned tree
 still resolves after each one (#239).
 
 After a re-pin, the old version's tree goes on the GC's next daily run once nothing

@@ -95,6 +95,6 @@ def test_the_flush_is_not_masked_and_the_journal_is_on_disk() -> None:
     """A mask leaves Storage=persistent inert: read where the journal is."""
     _assert_installed()
     state = _systemctl("is-enabled", "systemd-journal-flush.service")
-    assert state != "masked", "sudo systemctl unmask systemd-journal-flush (DEPLOYMENT.md)"
+    assert state != "masked", "sudo systemctl unmask systemd-journal-flush (LOGGING.md)"
     machine_id = Path("/etc/machine-id").read_text(encoding="utf-8").strip()
     assert Path(f"/var/log/journal/{machine_id}/system.journal").exists()

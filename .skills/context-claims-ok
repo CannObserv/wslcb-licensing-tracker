@@ -2,3 +2,12 @@
 # targets, URLs) a curation legitimately dropped (curating-context Phase 6,
 # prove-no-loss.sh --claims). Format: [PATH ::] WARRANT :: ATOM, the atom matched whole.
 
+# 2026-11-27, #272 run: link targets into the sections that left DEPLOYMENT.md now name
+# their new homes (LOGGING.md#pid-1s-log-target, LOGGING.md#journal, PATCHING.md#nodejs).
+# @run base=aa0c553e1c43 file=docs/DEPLOYMENT.md
+retarget :: #pid-1s-log-target
+# @run end
+# @run base=aa0c553e1c43 file=docs/MEMORY_PRESSURE.md
+retarget :: DEPLOYMENT.md#journal
+retarget :: DEPLOYMENT.md#nodejs
+# @run end

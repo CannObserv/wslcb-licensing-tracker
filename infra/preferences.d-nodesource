@@ -2,7 +2,7 @@
 # skill's policy.md "Two lanes"). The knob declares it `origin
 # deb.nodesource.com follow`. NodeSource's own setup script pins nodejs and
 # nsolid at 600 with no catch-all, which the probe reports as unscoped: these
-# pins replace it, so don't run that script. Install: docs/DEPLOYMENT.md § Node.js.
+# pins replace it, so don't run that script. Install: docs/PATCHING.md § Node.js.
 Package: *
 Pin: origin deb.nodesource.com
 Pin-Priority: 100

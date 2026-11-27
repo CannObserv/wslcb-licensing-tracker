@@ -8,7 +8,7 @@ skill's pull and install). Its files live under `/usr/local/lib` and are never e
 here: raise a rule change through the operator. It replaced this repo's own tooling
 tiers in #200. What stays repo-side: the data stragglers
 (`wslcb-compress-stragglers.timer`), pytest's basetemp knobs (`pyproject.toml`), and
-the journal's `Storage=persistent` ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Journal).
+the journal's `Storage=persistent` ([`LOGGING.md`](LOGGING.md#journal) § Journal).
 
 This host's `/etc/cannobserv/disk-gc/disk-gc.conf` (root, 0644), from the template:
 

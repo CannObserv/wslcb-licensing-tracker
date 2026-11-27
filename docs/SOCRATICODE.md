@@ -148,6 +148,7 @@ whatever `.socraticodecontextartifacts.json` lists — currently
 [`docs/SCHEMA-ENTITIES.md`](SCHEMA-ENTITIES.md) (`database-schema-entities`),
 [`docs/MIGRATIONS.md`](MIGRATIONS.md) (`database-migrations`),
 [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
+[`docs/PATCHING.md`](PATCHING.md) (`patching`),
 [`docs/ADDRESS_VALIDATION.md`](ADDRESS_VALIDATION.md) (`address-validation`),
 [`docs/MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md) (`memory-pressure`),
 [`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md),
