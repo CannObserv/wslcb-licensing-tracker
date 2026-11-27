@@ -1,5 +1,6 @@
 {% extends "admin/base.html" %}
 {% import "partials/entity_classification_forms.html" as f %}
+{% import "partials/entity_split_panel.html" as sp %}
 {% block title %}Entity Review — WSLCB Licensing Tracker{% endblock %}
 
 {% block admin_content %}
@@ -9,6 +10,9 @@
         <p class="text-sm text-gray-500 mt-1">
             {% if tab == 'unknown' %}
             Organizations whose subtype resolved to <em>unknown</em>, with no manual decision. Work these when convenient.
+            {% elif tab == 'couples' %}
+            Person names with a standalone <em>AND</em> or <em>&amp;</em> and no verdict yet. <em>Split into…</em> links each person to
+            every record printing the name (the printed name stays); <em>Keep whole</em> takes it off this list. Both are audited.
             {% elif tab == 'links' %}
             Spellings the automatic rules leave apart on purpose. <em>Link</em> lists the left one under the right one in the scope shown;
             <em>Dismiss</em> records that they are not one party. Both are audited and remove the suggestion.
@@ -21,7 +25,7 @@
 
     {# ── Tabs ─────────────────────────────────────────────────────────── #}
     <nav aria-label="Review tabs" class="flex gap-1 border-b border-gray-200">
-        {% for key, label in [('main', 'Review queue'), ('unknown', 'Subtype unknown'), ('links', 'Links')] %}
+        {% for key, label in [('main', 'Review queue'), ('unknown', 'Subtype unknown'), ('links', 'Links'), ('couples', 'Couples')] %}
         <a href="/admin/entities/review?tab={{ key }}"
            {% if tab == key %}aria-current="page"{% endif %}
            class="px-4 py-2 text-sm -mb-px border-b-2 {% if tab == key %}border-co-purple text-co-purple font-medium{% else %}border-transparent text-gray-600 hover:text-co-purple{% endif %}">
@@ -33,6 +37,19 @@
 
     {% if tab == 'links' %}
     {% include "partials/link_suggestions.html" %}
+    {% elif tab == 'couples' %}
+    {% if items %}
+    <ul class="space-y-3 list-none">
+        {% for d in items %}
+        <li class="bg-white border border-gray-200 rounded-lg p-4 space-y-2">
+            <a href="/entity/{{ d.entity_id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ d.name }}</a>
+            {{ sp.split_panel(d, next_url) }}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="bg-white border border-gray-200 rounded-lg px-4 py-8 text-center text-sm text-gray-500">No couple names to review.</div>
+    {% endif %}
     {% elif items %}
     {% if counts[tab] > items | length %}
     <p class="text-xs text-gray-500">Showing the first {{ items | length }} of {{ counts[tab] }}.</p>
@@ -83,15 +100,19 @@
                 </div>
             </dl>
 
+            {% if item.decided %}
+            {# A couple verdict (#269): only person can be set; anything else would be refused. #}
+            <p class="text-xs text-amber-800 bg-amber-50 rounded px-2 py-1" data-testid="decided-note">This name has a couple verdict: only <em>person</em> can be set here. To reclassify it, clear the verdict on the <a href="/entity/{{ item.entity_id }}?stay=1" class="underline">entity page</a> first.</p>
+            {% endif %}
             <div class="flex flex-wrap items-center gap-2">
-                {% if item.jev and item.jev.entity_type != 'not_a_name' %}{{ f.accept_form(item.entity_id, next_url, 'jev', 'Accept AI') }}{% endif %}
-                {% if item.regex %}{{ f.accept_form(item.entity_id, next_url, 'regex', 'Accept rules') }}{% endif %}
+                {% if item.jev and item.jev.entity_type != 'not_a_name' and (not item.decided or item.jev.entity_type == 'person') %}{{ f.accept_form(item.entity_id, next_url, 'jev', 'Accept AI') }}{% endif %}
+                {% if item.regex and (not item.decided or item.regex.entity_type == 'person') %}{{ f.accept_form(item.entity_id, next_url, 'regex', 'Accept rules') }}{% endif %}
             </div>
             <details class="text-xs">
                 <summary class="cursor-pointer text-co-purple hover:text-co-purple-700">Set other…</summary>
                 <div class="mt-2">{{ f.classify_form(item.entity_id, next_url, entity_types, entity_subtypes, item.entity_type, item.entity_subtype) }}</div>
             </details>
-            {{ f.not_a_name_form(item.entity_id, next_url) }}
+            {% if not item.decided %}{{ f.not_a_name_form(item.entity_id, next_url) }}{% endif %}
         </li>
         {% endfor %}
     </ul>

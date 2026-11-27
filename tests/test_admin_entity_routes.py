@@ -631,3 +631,149 @@ def test_alias_routes_require_admin():
         assert resp.status_code in (302, 303, 401, 403), path
     resp = c.get("/admin/entities/lookup?target=ab", follow_redirects=False)
     assert resp.status_code in (302, 303, 401, 403)
+
+
+# ── couples (#269) ───────────────────────────────────────────────────
+
+
+def _split_detail(**kw) -> dict:
+    d = {
+        "entity_id": 15477,
+        "name": "JASON AND WENDI MINAMI",
+        "entity_type": "person",
+        "couple_shaped": True,
+        "verdict": None,
+        "records": [
+            {
+                "id": 101,
+                "record_date": "2025-04-01",
+                "license_number": "089038",
+                "role": "applicant",
+                "source": "BIZ; JASON AND WENDI MINAMI",
+            }
+        ],
+        "truncated": False,
+        "prefill": ["JASON MINAMI", "WENDI MINAMI"],
+        "fields": ["JASON MINAMI", "WENDI MINAMI"],
+        "picks": [{"name": "JASON WEIGEL", "role": None, "same_role": True}],
+        "known": {"JASON MINAMI": {"id": 9, "licences": ["089038"]}},
+    }
+    return {**d, **kw}
+
+
+def test_couples_tab_renders_the_queue(client):
+    with patch(
+        f"{MOD}.couples_queue", new_callable=AsyncMock, return_value=[_split_detail()]
+    ) as fn:
+        resp = client.get("/admin/entities/review?tab=couples")
+    assert resp.status_code == 200
+    fn.assert_awaited_once()
+    body = resp.text
+    assert 'aria-current="page"' in body and "Couples" in body
+    assert 'data-testid="split-panel"' in body
+    assert 'value="JASON MINAMI"' in body and 'value="WENDI MINAMI"' in body
+    assert 'action="/admin/entities/15477/split"' in body
+    assert 'action="/admin/entities/15477/split-keep"' in body
+    assert "split-clear" not in body  # no verdict yet
+    assert '<option value="JASON WEIGEL">' in body
+    assert 'href="/entity/9?stay=1"' in body  # JASON MINAMI exists
+    assert 'name="next" value="/admin/entities/review?tab=couples"' in body
+
+
+def test_couples_tab_empty(client):
+    with patch(f"{MOD}.couples_queue", new_callable=AsyncMock, return_value=[]):
+        body = client.get("/admin/entities/review?tab=couples").text
+    assert "No couple names to review." in body
+
+
+def test_other_tabs_skip_the_couples_queue(client):
+    with (
+        patch(f"{MOD}.couples_queue", new_callable=AsyncMock) as fn,
+        patch(f"{MOD}.review_queue", new_callable=AsyncMock, return_value=[]),
+        patch(
+            f"{MOD}.review_counts", new_callable=AsyncMock, return_value={"main": 0, "unknown": 0}
+        ),
+    ):
+        client.get("/admin/entities/review?tab=main")
+    fn.assert_not_awaited()
+
+
+def test_split_posts_members_and_note(client, conn):
+    with patch(f"{MOD}.set_split", new_callable=AsyncMock, return_value={}) as fn:
+        resp = client.post(
+            "/admin/entities/15477/split",
+            data={
+                "member": ["JASON MINAMI", "WENDI MINAMI", "", ""],
+                "note": " #246 ",
+                "next": "/admin/entities/review?tab=couples",
+            },
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/admin/entities/review?tab=couples"
+    fn.assert_awaited_once_with(
+        conn,
+        15477,
+        ["JASON MINAMI", "WENDI MINAMI", "", ""],
+        admin_email=ADMIN["email"],
+        note="#246",
+    )
+    conn.commit.assert_awaited_once()
+
+
+def test_split_refusal_400_no_commit(client, conn):
+    with patch(f"{MOD}.set_split", new_callable=AsyncMock, side_effect=ValueError("at least 2")):
+        resp = client.post("/admin/entities/7/split", data={"member": ["A B"]})
+    assert resp.status_code == 400
+    assert "at least 2" in resp.text
+    conn.commit.assert_not_awaited()
+
+
+def test_keep_and_clear(client, conn):
+    with patch(f"{MOD}.keep_whole", new_callable=AsyncMock, return_value={}) as fn:
+        resp = client.post("/admin/entities/7/split-keep", data={}, follow_redirects=False)
+    assert resp.headers["location"] == "/entity/7?stay=1"
+    fn.assert_awaited_once_with(conn, 7, admin_email=ADMIN["email"], note=None)
+    with patch(
+        f"{MOD}.clear_verdict", new_callable=AsyncMock, side_effect=LookupError("no verdict")
+    ):
+        resp = client.post("/admin/entities/7/split-clear", follow_redirects=False)
+    assert resp.status_code == 404
+    assert conn.commit.await_count == 1
+
+
+def test_split_routes_require_admin():
+    c = TestClient(app)
+    c.headers["X-Forwarded-Proto"] = "https"
+    for path in (
+        "/admin/entities/7/split",
+        "/admin/entities/7/split-keep",
+        "/admin/entities/7/split-clear",
+    ):
+        resp = c.post(path, data={"member": ["A B", "C D"]}, follow_redirects=False)
+        assert resp.status_code in (302, 303, 401, 403), path
+
+
+def test_review_queue_hides_refused_actions_for_a_decided_entity(client):
+    """#269 CR 7: an item with a couple verdict offers only what would be accepted."""
+    item = _item(
+        decided=True,
+        jev={
+            "entity_type": "organization",
+            "entity_subtype": "trust",
+            "confidence": 0.5,
+            "model": "m",
+        },
+        regex={"entity_type": "person", "entity_subtype": None},
+    )
+    with (
+        patch(f"{MOD}.review_queue", new_callable=AsyncMock, return_value=[item]),
+        patch(
+            f"{MOD}.review_counts", new_callable=AsyncMock, return_value={"main": 1, "unknown": 0}
+        ),
+    ):
+        body = client.get("/admin/entities/review?tab=main").text
+    assert 'data-testid="decided-note"' in body
+    assert "Accept AI" not in body  # an organization answer would be refused
+    assert "Accept rules" in body  # person is fine
+    assert 'action="/admin/entities/7/not-a-name"' not in body

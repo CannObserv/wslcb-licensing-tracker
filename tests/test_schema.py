@@ -387,3 +387,102 @@ async def test_party_id_not_null_and_indexed(pg_conn):
         )
     ).scalar_one()
     assert "(party_id, record_id)" in idx
+
+
+# ── 0013 entity splits (#269, spec #246 §1) ─────────────────────────
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_split_verdict_and_members_cascade_with_the_entity(pg_conn):
+    from wslcb_licensing_tracker.models import entity_split_members, entity_splits
+
+    eid = await _entity(pg_conn, "SCHEMA TEST A & B SPLIT")
+    await pg_conn.execute(
+        insert(entity_splits).values(combined_id=eid, verdict="split", created_by="a@example.com")
+    )
+    await pg_conn.execute(
+        insert(entity_split_members).values(
+            [
+                {"combined_id": eid, "ordinal": 0, "member_name": "A SPLIT"},
+                {"combined_id": eid, "ordinal": 1, "member_name": "B SPLIT"},
+            ]
+        )
+    )
+    await pg_conn.execute(entities.delete().where(entities.c.id == eid))
+    left = (
+        await pg_conn.execute(
+            select(func.count())
+            .select_from(entity_split_members)
+            .where(entity_split_members.c.combined_id == eid)
+        )
+    ).scalar_one()
+    assert left == 0
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_split_verdict_is_split_or_keep(pg_conn):
+    from wslcb_licensing_tracker.models import entity_splits
+
+    eid = await _entity(pg_conn, "SCHEMA TEST VERDICT CHECK")
+    with pytest.raises(IntegrityError):
+        async with pg_conn.begin_nested():
+            await pg_conn.execute(
+                insert(entity_splits).values(combined_id=eid, verdict="maybe", created_by="x")
+            )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_split_member_names_unique_per_verdict(pg_conn):
+    from wslcb_licensing_tracker.models import entity_split_members, entity_splits
+
+    eid = await _entity(pg_conn, "SCHEMA TEST DUP MEMBERS")
+    await pg_conn.execute(
+        insert(entity_splits).values(combined_id=eid, verdict="split", created_by="x")
+    )
+    await pg_conn.execute(
+        insert(entity_split_members).values(combined_id=eid, ordinal=0, member_name="SAME")
+    )
+    with pytest.raises(IntegrityError):
+        async with pg_conn.begin_nested():
+            await pg_conn.execute(
+                insert(entity_split_members).values(combined_id=eid, ordinal=1, member_name="SAME")
+            )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_via_entity_id_never_the_linked_entity_and_indexed(pg_conn, standard_new_application):
+    rid = await _record(pg_conn, standard_new_application, "zq_0013_a")
+    eid = await _entity(pg_conn, "SCHEMA TEST VIA SELF")
+    with pytest.raises(IntegrityError):
+        async with pg_conn.begin_nested():
+            await pg_conn.execute(
+                insert(record_entities).values(record_id=rid, entity_id=eid, via_entity_id=eid)
+            )
+    idx = (
+        await pg_conn.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_re_via'")
+        )
+    ).scalar_one()
+    assert "(via_entity_id)" in idx and "IS NOT NULL" in idx
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_member_rows_cascade_with_the_combined_entity(pg_conn, standard_new_application):
+    rid = await _record(pg_conn, standard_new_application, "zq_0013_b")
+    combined = await _entity(pg_conn, "SCHEMA TEST C & D VIA")
+    member = await _entity(pg_conn, "SCHEMA TEST C VIA")
+    await pg_conn.execute(insert(record_entities).values(record_id=rid, entity_id=combined))
+    await pg_conn.execute(
+        insert(record_entities).values(
+            record_id=rid, entity_id=member, via_entity_id=combined, position=1
+        )
+    )
+    await pg_conn.execute(entities.delete().where(entities.c.id == combined))
+    left = (
+        await pg_conn.execute(
+            select(func.count())
+            .select_from(record_entities)
+            .where(record_entities.c.record_id == rid)
+        )
+    ).scalar_one()
+    assert left == 0

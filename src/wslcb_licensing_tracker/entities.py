@@ -9,7 +9,7 @@ strings, deduplicating by name, and linking them to license records.
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, insert, select, text, update
@@ -24,8 +24,11 @@ from .entity_classification import (
     current_answers,
     protected_ids,
     resolve_entities,
+    tombstone_ids,
+    verdict_ids,
     with_jev_answer,
 )
+from .entity_splits import member_ids, split_members
 from .models import (
     entities,
     entity_classifications,
@@ -584,24 +587,37 @@ def entity_source(stored: str | None, raw: str | None) -> str:
     return stored
 
 
-async def parse_and_link_entities(
+async def parse_and_link_entities(  # noqa: PLR0913
     conn: AsyncConnection,
     record_id: int,
     applicants_str: str,
     role: str = "applicant",
     *,
     delete_existing: bool = False,
+    split_map: Mapping[int, Sequence[str]] | None = None,
 ) -> int:
     """Split applicants string, skip first element (business name), create entities and link.
 
-    Assigns contiguous 0-based positions to successfully linked entities.
-    Returns the number of entities linked.
+    Two passes (#269, spec #246 §2):
+
+    1. **Printed:** each extracted name, at contiguous 0-based positions,
+       with ``via_entity_id`` NULL.
+    2. **Members:** for each printed entity with a ``split`` verdict, in
+       printed order, each member it names, at the following positions with
+       ``via_entity_id`` set to the combined entity.  A member already linked
+       in this role (printed, or named by an earlier couple) keeps that row; a
+       tombstoned member (current manual ``not_a_name``) is skipped.
+
+    Returns the number of links written, member rows included.
 
     Parameters
     ----------
     delete_existing:
         If True, delete existing ``record_entities`` rows for this
         ``(record_id, role)`` pair before inserting (idempotent mode).
+    split_map:
+        ``entity_splits.split_members(conn)``, preloaded by a caller that
+        links many records; None reads the printed entities' verdicts here.
     """
     if delete_existing:
         await conn.execute(
@@ -611,6 +627,7 @@ async def parse_and_link_entities(
         )
 
     linked = 0
+    printed: list[int] = []
     for name in extract_entity_names(applicants_str, record_id=record_id, role=role):
         entity_id = await get_or_create_entity(conn, name)
         stmt = (
@@ -620,6 +637,29 @@ async def parse_and_link_entities(
         )
         result = await conn.execute(stmt)
         linked += result.rowcount
+        printed.append(entity_id)
+
+    if not printed:
+        return linked
+    if split_map is None:
+        split_map = await split_members(conn, printed)
+    for combined_id in dict.fromkeys(printed):
+        for member in split_map.get(combined_id, ()):
+            member_id = await get_or_create_entity(conn, member)
+            if member_id == combined_id or await tombstone_ids(conn, [member_id]):
+                continue
+            stmt = (
+                pg_insert(record_entities)
+                .values(
+                    record_id=record_id,
+                    entity_id=member_id,
+                    role=role,
+                    position=linked,
+                    via_entity_id=combined_id,
+                )
+                .on_conflict_do_nothing()
+            )
+            linked += (await conn.execute(stmt)).rowcount
 
     return linked
 
@@ -636,6 +676,12 @@ async def get_record_entities(
     link target), ``name`` (the printed spellings joined with `` / ``),
     ``names``, ``entity_ids``, and the first link's ``entity_type``,
     ``entity_subtype`` and ``classification_source``.
+
+    Chips are the printed rows only.  A chip whose entity has a ``split``
+    verdict (#269) lists the people it names as ``members``, each
+    ``{"id", "name"}``: ``id`` is that member's party on the record (from its
+    member row, or its printed row when it is printed too).  ``members`` is
+    empty on every other chip.
     """
     if not record_ids:
         return {}
@@ -653,6 +699,7 @@ async def get_record_entities(
                 record_entities.c.role,
                 record_entities.c.position,
                 record_entities.c.party_id,
+                record_entities.c.via_entity_id,
                 entities.c.id.label("entity_id"),
                 entities.c.name,
                 entities.c.entity_type,
@@ -669,8 +716,16 @@ async def get_record_entities(
             )
         )
         rows = (await conn.execute(stmt)).mappings().all()
+        # Every link's party on its record and role, member rows included.
+        party_of = {(r["record_id"], r["role"], r["entity_id"]): r["party_id"] for r in rows}
+        splits = await split_members(
+            conn, {r["entity_id"] for r in rows if r["via_entity_id"] is None}
+        )
+        ids = await member_ids(conn, {m for ms in splits.values() for m in ms})
         chips: dict[tuple[int, str, int], dict] = {}
         for r in rows:
+            if r["via_entity_id"] is not None:
+                continue
             role_chips = result.setdefault(r["record_id"], {}).setdefault(r["role"], [])
             key = (r["record_id"], r["role"], r["party_id"])
             chip = chips.get(key)
@@ -682,11 +737,16 @@ async def get_record_entities(
                     "entity_type": r["entity_type"],
                     "entity_subtype": r["entity_subtype"],
                     "classification_source": r["classification_source"],
+                    "members": [],
                 }
                 chips[key] = chip
                 role_chips.append(chip)
             chip["names"].append(r["name"])
             chip["entity_ids"].append(r["entity_id"])
+            for m in splits.get(r["entity_id"], ()):
+                mid = ids.get(m)
+                party = party_of.get((r["record_id"], r["role"], mid), mid)
+                chip["members"].append({"id": party, "name": m})
         for chip in chips.values():
             chip["name"] = " / ".join(chip["names"])
 
@@ -724,14 +784,23 @@ async def merge_duplicate_entities(conn: AsyncConnection) -> int:
         )
     ).fetchall()
 
+    decided = await verdict_ids(conn, sorted({i for r in dup_rows for i in (r[0], r[2])}))
     merged = 0
     for dirty_id, dirty_name, canon_id in dup_rows:
+        if decided & {dirty_id, canon_id}:
+            logger.warning(
+                "Not merging entity %d %r → %d: a couple verdict (#269)",
+                dirty_id,
+                dirty_name,
+                canon_id,
+            )
+            continue
         await merge_entity_into(conn, dirty_id, canon_id)
         logger.info("Merged entity %d %r → %d", dirty_id, dirty_name, canon_id)
         merged += 1
 
     if merged:
-        await resolve_entities(conn, sorted({canon for _, _, canon in dup_rows}))
+        await resolve_entities(conn, sorted({canon for _, _, canon in dup_rows} - decided))
         logger.info("Merged %d duplicate entities", merged)
 
     return merged
@@ -748,32 +817,44 @@ async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int)
     (``resolve_entities``).
     A conflict leaves a gap in that record's positions; ``renumber_link_positions``
     closes it (``merge_duplicate_entities`` does not call it).
+    Raises ``ValueError`` when either entity has a couple verdict (#269).
     """
+    decided = await verdict_ids(conn, [dirty_id, canon_id])
+    if decided:
+        msg = f"entity {min(decided)} has a couple verdict; clear the verdict before merging"
+        raise ValueError(msg)
     dirty_links = (
         await conn.execute(
             select(
                 record_entities.c.record_id,
                 record_entities.c.role,
                 record_entities.c.position,
+                record_entities.c.via_entity_id,
             ).where(record_entities.c.entity_id == dirty_id)
         )
     ).fetchall()
 
-    for rid, role, pos in dirty_links:
+    for rid, role, pos, via in dirty_links:
         # Check if canonical already has a link for this (record, role)
         existing = (
             await conn.execute(
-                select(record_entities.c.position).where(
+                select(record_entities.c.position, record_entities.c.via_entity_id).where(
                     (record_entities.c.record_id == rid)
                     & (record_entities.c.entity_id == canon_id)
                     & (record_entities.c.role == role)
                 )
             )
-        ).scalar_one_or_none()
+        ).one_or_none()
 
         if existing is not None:
-            # Conflict — keep lower position on canonical
-            if pos < existing:
+            # Conflict — keep lower position on canonical; a printed row beats
+            # a member row (#269), so the survivor stays printed where either was.
+            values: dict = {}
+            if pos < existing[0]:
+                values["position"] = pos
+            if via is None and existing[1] is not None:
+                values["via_entity_id"] = None
+            if values:
                 await conn.execute(
                     update(record_entities)
                     .where(
@@ -781,7 +862,7 @@ async def merge_entity_into(conn: AsyncConnection, dirty_id: int, canon_id: int)
                         & (record_entities.c.entity_id == canon_id)
                         & (record_entities.c.role == role)
                     )
-                    .values(position=pos)
+                    .values(**values)
                 )
         else:
             await conn.execute(
@@ -821,6 +902,7 @@ async def reprocess_entities(
     conn: AsyncConnection,
     *,
     record_id: int | None = None,
+    record_ids: Sequence[int] | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Regenerate ``record_entities`` for all or a subset of records.
@@ -832,7 +914,8 @@ async def reprocess_entities(
     Every processed record is stamped at the ``entities`` step's current
     version (``enrichment.STEP_VERSIONS``, #267); ingest stamps the same one.
     Alias rule rows are then relinked: every group for a full run, the
-    record's entities for one record (#262).
+    records' entities for a subset (#262).  Couple verdicts are applied as
+    member rows (#269); a full run loads them once.
 
     Parameters
     ----------
@@ -840,6 +923,8 @@ async def reprocess_entities(
         Open database connection. Caller is responsible for committing.
     record_id:
         If given, only reprocess this single record.
+    record_ids:
+        If given, only reprocess these records (with *record_id*: both).
     dry_run:
         If True, compute what would be done and return counts without changes.
 
@@ -855,10 +940,13 @@ async def reprocess_entities(
         license_records.c.raw_applicants,
         license_records.c.raw_previous_applicants,
     )
-    if record_id is not None:
-        stmt = stmt.where(license_records.c.id == record_id)
+    subset: list[int] | None = None
+    if record_id is not None or record_ids is not None:
+        subset = sorted({*(record_ids or ()), *(() if record_id is None else (record_id,))})
+        stmt = stmt.where(license_records.c.id.in_(subset))
 
     rows = (await conn.execute(stmt)).fetchall()
+    split_map = None if dry_run else await split_members(conn)
 
     records_processed = 0
     entities_linked = 0
@@ -874,10 +962,15 @@ async def reprocess_entities(
             continue
 
         linked = await parse_and_link_entities(
-            conn, rid, applicants, "applicant", delete_existing=True
+            conn, rid, applicants, "applicant", delete_existing=True, split_map=split_map
         )
         linked += await parse_and_link_entities(
-            conn, rid, previous_applicants, "previous_applicant", delete_existing=True
+            conn,
+            rid,
+            previous_applicants,
+            "previous_applicant",
+            delete_existing=True,
+            split_map=split_map,
         )
         entities_linked += linked
         records_processed += 1
@@ -888,12 +981,12 @@ async def reprocess_entities(
         # A reprocess can create new spellings; they join their alias groups (#262).
         linked_ids = (
             None
-            if record_id is None
+            if subset is None
             else set(
                 (
                     await conn.execute(
                         select(record_entities.c.entity_id).where(
-                            record_entities.c.record_id == record_id
+                            record_entities.c.record_id.in_(subset)
                         )
                     )
                 ).scalars()

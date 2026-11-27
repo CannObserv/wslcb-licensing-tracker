@@ -28,6 +28,7 @@ from .models import (
     entity_aliases,
     entity_classifications,
     entity_review_flags,
+    entity_splits,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,9 @@ ENTITY_SUBTYPES = ("business", "nonprofit", "trust", "estate", "tribe", "governm
 # Subtypes Jev's org question can answer (trust/estate come from its kind question).
 JEV_ORG_SUBTYPES = ("business", "nonprofit", "tribe", "government")
 NOT_A_NAME = "not_a_name"
+# A couple verdict (#269) whose entity no longer resolves to person.
+SPLIT_FLAGGER = "system:entity-splits"
+SPLIT_NOT_PERSON_REASON = "split entity no longer resolves to person"
 # Org subtypes whose Jev answer met the go-live bar (>= 90% precision at 0.7) in
 # docs/research/person-vs-org-classification.md §10 (#210).  Tribe and government
 # had < 20 answers and fail closed; any ORG_CRITERIA change means re-scoring.
@@ -220,13 +224,56 @@ async def resolve_entities(
 async def _on_type_change(conn: AsyncConnection, entity_ids: list[int]) -> None:
     """Relink the alias groups of *entity_ids* and flag manual rows now across types (#262).
 
-    Runs in the caller's transaction, so a rule row never crosses types.
+    Also flags a couple verdict whose entity is no longer a person (#269): the
+    verdict stays in force, so an operator decides.  Runs in the caller's
+    transaction, so a rule row never crosses types.
     """
     # entity_aliases imports this module (tombstone_ids); import at call time.
     from .entity_aliases import flag_type_disagreements, relink  # noqa: PLC0415
 
     await relink(conn, entity_ids)
     await flag_type_disagreements(conn, entity_ids)
+    await _flag_decided_non_persons(conn, entity_ids)
+
+
+async def _flag_decided_non_persons(conn: AsyncConnection, entity_ids: Sequence[int]) -> None:
+    """Open the ``SPLIT_NOT_PERSON_REASON`` flag on each decided non-person, unless one is open."""
+    decided = await verdict_ids(conn, entity_ids)
+    if not decided:
+        return
+    erf = entity_review_flags
+    stmt = select(entities.c.id).where(
+        entities.c.id.in_(sorted(decided))
+        & (entities.c.entity_type != "person")
+        & ~exists().where(
+            (erf.c.entity_id == entities.c.id)
+            & erf.c.resolved_at.is_(None)
+            & (erf.c.reason == SPLIT_NOT_PERSON_REASON)
+        )
+    )
+    for eid in (await conn.execute(stmt)).scalars():
+        await conn.execute(
+            insert(erf).values(
+                entity_id=eid, flagged_by=SPLIT_FLAGGER, reason=SPLIT_NOT_PERSON_REASON
+            )
+        )
+        logger.warning("Entity %d has a couple verdict but no longer resolves to person", eid)
+
+
+async def verdict_ids(
+    conn: AsyncConnection, entity_ids: Sequence[int] | None = None, *, verdict: str | None = None
+) -> set[int]:
+    """Entities with a couple verdict (#269), of kind *verdict* if given, among *entity_ids*."""
+    s = entity_splits
+    stmt = select(s.c.combined_id)
+    if verdict is not None:
+        stmt = stmt.where(s.c.verdict == verdict)
+    if entity_ids is None:
+        return set((await conn.execute(stmt)).scalars())
+    out: set[int] = set()
+    for chunk in _chunks(list(dict.fromkeys(entity_ids))):
+        out |= set((await conn.execute(stmt.where(s.c.combined_id.in_(chunk)))).scalars())
+    return out
 
 
 def _validate_manual(entity_type: str, entity_subtype: str | None) -> None:
@@ -263,8 +310,9 @@ async def record_manual(  # noqa: PLR0913
 ) -> int:
     """Store an operator's classification for *entity_id*, re-resolve it, and return the row id.
 
-    Raises ``ValueError`` for a bad type/subtype combination, or for
-    ``not_a_name`` while the entity is in a manual alias row (#262), and
+    Raises ``ValueError`` for a bad type/subtype combination, for
+    ``not_a_name`` while the entity is in a manual alias row (#262), or for
+    any type but ``person`` while it has a couple verdict (#269), and
     ``LookupError`` when the entity does not exist; nothing is written then.
     The entity's alias groups are relinked in the same transaction.
     """
@@ -276,6 +324,9 @@ async def record_manual(  # noqa: PLR0913
         msg = (
             f"entity {entity_id} is in an operator alias link; unlink it before marking not-a-name"
         )
+        raise ValueError(msg)
+    if entity_type != "person" and await verdict_ids(conn, [entity_id]):
+        msg = f"entity {entity_id} has a couple verdict; clear the verdict first"
         raise ValueError(msg)
     row_id = (
         await conn.execute(
@@ -348,9 +399,9 @@ def _open_flag(entity_id_col: ColumnElement[int]) -> Exists:
 async def protected_ids(conn: AsyncConnection) -> set[int]:
     """Entities an automated purge must keep.
 
-    Those with a current manual row of a real type, an open review flag, or a
-    place in an operator alias decision: either end of a manual
-    ``entity_aliases`` row or of a dismissal (#262).
+    Those with a current manual row of a real type, an open review flag, a
+    place in an operator alias decision (either end of a manual
+    ``entity_aliases`` row or of a dismissal, #262), or a couple verdict (#269).
     """
     m = _current_manual()
     erf = entity_review_flags
@@ -364,6 +415,7 @@ async def protected_ids(conn: AsyncConnection) -> set[int]:
         select(ea.c.canonical_id).where(manual),
         select(ead.c.entity_id_a),
         select(ead.c.entity_id_b),
+        select(entity_splits.c.combined_id),
     )
     return set((await conn.execute(stmt)).scalars().all())
 

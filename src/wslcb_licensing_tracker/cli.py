@@ -67,6 +67,7 @@ from .backfill_diffs import backfill_diffs as run_backfill_diffs
 from .backfill_snapshots import backfill_from_snapshots as run_backfill_snapshots
 from .checkin import CLASSIFY, SCRAPE, post_checkin
 from .config import CONTACT_EMAIL_ENV, ENV_PREFIX, ContactEmailError, env, user_agent
+from .couple_seed import SeedRefused, SeedResult, resolve_admin, seed_couples
 from .db import DATA_DIR, DIFF_GLOB, SNAPSHOT_GLOB
 from .disk_hygiene import CompressResult, compress_data_stragglers, compress_files
 from .endorsements import reprocess_endorsements as run_reprocess_endorsements
@@ -614,16 +615,25 @@ def reprocess_endorsements(record_id: int | None, code: str | None, dry_run: boo
 
 
 @db.command("reprocess-entities")
-@click.option("--record-id", type=int, default=None, help="Only reprocess this record ID.")
+@click.option(
+    "--record-id",
+    "record_ids",
+    type=int,
+    multiple=True,
+    help="Only reprocess this record ID (repeatable).",
+)
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
-def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
-    """Regenerate record_entities from current applicants data."""
+def reprocess_entities(record_ids: tuple[int, ...], dry_run: bool) -> None:
+    """Regenerate record_entities from current applicants data.
+
+    Couple verdicts (#269) are applied as member links.
+    """
 
     async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
             result = await run_reprocess_entities(
                 conn,
-                record_id=record_id,
+                record_ids=list(record_ids) or None,
                 dry_run=dry_run,
             )
             if not dry_run:
@@ -682,6 +692,56 @@ def relink_entities(dry_run: bool) -> None:
         click.echo("Record-link parties: computed on the real run.")
     else:
         click.echo(f"Record-link parties: {r.parties_updated:,} updated.")
+
+
+@db.command("seed-couple-splits")
+@click.option("--dry-run", is_flag=True, help="Report what would change, then roll back.")
+@click.option(
+    "--admin-email",
+    default=None,
+    help="The approving admin account; defaults to the only admin there is.",
+)
+def seed_couple_splits(dry_run: bool, admin_email: str | None) -> None:
+    """Apply the operator-approved #246 verdicts on the 14 couple names (#269).
+
+    Writes 9 split and 3 keep verdicts and 2 trust classifications through the
+    audited paths, then reprocesses and relinks the names' records, in one
+    transaction.  Refuses (nothing written) if any of the 14 entities was
+    renamed, deleted or already decided; once applied, a rerun changes nothing.
+    Back up the affected rows first (docs/COUPLE_SPLITS.md, *The #246 seeded pass*).
+    """
+
+    async def _run(engine: AsyncEngine) -> SeedResult:
+        async with get_db(engine) as conn:
+            email = await resolve_admin(conn, admin_email)
+            result = await seed_couples(conn, admin_email=email, dry_run=dry_run)
+            if not dry_run and not result.already_applied:
+                await conn.commit()
+            return result
+
+    try:
+        r = _run_with_engine(_run)
+    except SeedRefused as e:
+        click.echo(f"Refused: {e}")
+        sys.exit(1)
+    if r.already_applied:
+        click.echo("Already applied: all 12 verdicts match the table; nothing written.")
+        return
+    tag = "[dry-run] " if dry_run else ""
+    verb = "Would write" if dry_run else "Wrote"
+    click.echo(
+        f"{tag}{verb} {r.splits} split and {r.keeps} keep verdict(s), "
+        f"{r.trusts} trust classification(s)."
+    )
+    click.echo(
+        f"{tag}Records reprocessed: {r.records:,}; member links: {r.member_links:,}; "
+        f"new person entities: {len(r.new_entities)}."
+    )
+    for name in r.new_entities:
+        click.echo(f"    new: {name}")
+    click.echo(f"{tag}Printed links unchanged: {'yes' if r.printed_unchanged else 'NO'}.")
+    if dry_run:
+        click.echo("Dry run: rolled back, nothing written.")
 
 
 @db.command("reclassify-entities")

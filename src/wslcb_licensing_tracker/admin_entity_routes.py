@@ -1,4 +1,4 @@
-"""FastAPI APIRouter for /admin/entities/* — classification review (#208), links (#264).
+"""FastAPI APIRouter for /admin/entities/* — classification (#208), links (#264), couples (#269).
 
 The review queue page, and the POST actions behind it and the entity-page
 admin panel: set, accept, not-a-name, clear override, flag, re-classify with
@@ -42,6 +42,7 @@ from .entity_classification import ENTITY_SUBTYPES, ENTITY_TYPES
 from .jev_classifier import RunSummary, classify_entities
 from .jev_client import is_classification_enabled
 from .models import entities
+from .split_review import clear_verdict, couples_queue, keep_whole, set_split
 
 logger = logging.getLogger(__name__)
 
@@ -109,16 +110,19 @@ async def _act(
 
 @router.get("/entities/review", response_class=HTMLResponse)
 async def admin_entity_review(request: Request, admin: Admin, tab: str = "main") -> HTMLResponse:
-    """The review queue: a main tab, a *Subtype unknown* tab, and a *Links* tab (#264)."""
-    if tab not in (*TABS, "links"):
+    """The review queue: main, *Subtype unknown*, *Links* (#264) and *Couples* (#269) tabs."""
+    if tab not in (*TABS, "links", "couples"):
         tab = "main"
     async with get_db(request.app.state.engine) as conn:
         counts: dict[str, int] = await review_counts(conn)
         # Suggestions cost ~100 ms (prod copy): only the Links tab computes
-        # them, so the other tabs show no Links count.
+        # them, so the other tabs show no Links count; Couples likewise (#269).
         if tab == "links":
             items = await suggestions(conn)
             counts = {**counts, "links": len(items)}
+        elif tab == "couples":
+            items = await couples_queue(conn)
+            counts = {**counts, "couples": len(items)}
         else:
             items = await review_queue(conn, tab=tab, limit=REVIEW_PAGE_SIZE)
     return await render_admin(
@@ -424,3 +428,58 @@ async def admin_entity_lookup(request: Request, _admin: Admin, target: str = "")
         for r in rows
     )
     return HTMLResponse("".join(options))
+
+
+# ── couples (#269) ───────────────────────────────────────────────────
+
+
+@router.post("/entities/{entity_id}/split")
+async def admin_entity_split(  # noqa: PLR0913
+    request: Request,
+    admin: Admin,
+    entity_id: int,
+    member: Annotated[list[str] | None, Form()] = None,
+    note: Annotated[str, Form()] = "",
+    next_url: Next = None,
+) -> RedirectResponse:
+    """Split into…: the people this name stands for (``entity.split_set``)."""
+    return await _act(
+        request,
+        f"/entity/{entity_id}?stay=1",
+        next_url,
+        lambda conn: set_split(
+            conn, entity_id, member or [], admin_email=admin["email"], note=_blank_to_none(note)
+        ),
+    )
+
+
+@router.post("/entities/{entity_id}/split-keep")
+async def admin_entity_split_keep(
+    request: Request,
+    admin: Admin,
+    entity_id: int,
+    note: Annotated[str, Form()] = "",
+    next_url: Next = None,
+) -> RedirectResponse:
+    """Keep whole: not a split, off the Couples tab (``entity.split_keep``)."""
+    return await _act(
+        request,
+        f"/entity/{entity_id}?stay=1",
+        next_url,
+        lambda conn: keep_whole(
+            conn, entity_id, admin_email=admin["email"], note=_blank_to_none(note)
+        ),
+    )
+
+
+@router.post("/entities/{entity_id}/split-clear")
+async def admin_entity_split_clear(
+    request: Request, admin: Admin, entity_id: int, next_url: Next = None
+) -> RedirectResponse:
+    """Clear the verdict (``entity.split_clear``)."""
+    return await _act(
+        request,
+        f"/entity/{entity_id}?stay=1",
+        next_url,
+        lambda conn: clear_verdict(conn, entity_id, admin_email=admin["email"]),
+    )

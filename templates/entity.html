@@ -20,6 +20,14 @@
                 <a href="/entity/{{ variant_of.id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ variant_of.name or ('#' ~ variant_of.id) }}</a>
                 everywhere; visitors are redirected there.</p>
             {% endif %}
+            {% if split_banner %}
+            {# A split couple (#269): one printed name, several people. #}
+            <p class="text-sm text-gray-700 bg-gray-50 rounded px-2 py-1 mt-2" data-testid="split-banner">WSLCB lists {{ split_banner | length }} people under this name:
+                {% for m in split_banner -%}
+                {% if m.id %}<a href="/entity/{{ m.id }}" class="font-medium text-co-purple hover:text-co-purple-700 hover:underline">{{ m.name }}</a>{% else %}<span class="font-medium">{{ m.name }}</span>{% endif %}{% if not loop.last %} · {% endif %}
+                {%- endfor %}
+            </p>
+            {% endif %}
             {% if listed_as %}
             <p class="text-sm text-gray-700 mt-2" data-testid="listed-as">Listed as: <span class="font-medium">{{ listed_as.name }}</span></p>
             {% endif %}
@@ -50,6 +58,16 @@
 {# Admin-only classification panel (#208); kept apart from the public header above. #}
 {% if current_user and classification %}
 {% include "partials/entity_admin_panel.html" %}
+{% endif %}
+{# Admin-only couple split panel (#269): open for a couple-shaped name or a decided one. #}
+{% if current_user and split %}
+{% import "partials/entity_split_panel.html" as sp %}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 mt-6 px-6 py-4">
+    <details {% if split.couple_shaped or split.verdict %}open{% endif %}>
+        <summary class="cursor-pointer text-sm font-semibold text-gray-900">Couple: several people under one name?</summary>
+        <div class="mt-3">{{ sp.split_panel(split, "/entity/" ~ entity.id ~ "?stay=1", open=false) }}</div>
+    </details>
+</div>
 {% endif %}
 {# Admin-only Links panel (#264). #}
 {% if current_user and links %}

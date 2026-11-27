@@ -101,17 +101,20 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - Non-name applicant parts (`is_noise_name()`: WAC citations, bare numbers, ownership-count annotations like `17 SHAREHOLDERS W/10% OR LESS`, bare legal suffixes, `NO PEOPLE REQUIRED`, a few observed fragments) are skipped like `ADDITIONAL_NAMES_MARKERS`; `reclassify-entities` deletes existing ones unless protected by a manual decision or open flag, plus operator-confirmed `not_a_name` entities. An appended citation (`7-ELEVEN, INC. PER WAC 314-07-035`) is stripped from the entity name at extraction, not from `applicants` (#211)
 - The first element of the semicolon-delimited `applicants` field (which equals `business_name`) is **excluded** — only the individual people/orgs behind the license are stored
 - Extraction reads `entities.entity_source(stored, raw)`: the `raw_*` shadow when it cleans to the stored column, else the stored column (#266). `clean_applicants_string()` de-duplicates a later repeat of element 0 away, but that repeat is a listed applicant (the LLC sharing the trade name, or a sole proprietor's `X; X`), so it is linked. Ingest, `reprocess-entities`, `backfill_entities`, `db check` and the WAC-repair check all read through it
-- `get_or_create_entity()` in `entities.py` normalizes names via `clean_entity_name()`: uppercase, strip whitespace, and remove stray trailing punctuation (periods, commas) that isn't part of a recognized suffix
-- The `_LEGIT_TRAILING_DOT` regex in `entities.py` defines the suffix allowlist — add new entries there when the WSLCB source uses a new legitimate abbreviation ending with a period.  Current list: `INC`, `LLC`, `L.L.C`, `L.L.P`, `LTD`, `CORP`, `CO`, `L.P`, `PTY`, `JR`, `SR`, `S.P.A`, `F.O.E`, `U.P`, `D.B.A`, `P.C`, `N.A`, `P.A`, `W. & S`
-- `clean_applicants_string()` applies `strip_duplicate_marker()` then `clean_entity_name()` to each element of a semicolon-delimited applicants string, then deduplicates tokens (first-occurrence-wins, preserving order) — used at ingest time so the `applicants`/`previous_applicants` columns on `license_records` stay consistent with entity names; DUPLICATE-annotated duplicates of the same person are collapsed to one token
+- `get_or_create_entity()` normalizes names via `clean_entity_name()`: uppercased, trimmed, stray trailing periods and commas removed unless part of a recognized suffix
+- `_LEGIT_TRAILING_DOT` (`entities.py`) is the suffix allowlist: add an abbreviation there when WSLCB prints a new one ending in a period. Current list: `INC`, `LLC`, `L.L.C`, `L.L.P`, `LTD`, `CORP`, `CO`, `L.P`, `PTY`, `JR`, `SR`, `S.P.A`, `F.O.E`, `U.P`, `D.B.A`, `P.C`, `N.A`, `P.A`, `W. & S`
+- `clean_applicants_string()` applies `strip_duplicate_marker()` then `clean_entity_name()` to each element, then de-duplicates (first occurrence wins, order kept), so DUPLICATE-annotated repeats collapse to one; ingest uses it to keep `applicants`/`previous_applicants` consistent with entity names
 - `insert_record()` in `pipeline.py` also cleans `business_name` and `previous_business_name` via `clean_entity_name()` before storage, so all name columns are consistently uppercased and stripped of stray punctuation
 - `has_additional_names` — `INTEGER NOT NULL DEFAULT 0`; set to `1` at ingest time when `applicants` or `previous_applicants` contains an `ADDITIONAL_NAMES_MARKERS` token. Used to show the notice *"+ WSLCB source signaled additional entities may be on file"* on the detail page. Backfilled by migration 010.
-- `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — shadow columns storing the as-parsed values from the source *before* name cleaning (uppercase, punctuation stripping); going forward, `insert_record()` saves the raw values here, then writes cleaned values to the primary columns; for existing records, these were backfilled with the already-cleaned values (originals lost)
+- `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — as-parsed values before name cleaning: `insert_record()` stores them here and the cleaned values in the primary columns. Records older than these columns were backfilled with already-cleaned values (originals lost)
 - `merge_duplicate_entities()` merges entities whose names differ only by case into the lowest id, moving its links. It ran once, through `backfill_entities()` in data migration `0005_backfill_entities` (`data_migration.py`), not at every startup
 - `link_key` (#262) — derived alias format key; index `idx_entities_link_key`
 
 ### `entity_aliases`, `entity_alias_dismissals` (#262)
 - Alias links and dismissals: `rule` rows derived (`relink-entities`), the rest operator data. See [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md)
+
+### `entity_splits`, `entity_split_members` (#269)
+- Couple verdicts and their people: operator data. See [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md)
 
 ### `entity_classifications` (per-source classification answers)
 - Append-only (#206): one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
@@ -139,6 +142,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `position` — 0-indexed ordering from the source document (after the business name)
 - Composite PK `(record_id, entity_id, role)`
 - `party_id` — derived alias party (#263, [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md))
+- `via_entity_id` — the split couple a member row is linked through; NULL on printed rows (#269, [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md))
 - Populated at ingest by `parse_and_link_entities()`; rebuilt by `reprocess-entities`
 - `ON DELETE CASCADE` on both FKs
 

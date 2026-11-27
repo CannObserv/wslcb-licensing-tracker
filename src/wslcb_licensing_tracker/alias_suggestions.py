@@ -27,6 +27,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .entity_aliases import (
+    VERDICT_SPLIT,
     Party,
     conflict_pairs,
     eff_many,
@@ -34,7 +35,7 @@ from .entity_aliases import (
     parse_person_key,
     plan_licence,
 )
-from .entity_classification import tombstone_ids
+from .entity_classification import tombstone_ids, verdict_ids
 from .models import entities, entity_alias_dismissals
 
 logger = logging.getLogger(__name__)
@@ -352,7 +353,10 @@ async def suggestions(conn: AsyncConnection) -> list[dict]:
         tuple(r) for r in (await conn.execute(select(ead.c.entity_id_a, ead.c.entity_id_b)))
     }
     ids = {e for pr in pairs for e in (pr.variant, pr.canonical)}
+    # Neither end may be a tombstone, nor a couple split into its members:
+    # both refuse a link (#262; #269, spec #246 §5a).
     tombs = await tombstone_ids(conn, list(ids))
+    tombs |= await verdict_ids(conn, list(ids), verdict=VERDICT_SPLIT)
     pairs = [
         pr
         for pr in pairs

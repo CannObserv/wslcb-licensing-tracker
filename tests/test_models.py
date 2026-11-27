@@ -28,6 +28,8 @@ EXPECTED_TABLES = {
     "classification_runs",
     "entity_aliases",
     "entity_alias_dismissals",
+    "entity_splits",
+    "entity_split_members",
 }
 
 

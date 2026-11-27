@@ -109,6 +109,9 @@ wslcb-licensing-tracker/
 ├── classification_review.py # Audited operator actions, review queue, health/spend queries (#208)
 ├── alias_review.py         # Audited link/unlink/dismiss actions + entity-page Links panel data (#264)
 ├── alias_suggestions.py    # Review-queue Links tab: comma-drop, legal-designator, single-token, middle-name-conflict suggestions (#264, #265)
+├── entity_splits.py       # Couple names (#269): prefill (shape, cut-off completion, fuller form), verdict reads
+├── split_review.py        # Couple verdicts: audited split / keep / clear, split panel, Couples tab queue (#269)
+├── couple_seed.py         # One-off: the operator-approved #246 couple verdicts (wslcb db seed-couple-splits, #269)
 ├── address_client.py       # HTTP transport for the address-validator service
 ├── address_validator.py    # Async address validation DB layer
 ├── link_records.py         # Async application→outcome record linking
@@ -141,7 +144,7 @@ wslcb-licensing-tracker/
 │   │   ├── base.html       # Admin base layout
 │   │   ├── dashboard.html  # System dashboard
 │   │   ├── endorsements.html # Endorsement management (list, suggestions, codes)
-│   │   ├── entity_review.html # Entity review queue: classification (#208), Links tab (#264)
+│   │   ├── entity_review.html # Entity review queue: classification (#208), Links tab (#264), Couples tab (#269)
 │   │   ├── users.html      # Admin user management
 │   │   └── audit_log.html  # Audit log
 │   └── partials/
@@ -154,6 +157,7 @@ wslcb-licensing-tracker/
 │       ├── entity_classification_forms.html # Classification action form macros (#208)
 │       ├── entity_links_panel.html # Entity-page Links panel, admins only (#264)
 │       ├── link_suggestions.html  # Review queue's Links tab list (#264)
+│       ├── entity_split_panel.html # Couple split panel: entity page + Couples tab (#269)
 │       └── source_viewer.html     # Source viewer partial (HTMX iframe)
 ├── static/                 # Static assets
 │   ├── css/
@@ -253,6 +257,9 @@ wslcb-licensing-tracker/
 │   ├── test_endorsements_admin.py # Admin endorsement helper tests
 │   ├── test_entities.py      # Entity normalization tests (require the test DB)
 │   ├── test_entity_aliases.py # Alias layer: link_key, election, resolution, relink, write API, hooks (PG parts require the test DB)
+│   ├── test_entity_splits.py # Couple names: prefill on the 14 fixtures, member rows, guards, display (PG parts require the test DB)
+│   ├── test_split_review.py  # Couple verdicts: audited writes, validation, split panel, Couples queue (require the test DB)
+│   ├── test_couple_seed.py   # The #246 seeded pass: dry run, apply, rerun, refusals (require the test DB)
 │   ├── test_entity_classification.py # Classification resolver + Jev rollback (require the test DB)
 │   ├── test_entity_wac_repair.py # WAC-suffix rename/merge + verification (require the test DB)
 │   ├── test_classification_review.py # Operator actions, review queue, health (require the test DB)
@@ -672,6 +679,9 @@ Test structure:
 | `tests/test_endorsements_admin.py` | Admin endorsement helpers — similarity, suggestions, dismissals |
 | `tests/test_entities.py` | Entity normalization — extraction, dedup, reprocessing, reclassify through the resolver (require the test DB) |
 | `tests/test_entity_aliases.py` | Alias layer (#262, #265): `link_key`, canonical election, middle-name rule, `eff()` resolution, cycle checks, `relink` idempotence, manual links + dismissals, ingest/type-change/merge/purge/reprocess hooks, spec worked cases (PG parts require the test DB) |
+| `tests/test_entity_splits.py` | Couple names (#269): prefill on the 14 #246 fixtures, member rows at ingest and reprocess, guards (protection, type, merge, alias rules), chips / listed-as / banner / `/entities` (PG parts require the test DB) |
+| `tests/test_split_review.py` | Couple verdicts (#269): audited split / keep / clear, validation, the split panel, the Couples queue (require the test DB) |
+| `tests/test_couple_seed.py` | The #246 seeded pass (#269): dry run, apply, rerun, refusals, admin attribution (require the test DB) |
 | `tests/test_entity_classification.py` | Classification resolver, manual rows, protected/confirmed-noise sets, `ignore-jev` (require the test DB) |
 | `tests/test_entity_wac_repair.py` | `strip-wac-suffixes` — rename, twin/group merge, regex refresh, link renumbering, noise skip, dry-run, idempotence, mismatch report (require the test DB) |
 | `tests/test_classification_review.py` | Audited operator actions, review-queue membership/order, entity detail, health/spend (require the test DB) |

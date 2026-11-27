@@ -34,6 +34,8 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 #   source_types   — reference data seeded by migration 0001; reseeded explicitly below
 #   data_migrations — tracks which one-time data migrations have run; must not be cleared
 _PG_SESSION_TABLES = [
+    "entity_split_members",
+    "entity_splits",
     "entity_aliases",
     "entity_alias_dismissals",
     "classification_runs",

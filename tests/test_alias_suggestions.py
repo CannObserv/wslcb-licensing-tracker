@@ -157,6 +157,30 @@ async def test_linked_dismissed_and_tombstoned_pairs_drop_out(pg_conn, standard_
 
 
 @PG
+async def test_split_couple_pairs_drop_out(pg_conn, standard_new_application):
+    """#269 CR 1: a split couple takes no alias link, so it is never suggested."""
+    from wslcb_licensing_tracker.models import entity_split_members, entity_splits
+
+    await _rec(pg_conn, standard_new_application, "T269SS", "ZQTYZ", "ZQTYZ ZQPENDZ", day=2)
+    ty = await _ent(pg_conn, "ZQTYZ")
+    full = await _ent(pg_conn, "ZQTYZ ZQPENDZ")
+    await relink(pg_conn, [ty, full])
+    assert len(await _mine(pg_conn, ty, full)) == 1
+    await pg_conn.execute(
+        insert(entity_splits).values(combined_id=full, verdict="split", created_by=ADMIN)
+    )
+    await pg_conn.execute(
+        insert(entity_split_members).values(
+            [
+                {"combined_id": full, "ordinal": 0, "member_name": "ZQA ZQPENDZ"},
+                {"combined_id": full, "ordinal": 1, "member_name": "ZQB ZQPENDZ"},
+            ]
+        )
+    )
+    assert await _mine(pg_conn, ty, full) == []
+
+
+@PG
 async def test_middle_name_conflicts(pg_conn, standard_new_application):
     """#265: a conflicting group lists each pair, shorter → longer, scoped to the licence."""
     await _rec(

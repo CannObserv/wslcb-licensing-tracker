@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import bindparam, delete, func, insert, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from .entity_classification import tombstone_ids
+from .entity_classification import tombstone_ids, verdict_ids
 from .models import (
     entities,
     entity_alias_dismissals,
@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 MAX_STEPS = 4
 RULE_FORMAT_KEY = "format_key"
 RULE_MIDDLE_NAMES = "middle_names"
+VERDICT_SPLIT = "split"  # entity_splits.verdict (#269); entity_splits imports this module
 KEYED_TYPES = frozenset({"person", "organization"})
 
 _GENERATIONAL = frozenset({"JR", "SR", "II", "III", "IV"})
@@ -162,7 +163,7 @@ def elect_canonical(
 # ── middle-name rule, pure (#265; spec §3) ───────────────────────────
 
 # A standalone AND / & marks a couple string (#246): it takes no part.
-_COUPLE_TOKENS = frozenset({"AND", "&"})
+COUPLE_TOKENS = frozenset({"AND", "&"})
 
 
 @dataclass(frozen=True)
@@ -182,7 +183,7 @@ def parse_person_key(key: str | None) -> PersonKey | None:
     key has fewer than two tokens or names a couple (a standalone ``AND``/``&``).
     """
     toks = (key or "").split()
-    if _COUPLE_TOKENS & set(toks):
+    if COUPLE_TOKENS & set(toks):
         return None
     suffix = toks.pop() if len(toks) > 2 and toks[-1] in _GENERATIONAL else None  # noqa: PLR2004
     if len(toks) < 2:  # noqa: PLR2004
@@ -797,6 +798,7 @@ async def _middle_parties(
         info.update({eid: (name, etype) for eid, name, etype in (await conn.execute(stmt))})
     persons = [p for p in party_ids if info.get(p, ("", ""))[1] == "person"]
     tombs = await tombstone_ids(conn, None if licences is None else persons)
+    tombs |= await verdict_ids(conn, None if licences is None else persons, verdict=VERDICT_SPLIT)
     counts = await _link_counts(conn, persons)
     by_licence = {
         lic: [
@@ -923,6 +925,10 @@ async def relink(
         dismissed=await _dismissed_pairs(conn),
     )
     tombstones = await tombstone_ids(conn, None if ids is None else sorted(loaded))
+    # A couple split into its members is no party (#269, spec #246 §5a).
+    tombstones |= await verdict_ids(
+        conn, None if ids is None else sorted(loaded), verdict=VERDICT_SPLIT
+    )
     members = [m.id for ms in _format_key_groups(loaded, tombstones, {}).values() for m in ms]
     groups = _format_key_groups(loaded, tombstones, await _link_counts(conn, members))
     if ids is not None and {r.variant for r in plan.other_rows} & set(members):
@@ -1120,8 +1126,9 @@ async def add_manual_alias(  # noqa: PLR0913
     """Link *variant_id* to *canonical_id* as an operator decision; return the row id.
 
     Raises ``LookupError`` if either entity is missing, and :class:`AliasError`
-    for a self-link, a tombstone at either end, an existing manual row for the
-    variant in that scope, or a link that would close a cycle (the message
+    for a self-link, a tombstone or a split couple (#269) at either end, an
+    existing manual row for the variant in that scope, or a link that would
+    close a cycle (the message
     names the rows that close it).  A link across resolved types is allowed
     and opens a review flag on the canonical.  The pair's rule groups are
     relinked in the same transaction.  Caller commits.
@@ -1137,6 +1144,10 @@ async def add_manual_alias(  # noqa: PLR0913
     tombs = await tombstone_ids(conn, [variant_id, canonical_id])
     if tombs:
         msg = f"entity {min(tombs)} is marked not-a-name; clear that first"
+        raise AliasError(msg)
+    split = await verdict_ids(conn, [variant_id, canonical_id], verdict=VERDICT_SPLIT)
+    if split:
+        msg = f"entity {min(split)} is split into its members; link a member instead"
         raise AliasError(msg)
     same = (
         await conn.execute(

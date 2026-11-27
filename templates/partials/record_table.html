@@ -85,6 +85,10 @@
                         {# entity page only: this entity's link here resolves to another party (#263) #}
                         <a href="/entity/{{ r.party_note.id }}" class="block font-sans text-xs text-co-purple hover:text-co-purple-700 hover:underline" onclick="event.stopPropagation()">On licence {{ r.license_number }}: {{ r.party_note.name }} →</a>
                         {% endif %}
+                        {% if r.listed_as %}
+                        {# entity page only: reached through a split couple's printed name (#269) #}
+                        <a href="/entity/{{ r.listed_as.id }}" class="block font-sans text-xs text-gray-500 hover:text-co-purple hover:underline" data-testid="listed-via" onclick="event.stopPropagation()">listed as {{ r.listed_as.name }}</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
