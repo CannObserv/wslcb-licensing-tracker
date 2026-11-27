@@ -350,13 +350,18 @@ async def split_detail(conn: AsyncConnection, entity_id: int) -> dict | None:
     records = await _printed(conn, entity_id)
     roles = {r["role"] for r in records} or {"applicant"}
     raw = max((p for r in records for p in _raw_parts(r["source"], name)), key=len, default=name)
+    # Two indexed lookups (records; licences): an OR of the two scans every link.
     rows = await conn.execute(
         text(
-            "SELECT DISTINCT e.name, e.entity_type, re.role, re.record_id = ANY(:rids) AS same"
-            " FROM record_entities re JOIN license_records lr ON lr.id = re.record_id"
-            " JOIN entities e ON e.id = re.entity_id"
-            " WHERE re.via_entity_id IS NULL AND re.entity_id <> :e"
-            " AND (re.record_id = ANY(:rids) OR lr.license_number = ANY(:lics))"
+            "SELECT e.name, e.entity_type, x.role, bool_or(x.same) FROM ("
+            "  SELECT re.entity_id, re.role, true AS same FROM record_entities re"
+            "  WHERE re.record_id = ANY(:rids) AND re.via_entity_id IS NULL"
+            "  UNION"
+            "  SELECT re.entity_id, re.role, false FROM license_records lr"
+            "  JOIN record_entities re ON re.record_id = lr.id"
+            "  WHERE lr.license_number = ANY(:lics) AND re.via_entity_id IS NULL"
+            ") x JOIN entities e ON e.id = x.entity_id WHERE x.entity_id <> :e"
+            " GROUP BY e.name, e.entity_type, x.role"
         ),
         {
             "e": entity_id,
@@ -366,12 +371,12 @@ async def split_detail(conn: AsyncConnection, entity_id: int) -> dict | None:
     )
     printed = [tuple(r) for r in rows.fetchall()]
     record_names = [name, *sorted({n for n, _, role, same in printed if same and role in roles})]
-    same_role = sorted(
-        {n for n, t, role, same in printed if same and role in roles and t == "person"}
-    )
-    other_role = sorted(
-        {(n, role) for n, t, role, _ in printed if role not in roles and t == "person"}
-    )
+    # Picks are single persons: a couple string would be refused as a member.
+    pickable = [
+        (n, role, same) for n, t, role, same in printed if t == "person" and not has_couple_token(n)
+    ]
+    same_role = sorted({n for n, role, same in pickable if same and role in roles})
+    other_role = sorted({(n, role) for n, role, _ in pickable if role not in roles})
     prefill = suggest_split(name, raw_part=raw, record_names=record_names, persons=same_role)
     fields = (verdict or {}).get("members") or prefill.members or []
     ids = await member_ids(conn, fields)

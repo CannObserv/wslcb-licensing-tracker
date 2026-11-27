@@ -205,6 +205,7 @@ async def test_split_detail_prefills_and_flags_truncation(pg_conn, standard_new_
         CLARK,
         "SALLY A CLARK, TTEE OF THE CLA",
         "LISA ZQBEDWELL",
+        "ZQ A & B MOSELEY",
     )
     prev = standard_new_application | {
         "license_number": "T269R8",
@@ -224,6 +225,7 @@ async def test_split_detail_prefills_and_flags_truncation(pg_conn, standard_new_
     picks = {(p["name"], p["role"]) for p in d["picks"]}
     assert ("LISA ZQBEDWELL", None) in picks
     assert ("GARY ZQPRIOR", "previous_applicant") in picks
+    assert not any("&" in n for n, _ in picks)  # a couple is never a pick
     assert d["known"] == {}  # neither member exists yet
 
 
