@@ -801,7 +801,10 @@ def restore_tombstones(backup_dir: Path, dry_run: bool, admin_email: str | None)
 @db.command("reclassify-entities")
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
 def reclassify_entities(dry_run: bool) -> None:
-    """Re-apply the regex classifier, re-resolve classifications, drop non-name entities.
+    """Re-apply the regex classifier, re-resolve classifications, drop regex-noise entities.
+
+    Operator-confirmed non-names are kept as tombstones and lose any record
+    links they still have (#261).
 
     reprocess-entities never updates an existing entity's type; this does,
     through the resolver: manual decisions and Jev answers are kept (#206).
