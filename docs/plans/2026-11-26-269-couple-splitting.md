@@ -1,7 +1,7 @@
 ---
 title: "#269 couple-name splitting: verdicts, member links, seeded pass"
 date: 2026-11-26
-status: draft
+status: approved
 ---
 
 # #269 couple-name splitting

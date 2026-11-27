@@ -18,6 +18,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    SmallInteger,
     Table,
     Text,
     UniqueConstraint,
@@ -260,7 +261,16 @@ record_entities = Table(
     # entity_aliases.relink.  A trigger (migration 0012) defaults it to
     # entity_id on insert and when an update re-points entity_id.
     Column("party_id", Integer, nullable=False, server_default=FetchedValue()),
+    # A member link (#269, spec #246 §2): the record prints the combined
+    # entity via_entity_id, and this row links one of the people it names.
+    # Derived like the rest of the table; NULL on every printed row.
+    Column("via_entity_id", Integer, ForeignKey("entities.id", ondelete="CASCADE")),
+    CheckConstraint(
+        "via_entity_id IS NULL OR via_entity_id <> entity_id",
+        name="ck_record_entities_via_not_self",
+    ),
     Index("idx_re_entity", "entity_id"),
+    Index("idx_re_via", "via_entity_id", postgresql_where=text("via_entity_id IS NOT NULL")),
     Index("idx_re_party_record", "party_id", "record_id"),
     Index("idx_re_role", "role"),
 )
@@ -294,6 +304,40 @@ entity_aliases = Table(
         "(source = 'rule') = (rule IS NOT NULL)", name="ck_entity_aliases_rule_iff_rule_source"
     ),
     Index("idx_entity_aliases_canonical", "canonical_id"),
+)
+
+# Operator verdicts on combined (couple) names (#269, spec #246 §1): 'split'
+# names the people in entity_split_members; 'keep' takes the name off the
+# Couples queue.  Operator data: nothing automated writes or deletes them.
+entity_splits = Table(
+    "entity_splits",
+    metadata,
+    Column(
+        "combined_id",
+        Integer,
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("verdict", Text, nullable=False),
+    Column("created_by", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("note", Text),
+    CheckConstraint("verdict IN ('split', 'keep')", name="ck_entity_splits_verdict"),
+)
+
+# The people a 'split' verdict names, cleaned (clean_entity_name), in order.
+entity_split_members = Table(
+    "entity_split_members",
+    metadata,
+    Column(
+        "combined_id",
+        Integer,
+        ForeignKey("entity_splits.combined_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("ordinal", SmallInteger, primary_key=True),
+    Column("member_name", Text, nullable=False),
+    UniqueConstraint("combined_id", "member_name", name="uq_entity_split_members_name"),
 )
 
 # An unordered pair (a < b) an operator said are not the same party (#262).
