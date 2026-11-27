@@ -1292,8 +1292,8 @@ class TestEntityAdminPanel:
         assert 'action="/admin/entities/7/split-clear"' in body
         assert 'value="/entity/7?stay=1"' in body
 
-    def test_not_a_name_pending_purge_hides_button(self, monkeypatch):
-        """A current manual not_a_name row shows the pending purge instead of the button."""
+    def test_not_a_name_tombstone_hides_button(self, monkeypatch):
+        """A current manual not_a_name row says it is a tombstone instead of the button (#261)."""
         manual = {**self._DETAIL["current"]["manual"], "entity_type": "not_a_name"}
         detail = {
             **self._DETAIL,
@@ -1305,14 +1305,22 @@ class TestEntityAdminPanel:
         assert resp.status_code == 200
         assert 'action="/admin/entities/7/not-a-name"' not in resp.text
         assert "Marked not a name" in resp.text
-        assert "reclassify-entities" in resp.text
-        assert "holds the purge" not in resp.text
+        assert "tombstone" in resp.text
+        assert "Clear manual override" in resp.text
+        assert "deletes" not in resp.text
 
-        # An open flag keeps the entity out of the purge (confirmed_noise_ids).
+        # An open flag changes nothing: a tombstone is unlinked either way.
         monkeypatch.setattr(self, "_DETAIL", detail)
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
         assert "Marked not a name" in resp.text
-        assert "An open flag holds the purge" in resp.text
+        assert "purge" not in resp.text
+
+    def test_not_a_name_form_describes_the_tombstone(self, monkeypatch):
+        """#261: the mark's confirm and help text describe what it now does."""
+        resp, _ = self._get(admin=True, monkeypatch=monkeypatch)
+        assert 'action="/admin/entities/7/not-a-name"' in resp.text
+        assert "Its record links are removed now" in resp.text
+        assert "next reclassify deletes" not in resp.text
 
     def test_jev_button_only_when_enabled(self, monkeypatch):
         resp, _ = self._get(admin=True, monkeypatch=monkeypatch, jev_enabled=True)

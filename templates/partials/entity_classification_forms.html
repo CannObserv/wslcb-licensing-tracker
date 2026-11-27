@@ -48,8 +48,8 @@
 <form method="POST" action="/admin/entities/{{ entity_id }}/not-a-name" class="flex flex-wrap items-center gap-1.5">
     <input type="hidden" name="next" value="{{ next }}">
     <button type="submit" class="{{ _btn_danger }}"
-            onclick="return confirm('Mark as not a name? The next reclassify deletes this entity and all its classification rows and flags.')">Not a name</button>
-    <span class="text-xs text-gray-500">The next <code>reclassify-entities</code> deletes the entity, its manual row and its flags. Only the audit log keeps a record.</span>
+            onclick="return confirm('Mark as not a name? Its record links are removed now and no record links it again; Clear manual override restores them.')">Not a name</button>
+    <span class="text-xs text-gray-500">Its record links are removed now, and no record links it again. The entity and this decision are kept; <em>Clear manual override</em> restores the links.</span>
 </form>
 {%- endmacro %}
 
