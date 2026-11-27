@@ -92,7 +92,7 @@ Replay-extract boundary (#154): the extract *files* are derived (natural-key pat
 - Each module: `logger = logging.getLogger(__name__)`.
 - Entry points call `setup_logging()` from `log_config.py` before doing any work.
 - Use `%s`/`%d` style in log calls (not f-strings).
-- **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json` (#162). Change the JSON schema in `build_json_formatter()` only; keep `ColorMessageFilter` on the uvicorn *loggers* (#163). Why: [`docs/LOGGING.md`](docs/LOGGING.md).
+- **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json` (#162). Change the JSON schema in `build_json_formatter()` only; keep `ColorMessageFilter` on the uvicorn *loggers*, never the handler or `reserved_attrs` (#163). Why: [`docs/LOGGING.md`](docs/LOGGING.md).
 
 ### Testing
 Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/ -v` must pass before committing.
@@ -178,7 +178,7 @@ See **Code Exploration Policy** above.
 
 SessionStart hooks (daily vendored-skills refresh; SocratiCode prefetch reminder and daily health check) and the `curating-context` budget guard: [`docs/SKILLS.md`](docs/SKILLS.md) under `managing-skills`, `init-socraticode`, `curating-context`. Never add a second skills updater (#164).
 
-SocratiCode is **pinned** here, driver and plugin session both (#175, #180): never "fix" the driver back to `npx`; verify the session pin with `ps`, never `claude mcp list`. Detail: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md#pinned-version).
+SocratiCode is **pinned** here, driver and plugin session both (#175, #180): never "fix" the driver back to `npx` (`~/.socraticode/pin`; confirm with `mcp-driver.mjs resolve`); verify the session pin with `ps`, never `claude mcp list`. Detail: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md#pinned-version).
 
 Dated analyses go under `docs/research/`, `docs/plans/`, or `docs/specs/`, which are excluded from the live surface. Vendored superpowers skills default to `docs/superpowers/{specs,plans}/`; this project overrides that — specs → `docs/specs/`, plans → `docs/plans/` (their own "user preferences override" clause applies; `tests/test_docs_layout.py` guards it, #176).
 

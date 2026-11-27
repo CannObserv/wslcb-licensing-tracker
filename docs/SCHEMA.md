@@ -41,6 +41,9 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - For CHANGE OF LOCATION records: `location_id` points to the new/destination address, `previous_location_id` points to the old/origin address
 - Approved-section CHANGE OF LOCATION records only have `location_id` (the source doesn't provide the previous address)
 - `license_type` stores the raw value from the source page (text or numeric code); never modified
+- `insert_record()` in `pipeline.py` also cleans `business_name` and `previous_business_name` via `clean_entity_name()` before storage, so all name columns are consistently uppercased and stripped of stray punctuation
+- `has_additional_names` — `INTEGER NOT NULL DEFAULT 0`; set to `1` at ingest time when `applicants` or `previous_applicants` contains an `ADDITIONAL_NAMES_MARKERS` token. Used to show the notice *"+ WSLCB source signaled additional entities may be on file"* on the detail page. Backfilled by migration 010.
+- `raw_business_name`, `raw_previous_business_name`, `raw_applicants`, `raw_previous_applicants` — as-parsed values before name cleaning: `insert_record()` stores them here and the cleaned values in the primary columns. Records older than these columns were backfilled with already-cleaned values (originals lost)
 - `enrich_record()` in `queries.py` adds `display_city`, `display_zip`, `display_previous_city`, `display_previous_zip` with standardized-first fallback
 
 ### `license_endorsements`

@@ -96,7 +96,8 @@ would link the pair on the dismissed licence too.
 
 ## The middle-name rule (licence-scoped)
 
-Spec §3 (#265). Within each licence, the **members** are its person parties under the
+Spec §3 (#265).
+Within each licence, the **members** are its person parties under the
 format-key and manual rows: every spelling the format key already links, and
 any variant an operator linked on the licence, folds into its party. So a
 format-key variant (`PENDERGRAFT, TYLER`) needs no row of its own: it reaches

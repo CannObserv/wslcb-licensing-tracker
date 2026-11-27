@@ -26,7 +26,8 @@ inactive TTL costs little freshness where it matters.
 
 ### USPS budget
 
-Set by #245. USPS bills address-validator's calls by the month, at one tier for the whole
+Set by #245.
+USPS bills address-validator's calls by the month, at one tier for the whole
 month, rounding up to the next thousand: $10 flat up to 2,000 calls, then $4.50
 per 1,000 up to 10,000. This tracker makes almost all of them. The operator's
 cap (2026-11-05, CannObserv/address-validator#404) is **$25 a month**.

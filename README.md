@@ -323,8 +323,8 @@ wslcb-licensing-tracker/
 │   └── fixtures/                # Minimal HTML fixtures for parser tests
 └── docs/                   # Operations and architecture documentation
     ├── ADDRESS_VALIDATION.md # address-validator client: key + flags, renewal TTL + pacing (#195), address commands
-    ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
     ├── COUPLE_SPLITS.md     # Couple verdicts: split/keep/trust, member links, seed (#269)
+    ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
     ├── DISK_GC.md           # Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
     ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key and middle-name rules, relink triggers (#262, #265)
     ├── TOMBSTONES.md        # Operator-confirmed non-names kept unlinked: effects, clearing, restore-tombstones (#261)
