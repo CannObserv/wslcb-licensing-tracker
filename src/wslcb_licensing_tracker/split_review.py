@@ -20,20 +20,20 @@ entity or verdict.  Caller commits.
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .admin_audit import log_action
 from .classification_review import MAX_TEXT_CHARS
-from .entities import reprocess_entities
+from .entities import entity_source, reprocess_entities
 from .entity_aliases import VERDICT_SPLIT, in_manual_alias
 from .entity_classification import tombstone_ids
-from .entity_splits import VERDICT_KEEP, has_couple_token
+from .entity_splits import VERDICT_KEEP, has_couple_token, member_ids, suggest_split
 from .models import entities, entity_split_members, entity_splits, record_entities
-from .text_utils import clean_entity_name
+from .text_utils import clean_entity_name, strip_duplicate_marker, strip_wac_annotation
 
 logger = logging.getLogger(__name__)
 
@@ -273,3 +273,140 @@ async def clear_verdict(conn: AsyncConnection, combined_id: int, *, admin_email:
     records = await _apply(conn, combined_id) if before["members"] else 0
     logger.info("Cleared the verdict on entity %d", combined_id)
     return {"records": records}
+
+
+# ── the split panel and the Couples queue (spec §3) ──────────────────
+
+_ROLES = ("applicant", "previous_applicant")
+# A standalone AND or & token (has_couple_token), in SQL.
+_COUPLE_SQL = r"(^|\s)(AND|&)(\s|$)"
+
+
+def _raw_parts(applicants: str, name: str) -> list[str]:
+    """The printed parts of *applicants* that clean to *name* (before the WAC strip)."""
+    return [
+        strip_duplicate_marker(p.strip())
+        for p in applicants.split(";")[1:]
+        if clean_entity_name(strip_wac_annotation(strip_duplicate_marker(p.strip()))) == name
+    ]
+
+
+async def _printed(conn: AsyncConnection, entity_id: int) -> list[dict]:
+    """The records printing *entity_id*: id, date, licence, role and the string it is read from."""
+    rows = await conn.execute(
+        text(
+            "SELECT lr.id, lr.record_date, lr.license_number, re.role,"
+            " lr.applicants, lr.raw_applicants, lr.previous_applicants, lr.raw_previous_applicants"
+            " FROM record_entities re JOIN license_records lr ON lr.id = re.record_id"
+            " WHERE re.entity_id = :e AND re.via_entity_id IS NULL"
+            " ORDER BY lr.record_date DESC, lr.id DESC"
+        ),
+        {"e": entity_id},
+    )
+    out = []
+    for rid, day, lic, role, app, raw_app, prev, raw_prev in rows.fetchall():
+        source = (
+            entity_source(app, raw_app) if role == "applicant" else entity_source(prev, raw_prev)
+        )
+        out.append(
+            {"id": rid, "record_date": day, "license_number": lic, "role": role, "source": source}
+        )
+    return out
+
+
+async def _licences_of(conn: AsyncConnection, ids: Collection[int]) -> dict[int, list[str]]:
+    """Sorted licence numbers each entity is printed on."""
+    if not ids:
+        return {}
+    rows = await conn.execute(
+        text(
+            "SELECT DISTINCT re.entity_id, lr.license_number FROM record_entities re"
+            " JOIN license_records lr ON lr.id = re.record_id"
+            " WHERE re.entity_id = ANY(:ids) AND re.via_entity_id IS NULL ORDER BY 1, 2"
+        ),
+        {"ids": sorted(ids)},
+    )
+    out: dict[int, list[str]] = {}
+    for eid, lic in rows.fetchall():
+        out.setdefault(eid, []).append(lic)
+    return out
+
+
+async def split_detail(conn: AsyncConnection, entity_id: int) -> dict | None:
+    """What the split panel shows for *entity_id*; None for a non-person with no verdict.
+
+    Keys: ``entity_id``, ``name``, ``entity_type``, ``couple_shaped``,
+    ``verdict`` (:func:`current_verdict`), ``records``, ``truncated``,
+    ``prefill`` (names, or None), ``fields`` (what the form shows: the saved
+    members, else the prefill), ``picks`` (``{"name", "role", "same_role"}``:
+    persons printed on those records in the same role, then persons on the
+    same licences in the other role) and ``known`` (``{name: {"id",
+    "licences"}}`` for each field name that is already an entity).
+    """
+    name, etype = await _entity(conn, entity_id)
+    verdict = await current_verdict(conn, entity_id)
+    if etype != "person" and verdict is None:
+        return None
+    records = await _printed(conn, entity_id)
+    roles = {r["role"] for r in records} or {"applicant"}
+    raw = max((p for r in records for p in _raw_parts(r["source"], name)), key=len, default=name)
+    rows = await conn.execute(
+        text(
+            "SELECT DISTINCT e.name, e.entity_type, re.role, re.record_id = ANY(:rids) AS same"
+            " FROM record_entities re JOIN license_records lr ON lr.id = re.record_id"
+            " JOIN entities e ON e.id = re.entity_id"
+            " WHERE re.via_entity_id IS NULL AND re.entity_id <> :e"
+            " AND (re.record_id = ANY(:rids) OR lr.license_number = ANY(:lics))"
+        ),
+        {
+            "e": entity_id,
+            "rids": [r["id"] for r in records],
+            "lics": sorted({r["license_number"] for r in records}),
+        },
+    )
+    printed = [tuple(r) for r in rows.fetchall()]
+    record_names = [name, *sorted({n for n, _, role, same in printed if same and role in roles})]
+    same_role = sorted(
+        {n for n, t, role, same in printed if same and role in roles and t == "person"}
+    )
+    other_role = sorted(
+        {(n, role) for n, t, role, _ in printed if role not in roles and t == "person"}
+    )
+    prefill = suggest_split(name, raw_part=raw, record_names=record_names, persons=same_role)
+    fields = (verdict or {}).get("members") or prefill.members or []
+    ids = await member_ids(conn, fields)
+    licences = await _licences_of(conn, set(ids.values()))
+    return {
+        "entity_id": entity_id,
+        "name": name,
+        "entity_type": etype,
+        "couple_shaped": has_couple_token(name),
+        "verdict": verdict,
+        "records": records,
+        "truncated": prefill.truncated,
+        "prefill": prefill.members,
+        "fields": fields,
+        "picks": [{"name": n, "role": None, "same_role": True} for n in same_role]
+        + [{"name": n, "role": r, "same_role": False} for n, r in other_role],
+        "known": {n: {"id": i, "licences": licences.get(i, [])} for n, i in ids.items()},
+    }
+
+
+async def _queue_ids(conn: AsyncConnection) -> list[int]:
+    """Couple-shaped persons with no verdict, not tombstones, by name."""
+    rows = await conn.execute(
+        text(
+            "SELECT e.id FROM entities e WHERE e.entity_type = 'person' AND e.name ~ :pat"
+            " AND NOT EXISTS (SELECT 1 FROM entity_splits s WHERE s.combined_id = e.id)"
+            " ORDER BY e.name, e.id"
+        ),
+        {"pat": _COUPLE_SQL},
+    )
+    ids = list(rows.scalars())
+    tombs = await tombstone_ids(conn, ids)
+    return [i for i in ids if i not in tombs]
+
+
+async def couples_queue(conn: AsyncConnection) -> list[dict]:
+    """The Couples tab: :func:`split_detail` of each undecided couple-shaped person."""
+    return [d for i in await _queue_ids(conn) if (d := await split_detail(conn, i))]

@@ -136,7 +136,9 @@ def _make_client(stats: dict | None = None, entity_result: dict | None = None):
     return client, patches
 
 
-def _party_patches(party: int | None = None, members: list | None = None) -> list:
+def _party_patches(
+    party: int | None = None, members: list | None = None, split: dict | None = None
+) -> list:
     """Patches for the alias read paths (#263): not a variant, no members, by default."""
     return [
         patch(
@@ -149,6 +151,9 @@ def _party_patches(party: int | None = None, members: list | None = None) -> lis
         ),
         patch(
             "wslcb_licensing_tracker.app.split_banner", new_callable=AsyncMock, return_value=None
+        ),
+        patch(
+            "wslcb_licensing_tracker.app.split_detail", new_callable=AsyncMock, return_value=split
         ),
     ]
 
@@ -1148,7 +1153,7 @@ class TestEntityAdminPanel:
 
     _LINKS = {"outgoing": [], "incoming": [], "dismissals": [], "licences": [], "in_manual": False}
 
-    def _get(
+    def _get(  # noqa: PLR0913
         self,
         *,
         admin: bool,
@@ -1156,6 +1161,7 @@ class TestEntityAdminPanel:
         jev_enabled: bool = False,
         url: str = "/entity/7",
         party: int | None = None,
+        split: dict | None = None,
     ):
         monkeypatch.delenv(ADMIN_DEV_EMAIL_ENV, raising=False)
         env = "CO_WSLCB_LICENSING_TRACKER_ENABLE_JEV_CLASSIFICATION"
@@ -1176,7 +1182,7 @@ class TestEntityAdminPanel:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            *_party_patches(party),
+            *_party_patches(party, split=split),
             patch("wslcb_licensing_tracker.app.classification_detail", new=detail),
             patch(
                 "wslcb_licensing_tracker.app.links_detail",
@@ -1227,6 +1233,33 @@ class TestEntityAdminPanel:
         assert "Set classification" not in resp.text
         assert "jev-1.14.0" not in resp.text
         detail.assert_not_awaited()
+
+    def test_split_panel_for_admins_on_a_couple(self, monkeypatch):
+        """#269: the entity page carries the split panel, open for a couple-shaped name."""
+        split = {
+            "entity_id": 7,
+            "name": "HOPE & JOY HOUSE",
+            "entity_type": "person",
+            "couple_shaped": True,
+            "verdict": {
+                "verdict": "split",
+                "members": ["HOPE HOUSE", "JOY HOUSE"],
+                "created_by": "admin@example.com",
+                "created_at": None,
+                "note": None,
+            },
+            "records": [],
+            "truncated": True,
+            "prefill": None,
+            "fields": ["HOPE HOUSE", "JOY HOUSE"],
+            "picks": [],
+            "known": {},
+        }
+        body = self._get(admin=True, monkeypatch=monkeypatch, split=split)[0].text
+        assert 'data-testid="split-panel"' in body
+        assert "Possibly cut off" in body
+        assert 'action="/admin/entities/7/split-clear"' in body
+        assert 'value="/entity/7?stay=1"' in body
 
     def test_not_a_name_pending_purge_hides_button(self, monkeypatch):
         """A current manual not_a_name row shows the pending purge instead of the button."""

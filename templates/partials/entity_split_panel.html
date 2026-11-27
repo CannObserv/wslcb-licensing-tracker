@@ -1,0 +1,81 @@
+{# Couple split panel, admins only (#269, spec #246 §3).  ``split_panel(d, next)``
+   takes split_review.split_detail; used on the entity page and in the Couples tab.
+   Every action posts to /admin/entities/{id}/split…, which reprocesses the
+   name's records and returns to *next*. #}
+{% macro split_panel(d, next, open=true) %}
+{% set btn = "text-xs font-medium px-2.5 py-1 rounded border transition-colors" %}
+{% set btn_primary = btn ~ " bg-co-purple text-white border-co-purple hover:bg-co-purple-700" %}
+{% set btn_plain = btn ~ " bg-white text-gray-700 border-gray-300 hover:border-co-purple hover:text-co-purple" %}
+{% set btn_danger = btn ~ " bg-white text-red-700 border-red-300 hover:bg-red-50" %}
+{% set input = "border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:border-co-purple focus:ring-1 focus:ring-co-purple" %}
+{% set list_id = "split-picks-" ~ d.entity_id %}
+<div class="space-y-3 text-sm" data-testid="split-panel">
+    <div class="flex flex-wrap items-center gap-2">
+        {% if d.verdict %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {% if d.verdict.verdict == 'split' %}bg-green-50 text-green-800{% else %}bg-gray-100 text-gray-700{% endif %}">
+            {{ 'Split' if d.verdict.verdict == 'split' else 'Kept whole' }}</span>
+        <span class="text-xs text-gray-500">by {{ d.verdict.created_by }}{% if d.verdict.created_at %}, {{ d.verdict.created_at.strftime('%Y-%m-%d') }}{% endif %}{% if d.verdict.note %} — {{ d.verdict.note }}{% endif %}</span>
+        {% else %}
+        <span class="text-xs text-gray-500">No verdict yet.</span>
+        {% endif %}
+        {% if d.truncated %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800" title="The printed part is at WSLCB's 30-character cut: its last word may be cut off">Possibly cut off</span>
+        {% endif %}
+        {% if d.entity_type != 'person' %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-50 text-red-700">Resolves to {{ d.entity_type }}</span>
+        {% endif %}
+    </div>
+
+    <details class="text-xs" {% if open %}open{% endif %}>
+        <summary class="cursor-pointer text-gray-600">Printed on {{ d.records | length }} record{{ 's' if d.records | length != 1 }}</summary>
+        <ul class="mt-1 space-y-0.5 list-none">
+            {% for r in d.records %}
+            <li><a href="/record/{{ r.id }}" class="text-co-purple hover:text-co-purple-700 hover:underline">{{ r.record_date }}</a>
+                · licence <span class="font-mono">{{ r.license_number }}</span> · {{ r.role | replace('_', ' ') }}
+                <div class="text-gray-500 font-mono break-words">{{ r.source }}</div></li>
+            {% endfor %}
+        </ul>
+    </details>
+
+    <datalist id="{{ list_id }}">
+        {% for p in d.picks %}<option value="{{ p.name }}">{% if p.same_role %}on these records{% else %}{{ p.role | replace('_', ' ') }} on the same licence{% endif %}</option>{% endfor %}
+    </datalist>
+    <form method="POST" action="/admin/entities/{{ d.entity_id }}/split" class="space-y-1.5">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="text-xs font-medium text-gray-700">Split into…{% if not d.verdict and d.prefill %} <span class="font-normal text-gray-500">(suggested; edit before saving)</span>{% endif %}</div>
+        {% for i in range(4) %}
+        {% set value = d.fields[i] if i < d.fields | length else '' %}
+        <div class="flex flex-wrap items-center gap-2">
+            <label class="sr-only" for="split-{{ d.entity_id }}-{{ i }}">Person {{ i + 1 }}</label>
+            <input type="text" name="member" id="split-{{ d.entity_id }}-{{ i }}" value="{{ value }}" list="{{ list_id }}" maxlength="500" autocomplete="off"
+                   placeholder="{{ 'Person ' ~ (i + 1) ~ (' (optional)' if i > 1 else '') }}" class="{{ input }} w-80">
+            {% if value and d.known.get(value) %}
+            {% set k = d.known[value] %}
+            <span class="text-xs text-gray-500">exists: <a href="/entity/{{ k.id }}?stay=1" class="text-co-purple hover:underline">#{{ k.id }}</a>{% if k.licences %}, licence {{ k.licences | join(', ') }}{% else %}, no printed records{% endif %}</span>
+            {% elif value %}
+            <span class="text-xs text-gray-400">new entity</span>
+            {% endif %}
+        </div>
+        {% endfor %}
+        <div class="flex flex-wrap items-center gap-2">
+            <label class="sr-only" for="split-{{ d.entity_id }}-note">Note</label>
+            <input type="text" name="note" id="split-{{ d.entity_id }}-note" maxlength="500" placeholder="Note (optional)" class="{{ input }} w-80">
+            <button type="submit" class="{{ btn_primary }}">Save split</button>
+        </div>
+    </form>
+    <div class="flex flex-wrap items-center gap-2">
+        <form method="POST" action="/admin/entities/{{ d.entity_id }}/split-keep" class="flex flex-wrap items-center gap-2">
+            <input type="hidden" name="next" value="{{ next }}">
+            <label class="sr-only" for="keep-{{ d.entity_id }}-note">Note</label>
+            <input type="text" name="note" id="keep-{{ d.entity_id }}-note" maxlength="500" placeholder="Why keep it whole? (optional)" class="{{ input }} w-64">
+            <button type="submit" class="{{ btn_plain }}">Keep whole</button>
+        </form>
+        {% if d.verdict %}
+        <form method="POST" action="/admin/entities/{{ d.entity_id }}/split-clear" class="inline">
+            <input type="hidden" name="next" value="{{ next }}">
+            <button type="submit" class="{{ btn_danger }}" onclick='return confirm({{ "Clear this verdict? Member links on its records are removed." | tojson }})'>Clear verdict</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endmacro %}

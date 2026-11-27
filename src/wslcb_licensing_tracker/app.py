@@ -64,6 +64,7 @@ from .queries_search import (
     search_records,
 )
 from .queries_stats import get_stats
+from .split_review import split_detail
 
 logger = logging.getLogger(__name__)
 
@@ -514,7 +515,8 @@ async def entity_detail(
     A global alias variant redirects (302) to its party with ``?from=<variant>``;
     the party's page lists the union of its members' records, "Also listed as"
     and, for ``?from``, "Listed as".  Signed-in admins also get the
-    classification panel (#208) and the Links panel (#264), and with
+    classification panel (#208), the Links panel (#264) and the couple split
+    panel (#269), and with
     ``?stay=1`` stay on a variant's own page to manage its links.
     """
     current_user = await get_current_user(request)
@@ -554,6 +556,7 @@ async def entity_detail(
                     }
                 ),
                 "links": await links_detail(conn, entity_id),
+                "split": await split_detail(conn, entity_id),
                 "classification": await classification_detail(conn, entity_id),
                 "jev_enabled": is_classification_enabled(),
                 "entity_types": ENTITY_TYPES,
