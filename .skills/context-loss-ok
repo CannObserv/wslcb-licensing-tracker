@@ -1,20 +1,25 @@
 # context-loss-ok — judged warrants for lines a curation rewrote rather than moved
 # (curating-context Phase 6). Format: [PATH ::] WARRANT :: CONTENT. See prove-no-loss.sh --help.
 
-# #271 pruned #242's 39 entries and its 6 claims-ok entries (that run is on main): see git history.
+# #272 pruned #271's 5 entries (that run is on main, aa0c553): see git history.
 
-# 2026-11-27, #271 run: the SCHEMA.md index line extended in place to link the entity-table
-# split (docs/SCHEMA-ENTITIES.md) it did not link at the branch point.
-# @run base=2ec368260405 file=AGENTS.md
-index :: - [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference
+# 2026-11-27, #272 run: DEPLOYMENT.md § OS security updates moved to docs/PATCHING.md and
+# § Journal (with § PID 1's log target) to docs/LOGGING.md. The moved OS block's in-doc
+# link to #pid-1s-log-target now names LOGGING.md, where that section went.
+# @run base=aa0c553e1c43 file=docs/DEPLOYMENT.md
+retarget :: re-exec ([PID 1's log target](#pid-1s-log-target)); `systemd`'s re-exec
 # @run end
 
-# 2026-11-27, #271 seam pass: the two entity-table headings that moved to
-# docs/SCHEMA-ENTITIES.md lost their issue numbers (check-seams provenance-heading); each
-# issue ref moved to the heading's first bullet, and SCHEMA.md's pointers follow the slugs.
-# @run base=2ec368260405 file=docs/SCHEMA.md
-rename :: ### `entity_aliases`, `entity_alias_dismissals` (#262)
-rename :: - Alias links and dismissals: `rule` rows derived (`relink-entities`), the rest operator data. See [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md)
-rename :: ### `entity_splits`, `entity_split_members` (#269)
-rename :: - Couple verdicts and their people: operator data. See [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md)
+# Same run: back-references to the moved sections follow them.
+# @run base=aa0c553e1c43 file=docs/DISK_GC.md
+retarget :: the journal's `Storage=persistent` ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Journal).
+# @run end
+# @run base=aa0c553e1c43 file=docs/MEMORY_PRESSURE.md
+retarget :: ([DEPLOYMENT.md § Journal](DEPLOYMENT.md#journal)). If `/run/log/journal`
+retarget :: bundled npm, so [`DEPLOYMENT.md`](DEPLOYMENT.md#nodejs) checks the pinned tree
+# @run end
+# Same run, CR follow-through: SOCRATICODE.md's current-state artifact list names the two
+# artifacts the moved sections now live in (`patching`, `logging`), split out of `deployment`.
+# @run base=aa0c553e1c43 file=docs/SOCRATICODE.md
+retarget :: `deployment`, `memory-pressure`, `source-page`, `style` or `infra` — never
 # @run end

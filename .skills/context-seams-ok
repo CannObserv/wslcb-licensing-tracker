@@ -46,33 +46,39 @@ docs/SKILLS.md :: `curating-context` owns `AGENTS.md`'s 6,000-token budget (#165
 # On the next split of either doc, those back-references must be re-judged against what
 # that split moves: a content-matched ack from #208 would silence one the split made false.
 
-# #271 (2026-11-27): three AGENTS.md body lines left for docs (uvicorn detail -> LOGGING.md,
-# snapshot .gz contract -> SCHEMA.md, SocratiCode pin -> SOCRATICODE.md), so source was swept.
-# Each hit below still points at content AGENTS.md keeps: § Logging's rules, § Frozen's
-# table list, the Data Integrity rule (with its SCHEMA.md link), the docs override, and the
-# Code Exploration Policy block.
-# @run base=2ec368260405
+# #272 pruned #271's two groups (10 + 5 acks; that run is on main, aa0c553): see git history.
+
+# #272 (2026-11-27): docs/LOGGING.md's intro still names AGENTS.md § Logging for the module
+# rules, which stayed there; the split added the journal below it, not above.
+# @run base=aa0c553e1c43
 docs/LOGGING.md :: The rules every module follows are in
-.socraticodecontextartifacts.json :: The on-demand half of the Code Exploration Policy block in AGENTS.md
-src/wslcb_licensing_tracker/backup.py :: The frozen tables (AGENTS.md)
-src/wslcb_licensing_tracker/parser.py :: a bug; see AGENTS.md.
-tests/test_docs_layout.py :: project, and AGENTS.md supplies that preference
-tests/test_docs_layout.py :: of surfacing in a PR, and the AGENTS.md line can't be trimmed away silently.
-tests/test_docs_layout.py :: plans to docs/plans/ (see AGENTS.md, #176)
-tests/test_docs_layout.py :: AGENTS.md is the point-of-use statement the vendored skills defer to.
-tests/test_docs_layout.py :: (REPO_ROOT / "AGENTS.md").read_text
-tests/test_docs_layout.py :: AGENTS.md no longer states the docs/superpowers/
 # @run end
 
-# #271 split of docs/SCHEMA.md (entity tables -> docs/SCHEMA-ENTITIES.md). Each hit names
-# SCHEMA.md for what it still holds: the split doc's provenance line and its license_records
-# pointer (CR 2), the doc-gate's
-# note on upstream defaults, and the context-artifact entry (SCHEMA-ENTITIES.md now listed
-# beside it in both the manifest and SOCRATICODE.md).
-# @run base=2ec368260405 file=docs/SCHEMA.md
-docs/SCHEMA-ENTITIES.md :: Columns, constraints and rules of the applicant-entity tables, split out of
-docs/SCHEMA-ENTITIES.md :: `license_records` columns, including the `raw_*` shadows extraction reads, are in
-docs/SKILLS.md :: Upstream's two default lines describe a generic FastAPI layout and never name `docs/SCHEMA.md`
-docs/SOCRATICODE.md :: [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
-.socraticodecontextartifacts.json :: "path": "docs/SCHEMA.md",
+# #272 split of docs/DEPLOYMENT.md (§ OS security updates + § Node.js -> docs/PATCHING.md,
+# § Journal + § PID 1's log target -> docs/LOGGING.md). Back-references below name what
+# DEPLOYMENT.md still holds (Services, the copy block, Sudoers rule, Entity classification,
+# the artifact entry) or are the new docs' own lines. Moved-title hits name the new homes.
+# journald's conf comment keeps "DEPLOYMENT.md "Journal"": that stub forwards to LOGGING.md,
+# and the file is byte-pinned to its installed copy (tests/test_journald_config.py).
+# @run base=aa0c553e1c43 file=docs/DEPLOYMENT.md
+docs/ADDRESS_VALIDATION.md :: [`DEPLOYMENT.md`](DEPLOYMENT.md) § Services.
+docs/LOGGING.md :: The rules every module follows are in
+docs/MEMORY_PRESSURE.md :: | Service reservation — `MemoryLow=256M`, `OOMScoreAdjust=-700` | `infra/wslcb-web.service`
+docs/MONITORING.md :: Jev classification ([`DEPLOYMENT.md`](DEPLOYMENT.md) § Entity classification)
+docs/PATCHING.md :: [`DEPLOYMENT.md`](DEPLOYMENT.md).
+docs/RELAY.md :: mirrors), plus the [`DEPLOYMENT.md`](DEPLOYMENT.md) copy block, which installs the
+docs/SKILLS.md :: - `.skills/doc-sections` (#173), the advice printed on a hit
+docs/SOCRATICODE.md :: [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
+docs/PATCHING.md :: (`origin deb.nodesource.com follow`, [Node.js](#nodejs) below, #239).
+docs/SKILLS.md :: Runs a live agent-to-agent exchange with another repo's agent over a [Mayfly Chat]
+docs/DEPLOYMENT.md :: Persistent journald (#186) and PID 1's log target (#254): installs, checks,
+docs/LOGGING.md :: It also holds the persistent journal (#186) and PID 1's log target (#254).
+docs/PATCHING.md :: re-exec ([PID 1's log target](LOGGING.md#pid-1s-log-target)); `systemd`'s re-exec
+.socraticodecontextartifacts.json :: "path": "docs/DEPLOYMENT.md",
+infra/journald.conf.d/wslcb.conf :: # docs/DEPLOYMENT.md "Journal".
+infra/preferences.d-nodesource :: Install: docs/PATCHING.md § Node.js.
+infra/sources.list.d-nodesource.sources :: Install: docs/PATCHING.md § Node.js.
+infra/wslcb-healthcheck.service :: (see docs/DEPLOYMENT.md "Sudoers rule").
+tests/test_log_target_config.py :: install time: ``docs/LOGGING.md`` § PID 1's log target.
+.socraticodecontextartifacts.json :: "description": "Where logs go: uvicorn's --log-config routing
 # @run end

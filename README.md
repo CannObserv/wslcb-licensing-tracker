@@ -328,10 +328,11 @@ wslcb-licensing-tracker/
     ├── DISK_GC.md           # Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
     ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key and middle-name rules, relink triggers (#262, #265)
     ├── TOMBSTONES.md        # Operator-confirmed non-names kept unlinked: effects, clearing, restore-tombstones (#261)
-    ├── LOGGING.md           # uvicorn log routing: --log-config, shared JSON formatter, ColorMessageFilter
+    ├── LOGGING.md           # uvicorn log routing: --log-config, shared JSON formatter, ColorMessageFilter; persistent journal, PID 1 log target
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
+    ├── PATCHING.md          # patching-hosts run: knob, needrestart list mode, NodeSource Node.js (#192, #239)
     ├── RELAY.md             # Relayed scrape during the WSLCB block: VM + Mac install, monitoring (#201)
     ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
     ├── RECOVERY-REHEARSALS.md # Dated backup drills and what each proved (#185)

@@ -16,7 +16,7 @@ this repo's. Re-copy it from provisioner rather than editing it here.
 The installed-copy check skips where the file isn't installed, as the
 ``TestInstalled`` classes of the ``infra`` unit tests do. What the live PID 1
 reads (``systemd-analyze get-log-target``) is runtime state, verified at
-install time: ``docs/DEPLOYMENT.md`` § PID 1's log target.
+install time: ``docs/LOGGING.md`` § PID 1's log target.
 """
 
 import hashlib

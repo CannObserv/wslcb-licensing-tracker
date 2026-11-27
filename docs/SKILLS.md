@@ -123,6 +123,8 @@ Patches the host's OS packages in a scheduled, owner-approved monthly run: a rea
 
 What only this repo knows lives in `.skills/patching-hosts`: the `scheduled` posture, the window, a `quiet` range per timer firing (UTC, covering both Pacific offsets; the test derives them from `infra/*.timer`, #223), the in-flight count of `wslcb-task@*` units, the restarter, the health check, every cluster database, the nightly backup that stands in for the recovery point's dump of `wslcb` (the line names the database it takes, or the skill refuses it: skills#480, #237; the recovery point dumps `wslcb_test` itself), the Tailscale and NodeSource origins (`follow`, each in its own held step, scoped by `infra/preferences.d-tailscale` and `infra/preferences.d-nodesource`, #239), a `not-restarter:` exception per timer's service (the probe can't follow `python -m …cli`; none restarts anything, and the test fails a new timer without one, #238), and an exception for SocratiCode's rebuildable Qdrant until #234. The skill reads it and never writes it, and a malformed line makes the host report-only, so `tests/test_patching_hosts_knob.py` runs the vendored `read-knob.sh` against it, and the vendored `backup_covers` the probe and recovery point refuse with. Its `inflight` line counts `activating` units: `wslcb-task@` is a oneshot, and the skill's own example (`--state=active`) reads 0 mid-scrape.
 
+Host runbook (needrestart list mode, NodeSource, after-run checks): [`PATCHING.md`](PATCHING.md).
+
 **Trigger:** "patch the host", "OS updates", "security updates", "apply updates", "unattended-upgrades", "needrestart", "is this host patched".
 
 ## reviewing-architecture

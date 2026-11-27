@@ -148,6 +148,8 @@ whatever `.socraticodecontextartifacts.json` lists — currently
 [`docs/SCHEMA-ENTITIES.md`](SCHEMA-ENTITIES.md) (`database-schema-entities`),
 [`docs/MIGRATIONS.md`](MIGRATIONS.md) (`database-migrations`),
 [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
+[`docs/PATCHING.md`](PATCHING.md) (`patching`),
+[`docs/LOGGING.md`](LOGGING.md) (`logging`),
 [`docs/ADDRESS_VALIDATION.md`](ADDRESS_VALIDATION.md) (`address-validation`),
 [`docs/MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md) (`memory-pressure`),
 [`docs/SOURCE_PAGE.md`](SOURCE_PAGE.md),
@@ -159,7 +161,7 @@ so they answer only through context search — and, being dated, may describe a
 design since superseded (the SQLite→PostgreSQL phase plans). For a question
 about current behaviour, scope with `artifactName` to a current-state artifact
 — `database-schema`, `database-schema-entities`, `database-migrations`,
-`deployment`, `memory-pressure`, `source-page`, `style` or `infra` — never
+`deployment`, `patching`, `logging`, `memory-pressure`, `source-page`, `style` or `infra` — never
 `plans`, `specs` or `research`.
 
 ### Entry points

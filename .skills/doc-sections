@@ -17,6 +17,8 @@ docs/SCHEMA-ENTITIES.md: entity-table columns and rules (models.py, alembic/vers
 docs/MIGRATIONS.md: Alembic revision history (alembic/versions/)
 docs/MEMORY_PRESSURE.md: memory configs + SocratiCode pins (infra/, .claude/settings.json)
 docs/DEPLOYMENT.md: systemd services and ops reference (infra/)
+docs/PATCHING.md: patching knob, needrestart, NodeSource (infra/)
+docs/LOGGING.md: uvicorn log config, journald + PID 1 log target (log_config.json, infra/journald.conf.d/, infra/system.conf.d/)
 docs/ADDRESS_VALIDATION.md: renewal TTL + pacing, address commands (address_validator.py, infra/wslcb-address-validation.timer)
 docs/MONITORING.md: co-status check-ins, the scrape drop-in + monitor fields (infra/wslcb-task@scrape.service.d/, checkin.py)
 docs/RELAY.md: relay import + Mac install (relay.py, scripts/relay/, infra/wslcb-task@import-relayed.service.d/)

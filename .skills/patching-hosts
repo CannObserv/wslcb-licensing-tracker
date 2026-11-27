@@ -55,7 +55,7 @@ hold tailscale tailscale
 # Its own held step: each update brings a new bundled npm, and a changed
 # ~/.npm/_npx key would re-install SocratiCode at the next session launch
 # (#175's memory peak). The run checks it by hand after the step, with
-# `npm exec --no` (docs/DEPLOYMENT.md § Node.js): the skill runs no per-step
+# `npm exec --no` (docs/PATCHING.md § Node.js): the skill runs no per-step
 # check, and a `health` line runs at every probe.
 origin deb.nodesource.com follow
 hold nodejs nodejs
