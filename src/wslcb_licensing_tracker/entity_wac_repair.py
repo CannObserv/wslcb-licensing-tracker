@@ -228,7 +228,10 @@ async def _unmatched_records(conn: AsyncConnection, pairs: list[tuple[int, str]]
                 select(entities.c.name, record_entities.c.position)
                 .join(record_entities, record_entities.c.entity_id == entities.c.id)
                 .where(
-                    (record_entities.c.record_id == record_id) & (record_entities.c.role == role)
+                    (record_entities.c.record_id == record_id)
+                    & (record_entities.c.role == role)
+                    # Member rows (#269) are not printed: a fresh extraction has none.
+                    & record_entities.c.via_entity_id.is_(None)
                 )
                 .order_by(record_entities.c.position)
             )

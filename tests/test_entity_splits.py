@@ -203,3 +203,135 @@ def test_fuller_form_ignores_couples_and_other_suffixes():
         persons=["TREVOR & JAYNE BLACKWELL", "TREVOR EUGENE BLACKWELL JR"],
     )
     assert prefill.members == ["TREVOR BLACKWELL", "JAYNE BLACKWELL"]
+
+
+# ── PG: extraction (spec §2) ─────────────────────────────────────────
+
+from sqlalchemy import delete, insert, select  # noqa: E402
+
+from wslcb_licensing_tracker.entities import (  # noqa: E402
+    get_or_create_entity,
+    parse_and_link_entities,
+    reprocess_entities,
+)
+from wslcb_licensing_tracker.entity_classification import record_manual  # noqa: E402
+from wslcb_licensing_tracker.models import (  # noqa: E402
+    entities,
+    entity_split_members,
+    entity_splits,
+    record_entities,
+)
+from wslcb_licensing_tracker.pipeline import insert_record  # noqa: E402
+
+COUPLE = "T269 TREVOR & JAYNE BLACKWELL"
+APPLICANTS = f"T269 FARMS LLC; {COUPLE}; T269 TREVOR EUGENE BLACKWELL"
+MEMBERS = ["T269 TREVOR EUGENE BLACKWELL", "T269 JAYNE MARIE BLACKWELL"]
+
+
+async def _record(conn, rec, licence, applicants=APPLICANTS):
+    rec = rec | {"license_number": licence, "applicants": applicants}
+    rid = (await insert_record(conn, rec))[0]
+    await parse_and_link_entities(conn, rid, applicants, delete_existing=True)
+    return rid
+
+
+async def _id(conn, name):
+    return (await conn.execute(select(entities.c.id).where(entities.c.name == name))).scalar_one()
+
+
+async def _verdict(conn, combined_id, members, verdict="split"):
+    await conn.execute(
+        insert(entity_splits).values(combined_id=combined_id, verdict=verdict, created_by="t@x")
+    )
+    if members:
+        await conn.execute(
+            insert(entity_split_members).values(
+                [
+                    {"combined_id": combined_id, "ordinal": i, "member_name": m}
+                    for i, m in enumerate(members)
+                ]
+            )
+        )
+
+
+async def _links(conn, rid):
+    rows = await conn.execute(
+        select(entities.c.name, record_entities.c.position, record_entities.c.via_entity_id)
+        .join(entities, entities.c.id == record_entities.c.entity_id)
+        .where(record_entities.c.record_id == rid)
+        .order_by(record_entities.c.position)
+    )
+    return [tuple(r) for r in rows]
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_split_adds_member_rows_after_the_printed_ones(pg_conn, standard_new_application):
+    rid = await _record(pg_conn, standard_new_application, "t269_a")
+    couple = await _id(pg_conn, COUPLE)
+    await _verdict(pg_conn, couple, MEMBERS)
+    await reprocess_entities(pg_conn, record_ids=[rid])
+    # TREVOR is printed: his printed row wins and he gets no member row.
+    assert await _links(pg_conn, rid) == [
+        (COUPLE, 0, None),
+        ("T269 TREVOR EUGENE BLACKWELL", 1, None),
+        ("T269 JAYNE MARIE BLACKWELL", 2, couple),
+    ]
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_ingest_path_reads_the_verdict_without_a_map(pg_conn, standard_new_application):
+    first = await _record(pg_conn, standard_new_application, "t269_b")
+    await _verdict(pg_conn, await _id(pg_conn, COUPLE), MEMBERS)
+    # A later record printing the couple, linked the way ingest links it.
+    later = await _record(pg_conn, standard_new_application, "t269_b2", f"T269 X LLC; {COUPLE}")
+    assert [n for n, _, via in await _links(pg_conn, later) if via] == MEMBERS
+    assert first != later
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_keep_verdict_changes_nothing(pg_conn, standard_new_application):
+    rid = await _record(pg_conn, standard_new_application, "t269_c")
+    before = await _links(pg_conn, rid)
+    await _verdict(pg_conn, await _id(pg_conn, COUPLE), [], verdict="keep")
+    await reprocess_entities(pg_conn, record_ids=[rid])
+    assert await _links(pg_conn, rid) == before
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_full_reprocess_rebuilds_member_rows_and_clear_drops_them(
+    pg_conn, standard_new_application
+):
+    """The spec's PG test: verdict, full reprocess, clear, reprocess."""
+    rid = await _record(pg_conn, standard_new_application, "t269_d")
+    couple = await _id(pg_conn, COUPLE)
+    printed = await _links(pg_conn, rid)
+    await _verdict(pg_conn, couple, MEMBERS)
+    await reprocess_entities(pg_conn)
+    after = await _links(pg_conn, rid)
+    assert [r for r in after if r[2] is None] == printed
+    assert [r[0] for r in after if r[2] == couple] == ["T269 JAYNE MARIE BLACKWELL"]
+    await pg_conn.execute(delete(entity_splits).where(entity_splits.c.combined_id == couple))
+    await reprocess_entities(pg_conn)
+    assert await _links(pg_conn, rid) == printed
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_tombstoned_member_is_skipped(pg_conn, standard_new_application):
+    rid = await _record(pg_conn, standard_new_application, "t269_e")
+    jayne = await get_or_create_entity(pg_conn, "T269 JAYNE MARIE BLACKWELL")
+    await record_manual(
+        pg_conn, jayne, entity_type="not_a_name", entity_subtype=None, created_by="t@x"
+    )
+    await _verdict(pg_conn, await _id(pg_conn, COUPLE), MEMBERS)
+    await reprocess_entities(pg_conn, record_ids=[rid])
+    assert all(via is None for _, _, via in await _links(pg_conn, rid))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_link_check_ignores_member_rows(pg_conn, standard_new_application):
+    from wslcb_licensing_tracker.entity_wac_repair import _unmatched_records
+
+    rid = await _record(pg_conn, standard_new_application, "t269_f")
+    await _verdict(pg_conn, await _id(pg_conn, COUPLE), MEMBERS)
+    await reprocess_entities(pg_conn, record_ids=[rid])
+    assert await _unmatched_records(pg_conn, [(rid, "applicant")]) == []

@@ -279,6 +279,19 @@ class TestDbGroup:
         assert result.exit_code == 0
         assert "10" in result.output
 
+    @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
+    @patch("wslcb_licensing_tracker.cli.run_reprocess_entities", new_callable=AsyncMock)
+    @patch("wslcb_licensing_tracker.cli.create_engine_from_env")
+    def test_reprocess_entities_record_id_repeats(self, mock_engine, mock_rp, mock_gdb):
+        """--record-id may be given more than once (#269)."""
+        mock_engine.return_value = mock_async_engine()
+        mock_rp.return_value = {"records_processed": 2, "entities_linked": 5}
+        result = CliRunner().invoke(
+            main, ["db", "reprocess-entities", "--record-id", "7", "--record-id", "9"]
+        )
+        assert result.exit_code == 0, result.output
+        assert mock_rp.call_args.kwargs["record_ids"] == [7, 9]
+
     @pytest.mark.parametrize("dry_run", [True, False])
     @patch("wslcb_licensing_tracker.cli.get_db", side_effect=mock_get_db)
     @patch("wslcb_licensing_tracker.cli.run_relink", new_callable=AsyncMock)

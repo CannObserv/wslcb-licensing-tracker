@@ -614,16 +614,25 @@ def reprocess_endorsements(record_id: int | None, code: str | None, dry_run: boo
 
 
 @db.command("reprocess-entities")
-@click.option("--record-id", type=int, default=None, help="Only reprocess this record ID.")
+@click.option(
+    "--record-id",
+    "record_ids",
+    type=int,
+    multiple=True,
+    help="Only reprocess this record ID (repeatable).",
+)
 @click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
-def reprocess_entities(record_id: int | None, dry_run: bool) -> None:
-    """Regenerate record_entities from current applicants data."""
+def reprocess_entities(record_ids: tuple[int, ...], dry_run: bool) -> None:
+    """Regenerate record_entities from current applicants data.
+
+    Couple verdicts (#269) are applied as member links.
+    """
 
     async def _run(engine: AsyncEngine) -> dict:
         async with get_db(engine) as conn:
             result = await run_reprocess_entities(
                 conn,
-                record_id=record_id,
+                record_ids=list(record_ids) or None,
                 dry_run=dry_run,
             )
             if not dry_run:

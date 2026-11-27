@@ -14,10 +14,14 @@ and, below it, the verdict reads and the audited writes.
 
 import logging
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncConnection
+
 from .entity_aliases import COUPLE_TOKENS, link_key, middles_compatible, parse_person_key
+from .models import entity_split_members, entity_splits
 
 logger = logging.getLogger(__name__)
 
@@ -141,3 +145,42 @@ def suggest_split(
     if truncated:
         parts = _complete_last_token(parts, record_names)
     return Prefill([_fuller_form(p, persons) for p in parts], truncated)
+
+
+# ── database: verdict reads ──────────────────────────────────────────
+
+
+async def split_members(
+    conn: AsyncConnection, combined_ids: Collection[int] | None = None
+) -> dict[int, tuple[str, ...]]:
+    """``{combined_id: member names in order}`` per ``split`` verdict (of *combined_ids*)."""
+    s, m = entity_splits, entity_split_members
+    stmt = (
+        select(m.c.combined_id, m.c.member_name)
+        .join(s, s.c.combined_id == m.c.combined_id)
+        .where(s.c.verdict == VERDICT_SPLIT)
+        .order_by(m.c.combined_id, m.c.ordinal)
+    )
+    if combined_ids is not None:
+        if not combined_ids:
+            return {}
+        stmt = stmt.where(m.c.combined_id.in_(list(combined_ids)))
+    out: dict[int, list[str]] = {}
+    for cid, name in (await conn.execute(stmt)).fetchall():
+        out.setdefault(cid, []).append(name)
+    return {cid: tuple(names) for cid, names in out.items()}
+
+
+async def verdict_ids(
+    conn: AsyncConnection, entity_ids: Collection[int] | None = None, *, verdict: str | None = None
+) -> set[int]:
+    """Entities with a verdict (of kind *verdict*, when given), among *entity_ids* when given."""
+    s = entity_splits
+    stmt = select(s.c.combined_id)
+    if verdict is not None:
+        stmt = stmt.where(s.c.verdict == verdict)
+    if entity_ids is not None:
+        if not entity_ids:
+            return set()
+        stmt = stmt.where(s.c.combined_id.in_(list(entity_ids)))
+    return set((await conn.execute(stmt)).scalars())
