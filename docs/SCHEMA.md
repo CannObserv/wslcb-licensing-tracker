@@ -113,6 +113,9 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 ### `entity_aliases`, `entity_alias_dismissals` (#262)
 - Alias links and dismissals: `rule` rows derived (`relink-entities`), the rest operator data. See [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md)
 
+### `entity_splits`, `entity_split_members` (#269)
+- Operator verdicts on couple names: `entity_splits` (PK `combined_id` FK `entities` cascade; `verdict` `split`/`keep`, CHECK `ck_entity_splits_verdict`; `created_by`, `created_at`, `note`) and the people a `split` names (`entity_split_members`: `combined_id`, `ordinal`, cleaned `member_name`; UNIQUE per verdict). Operator data. See [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md)
+
 ### `entity_classifications` (per-source classification answers)
 - Append-only (#206): one row per answer from one source. `source` — `regex`, `jev` or `manual` (CHECK `ck_ec_source`)
 - `entity_id` — FK to `entities(id)`, `ON DELETE CASCADE`
@@ -139,6 +142,7 @@ For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS
 - `position` — 0-indexed ordering from the source document (after the business name)
 - Composite PK `(record_id, entity_id, role)`
 - `party_id` — derived alias party (#263, [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md))
+- `via_entity_id` — set on a member row: the record prints that split couple, and this row links one of its people (FK cascade, CHECK `<> entity_id`, partial index `idx_re_via`; #269, [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md)). NULL on printed rows; read paths and link checks use printed rows unless they want members
 - Populated at ingest by `parse_and_link_entities()`; rebuilt by `reprocess-entities`
 - `ON DELETE CASCADE` on both FKs
 

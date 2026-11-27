@@ -27,6 +27,7 @@ Schema is managed by **Alembic** against PostgreSQL. Revisions live in
 | `0010_entity_subtype_matches_type` | CHECKs tying `entity_subtype` to `entity_type` on `entities` and `entity_classifications`: set iff `organization` (#212) |
 | `0011_entity_aliases` | `entity_aliases`, `entity_alias_dismissals`, `entities.link_key` (NULL until `wslcb db relink-entities` fills it) (#262) |
 | `0012_record_entities_party` | `record_entities.party_id` (derived alias party; trigger defaults it to `entity_id`), index `(party_id, record_id)` (#263) |
+| `0013_entity_splits` | `entity_splits`, `entity_split_members`, `record_entities.via_entity_id` (member rows of a split couple) (#269) |
 
 Each revision's `down_revision` points at the previous number, so the chain is
 strictly linear — no branches or merge points.

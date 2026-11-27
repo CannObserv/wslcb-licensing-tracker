@@ -89,9 +89,10 @@ The writers keep the graph acyclic:
 A *global* manual variant is never elected; a scoped one can be, because it
 is still its group's party everywhere else (the spec's Pendergraft case).
 
-**No rule row** for a tombstone (current manual answer `not_a_name`), or for
-a pair with a dismissal in any scope: the rule row is global, so it would
-link the pair on the dismissed licence too.
+**No rule row** for a tombstone (current manual answer `not_a_name`), for a
+couple split into its members (#269, [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md)),
+or for a pair with a dismissal in any scope: the rule row is global, so it
+would link the pair on the dismissed licence too.
 
 ## The middle-name rule (licence-scoped, #265)
 
@@ -103,7 +104,8 @@ the long form through its party's one row.
 
 - **Key:** the party's `link_key` split into first, last, middles and a
   trailing `JR SR II III IV` (split off first). Left out: under two tokens, a
-  standalone `AND`/`&` token (couple strings, #246), a tombstone.
+  standalone `AND`/`&` token (couple strings, #246), a tombstone, a couple
+  split into its members (#269; its members' links take part instead).
 - **Group:** `(licence, first, last, suffix)`; a missing suffix matches only a
   missing suffix.
 - **Compatible:** no middles fits any middles; otherwise the same number of
@@ -144,7 +146,7 @@ transaction:
 | a resolved type changes | `resolve_entities` (classify, reclassify, Jev); manual rows now across types get a flag |
 | a manual classification is set or cleared | `record_manual` / `clear_manual` (so a not-a-name mark drops the rule rows) |
 | entities are merged, purged or renamed | `merge_entity_into` (operator rows re-pointed first), `_purge_entities`, the WAC repair |
-| `reprocess-entities` | every group, or the record's entities with `--record-id` |
+| `reprocess-entities` | every group, or the records' entities with `--record-id` (repeatable); a couple verdict's save or clear reprocesses its records ([`COUPLE_SPLITS.md`](COUPLE_SPLITS.md)) |
 
 Each of these also refreshes `record_entities.party_id` for the affected links.
 
@@ -176,8 +178,9 @@ count and 519 ms when the party is resolved at read time.
 `add_manual_alias`, `remove_manual_alias`, `dismiss_pair` and
 `undismiss_pair` (the #264 UI calls them through `alias_review.py`, which
 writes the audit rows):
-- a self-link, a not-a-name entity at either end, or a second manual row for
-  the variant in the same scope is refused (`AliasError`);
+- a self-link, a not-a-name entity or a split couple (#269) at either end, or
+  a second manual row for the variant in the same scope is refused
+  (`AliasError`);
 - a manual link across resolved types is allowed and opens an
   `entity_review_flags` row `members disagree on type` on the canonical, as
   does a later type flip of either end.
