@@ -324,9 +324,11 @@ wslcb-licensing-tracker/
 └── docs/                   # Operations and architecture documentation
     ├── ADDRESS_VALIDATION.md # address-validator client: key + flags, renewal TTL + pacing (#195), address commands
     ├── DEPLOYMENT.md        # systemd setup, service lifecycle, ops reference
+    ├── COUPLE_SPLITS.md     # Couple verdicts: split/keep/trust, member links, seed (#269)
     ├── DISK_GC.md           # Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
     ├── ENTITY_ALIASES.md    # Entity alias layer: tables, resolution, format-key and middle-name rules, relink triggers (#262, #265)
     ├── TOMBSTONES.md        # Operator-confirmed non-names kept unlinked: effects, clearing, restore-tombstones (#261)
+    ├── LOGGING.md           # uvicorn log routing: --log-config, shared JSON formatter, ColorMessageFilter
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
@@ -334,6 +336,7 @@ wslcb-licensing-tracker/
     ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
     ├── RECOVERY-REHEARSALS.md # Dated backup drills and what each proved (#185)
     ├── SCHEMA.md            # Full table/column reference
+    ├── SCHEMA-ENTITIES.md   # Entity-table columns and rules, split from SCHEMA.md (#271)
     ├── SKILLS.md            # AI agent skill inventory and trigger phrases
     ├── SOCRATICODE.md       # Code-exploration tool table, per-tool notes, graph health, index scope
     ├── SOURCE_PAGE.md       # WSLCB source page structure and field label quirks
@@ -580,7 +583,7 @@ Names are normalized at ingestion time:
 
 The first element of the `applicants` string (the business name) is excluded from entity extraction — only the individual people and organizations are stored.
 
-Each entity is classified `person` or `organization`, with an `entity_subtype` for organizations (business, nonprofit, trust, estate, tribe, government, unknown) and a `classification_source` (regex, Jev or manual). Every source's answer is kept in `entity_classifications`; the shown values are resolved from them (#206, see [`docs/SCHEMA.md`](docs/SCHEMA.md)). Public pages show the subtype and a vendor-neutral badge: **Rules**, **AI · NN%** or **Reviewed** (#209).
+Each entity is classified `person` or `organization`, with an `entity_subtype` for organizations (business, nonprofit, trust, estate, tribe, government, unknown) and a `classification_source` (regex, Jev or manual). Every source's answer is kept in `entity_classifications`; the shown values are resolved from them (#206, see [`docs/SCHEMA-ENTITIES.md`](docs/SCHEMA-ENTITIES.md)). Public pages show the subtype and a vendor-neutral badge: **Rules**, **AI · NN%** or **Reviewed** (#209).
 
 The same cleaning is applied to the `applicants` and `previous_applicants` string columns on `license_records`, so FTS search results and CSV exports are consistent with entity names.
 

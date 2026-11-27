@@ -39,9 +39,9 @@ The **derived** format key, `link_key(name, resolved type)`; index
 `idx_entities_link_key`. NULL for any type but person and organization.
 `get_or_create_entity()` writes it on insert; `relink` refreshes it.
 
-### `record_entities.party_id` (#263)
+### `record_entities.party_id`
 
-Each link's party: `eff(entity_id, the record's licence)`. **Derived.**
+Each link's party (#263): `eff(entity_id, the record's licence)`. **Derived.**
 Index `idx_re_party_record (party_id, record_id)`. A trigger
 (`record_entities_party_default`, migration 0012) defaults it to `entity_id`
 on insert, and when an update re-points `entity_id` without setting it, so
@@ -94,9 +94,9 @@ couple split into its members (#269, [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md)),
 or for a pair with a dismissal in any scope: the rule row is global, so it
 would link the pair on the dismissed licence too.
 
-## The middle-name rule (licence-scoped, #265)
+## The middle-name rule (licence-scoped)
 
-Spec §3. Within each licence, the **members** are its person parties under the
+Spec §3 (#265). Within each licence, the **members** are its person parties under the
 format-key and manual rows: every spelling the format key already links, and
 any variant an operator linked on the licence, folds into its party. So a
 format-key variant (`PENDERGRAFT, TYLER`) needs no row of its own: it reaches
@@ -157,9 +157,9 @@ every page the rewrite left not-all-visible until a vacuum marks them. A
 rewrite under autovacuum's 20 % threshold can leave that state for days
 (prod, 2026-11-25: `/entities` 495 ms before the vacuum, 199 ms after).
 
-## Read paths (#263)
+## Read paths
 
-All read `record_entities.party_id` (`queries_entity.py`, `entities.get_record_entities`):
+All read `record_entities.party_id` (#263; `queries_entity.py`, `entities.get_record_entities`):
 
 | Page | Behaviour |
 |---|---|
@@ -188,9 +188,9 @@ writes the audit rows):
 Entities in a manual row or a dismissal are in `protected_ids()`. Marking an
 entity in a manual row not-a-name is refused until it is unlinked.
 
-## Operator UI (#264)
+## Operator UI
 
-**The entity page's Links panel** (admins): the links from the entity (its
+**The entity page's Links panel** (admins, #264): the links from the entity (its
 party in each scope) and to it, and its dismissals, each with the other name,
 scope, source (rule name or operator email), date and note.
 - **Unlink** deletes a manual row. A rule row is derived, so Unlink writes a

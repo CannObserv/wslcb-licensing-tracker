@@ -92,7 +92,7 @@ Replay-extract boundary (#154): the extract *files* are derived (natural-key pat
 - Each module: `logger = logging.getLogger(__name__)`.
 - Entry points call `setup_logging()` from `log_config.py` before doing any work.
 - Use `%s`/`%d` style in log calls (not f-strings).
-- **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json`, or uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` lines bypass the JSON formatter and journald gets mixed plain-text/JSON logs (#162). That file and `setup_logging()` share one formatter via `build_json_formatter()` — change the JSON schema in that factory only. `log_config.json` also attaches `ColorMessageFilter` to every uvicorn logger, stripping uvicorn's ANSI-coloured `color_message` extra at the record (#163) — keep it on the *loggers*, not the handler or the formatter's `reserved_attrs`: a filter placed on one sink is resurrected by the next one, and a logger never inherits an ancestor's filters.
+- **uvicorn:** every uvicorn invocation (systemd `ExecStart` + all dev-server commands) must pass `--log-config src/wslcb_licensing_tracker/log_config.json` (#162). Change the JSON schema in `build_json_formatter()` only; keep `ColorMessageFilter` on the uvicorn *loggers* (#163). Why: [`docs/LOGGING.md`](docs/LOGGING.md).
 
 ### Testing
 Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/ -v` must pass before committing.
@@ -110,7 +110,7 @@ Red/Green TDD: write a failing test first, then implement. `uv run pytest tests/
 ### Data Integrity
 - `insert_record()` returns `(id, True)` for new, `(id, False)` for duplicate, `None` on unexpected `IntegrityError`.
 - Never delete historical data — accumulating beyond the 30-day source window is the whole point.
-- `sources.snapshot_path` stores the path as it was at ingest time. Files compressed by `wslcb ingest compress-snapshots` are renamed `.html` → `.html.gz` on disk but the DB column is not updated. `parser._read_snapshot()` transparently falls back to the `.gz` sibling, so all read paths work without a migration. Do not "fix" the DB paths — the fallback is the contract. The same contract applies to `data/wslcb/licensinginfo-diffs/` archives: `wslcb ingest compress-diffs` (#137) renames `.txt` → `.txt.gz` in place, and `parser.extract_records_from_diff()` / `glob_with_gz()` transparently tolerate either extension — no DB migration there either.
+- Compressed archives keep their ingest-time DB path: `sources.snapshot_path` still says `.html` after `compress-snapshots` (diffs: `.txt`, `compress-diffs`), and readers fall back to the `.gz` sibling. Never "fix" the DB paths ([`docs/SCHEMA.md`](docs/SCHEMA.md#sources-provenance-artifacts)).
 
 ## Git Workflow
 
@@ -178,7 +178,7 @@ See **Code Exploration Policy** above.
 
 SessionStart hooks (daily vendored-skills refresh; SocratiCode prefetch reminder and daily health check) and the `curating-context` budget guard: [`docs/SKILLS.md`](docs/SKILLS.md) under `managing-skills`, `init-socraticode`, `curating-context`. Never add a second skills updater (#164).
 
-SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this host has no swap and co-hosts `wslcb-web.service`, and a per-launch `npx socraticode@latest` install was the measured memory peak, not the indexing (#175). Never "fix" the driver back to `npx`; confirm with `mcp-driver.mjs resolve`. The plugin session is pinned too: `.claude/settings.json` *declares* `SOCRATICODE_SPEC`, but only VS Code's machine-scoped `claudeCode.environmentVariables` *delivers* it to the launch — verify with `ps`, never `claude mcp list` (#180). See [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md).
+SocratiCode is **pinned** here, driver and plugin session both (#175, #180): never "fix" the driver back to `npx`; verify the session pin with `ps`, never `claude mcp list`. Detail: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md#pinned-version).
 
 Dated analyses go under `docs/research/`, `docs/plans/`, or `docs/specs/`, which are excluded from the live surface. Vendored superpowers skills default to `docs/superpowers/{specs,plans}/`; this project overrides that — specs → `docs/specs/`, plans → `docs/plans/` (their own "user preferences override" clause applies; `tests/test_docs_layout.py` guards it, #176).
 
@@ -191,9 +191,11 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases
 - [`docs/MEMORY_PRESSURE.md`](docs/MEMORY_PRESSURE.md) — no swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins + loopback containers (#175, #180, #222)
 - [`docs/DISK_GC.md`](docs/DISK_GC.md) — Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
 - [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape, classify): installs + fields
+- [`docs/LOGGING.md`](docs/LOGGING.md) — uvicorn log routing (#162, #163)
 - [`docs/RELAY.md`](docs/RELAY.md) — relayed scrape while WSLCB blocks the host (#198/#201): Mac LaunchAgent install, monitoring, retirement
 - [`docs/RECOVERY.md`](docs/RECOVERY.md) — nightly GCS backup (DB + `data/` archive), restore, drills; log in [`docs/RECOVERY-REHEARSALS.md`](docs/RECOVERY-REHEARSALS.md)
-- [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference
+- [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference; entity tables in [`docs/SCHEMA-ENTITIES.md`](docs/SCHEMA-ENTITIES.md)
+- [`docs/ENTITY_ALIASES.md`](docs/ENTITY_ALIASES.md), [`docs/COUPLE_SPLITS.md`](docs/COUPLE_SPLITS.md), [`docs/TOMBSTONES.md`](docs/TOMBSTONES.md) — entity aliases, couple verdicts, tombstones
 - [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md) — Alembic chain, revision history, adding a migration
 - [`docs/SOURCE_PAGE.md`](docs/SOURCE_PAGE.md) — WSLCB source page structure and field label quirks (needed when touching `parser.py`)
 - [`docs/STYLE.md`](docs/STYLE.md) — brand colors and CSS conventions

@@ -136,11 +136,16 @@ apply it. Left in, vendored trees outrank first-party code in `codebase_search`.
 
 ## Repo-specific notes
 
+### Pinned version
+
+SocratiCode is **pinned** here (`~/.socraticode/pin`, outside the repo): this host has no swap and co-hosts `wslcb-web.service`, and a per-launch `npx socraticode@latest` install was the measured memory peak, not the indexing (#175). Never "fix" the driver back to `npx`; confirm with `mcp-driver.mjs resolve`. The plugin session is pinned too: `.claude/settings.json` *declares* `SOCRATICODE_SPEC`, but only VS Code's machine-scoped `claudeCode.environmentVariables` *delivers* it to the launch — verify with `ps`, never `claude mcp list` (#180). See [`docs/MEMORY_PRESSURE.md`](MEMORY_PRESSURE.md).
+
 ### Context artifacts
 
 The project's non-code knowledge reachable through `codebase_context_search` is
 whatever `.socraticodecontextartifacts.json` lists — currently
 [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
+[`docs/SCHEMA-ENTITIES.md`](SCHEMA-ENTITIES.md) (`database-schema-entities`),
 [`docs/MIGRATIONS.md`](MIGRATIONS.md) (`database-migrations`),
 [`docs/DEPLOYMENT.md`](DEPLOYMENT.md),
 [`docs/ADDRESS_VALIDATION.md`](ADDRESS_VALIDATION.md) (`address-validation`),
@@ -153,8 +158,8 @@ and `docs/specs/`. Those three are also excluded from the code index (below),
 so they answer only through context search — and, being dated, may describe a
 design since superseded (the SQLite→PostgreSQL phase plans). For a question
 about current behaviour, scope with `artifactName` to a current-state artifact
-— `database-schema`, `database-migrations`, `deployment`, `memory-pressure`,
-`source-page`, `style` or `infra` — never
+— `database-schema`, `database-schema-entities`, `database-migrations`,
+`deployment`, `memory-pressure`, `source-page`, `style` or `infra` — never
 `plans`, `specs` or `research`.
 
 ### Entry points

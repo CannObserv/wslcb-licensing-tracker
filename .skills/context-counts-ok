@@ -1,0 +1,10 @@
+# context-counts-ok — judged rot-prone counts (curating-context Phase 6.5, check-counts.sh).
+# Format: [PATH ::] WARRANT :: CONTENT. See check-counts.sh --help.
+
+# #271: moved verbatim from docs/SCHEMA.md with the entity tables.
+# gated: tests/test_entity_classification.py asserts len(ENTITY_SUBTYPES) == 7, and the
+# ck_entities_subtype / ck_ec_subtype CHECKs enforce the same set.
+docs/SCHEMA-ENTITIES.md :: gated :: set iff `organization`, one of seven
+docs/SCHEMA-ENTITIES.md :: gated :: set iff `organization`, one of the seven
+# "7-ELEVEN" is a business name in an example citation; the counted thing is the name itself.
+docs/SCHEMA-ENTITIES.md :: stable :: An appended citation (`7-ELEVEN, INC.

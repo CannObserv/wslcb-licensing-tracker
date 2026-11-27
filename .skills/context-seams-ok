@@ -45,3 +45,32 @@ docs/SKILLS.md :: `curating-context` owns `AGENTS.md`'s 6,000-token budget (#165
 # default sweep reported them as matching nothing, and an ack can't be scoped to a target.
 # On the next split of either doc, those back-references must be re-judged against what
 # that split moves: a content-matched ack from #208 would silence one the split made false.
+
+# #271 (2026-11-27): three AGENTS.md body lines left for docs (uvicorn detail -> LOGGING.md,
+# snapshot .gz contract -> SCHEMA.md, SocratiCode pin -> SOCRATICODE.md), so source was swept.
+# Each hit below still points at content AGENTS.md keeps: § Logging's rules, § Frozen's
+# table list, the Data Integrity rule (with its SCHEMA.md link), the docs override, and the
+# Code Exploration Policy block.
+# @run base=2ec368260405
+docs/LOGGING.md :: The rules every module follows are in
+.socraticodecontextartifacts.json :: The on-demand half of the Code Exploration Policy block in AGENTS.md
+src/wslcb_licensing_tracker/backup.py :: The frozen tables (AGENTS.md)
+src/wslcb_licensing_tracker/parser.py :: a bug; see AGENTS.md.
+tests/test_docs_layout.py :: project, and AGENTS.md supplies that preference
+tests/test_docs_layout.py :: of surfacing in a PR, and the AGENTS.md line can't be trimmed away silently.
+tests/test_docs_layout.py :: plans to docs/plans/ (see AGENTS.md, #176)
+tests/test_docs_layout.py :: AGENTS.md is the point-of-use statement the vendored skills defer to.
+tests/test_docs_layout.py :: (REPO_ROOT / "AGENTS.md").read_text
+tests/test_docs_layout.py :: AGENTS.md no longer states the docs/superpowers/
+# @run end
+
+# #271 split of docs/SCHEMA.md (entity tables -> docs/SCHEMA-ENTITIES.md). Each hit names
+# SCHEMA.md for what it still holds: the split doc's own provenance line, the doc-gate's
+# note on upstream defaults, and the context-artifact entry (SCHEMA-ENTITIES.md now listed
+# beside it in both the manifest and SOCRATICODE.md).
+# @run base=2ec368260405 file=docs/SCHEMA.md
+docs/SCHEMA-ENTITIES.md :: Columns, constraints and rules of the applicant-entity tables, split out of
+docs/SKILLS.md :: Upstream's two default lines describe a generic FastAPI layout and never name `docs/SCHEMA.md`
+docs/SOCRATICODE.md :: [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
+.socraticodecontextartifacts.json :: "path": "docs/SCHEMA.md",
+# @run end

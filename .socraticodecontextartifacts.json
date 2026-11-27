@@ -3,7 +3,12 @@
     {
       "name": "database-schema",
       "path": "docs/SCHEMA.md",
-      "description": "Table and column reference with FK relationships and constraints. Check before writing any DB query or schema-dependent feature; the migration chain is the database-migrations artifact."
+      "description": "Table and column reference with FK relationships and constraints. Check before writing any DB query or schema-dependent feature; the entity tables are the database-schema-entities artifact, the migration chain the database-migrations artifact."
+    },
+    {
+      "name": "database-schema-entities",
+      "path": "docs/SCHEMA-ENTITIES.md",
+      "description": "Applicant-entity tables: entities, entity_classifications, entity_review_flags, classification_runs, record_entities, plus pointers for the alias and couple-split tables. Check before writing any entity query or touching entity extraction, classification or linking."
     },
     {
       "name": "database-migrations",

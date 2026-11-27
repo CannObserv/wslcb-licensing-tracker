@@ -110,10 +110,10 @@ then `reprocess_entities(record_ids=the printed records)`, which relinks.
 Member rows are ordinary licence links, so members take part in both alias
 rules like any other entity.
 
-## The #246 seeded pass
+## The seeded pass
 
 `wslcb db seed-couple-splits [--dry-run] [--admin-email E]` writes the table
-the operator approved on 2026-11-24:
+the operator approved on 2026-11-24 (#246):
 
 - 9 `split` and 3 `keep` verdicts;
 - manual `organization`/`trust` rows for 17210 and 45444;
