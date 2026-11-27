@@ -192,7 +192,7 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for full descriptions and trigger phrases
 - [`docs/DISK_GC.md`](docs/DISK_GC.md) — Provisioner's disk GC + headroom sensor on this host: config, what stays repo-side (#200)
 - [`docs/MONITORING.md`](docs/MONITORING.md) — co-status dead-man check-ins (backup, scrape, classify): installs + fields
 - [`docs/LOGGING.md`](docs/LOGGING.md) — uvicorn log routing (#162, #163)
-- [`docs/PATCHING.md`](docs/PATCHING.md) — monthly OS patching: knob, needrestart, Node.js
+- [`docs/PATCHING.md`](docs/PATCHING.md) — OS patching: knob, needrestart, Node.js
 - [`docs/RELAY.md`](docs/RELAY.md) — relayed scrape while WSLCB blocks the host (#198/#201): Mac LaunchAgent install, monitoring, retirement
 - [`docs/RECOVERY.md`](docs/RECOVERY.md) — nightly GCS backup (DB + `data/` archive), restore, drills; log in [`docs/RECOVERY-REHEARSALS.md`](docs/RECOVERY-REHEARSALS.md)
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — table/column reference; entity tables in [`docs/SCHEMA-ENTITIES.md`](docs/SCHEMA-ENTITIES.md)

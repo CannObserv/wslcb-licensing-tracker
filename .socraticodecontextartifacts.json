@@ -23,7 +23,7 @@
     {
       "name": "patching",
       "path": "docs/PATCHING.md",
-      "description": "OS patching on this host: the monthly patching-hosts run's knob, needrestart list mode and held steps, the Tailscale and NodeSource apt origins, and the after-run checks. Check before patching, touching apt sources or pins, or changing needrestart."
+      "description": "OS patching on this host: the patching-hosts run's knob, needrestart list mode and held steps, the Tailscale and NodeSource apt origins, and the after-run checks. Check before patching, touching apt sources or pins, or changing needrestart."
     },
     {
       "name": "logging",

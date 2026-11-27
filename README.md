@@ -332,7 +332,7 @@ wslcb-licensing-tracker/
     ├── MEMORY_PRESSURE.md   # No swap + co-hosted prod: earlyoom, memory configs, SocratiCode pins (#175)
     ├── MIGRATIONS.md        # Alembic chain, revision history, adding a migration
     ├── MONITORING.md        # co-status dead-man check-ins: backup + scrape monitors, scrape drop-in install (#196)
-    ├── PATCHING.md          # Monthly patching-hosts run: knob, needrestart list mode, NodeSource Node.js (#192, #239)
+    ├── PATCHING.md          # patching-hosts run: knob, needrestart list mode, NodeSource Node.js (#192, #239)
     ├── RELAY.md             # Relayed scrape during the WSLCB block: VM + Mac install, monitoring (#201)
     ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
     ├── RECOVERY-REHEARSALS.md # Dated backup drills and what each proved (#185)

@@ -90,7 +90,7 @@ No swap, a co-hosted prod service, and earlyoom: the budget, the configs in
 
 ## OS security updates
 
-The monthly `patching-hosts` run (#192): its knob, needrestart's list mode,
+The `patching-hosts` run (#192): its knob, needrestart's list mode,
 held steps, NodeSource's Node.js and the after-run checks are in
 [`PATCHING.md`](PATCHING.md).
 
