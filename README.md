@@ -335,7 +335,7 @@ wslcb-licensing-tracker/
     ├── RELAY.md             # Relayed scrape during the WSLCB block: VM + Mac install, monitoring (#201)
     ├── RECOVERY.md          # Nightly GCS backup, restore, drills (#185)
     ├── RECOVERY-REHEARSALS.md # Dated backup drills and what each proved (#185)
-    ├── SCHEMA.md            # Full table/column reference
+    ├── SCHEMA.md            # Table/column reference; entity tables in SCHEMA-ENTITIES.md
     ├── SCHEMA-ENTITIES.md   # Entity-table columns and rules, split from SCHEMA.md (#271)
     ├── SKILLS.md            # AI agent skill inventory and trigger phrases
     ├── SOCRATICODE.md       # Code-exploration tool table, per-tool notes, graph health, index scope

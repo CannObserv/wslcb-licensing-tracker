@@ -1,6 +1,7 @@
 # Database Schema Reference
 
 Detailed reference for all PostgreSQL tables, columns and constraints. The Alembic migration chain is in [`MIGRATIONS.md`](MIGRATIONS.md).
+The entity tables get one line each here; their columns and rules are in [`SCHEMA-ENTITIES.md`](SCHEMA-ENTITIES.md).
 For high-level architecture and module descriptions, see [`AGENTS.md`](../AGENTS.md).
 
 ## Tables
