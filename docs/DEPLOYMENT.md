@@ -178,6 +178,7 @@ unrelated orphans.
 ## Logging
 
 Under systemd (non-TTY), all output is JSON lines — `timestamp`, `level`, `name`, `message`. Captured by the journal. Uvicorn access/error logs routed through the same formatter.
+Why every uvicorn invocation passes `--log-config`: [`LOGGING.md`](LOGGING.md).
 
 ```bash
 journalctl -u wslcb-web.service -f
