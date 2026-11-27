@@ -29,7 +29,10 @@ from .split_review import current_verdict, keep_whole, printed_records, set_spli
 
 logger = logging.getLogger(__name__)
 
-_NOTE = "#246 seeded pass: the operator-approved table (docs/specs/2026-11-24-246-…-design.md)"
+_NOTE = (
+    "#246 seeded pass: the operator-approved table "
+    "(docs/specs/2026-11-24-246-couple-name-splitting-design.md)"
+)
 
 
 @dataclass(frozen=True)

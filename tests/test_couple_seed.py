@@ -92,7 +92,8 @@ async def test_real_run_then_rerun(pg_conn, standard_new_application):
         "entity.split_keep",
         "entity.split_set",
     ]
-    assert all("#246 seeded pass" in json.loads(d)["note"] for _, d in actions)
+    spec = "docs/specs/2026-11-24-246-couple-name-splitting-design.md"
+    assert all(spec in json.loads(d)["note"] for _, d in actions)
     again = await cs.seed_couples(pg_conn, admin_email=ADMIN, table=table)
     assert again.already_applied
     links = (
