@@ -73,7 +73,7 @@ backed up under `data/remediation-backups/`. Ad-hoc edits remain forbidden.
 | `record_links` | `link_records.build_all_links()` | `wslcb db rebuild-links` |
 | `data/wslcb/licensinginfo-replay/` extract files | `replay_extracts.generate_replay_extracts()` | `wslcb ingest generate-replay-extracts` |
 
-Jev rows in `entity_classifications` cost money and drift ~1%: never bulk-delete; roll back with `wslcb db ignore-jev`. Nothing automated overrides a current manual row (alias links and dismissals too, #262; couple verdicts, #269) or deletes an open flag; purging an entity deletes all its rows (#206). `record_entities` member rows (`via_entity_id`) are derived from couple verdicts ([`COUPLE_SPLITS.md`](docs/COUPLE_SPLITS.md)).
+Jev rows in `entity_classifications` cost money and drift ~1%: never bulk-delete; roll back with `wslcb db ignore-jev`. Nothing automated overrides a current manual row (aliases, dismissals, couple verdicts) or deletes an open flag; purging an entity deletes all its rows (#206).
 
 `reprocess_endorsements()` is idempotent: it deletes, then reinserts. `build_all_links()` also backfills `license_records.previous_location_id` for approved CHANGE OF LOCATION records when NULL.
 
