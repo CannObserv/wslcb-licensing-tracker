@@ -65,11 +65,13 @@ tests/test_docs_layout.py :: AGENTS.md no longer states the docs/superpowers/
 # @run end
 
 # #271 split of docs/SCHEMA.md (entity tables -> docs/SCHEMA-ENTITIES.md). Each hit names
-# SCHEMA.md for what it still holds: the split doc's own provenance line, the doc-gate's
+# SCHEMA.md for what it still holds: the split doc's provenance line and its license_records
+# pointer (CR 2), the doc-gate's
 # note on upstream defaults, and the context-artifact entry (SCHEMA-ENTITIES.md now listed
 # beside it in both the manifest and SOCRATICODE.md).
 # @run base=2ec368260405 file=docs/SCHEMA.md
 docs/SCHEMA-ENTITIES.md :: Columns, constraints and rules of the applicant-entity tables, split out of
+docs/SCHEMA-ENTITIES.md :: `license_records` columns, including the `raw_*` shadows extraction reads, are in
 docs/SKILLS.md :: Upstream's two default lines describe a generic FastAPI layout and never name `docs/SCHEMA.md`
 docs/SOCRATICODE.md :: [`docs/SCHEMA.md`](SCHEMA.md) (`database-schema`),
 .socraticodecontextartifacts.json :: "path": "docs/SCHEMA.md",
