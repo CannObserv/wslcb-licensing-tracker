@@ -126,6 +126,20 @@ printed link is unchanged; a changed printed link rolls the run back.
 Attribution is the only admin account, or `--admin-email`; the address is
 never printed.
 
+**Back up first** (spec: `data/remediation-backups/<date>-246/`). Run this
+from the deploy checkout, with the `PG*` variables set from the production
+`.env`, never a URL on the command line:
+
+```bash
+D=data/remediation-backups/$(date -u +%F)-246; mkdir -p "$D"
+IDS=13439,15477,16331,17210,21867,30292,45444,45609,49087,49945,51098,57311,57314,66317
+export PGOPTIONS='-c default_transaction_read_only=on'
+psql -X -c "\copy (SELECT * FROM record_entities WHERE record_id IN (SELECT record_id FROM record_entities WHERE entity_id IN ($IDS)) ORDER BY 1, 3, 4) TO '$D/record_entities.csv' CSV HEADER"
+psql -X -c "\copy (SELECT * FROM entity_classifications WHERE entity_id IN ($IDS) ORDER BY id) TO '$D/entity_classifications.csv' CSV HEADER"
+unset PGOPTIONS
+.venv/bin/wslcb db seed-couple-splits --dry-run | tee "$D/dry-run.txt"
+```
+
 Rehearsed on a prod copy (2026-11-27): 29 records reprocessed, 21 member
 links, 10 new persons, printed links unchanged. A full relink afterwards made
 0 changes.

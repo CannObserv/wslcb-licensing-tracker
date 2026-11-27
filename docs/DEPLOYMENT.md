@@ -376,7 +376,7 @@ uv run wslcb db check --fix
 uv run wslcb db rebuild-links
 uv run wslcb db reprocess-endorsements [--code 394] [--record-id 12345] [--dry-run]
 uv run wslcb db reprocess-entities [--record-id 12345 ...] [--dry-run]   # --record-id repeatable (#269)
-uv run wslcb db seed-couple-splits [--dry-run] [--admin-email E]  # one-off: the approved #246 couple verdicts (#269, COUPLE_SPLITS.md); refuses on drift, rerun is a no-op
+uv run wslcb db seed-couple-splits [--dry-run] [--admin-email E]  # one-off: the approved #246 couple verdicts (#269); back up first (COUPLE_SPLITS.md); rerun is a no-op
 uv run wslcb db reclassify-entities [--dry-run]   # regex rows + re-resolve classifications; drop non-name entities (#203, #206)
 uv run wslcb db relink-entities [--dry-run]       # rebuild rule-made alias rows (format key, middle names), link keys + record-link parties; idempotent (#262, #263, #265)
 uv run wslcb db strip-wac-suffixes [--dry-run]    # one-off: rename/merge entities named '… PER WAC 314-…' (#211); commits only if verified
