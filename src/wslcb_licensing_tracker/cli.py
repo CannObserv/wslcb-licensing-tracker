@@ -709,7 +709,7 @@ def seed_couple_splits(dry_run: bool, admin_email: str | None) -> None:
     audited paths, then reprocesses and relinks the names' records, in one
     transaction.  Refuses (nothing written) if any of the 14 entities was
     renamed, deleted or already decided; once applied, a rerun changes nothing.
-    Back up the affected rows first (docs/COUPLE_SPLITS.md, *The #246 seeded pass*).
+    Back up the affected rows first (docs/COUPLE_SPLITS.md, *The seeded pass*).
     """
 
     async def _run(engine: AsyncEngine) -> SeedResult:
