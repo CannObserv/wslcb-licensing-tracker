@@ -1,6 +1,7 @@
 # Entity Tables Schema Reference
 
 Columns, constraints and rules of the applicant-entity tables, split out of [`SCHEMA.md`](SCHEMA.md) (#271), which keeps a one-line pointer per table. Behaviour and operator workflows: [`ENTITY_ALIASES.md`](ENTITY_ALIASES.md) (alias links, relink), [`COUPLE_SPLITS.md`](COUPLE_SPLITS.md) (couple verdicts), [`TOMBSTONES.md`](TOMBSTONES.md) (confirmed non-names).
+`license_records` columns, including the `raw_*` shadows extraction reads, are in [`SCHEMA.md`](SCHEMA.md#license_records-main-table).
 
 ## `entities` (applicant normalization table)
 - One row per unique applicant name (person or organization)
